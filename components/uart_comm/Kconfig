@@ -1,0 +1,118 @@
+menu "UART Comm Configuration"
+
+    config UART_COMM_PORT_NUM
+        int "UART port number"
+        default 1
+        range 0 2
+        help
+            Which UART peripheral to use (0, 1, or 2).
+            UART 0 is typically used for console logging.
+
+    config UART_COMM_TX_PIN
+        int "UART TX GPIO pin"
+        default 17
+        range 0 48
+        help
+            GPIO number for the UART transmit pin.
+
+    config UART_COMM_RX_PIN
+        int "UART RX GPIO pin"
+        default 18
+        range 0 48
+        help
+            GPIO number for the UART receive pin.
+
+    config UART_COMM_BAUD_RATE
+        int "Baud rate (fixed at compile time)"
+        default 115200
+        range 9600 3000000
+        help
+            UART baud rate, fixed at compile time.
+            Both ends of the link must be configured to the same value.
+            921600 is recommended for real-time streaming between ESP32-S3 and PC.
+
+    config UART_COMM_MAX_PAYLOAD
+        int "Maximum payload size in bytes"
+        default 128
+        range 1 255
+        help
+            Upper bound on payload length per frame.
+            Determines the size of internal RX/TX payload buffers.
+
+    config UART_COMM_RX_BUF_SIZE
+        int "UART RX ring buffer size"
+        default 1024
+        range 256 8192
+        help
+            Size of the UART driver receive ring buffer in bytes.
+
+    config UART_COMM_TX_BUF_SIZE
+        int "UART TX ring buffer size"
+        default 1024
+        range 0 8192
+        help
+            Size of the UART driver transmit ring buffer in bytes.
+            Set to 0 for blocking TX mode.
+
+    config UART_COMM_CMD_QUEUE_DEPTH
+        int "TX command queue depth"
+        default 8
+        range 2 32
+        help
+            Number of command/response/event frames that can be
+            queued for transmission before sendCommand returns an error.
+
+    config UART_COMM_RX_QUEUE_DEPTH
+        int "RX delivery queue depth"
+        default 8
+        range 2 32
+        help
+            Number of received frames buffered for the application
+            to consume via receive().
+
+    config UART_COMM_RX_TASK_STACK
+        int "RX task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the internal receive task.
+
+    config UART_COMM_RX_TASK_PRIO
+        int "RX task priority"
+        default 5
+        range 1 24
+        help
+            FreeRTOS priority for the internal receive task.
+
+    config UART_COMM_TX_TASK_STACK
+        int "TX task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the internal transmit task.
+
+    config UART_COMM_TX_TASK_PRIO
+        int "TX task priority"
+        default 5
+        range 1 24
+        help
+            FreeRTOS priority for the internal transmit task.
+
+    config UART_COMM_PATTERN_QUEUE_SIZE
+        int "Pattern detection queue size"
+        default 20
+        range 5 100
+        help
+            Number of pattern detection positions to buffer.
+            Each detected 3x0xAA start sequence consumes one slot.
+
+    config UART_COMM_RX_TIMEOUT_SYMBOLS
+        int "RX timeout in symbol periods"
+        default 10
+        range 1 126
+        help
+            Number of symbol periods of silence before the UART
+            hardware triggers an RX timeout interrupt. One symbol
+            is approximately one byte transmission time.
+
+endmenu
