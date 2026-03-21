@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/pulse_cnt.h"
+#include <atomic>
 #include <utility>
 
 static const char *TAG = "encoder";
@@ -12,50 +13,59 @@ namespace esp_rotary_encoder {
 
 struct Encoder::Impl {
     detail::PcntUnit pcnt;
-    esp_timer_handle_t rate_timer;
-    portMUX_TYPE spinlock;
-    int32_t prev_count;
-    int64_t prev_time_us;
-    float current_rate;
-    int32_t last_delta;
+    std::atomic<int32_t> prev_count;
+    std::atomic<int64_t> prev_time_us;
+    std::atomic<float> current_rate;
+    std::atomic<int32_t> last_delta;
+    std::atomic<bool> sampling_in_progress;
     bool valid;
 };
 
-static void rate_timer_callback(void *arg)
+static void update_rate_sample(Encoder::Impl *impl)
 {
-    auto *impl = static_cast<Encoder::Impl *>(arg);
+    if (!impl || !impl->valid) {
+        return;
+    }
 
-    taskENTER_CRITICAL(&impl->spinlock);
+    if (impl->sampling_in_progress.exchange(true, std::memory_order_acquire)) {
+        return;
+    }
 
     int count = 0;
-    pcnt_unit_get_count(impl->pcnt.unit, &count);
+    esp_err_t ret = pcnt_unit_get_count(impl->pcnt.unit, &count);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read PCNT count for unit %d: %s",
+                 impl->pcnt.unit_id, esp_err_to_name(ret));
+        impl->sampling_in_progress.store(false, std::memory_order_release);
+        return;
+    }
     int64_t now_us = esp_timer_get_time();
 
-    int32_t delta = static_cast<int32_t>(count) - impl->prev_count;
-    int64_t dt_us = now_us - impl->prev_time_us;
+    int32_t previous_count = impl->prev_count.load(std::memory_order_relaxed);
+    int64_t previous_time_us = impl->prev_time_us.load(std::memory_order_relaxed);
+    int32_t delta = static_cast<int32_t>(count) - previous_count;
+    int64_t dt_us = now_us - previous_time_us;
 
     float rate = 0.0f;
     if (dt_us > 0) {
         rate = static_cast<float>(delta) / (static_cast<float>(dt_us) / 1000000.0f);
     }
 
-    impl->current_rate = rate;
-    impl->last_delta = delta;
-    impl->prev_count = static_cast<int32_t>(count);
-    impl->prev_time_us = now_us;
-
-    taskEXIT_CRITICAL(&impl->spinlock);
+    impl->current_rate.store(rate, std::memory_order_relaxed);
+    impl->last_delta.store(delta, std::memory_order_relaxed);
+    impl->prev_count.store(static_cast<int32_t>(count), std::memory_order_relaxed);
+    impl->prev_time_us.store(now_us, std::memory_order_relaxed);
+    impl->sampling_in_progress.store(false, std::memory_order_release);
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     : m_impl(new Impl{})
 {
-    m_impl->rate_timer = nullptr;
-    m_impl->spinlock = portMUX_INITIALIZER_UNLOCKED;
-    m_impl->prev_count = 0;
-    m_impl->prev_time_us = 0;
-    m_impl->current_rate = 0.0f;
-    m_impl->last_delta = 0;
+    m_impl->prev_count.store(0, std::memory_order_relaxed);
+    m_impl->prev_time_us.store(0, std::memory_order_relaxed);
+    m_impl->current_rate.store(0.0f, std::memory_order_relaxed);
+    m_impl->last_delta.store(0, std::memory_order_relaxed);
+    m_impl->sampling_in_progress.store(false, std::memory_order_relaxed);
     m_impl->valid = false;
 
     // Allocate PCNT unit with quadrature decoding
@@ -66,30 +76,17 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
         return;
     }
 
-    // Create periodic timer for rate sampling
-    esp_timer_create_args_t timer_args = {};
-    timer_args.callback = rate_timer_callback;
-    timer_args.arg = m_impl;
-    timer_args.name = "enc_rate";
-    timer_args.dispatch_method = ESP_TIMER_TASK;
-
-    ret = esp_timer_create(&timer_args, &m_impl->rate_timer);
+    int count = 0;
+    ret = pcnt_unit_get_count(m_impl->pcnt.unit, &count);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create rate timer: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to read initial PCNT count for pins %d/%d: %s",
+                 pin_a, pin_b, esp_err_to_name(ret));
         detail::PcntPool::deallocate(m_impl->pcnt);
         return;
     }
 
-    m_impl->prev_time_us = esp_timer_get_time();
-
-    ret = esp_timer_start_periodic(m_impl->rate_timer,
-        CONFIG_ENCODER_HAL_RATE_SAMPLE_PERIOD_MS * 1000);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start rate timer: %s", esp_err_to_name(ret));
-        esp_timer_delete(m_impl->rate_timer);
-        detail::PcntPool::deallocate(m_impl->pcnt);
-        return;
-    }
+    m_impl->prev_count.store(static_cast<int32_t>(count), std::memory_order_relaxed);
+    m_impl->prev_time_us.store(esp_timer_get_time(), std::memory_order_relaxed);
 
     m_impl->valid = true;
     ESP_LOGI(TAG, "Encoder created: pin_a=%d pin_b=%d", pin_a, pin_b);
@@ -99,8 +96,6 @@ Encoder::~Encoder()
 {
     if (m_impl) {
         if (m_impl->valid) {
-            esp_timer_stop(m_impl->rate_timer);
-            esp_timer_delete(m_impl->rate_timer);
             detail::PcntPool::deallocate(m_impl->pcnt);
         }
         delete m_impl;
@@ -118,8 +113,6 @@ Encoder &Encoder::operator=(Encoder &&other) noexcept
     if (this != &other) {
         if (m_impl) {
             if (m_impl->valid) {
-                esp_timer_stop(m_impl->rate_timer);
-                esp_timer_delete(m_impl->rate_timer);
                 detail::PcntPool::deallocate(m_impl->pcnt);
             }
             delete m_impl;
@@ -134,8 +127,14 @@ int32_t Encoder::getCount() const
     if (!m_impl || !m_impl->valid) {
         return 0;
     }
+    update_rate_sample(m_impl);
     int count = 0;
-    pcnt_unit_get_count(m_impl->pcnt.unit, &count);
+    esp_err_t ret = pcnt_unit_get_count(m_impl->pcnt.unit, &count);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read count for unit %d: %s",
+                 m_impl->pcnt.unit_id, esp_err_to_name(ret));
+        return 0;
+    }
     return static_cast<int32_t>(count);
 }
 
@@ -144,10 +143,8 @@ Direction Encoder::getDirection() const
     if (!m_impl || !m_impl->valid) {
         return Direction::Stopped;
     }
-    int32_t delta;
-    taskENTER_CRITICAL(&m_impl->spinlock);
-    delta = m_impl->last_delta;
-    taskEXIT_CRITICAL(&m_impl->spinlock);
+    update_rate_sample(m_impl);
+    int32_t delta = m_impl->last_delta.load(std::memory_order_relaxed);
 
     if (delta > 0) return Direction::Forward;
     if (delta < 0) return Direction::Reverse;
@@ -159,11 +156,8 @@ float Encoder::getRate() const
     if (!m_impl || !m_impl->valid) {
         return 0.0f;
     }
-    float rate;
-    taskENTER_CRITICAL(&m_impl->spinlock);
-    rate = m_impl->current_rate;
-    taskEXIT_CRITICAL(&m_impl->spinlock);
-    return rate;
+    update_rate_sample(m_impl);
+    return m_impl->current_rate.load(std::memory_order_relaxed);
 }
 
 void Encoder::reset()
@@ -171,13 +165,17 @@ void Encoder::reset()
     if (!m_impl || !m_impl->valid) {
         return;
     }
-    taskENTER_CRITICAL(&m_impl->spinlock);
-    pcnt_unit_clear_count(m_impl->pcnt.unit);
-    m_impl->prev_count = 0;
-    m_impl->prev_time_us = esp_timer_get_time();
-    m_impl->current_rate = 0.0f;
-    m_impl->last_delta = 0;
-    taskEXIT_CRITICAL(&m_impl->spinlock);
+    esp_err_t ret = pcnt_unit_clear_count(m_impl->pcnt.unit);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to clear count for unit %d: %s",
+                 m_impl->pcnt.unit_id, esp_err_to_name(ret));
+        return;
+    }
+    m_impl->prev_count.store(0, std::memory_order_relaxed);
+    m_impl->prev_time_us.store(esp_timer_get_time(), std::memory_order_relaxed);
+    m_impl->current_rate.store(0.0f, std::memory_order_relaxed);
+    m_impl->last_delta.store(0, std::memory_order_relaxed);
+    m_impl->sampling_in_progress.store(false, std::memory_order_relaxed);
 }
 
 bool Encoder::isValid() const

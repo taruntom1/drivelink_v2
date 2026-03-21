@@ -7,7 +7,7 @@ Each `Encoder` instance:
 - Allocates one PCNT unit from a shared pool
 - Configures both PCNT channels for 4x quadrature decoding
 - Optionally applies hardware glitch filtering
-- Starts a periodic timer to compute signed rate and direction
+- Computes signed rate and direction on demand when getter APIs are called
 
 This component is intended for wheel odometry, shaft position tracking, and closed-loop motor control feedback.
 
@@ -43,7 +43,7 @@ Choose this when you need long-term position, not just instantaneous speed.
 Use for speed feedback loops.
 
 - Returns signed pulses/second (`float`)
-- Computed every `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS`
+- Computed on getter call from elapsed time between samples
 
 Choose this when your controller needs velocity.
 
@@ -113,8 +113,6 @@ Key settings:
 - `ENCODER_HAL_GLITCH_FILTER_NS`
   - Rejects pulses shorter than this duration
   - Set `0` to disable filtering
-- `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS`
-  - Faster updates with lower value, smoother/noisier tradeoff
 - `ENCODER_HAL_PCNT_HIGH_LIMIT`
 - `ENCODER_HAL_PCNT_LOW_LIMIT`
   - Hardware counter wrap points used with accumulator support
@@ -126,7 +124,6 @@ Recommended starting values are already provided in Kconfig defaults.
 - Component dependencies are already declared:
   - `esp_driver_pcnt`
   - `esp_driver_gpio`
-  - `esp_timer`
 - Any component using this API should add `REQUIRES rotary_encoder_hal`.
 
 Typical setup flow:
@@ -136,9 +133,9 @@ Typical setup flow:
 
 ## Behavior and Concurrency Notes
 
-- Rate/direction are updated by an internal periodic `esp_timer` callback.
-- Internal state for rate/direction uses a spinlock for safe concurrent reads.
-- `getCount()` reads the PCNT accumulator-backed count directly.
+- Rate/direction are refreshed on demand whenever `getCount()`, `getRate()`, or `getDirection()` is called.
+- Shared scalar state for rate/direction bookkeeping uses atomics.
+- `getCount()` returns the PCNT accumulator-backed count directly after refreshing the latest sample.
 - Use one `Encoder` instance per physical quadrature sensor.
 
 ## Quick Decision Guide

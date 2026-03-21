@@ -3,5 +3,5 @@ idf_component_register(
          "src/pcnt_pool.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES esp_driver_pcnt esp_driver_gpio esp_timer
+    REQUIRES esp_driver_pcnt esp_driver_gpio
 )

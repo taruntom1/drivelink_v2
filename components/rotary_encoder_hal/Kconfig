@@ -10,16 +10,6 @@ menu "Rotary Encoder HAL Configuration"
             Set to 0 to disable the glitch filter entirely.
             1000 ns (1 us) is a good default for mechanical rotary encoders.
 
-    config ENCODER_HAL_RATE_SAMPLE_PERIOD_MS
-        int "Rate sampling period in milliseconds"
-        default 50
-        range 10 1000
-        help
-            How often the encoder count is sampled to compute rotation rate.
-            Shorter periods give faster response but noisier rate readings.
-            Longer periods give smoother readings but slower response.
-            50 ms (20 Hz) provides a good balance for motor control.
-
     config ENCODER_HAL_PCNT_HIGH_LIMIT
         int "PCNT counter high limit"
         default 32767
