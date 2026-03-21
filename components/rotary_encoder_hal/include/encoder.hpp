@@ -22,9 +22,9 @@ struct PcntUnit;
 /// hardware pool, configured for 4x quadrature decoding. The ESP32-S3
 /// has 4 PCNT units, so a maximum of 4 encoders can be active simultaneously.
 ///
-/// An internal periodic timer samples the count at a fixed interval to
-/// compute rotation rate and direction. The sampling period is configurable
-/// via menuconfig (ENCODER_HAL_RATE_SAMPLE_PERIOD_MS).
+/// Rate and direction are sampled on demand when getRate()/getDirection()
+/// are called. Sampling is throttled to a configurable minimum interval via
+/// menuconfig (ENCODER_HAL_RATE_SAMPLE_PERIOD_MS).
 ///
 /// Usage:
 ///   esp_rotary_encoder::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5);
@@ -39,12 +39,12 @@ class Encoder {
 public:
     /// Construct an encoder on the given quadrature signal pins.
     /// Allocates a PCNT unit, configures channels for quadrature decoding,
-    /// applies glitch filter, and starts the rate sampling timer.
+    /// applies glitch filter, and initializes the on-demand rate sampler.
     /// @param pin_a  GPIO number for encoder channel A (CLK)
     /// @param pin_b  GPIO number for encoder channel B (DT)
     Encoder(gpio_num_t pin_a, gpio_num_t pin_b);
 
-    /// Destructor. Stops the rate timer and releases the PCNT unit back to the pool.
+    /// Destructor. Releases the PCNT unit back to the pool.
     ~Encoder();
 
     Encoder(const Encoder &) = delete;
@@ -60,13 +60,14 @@ public:
     int32_t getCount() const;
 
     /// Returns the last computed rotation direction.
-    /// Based on the count delta from the most recent rate sample period.
+    /// Based on the count delta from the most recent on-demand sample.
     /// @return Direction::Forward, Direction::Reverse, or Direction::Stopped.
     Direction getDirection() const;
 
     /// Returns the rotation rate in pulses per second (signed).
     /// Positive when counting forward, negative when reversing.
-    /// Updated internally at the configured sample rate.
+    /// Updated on demand, with a minimum interval set by
+    /// ENCODER_HAL_RATE_SAMPLE_PERIOD_MS.
     /// @return Rate in pulses/second, or 0.0f if the encoder is invalid.
     float getRate() const;
 

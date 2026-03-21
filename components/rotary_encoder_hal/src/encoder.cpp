@@ -12,7 +12,6 @@ namespace esp_rotary_encoder {
 
 struct Encoder::Impl {
     detail::PcntUnit pcnt;
-    esp_timer_handle_t rate_timer;
     portMUX_TYPE spinlock;
     int32_t prev_count;
     int64_t prev_time_us;
@@ -21,15 +20,21 @@ struct Encoder::Impl {
     bool valid;
 };
 
-static void rate_timer_callback(void *arg)
+static void update_rate_sample_locked(Encoder::Impl *impl)
 {
-    auto *impl = static_cast<Encoder::Impl *>(arg);
-
-    taskENTER_CRITICAL(&impl->spinlock);
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t sample_period_us =
+        static_cast<int64_t>(CONFIG_ENCODER_HAL_RATE_SAMPLE_PERIOD_MS) * 1000;
+    if ((now_us - impl->prev_time_us) < sample_period_us) {
+        return;
+    }
 
     int count = 0;
-    pcnt_unit_get_count(impl->pcnt.unit, &count);
-    int64_t now_us = esp_timer_get_time();
+    esp_err_t ret = pcnt_unit_get_count(impl->pcnt.unit, &count);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read PCNT count: %s", esp_err_to_name(ret));
+        return;
+    }
 
     int32_t delta = static_cast<int32_t>(count) - impl->prev_count;
     int64_t dt_us = now_us - impl->prev_time_us;
@@ -43,17 +48,14 @@ static void rate_timer_callback(void *arg)
     impl->last_delta = delta;
     impl->prev_count = static_cast<int32_t>(count);
     impl->prev_time_us = now_us;
-
-    taskEXIT_CRITICAL(&impl->spinlock);
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     : m_impl(new Impl{})
 {
-    m_impl->rate_timer = nullptr;
     m_impl->spinlock = portMUX_INITIALIZER_UNLOCKED;
     m_impl->prev_count = 0;
-    m_impl->prev_time_us = 0;
+    m_impl->prev_time_us = esp_timer_get_time();
     m_impl->current_rate = 0.0f;
     m_impl->last_delta = 0;
     m_impl->valid = false;
@@ -66,30 +68,15 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
         return;
     }
 
-    // Create periodic timer for rate sampling
-    esp_timer_create_args_t timer_args = {};
-    timer_args.callback = rate_timer_callback;
-    timer_args.arg = m_impl;
-    timer_args.name = "enc_rate";
-    timer_args.dispatch_method = ESP_TIMER_TASK;
-
-    ret = esp_timer_create(&timer_args, &m_impl->rate_timer);
+    int count = 0;
+    ret = pcnt_unit_get_count(m_impl->pcnt.unit, &count);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create rate timer: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to read initial PCNT count for pins %d/%d: %s",
+                 pin_a, pin_b, esp_err_to_name(ret));
         detail::PcntPool::deallocate(m_impl->pcnt);
         return;
     }
-
-    m_impl->prev_time_us = esp_timer_get_time();
-
-    ret = esp_timer_start_periodic(m_impl->rate_timer,
-        CONFIG_ENCODER_HAL_RATE_SAMPLE_PERIOD_MS * 1000);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start rate timer: %s", esp_err_to_name(ret));
-        esp_timer_delete(m_impl->rate_timer);
-        detail::PcntPool::deallocate(m_impl->pcnt);
-        return;
-    }
+    m_impl->prev_count = static_cast<int32_t>(count);
 
     m_impl->valid = true;
     ESP_LOGI(TAG, "Encoder created: pin_a=%d pin_b=%d", pin_a, pin_b);
@@ -99,8 +86,6 @@ Encoder::~Encoder()
 {
     if (m_impl) {
         if (m_impl->valid) {
-            esp_timer_stop(m_impl->rate_timer);
-            esp_timer_delete(m_impl->rate_timer);
             detail::PcntPool::deallocate(m_impl->pcnt);
         }
         delete m_impl;
@@ -118,8 +103,6 @@ Encoder &Encoder::operator=(Encoder &&other) noexcept
     if (this != &other) {
         if (m_impl) {
             if (m_impl->valid) {
-                esp_timer_stop(m_impl->rate_timer);
-                esp_timer_delete(m_impl->rate_timer);
                 detail::PcntPool::deallocate(m_impl->pcnt);
             }
             delete m_impl;
@@ -146,6 +129,7 @@ Direction Encoder::getDirection() const
     }
     int32_t delta;
     taskENTER_CRITICAL(&m_impl->spinlock);
+    update_rate_sample_locked(m_impl);
     delta = m_impl->last_delta;
     taskEXIT_CRITICAL(&m_impl->spinlock);
 
@@ -161,6 +145,7 @@ float Encoder::getRate() const
     }
     float rate;
     taskENTER_CRITICAL(&m_impl->spinlock);
+    update_rate_sample_locked(m_impl);
     rate = m_impl->current_rate;
     taskEXIT_CRITICAL(&m_impl->spinlock);
     return rate;

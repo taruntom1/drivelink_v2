@@ -7,7 +7,7 @@ Each `Encoder` instance:
 - Allocates one PCNT unit from a shared pool
 - Configures both PCNT channels for 4x quadrature decoding
 - Optionally applies hardware glitch filtering
-- Starts a periodic timer to compute signed rate and direction
+- Computes signed rate and direction on getter calls
 
 This component is intended for wheel odometry, shaft position tracking, and closed-loop motor control feedback.
 
@@ -43,7 +43,7 @@ Choose this when you need long-term position, not just instantaneous speed.
 Use for speed feedback loops.
 
 - Returns signed pulses/second (`float`)
-- Computed every `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS`
+- Computed on demand when called (throttled by `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS`)
 
 Choose this when your controller needs velocity.
 
@@ -136,7 +136,8 @@ Typical setup flow:
 
 ## Behavior and Concurrency Notes
 
-- Rate/direction are updated by an internal periodic `esp_timer` callback.
+- Rate/direction are updated on `getRate()`/`getDirection()` calls.
+- Sampling is throttled by `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS` to keep a stable window.
 - Internal state for rate/direction uses a spinlock for safe concurrent reads.
 - `getCount()` reads the PCNT accumulator-backed count directly.
 - Use one `Encoder` instance per physical quadrature sensor.
