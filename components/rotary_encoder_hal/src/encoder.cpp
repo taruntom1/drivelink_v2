@@ -22,6 +22,7 @@ struct Encoder::Impl {
 
 static void update_rate_sample_locked(Encoder::Impl *impl)
 {
+    // PRECONDITION: Caller must hold impl->spinlock.
     const int64_t now_us = esp_timer_get_time();
     const int64_t sample_period_us =
         static_cast<int64_t>(CONFIG_ENCODER_HAL_RATE_SAMPLE_PERIOD_MS) * 1000;
