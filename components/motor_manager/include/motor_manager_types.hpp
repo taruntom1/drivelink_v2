@@ -21,10 +21,6 @@ enum class ResultCode : uint8_t {
     InternalError = 0x07
 };
 
-enum class CommandType : uint8_t {
-    Configure = 0x01,
-};
-
 enum class ConfigureSubcommand : uint8_t {
     CreateMotor = 0x01,
     DeleteMotor = 0x02,
@@ -90,12 +86,8 @@ struct ManagerConfig {
     uint8_t telemetry_stream_channel = kManagerTelemetryStreamChannel;
     uint8_t max_motors = 8;
     UpdateTaskConfig update_task;
-};
-
-struct TelemetrySample {
-    uint8_t motor_id;
-    float angle_rad;
-    float velocity_rad_s;
+    uint32_t config_task_stack_size = CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK;
+    UBaseType_t config_task_priority = CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO;
 };
 
 const char *resultCodeToString(ResultCode code);

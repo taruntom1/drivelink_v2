@@ -15,4 +15,19 @@ menu "Motor Manager Configuration"
         help
             FreeRTOS priority for the optional internal update task.
 
+    config MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK
+        int "Default motor manager config task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the internal configuration command task.
+            This task parses and dispatches queued configure commands.
+
+    config MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO
+        int "Default motor manager config task priority"
+        default 6
+        range 1 24
+        help
+            FreeRTOS priority for the internal configuration command task.
+
 endmenu

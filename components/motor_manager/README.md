@@ -163,7 +163,6 @@ No per-packet dynamic allocation is used while parsing.
   - repeated entries:
     - `motor_id` (`uint8_t`)
     - `angle_rad` (`float32`)
-    - `velocity_rad_s` (`float32`)
+    - `angular_velocity_rad_s` (`float32`)
 
 Use `MotorManager::publishTelemetry()` periodically (or enable the internal update task).
-

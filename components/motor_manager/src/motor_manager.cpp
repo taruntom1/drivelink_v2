@@ -15,6 +15,9 @@ namespace motor_manager {
 namespace {
 
 constexpr TickType_t kMutexTimeoutTicks = pdMS_TO_TICKS(50);
+constexpr UBaseType_t kConfigQueueDepth = 8;
+constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
+constexpr TickType_t kTaskStopGraceTicks = pdMS_TO_TICKS(20);
 
 } // namespace
 
@@ -36,7 +39,7 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     }
 
     m_motors.reserve(m_config.max_motors);
-    m_config_queue = xQueueCreate(8, sizeof(uart_comm::RxFrame));
+    m_config_queue = xQueueCreate(kConfigQueueDepth, sizeof(uart_comm::RxFrame));
     if (m_config_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create configure queue");
         return;
@@ -90,6 +93,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
             &m_update_task);
         if (ok != pdPASS) {
             m_update_task = nullptr;
+            m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
+            m_uart.registerCallback(m_config.setpoint_stream_channel, uart_comm::RxCallback{});
             ESP_LOGE(TAG, "Failed to create update task");
             return;
         }
@@ -98,12 +103,14 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     BaseType_t cfg_ok = xTaskCreate(
         &MotorManager::configTaskEntry,
         "motor_mgr_cfg",
-        4096,
+        m_config.config_task_stack_size,
         this,
-        6,
+        m_config.config_task_priority,
         &m_config_task);
     if (cfg_ok != pdPASS) {
         m_config_task = nullptr;
+        m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
+        m_uart.registerCallback(m_config.setpoint_stream_channel, uart_comm::RxCallback{});
         ESP_LOGE(TAG, "Failed to create config task");
         return;
     }
@@ -127,7 +134,11 @@ MotorManager::~MotorManager()
         uart_comm::RxFrame wake{};
         xQueueSend(m_config_queue, &wake, 0);
     }
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(kTaskStopGraceTicks);
+    if (m_config_task != nullptr) {
+        vTaskDelete(m_config_task);
+        m_config_task = nullptr;
+    }
 
     if (m_mutex != nullptr) {
         xSemaphoreTake(m_mutex, portMAX_DELAY);
@@ -446,7 +457,7 @@ void MotorManager::configTaskEntry(void *arg)
     auto *self = static_cast<MotorManager *>(arg);
     uart_comm::RxFrame frame{};
     while (!self->m_stop_config_task.load(std::memory_order_relaxed)) {
-        if (xQueueReceive(self->m_config_queue, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
+        if (xQueueReceive(self->m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
             continue;
         }
         if (self->m_stop_config_task.load(std::memory_order_relaxed)) {
@@ -512,8 +523,11 @@ void MotorManager::stopUpdateTask()
         return;
     }
     m_stop_update_task.store(true, std::memory_order_relaxed);
-    vTaskDelete(m_update_task);
-    m_update_task = nullptr;
+    vTaskDelay(kTaskStopGraceTicks);
+    if (m_update_task != nullptr) {
+        vTaskDelete(m_update_task);
+        m_update_task = nullptr;
+    }
 }
 
 } // namespace motor_manager

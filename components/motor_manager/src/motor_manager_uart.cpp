@@ -10,6 +10,13 @@ namespace motor_manager {
 
 namespace {
 
+constexpr size_t kConfigureHeaderBytes = 3U;
+constexpr size_t kCreateConfigureGpioBytes = 4U;
+constexpr size_t kCreateConfigureFloatCount = 14U;
+constexpr size_t kPidSetFloatCount = 3U;
+constexpr size_t kPidKindBytes = 1U;
+constexpr size_t kSetpointKindBytes = 1U;
+
 bool readFloatLe(const uint8_t *src, size_t src_len, size_t &offset, float &out)
 {
     if ((offset + sizeof(float)) > src_len) {
@@ -123,12 +130,14 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
     switch (subcommand) {
         case ConfigureSubcommand::CreateMotor:
         case ConfigureSubcommand::ConfigureMotor: {
-            constexpr size_t kRequiredLen = 3U + 4U + 14U * sizeof(float) + sizeof(uint32_t);
+            constexpr size_t kRequiredLen =
+                kConfigureHeaderBytes + kCreateConfigureGpioBytes +
+                kCreateConfigureFloatCount * sizeof(float) + sizeof(uint32_t);
             if (len < kRequiredLen) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
-            size_t offset = 3;
+            size_t offset = kConfigureHeaderBytes;
             MotorConfigPayload cfg{};
             cfg.pwm_gpio = static_cast<gpio_num_t>(payload[offset++]);
             cfg.dir_gpio = static_cast<gpio_num_t>(payload[offset++]);
@@ -151,10 +160,11 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
                 break;
             }
 
-            float reserved0 = 0.0f;
-            float reserved1 = 0.0f;
-            if (!readFloatLe(payload, len, offset, reserved0) ||
-                !readFloatLe(payload, len, offset, reserved1)) {
+            // Reserved extension slots for forward-compatible protocol evolution.
+            float protocol_extension_slot_0 = 0.0f;
+            float protocol_extension_slot_1 = 0.0f;
+            if (!readFloatLe(payload, len, offset, protocol_extension_slot_0) ||
+                !readFloatLe(payload, len, offset, protocol_extension_slot_1)) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
@@ -193,11 +203,12 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::SetPidParams: {
-            if (len < 3U + 1U + 3U * sizeof(float) + sizeof(uint32_t)) {
+            if (len < kConfigureHeaderBytes + kPidKindBytes +
+                          kPidSetFloatCount * sizeof(float) + sizeof(uint32_t)) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
-            size_t offset = 3;
+            size_t offset = kConfigureHeaderBytes;
             const auto pid_kind = static_cast<PidKind>(payload[offset++]);
             float kp = 0.0f;
             float ki = 0.0f;
@@ -215,11 +226,11 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::SetSetpoint: {
-            if (len < 3U + 1U + sizeof(float)) {
+            if (len < kConfigureHeaderBytes + kSetpointKindBytes + sizeof(float)) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
-            size_t offset = 3;
+            size_t offset = kConfigureHeaderBytes;
             const auto kind = static_cast<SetpointKind>(payload[offset++]);
             float value = 0.0f;
             if (!readFloatLe(payload, len, offset, value)) {
