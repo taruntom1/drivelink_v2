@@ -9,9 +9,10 @@
 static const char *TAG = "encoder";
 
 namespace esp_rotary_encoder {
+namespace detail {
 
-struct Encoder::Impl {
-    detail::PcntUnit pcnt;
+struct EncoderImpl {
+    PcntUnit pcnt;
     portMUX_TYPE spinlock;
     int32_t prev_count;
     int64_t prev_time_us;
@@ -20,7 +21,9 @@ struct Encoder::Impl {
     bool valid;
 };
 
-static void update_rate_sample_locked(Encoder::Impl *impl)
+} // namespace detail
+
+static void update_rate_sample_locked(detail::EncoderImpl *impl)
 {
     // PRECONDITION: Caller must hold impl->spinlock.
     const int64_t now_us = esp_timer_get_time();
@@ -52,7 +55,7 @@ static void update_rate_sample_locked(Encoder::Impl *impl)
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
-    : m_impl(new Impl{})
+    : m_impl(new detail::EncoderImpl{})
 {
     m_impl->spinlock = portMUX_INITIALIZER_UNLOCKED;
     m_impl->prev_count = 0;

@@ -14,6 +14,7 @@ enum class Direction {
 
 namespace detail {
 struct PcntUnit;
+struct EncoderImpl;
 }
 
 /// Quadrature rotary encoder reader using the ESP32-S3 PCNT peripheral.
@@ -80,8 +81,7 @@ public:
     bool isValid() const;
 
 private:
-    struct Impl;
-    Impl *m_impl;
+    detail::EncoderImpl *m_impl;
 };
 
 } // namespace esp_rotary_encoder
