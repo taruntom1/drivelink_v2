@@ -1,9 +1,10 @@
 #include "encoder.hpp"
 #include "pcnt_pool.hpp"
-#include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "driver/pulse_cnt.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <atomic>
 #include <utility>
 
@@ -21,14 +22,30 @@ struct Encoder::Impl {
     bool valid;
 };
 
-static void update_rate_sample(Encoder::Impl *impl)
+static bool acquire_sampling_lock(Encoder::Impl *impl)
 {
     if (!impl || !impl->valid) {
-        return;
+        return false;
     }
 
-    if (impl->sampling_in_progress.exchange(true, std::memory_order_acquire)) {
-        return;
+    bool expected = false;
+    while (!impl->sampling_in_progress.compare_exchange_weak(
+        expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
+        expected = false;
+        taskYIELD();
+    }
+    return true;
+}
+
+static void release_sampling_lock(Encoder::Impl *impl)
+{
+    impl->sampling_in_progress.store(false, std::memory_order_release);
+}
+
+static bool update_rate_sample(Encoder::Impl *impl, int32_t *sampled_count = nullptr)
+{
+    if (!acquire_sampling_lock(impl)) {
+        return false;
     }
 
     int count = 0;
@@ -36,8 +53,8 @@ static void update_rate_sample(Encoder::Impl *impl)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read PCNT count for unit %d: %s",
                  impl->pcnt.unit_id, esp_err_to_name(ret));
-        impl->sampling_in_progress.store(false, std::memory_order_release);
-        return;
+        release_sampling_lock(impl);
+        return false;
     }
     int64_t now_us = esp_timer_get_time();
 
@@ -55,7 +72,11 @@ static void update_rate_sample(Encoder::Impl *impl)
     impl->last_delta.store(delta, std::memory_order_relaxed);
     impl->prev_count.store(static_cast<int32_t>(count), std::memory_order_relaxed);
     impl->prev_time_us.store(now_us, std::memory_order_relaxed);
-    impl->sampling_in_progress.store(false, std::memory_order_release);
+    if (sampled_count) {
+        *sampled_count = static_cast<int32_t>(count);
+    }
+    release_sampling_lock(impl);
+    return true;
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
@@ -127,15 +148,11 @@ int32_t Encoder::getCount() const
     if (!m_impl || !m_impl->valid) {
         return 0;
     }
-    update_rate_sample(m_impl);
-    int count = 0;
-    esp_err_t ret = pcnt_unit_get_count(m_impl->pcnt.unit, &count);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read count for unit %d: %s",
-                 m_impl->pcnt.unit_id, esp_err_to_name(ret));
-        return 0;
+    int32_t sampled_count = 0;
+    if (update_rate_sample(m_impl, &sampled_count)) {
+        return sampled_count;
     }
-    return static_cast<int32_t>(count);
+    return m_impl->prev_count.load(std::memory_order_relaxed);
 }
 
 Direction Encoder::getDirection() const
@@ -165,17 +182,23 @@ void Encoder::reset()
     if (!m_impl || !m_impl->valid) {
         return;
     }
+
+    if (!acquire_sampling_lock(m_impl)) {
+        return;
+    }
+
     esp_err_t ret = pcnt_unit_clear_count(m_impl->pcnt.unit);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to clear count for unit %d: %s",
                  m_impl->pcnt.unit_id, esp_err_to_name(ret));
+        release_sampling_lock(m_impl);
         return;
     }
     m_impl->prev_count.store(0, std::memory_order_relaxed);
     m_impl->prev_time_us.store(esp_timer_get_time(), std::memory_order_relaxed);
     m_impl->current_rate.store(0.0f, std::memory_order_relaxed);
     m_impl->last_delta.store(0, std::memory_order_relaxed);
-    m_impl->sampling_in_progress.store(false, std::memory_order_relaxed);
+    release_sampling_lock(m_impl);
 }
 
 bool Encoder::isValid() const
