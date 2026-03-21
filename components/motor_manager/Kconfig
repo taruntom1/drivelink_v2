@@ -1,0 +1,18 @@
+menu "Motor Manager Configuration"
+
+    config MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK
+        int "Default motor manager update task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the optional internal update task that
+            periodically calls MotorManager::updateAll().
+
+    config MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO
+        int "Default motor manager update task priority"
+        default 6
+        range 1 24
+        help
+            FreeRTOS priority for the optional internal update task.
+
+endmenu
