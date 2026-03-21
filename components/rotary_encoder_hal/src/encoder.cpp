@@ -29,12 +29,16 @@ static bool acquire_sampling_lock(Encoder::Impl *impl)
     }
 
     bool expected = false;
-    while (!impl->sampling_in_progress.compare_exchange_weak(
-        expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
+    constexpr int kMaxLockAttempts = 8;
+    for (int attempt = 0; attempt < kMaxLockAttempts; ++attempt) {
+        if (impl->sampling_in_progress.compare_exchange_weak(
+            expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
+            return true;
+        }
         expected = false;
         taskYIELD();
     }
-    return true;
+    return false;
 }
 
 static void release_sampling_lock(Encoder::Impl *impl)
@@ -160,7 +164,9 @@ Direction Encoder::getDirection() const
     if (!m_impl || !m_impl->valid) {
         return Direction::Stopped;
     }
-    update_rate_sample(m_impl);
+    if (!update_rate_sample(m_impl)) {
+        return Direction::Stopped;
+    }
     int32_t delta = m_impl->last_delta.load(std::memory_order_relaxed);
 
     if (delta > 0) return Direction::Forward;
@@ -173,7 +179,9 @@ float Encoder::getRate() const
     if (!m_impl || !m_impl->valid) {
         return 0.0f;
     }
-    update_rate_sample(m_impl);
+    if (!update_rate_sample(m_impl)) {
+        return 0.0f;
+    }
     return m_impl->current_rate.load(std::memory_order_relaxed);
 }
 
