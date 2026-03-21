@@ -19,12 +19,12 @@ struct Encoder::Impl {
     std::atomic<float> current_rate;
     std::atomic<int32_t> last_delta;
     std::atomic<bool> sampling_in_progress;
-    bool valid;
+    std::atomic<bool> valid;
 };
 
 static bool acquire_sampling_lock(Encoder::Impl *impl)
 {
-    if (!impl || !impl->valid) {
+    if (!impl || !impl->valid.load(std::memory_order_relaxed)) {
         return false;
     }
 
@@ -90,7 +90,7 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     m_impl->current_rate.store(0.0f, std::memory_order_relaxed);
     m_impl->last_delta.store(0, std::memory_order_relaxed);
     m_impl->sampling_in_progress.store(false, std::memory_order_relaxed);
-    m_impl->valid = false;
+    m_impl->valid.store(false, std::memory_order_relaxed);
 
     // Allocate PCNT unit with quadrature decoding
     esp_err_t ret = detail::PcntPool::allocate(pin_a, pin_b, m_impl->pcnt);
@@ -112,14 +112,14 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     m_impl->prev_count.store(static_cast<int32_t>(count), std::memory_order_relaxed);
     m_impl->prev_time_us.store(esp_timer_get_time(), std::memory_order_relaxed);
 
-    m_impl->valid = true;
+    m_impl->valid.store(true, std::memory_order_relaxed);
     ESP_LOGI(TAG, "Encoder created: pin_a=%d pin_b=%d", pin_a, pin_b);
 }
 
 Encoder::~Encoder()
 {
     if (m_impl) {
-        if (m_impl->valid) {
+        if (m_impl->valid.load(std::memory_order_relaxed)) {
             detail::PcntPool::deallocate(m_impl->pcnt);
         }
         delete m_impl;
@@ -136,7 +136,7 @@ Encoder &Encoder::operator=(Encoder &&other) noexcept
 {
     if (this != &other) {
         if (m_impl) {
-            if (m_impl->valid) {
+            if (m_impl->valid.load(std::memory_order_relaxed)) {
                 detail::PcntPool::deallocate(m_impl->pcnt);
             }
             delete m_impl;
@@ -148,22 +148,25 @@ Encoder &Encoder::operator=(Encoder &&other) noexcept
 
 int32_t Encoder::getCount() const
 {
-    if (!m_impl || !m_impl->valid) {
+    if (!m_impl || !m_impl->valid.load(std::memory_order_relaxed)) {
         return 0;
     }
     int32_t sampled_count = 0;
     if (update_rate_sample(m_impl, &sampled_count)) {
         return sampled_count;
     }
+    ESP_LOGW(TAG, "getCount returning cached sample due to lock contention/read failure");
     return m_impl->prev_count.load(std::memory_order_relaxed);
 }
 
 Direction Encoder::getDirection() const
 {
-    if (!m_impl || !m_impl->valid) {
+    if (!m_impl || !m_impl->valid.load(std::memory_order_relaxed)) {
         return Direction::Stopped;
     }
-    update_rate_sample(m_impl);
+    if (!update_rate_sample(m_impl)) {
+        ESP_LOGW(TAG, "getDirection returning cached sample due to lock contention/read failure");
+    }
     int32_t delta = m_impl->last_delta.load(std::memory_order_relaxed);
 
     if (delta > 0) return Direction::Forward;
@@ -173,20 +176,23 @@ Direction Encoder::getDirection() const
 
 float Encoder::getRate() const
 {
-    if (!m_impl || !m_impl->valid) {
+    if (!m_impl || !m_impl->valid.load(std::memory_order_relaxed)) {
         return 0.0f;
     }
-    update_rate_sample(m_impl);
+    if (!update_rate_sample(m_impl)) {
+        ESP_LOGW(TAG, "getRate returning cached sample due to lock contention/read failure");
+    }
     return m_impl->current_rate.load(std::memory_order_relaxed);
 }
 
 void Encoder::reset()
 {
-    if (!m_impl || !m_impl->valid) {
+    if (!m_impl || !m_impl->valid.load(std::memory_order_relaxed)) {
         return;
     }
 
     if (!acquire_sampling_lock(m_impl)) {
+        ESP_LOGW(TAG, "reset skipped due to sampling lock contention");
         return;
     }
 
@@ -205,7 +211,7 @@ void Encoder::reset()
 
 bool Encoder::isValid() const
 {
-    return m_impl && m_impl->valid;
+    return m_impl && m_impl->valid.load(std::memory_order_relaxed);
 }
 
 } // namespace esp_rotary_encoder
