@@ -29,8 +29,8 @@ static bool acquire_sampling_lock(Encoder::Impl *impl)
     }
 
     bool expected = false;
-    constexpr int kMaxLockAttempts = 8;
-    for (int attempt = 0; attempt < kMaxLockAttempts; ++attempt) {
+    constexpr int MAX_LOCK_ATTEMPTS = 8;
+    for (int attempt = 0; attempt < MAX_LOCK_ATTEMPTS; ++attempt) {
         if (impl->sampling_in_progress.compare_exchange_weak(
             expected, true, std::memory_order_acquire, std::memory_order_relaxed)) {
             return true;
@@ -55,8 +55,7 @@ static bool update_rate_sample(Encoder::Impl *impl, int32_t *sampled_count = nul
     int count = 0;
     esp_err_t ret = pcnt_unit_get_count(impl->pcnt.unit, &count);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read PCNT count for unit %d: %s",
-                 impl->pcnt.unit_id, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to read PCNT count: %s", esp_err_to_name(ret));
         release_sampling_lock(impl);
         return false;
     }
@@ -164,9 +163,7 @@ Direction Encoder::getDirection() const
     if (!m_impl || !m_impl->valid) {
         return Direction::Stopped;
     }
-    if (!update_rate_sample(m_impl)) {
-        return Direction::Stopped;
-    }
+    update_rate_sample(m_impl);
     int32_t delta = m_impl->last_delta.load(std::memory_order_relaxed);
 
     if (delta > 0) return Direction::Forward;
@@ -179,9 +176,7 @@ float Encoder::getRate() const
     if (!m_impl || !m_impl->valid) {
         return 0.0f;
     }
-    if (!update_rate_sample(m_impl)) {
-        return 0.0f;
-    }
+    update_rate_sample(m_impl);
     return m_impl->current_rate.load(std::memory_order_relaxed);
 }
 
@@ -197,8 +192,7 @@ void Encoder::reset()
 
     esp_err_t ret = pcnt_unit_clear_count(m_impl->pcnt.unit);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to clear count for unit %d: %s",
-                 m_impl->pcnt.unit_id, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to clear PCNT count: %s", esp_err_to_name(ret));
         release_sampling_lock(m_impl);
         return;
     }
