@@ -6,6 +6,7 @@
 #include "sdkconfig.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include <atomic>
 
 namespace motor_controller {
 
@@ -84,10 +85,12 @@ struct MotorControllerConfig {
 /// @endcode
 ///
 /// Thread safety:
-///   - setMode(), setOpenLoopDuty(), setVelocitySetpoint(), setPositionSetpoint(),
+///   - setMode() and setOutputLimits() synchronize mode/limits with update()
+///     through an internal spinlock.
+///   - setOpenLoopDuty(), setVelocitySetpoint(), setPositionSetpoint(),
 ///     setVelocityFeedforward(), setPositionFeedforward(), setCountsPerRev(),
-///     setGearRatio(), and setOutputLimits() are safe to call concurrently with
-///     update() from a different task (spinlock-protected shared state).
+///     setGearRatio(), getAngle(), and getAngularVelocity() use lock-free atomic
+///     loads/stores for single-value state shared with update().
 ///   - PID tuning/reset setters (setVelocityPidTunings, setPositionPidTunings,
 ///     setSampleTime, reset) mutate PID controller internals which are not
 ///     individually thread-safe; call them from the same task as update(), or
@@ -242,26 +245,26 @@ private:
     // Active control mode (protected by m_mux)
     ControlMode m_mode;
 
-    // Setpoints (protected by m_mux)
-    float m_open_loop_duty;
-    float m_vel_setpoint;
-    float m_pos_setpoint;
-    float m_vel_feedforward;
-    float m_pos_feedforward;
+    // Setpoints/feedforward (atomic; lock-free shared with update())
+    std::atomic<float> m_open_loop_duty;
+    std::atomic<float> m_vel_setpoint;
+    std::atomic<float> m_pos_setpoint;
+    std::atomic<float> m_vel_feedforward;
+    std::atomic<float> m_pos_feedforward;
 
-    // Configuration (protected by m_mux; updated by runtime setters)
-    float        m_counts_per_rev;
-    float        m_gear_ratio;
+    // Per-instance conversion config (atomic; updated by runtime setters)
+    std::atomic<float> m_counts_per_rev;
+    std::atomic<float> m_gear_ratio;
     float        m_output_min;
     float        m_output_max;
 
-    // Cached feedback state (protected by m_mux)
-    float m_cached_angle_rad;
-    float m_cached_velocity_rad_s;
-    bool  m_cached_angle_valid;
-    bool  m_cached_velocity_valid;
+    // Cached feedback state
+    std::atomic<float> m_cached_angle_rad;
+    std::atomic<float> m_cached_velocity_rad_s;
+    std::atomic<bool>  m_cached_angle_valid;
+    std::atomic<bool>  m_cached_velocity_valid;
 
-    // Spinlock protecting mode and setpoints during concurrent access.
+    // Spinlock protecting mode and output limits during concurrent access.
     // Declared mutable so that const getters can acquire it without const_cast.
     mutable portMUX_TYPE m_mux;
 };

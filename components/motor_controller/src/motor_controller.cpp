@@ -66,7 +66,7 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
                  "MotorController ready: pwm=%d dir=%d encA=%d encB=%d "
                  "cpr=%.1f gear=%.3f out=[%.2f,%.2f]",
                  pwm_gpio, dir_gpio, enc_a, enc_b,
-                 m_counts_per_rev, m_gear_ratio,
+                 m_counts_per_rev.load(), m_gear_ratio.load(),
                  m_output_min, m_output_max);
     }
 }
@@ -81,25 +81,26 @@ void MotorController::update()
         return;
     }
 
-    // Atomically snapshot mode, setpoints, and per-instance scaling so that
-    // concurrent setters from other tasks see a consistent view.
+    // Snapshot mode/limits and single-value state so concurrent setters from
+    // other tasks see valid values without lengthy critical sections.
     ControlMode mode;
     float open_duty, vel_sp, pos_sp;
     float vel_ff, pos_ff;
-    float counts_per_rev, gear_ratio, out_min, out_max;
+    float counts_per_rev, gear_ratio;
+    float out_min, out_max;
 
     taskENTER_CRITICAL(&m_mux);
     mode          = m_mode;
-    open_duty     = m_open_loop_duty;
-    vel_sp        = m_vel_setpoint;
-    pos_sp        = m_pos_setpoint;
-    vel_ff        = m_vel_feedforward;
-    pos_ff        = m_pos_feedforward;
-    counts_per_rev = m_counts_per_rev;
-    gear_ratio    = m_gear_ratio;
     out_min       = m_output_min;
     out_max       = m_output_max;
     taskEXIT_CRITICAL(&m_mux);
+    open_duty     = m_open_loop_duty.load();
+    vel_sp        = m_vel_setpoint.load();
+    pos_sp        = m_pos_setpoint.load();
+    vel_ff        = m_vel_feedforward.load();
+    pos_ff        = m_pos_feedforward.load();
+    counts_per_rev = m_counts_per_rev.load();
+    gear_ratio    = m_gear_ratio.load();
 
     float output = 0.0f;
 
@@ -111,10 +112,8 @@ void MotorController::update()
         case ControlMode::VelocityControl: {
             float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
             output = m_vel_pid.compute(omega, vel_sp, vel_ff);
-            taskENTER_CRITICAL(&m_mux);
-            m_cached_velocity_rad_s = omega;
-            m_cached_velocity_valid = true;
-            taskEXIT_CRITICAL(&m_mux);
+            m_cached_velocity_rad_s.store(omega, std::memory_order_release);
+            m_cached_velocity_valid.store(true, std::memory_order_release);
             ESP_LOGD(TAG, "VelCtrl: sp=%.3f meas=%.3f out=%.3f", vel_sp, omega, output);
             break;
         }
@@ -122,10 +121,8 @@ void MotorController::update()
         case ControlMode::PositionControl: {
             float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
             output = m_pos_pid.compute(angle, pos_sp, pos_ff);
-            taskENTER_CRITICAL(&m_mux);
-            m_cached_angle_rad = angle;
-            m_cached_angle_valid = true;
-            taskEXIT_CRITICAL(&m_mux);
+            m_cached_angle_rad.store(angle, std::memory_order_release);
+            m_cached_angle_valid.store(true, std::memory_order_release);
             ESP_LOGD(TAG, "PosCtrl: sp=%.3f meas=%.3f out=%.3f", pos_sp, angle, output);
             break;
         }
@@ -134,12 +131,10 @@ void MotorController::update()
     if (mode == ControlMode::OpenLoop) {
         float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
         float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
-        taskENTER_CRITICAL(&m_mux);
-        m_cached_angle_rad = angle;
-        m_cached_velocity_rad_s = omega;
-        m_cached_angle_valid = true;
-        m_cached_velocity_valid = true;
-        taskEXIT_CRITICAL(&m_mux);
+        m_cached_angle_rad.store(angle, std::memory_order_release);
+        m_cached_velocity_rad_s.store(omega, std::memory_order_release);
+        m_cached_angle_valid.store(true, std::memory_order_release);
+        m_cached_velocity_valid.store(true, std::memory_order_release);
     }
 
     m_motor.setSpeed(output);
@@ -154,12 +149,8 @@ void MotorController::setMode(ControlMode mode)
     // Stop motor first for safety, then switch mode.
     m_motor.stop();
 
-    float cpr;
-    float gr;
-    taskENTER_CRITICAL(&m_mux);
-    cpr = m_counts_per_rev;
-    gr = m_gear_ratio;
-    taskEXIT_CRITICAL(&m_mux);
+    const float cpr = m_counts_per_rev.load();
+    const float gr = m_gear_ratio.load();
     const float current_angle = countsToRadians(m_encoder.getCount(), cpr, gr);
 
     // Reset PID state when entering a closed-loop mode to prevent
@@ -172,9 +163,7 @@ void MotorController::setMode(ControlMode mode)
         m_pos_pid.reset();
         m_pos_pid.setMode(esp_pid::Mode::Automatic);
         m_vel_pid.setMode(esp_pid::Mode::Manual);
-        taskENTER_CRITICAL(&m_mux);
-        m_pos_setpoint = current_angle;
-        taskEXIT_CRITICAL(&m_mux);
+        m_pos_setpoint.store(current_angle);
     } else {
         // OpenLoop
         m_vel_pid.setMode(esp_pid::Mode::Manual);
@@ -207,37 +196,27 @@ ControlMode MotorController::getMode() const
 void MotorController::setOpenLoopDuty(float duty)
 {
     duty = std::clamp(duty, -1.0f, 1.0f);
-    taskENTER_CRITICAL(&m_mux);
-    m_open_loop_duty = duty;
-    taskEXIT_CRITICAL(&m_mux);
+    m_open_loop_duty.store(duty);
 }
 
 void MotorController::setVelocitySetpoint(float rad_per_sec)
 {
-    taskENTER_CRITICAL(&m_mux);
-    m_vel_setpoint = rad_per_sec;
-    taskEXIT_CRITICAL(&m_mux);
+    m_vel_setpoint.store(rad_per_sec);
 }
 
 void MotorController::setPositionSetpoint(float radians)
 {
-    taskENTER_CRITICAL(&m_mux);
-    m_pos_setpoint = radians;
-    taskEXIT_CRITICAL(&m_mux);
+    m_pos_setpoint.store(radians);
 }
 
 void MotorController::setVelocityFeedforward(float feedforward)
 {
-    taskENTER_CRITICAL(&m_mux);
-    m_vel_feedforward = feedforward;
-    taskEXIT_CRITICAL(&m_mux);
+    m_vel_feedforward.store(feedforward);
 }
 
 void MotorController::setPositionFeedforward(float feedforward)
 {
-    taskENTER_CRITICAL(&m_mux);
-    m_pos_feedforward = feedforward;
-    taskEXIT_CRITICAL(&m_mux);
+    m_pos_feedforward.store(feedforward);
 }
 
 // ---------------------------------------------------------------------------
@@ -249,13 +228,11 @@ float MotorController::getAngle() const
     if (!m_encoder.isValid()) {
         return 0.0f;
     }
-    taskENTER_CRITICAL(&m_mux);
-    const ControlMode mode = m_mode;
-    const bool cached_valid = m_cached_angle_valid;
-    const float cached_angle = m_cached_angle_rad;
-    const float cpr = m_counts_per_rev;
-    const float gr  = m_gear_ratio;
-    taskEXIT_CRITICAL(&m_mux);
+    const ControlMode mode = getMode();
+    const bool cached_valid = m_cached_angle_valid.load(std::memory_order_acquire);
+    const float cached_angle = m_cached_angle_rad.load(std::memory_order_acquire);
+    const float cpr = m_counts_per_rev.load();
+    const float gr  = m_gear_ratio.load();
     if (!cached_valid || mode == ControlMode::VelocityControl) {
         return countsToRadians(m_encoder.getCount(), cpr, gr);
     }
@@ -267,13 +244,11 @@ float MotorController::getAngularVelocity() const
     if (!m_encoder.isValid()) {
         return 0.0f;
     }
-    taskENTER_CRITICAL(&m_mux);
-    const ControlMode mode = m_mode;
-    const bool cached_valid = m_cached_velocity_valid;
-    const float cached_velocity = m_cached_velocity_rad_s;
-    const float cpr = m_counts_per_rev;
-    const float gr  = m_gear_ratio;
-    taskEXIT_CRITICAL(&m_mux);
+    const ControlMode mode = getMode();
+    const bool cached_valid = m_cached_velocity_valid.load(std::memory_order_acquire);
+    const float cached_velocity = m_cached_velocity_rad_s.load(std::memory_order_acquire);
+    const float cpr = m_counts_per_rev.load();
+    const float gr  = m_gear_ratio.load();
     if (!cached_valid || mode == ControlMode::PositionControl) {
         return rateToAngularVelocity(m_encoder.getRate(), cpr, gr);
     }
@@ -306,9 +281,7 @@ void MotorController::setCountsPerRev(float counts)
         ESP_LOGW(TAG, "setCountsPerRev: value must be > 0 (got %.2f); ignoring", counts);
         return;
     }
-    taskENTER_CRITICAL(&m_mux);
-    m_counts_per_rev = counts;
-    taskEXIT_CRITICAL(&m_mux);
+    m_counts_per_rev.store(counts);
     ESP_LOGI(TAG, "counts_per_rev updated to %.1f", counts);
 }
 
@@ -318,9 +291,7 @@ void MotorController::setGearRatio(float ratio)
         ESP_LOGW(TAG, "setGearRatio: value must be > 0 (got %.4f); ignoring", ratio);
         return;
     }
-    taskENTER_CRITICAL(&m_mux);
-    m_gear_ratio = ratio;
-    taskEXIT_CRITICAL(&m_mux);
+    m_gear_ratio.store(ratio);
     ESP_LOGI(TAG, "gear_ratio updated to %.4f", ratio);
 }
 
@@ -357,9 +328,7 @@ bool MotorController::isValid() const
 void MotorController::stop()
 {
     m_motor.stop();
-    taskENTER_CRITICAL(&m_mux);
-    m_open_loop_duty = 0.0f;
-    taskEXIT_CRITICAL(&m_mux);
+    m_open_loop_duty.store(0.0f);
 }
 
 void MotorController::reset()
@@ -369,15 +338,13 @@ void MotorController::reset()
     m_encoder.reset();
     m_motor.stop();
 
-    taskENTER_CRITICAL(&m_mux);
-    m_open_loop_duty = 0.0f;
-    m_vel_setpoint = 0.0f;
-    m_pos_setpoint = 0.0f;
-    m_cached_angle_rad = 0.0f;
-    m_cached_velocity_rad_s = 0.0f;
-    m_cached_angle_valid = false;
-    m_cached_velocity_valid = false;
-    taskEXIT_CRITICAL(&m_mux);
+    m_open_loop_duty.store(0.0f);
+    m_vel_setpoint.store(0.0f);
+    m_pos_setpoint.store(0.0f);
+    m_cached_angle_rad.store(0.0f, std::memory_order_release);
+    m_cached_velocity_rad_s.store(0.0f, std::memory_order_release);
+    m_cached_angle_valid.store(false, std::memory_order_release);
+    m_cached_velocity_valid.store(false, std::memory_order_release);
 }
 
 float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const

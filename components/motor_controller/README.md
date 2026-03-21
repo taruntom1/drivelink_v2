@@ -227,11 +227,12 @@ omega_rad_s = counts_per_sec / (counts_per_rev × gear_ratio) × 2π
 
 | Operation                                          | Thread-safe with `update()`? |
 |----------------------------------------------------|------------------------------|
-| `setOpenLoopDuty` / `setVelocitySetpoint` / `setPositionSetpoint` | Yes (spinlock) |
-| `setVelocityFeedforward` / `setPositionFeedforward` | Yes (spinlock) |
-| `setMode`                                          | Yes (spinlock)               |
-| `setCountsPerRev` / `setGearRatio` / `setOutputLimits` | Yes (spinlock)           |
-| `getAngle` / `getAngularVelocity`                  | Yes (spinlock + encoder HAL) |
+| `setOpenLoopDuty` / `setVelocitySetpoint` / `setPositionSetpoint` | Yes (lock-free atomics) |
+| `setVelocityFeedforward` / `setPositionFeedforward` | Yes (lock-free atomics) |
+| `setMode`                                          | Yes (spinlock for mode transition sequencing) |
+| `setCountsPerRev` / `setGearRatio`                 | Yes (lock-free atomics)      |
+| `setOutputLimits`                                  | Yes (spinlock)               |
+| `getAngle` / `getAngularVelocity`                  | Yes (atomics + encoder HAL)  |
 | `stop`                                             | Yes (idempotent; coordinate for deterministic sequencing) |
 | `reset` / `setVelocityPidTunings` / `setPositionPidTunings` / `setSampleTime` | No — suspend update loop |
 
