@@ -46,6 +46,12 @@ struct MotorControllerConfig {
     /// Position PID parameters. output_min/output_max are overridden by the
     /// MotorController constructor to match the above limits.
     esp_pid::PidConfig position_pid;
+
+    /// Constant feedforward term added to velocity PID output.
+    float velocity_feedforward = 0.0f;
+
+    /// Constant feedforward term added to position PID output.
+    float position_feedforward = 0.0f;
 };
 
 /// Single-motor closed-loop and open-loop controller.
@@ -78,15 +84,16 @@ struct MotorControllerConfig {
 /// @endcode
 ///
 /// Thread safety:
-///   All public methods that modify or read shared state are protected by
-///   an internal spinlock (portMUX_TYPE):
 ///   - setMode(), setOpenLoopDuty(), setVelocitySetpoint(), setPositionSetpoint(),
-///     setCountsPerRev(), setGearRatio(), and setOutputLimits() are safe to call
-///     concurrently with update() from a different task.
-///   - PID tuning setters (setVelocityPidTunings, setPositionPidTunings,
-///     setSampleTime) mutate PID controllers which are not individually
-///     thread-safe; call them from the same task as update(), or while the
-///     update loop is suspended.
+///     setVelocityFeedforward(), setPositionFeedforward(), setCountsPerRev(),
+///     setGearRatio(), and setOutputLimits() are safe to call concurrently with
+///     update() from a different task (spinlock-protected shared state).
+///   - PID tuning/reset setters (setVelocityPidTunings, setPositionPidTunings,
+///     setSampleTime, reset) mutate PID controller internals which are not
+///     individually thread-safe; call them from the same task as update(), or
+///     while the update loop is suspended.
+///   - stop() is idempotent but should still be coordinated with the update task
+///     for deterministic command sequencing.
 ///   - update() is not re-entrant; call it from a single task only.
 class MotorController {
 public:
@@ -151,6 +158,14 @@ public:
     /// @param radians  Target angular position in radians.
     void setPositionSetpoint(float radians);
 
+    /// Set a constant feedforward value for velocity control.
+    /// @param feedforward Added to velocity PID output every update.
+    void setVelocityFeedforward(float feedforward);
+
+    /// Set a constant feedforward value for position control.
+    /// @param feedforward Added to position PID output every update.
+    void setPositionFeedforward(float feedforward);
+
     // -------------------------------------------------------------------------
     // Feedback (thread-safe; reads are atomic or spinlock-protected)
     // -------------------------------------------------------------------------
@@ -203,7 +218,19 @@ public:
     /// @return true if both motor and encoder hardware initialised successfully.
     bool isValid() const;
 
+    /// Stop motor output immediately (idempotent).
+    /// Leaves controller mode unchanged.
+    void stop();
+
+    /// Reset controller and feedback state (idempotent).
+    /// Resets both PIDs, clears encoder count/rate baseline, zeros cached feedback,
+    /// and zeroes setpoints/open-loop duty.
+    void reset();
+
 private:
+    float countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const;
+    float rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const;
+
     // Hardware handles
     esp_motor::Motor            m_motor;
     esp_rotary_encoder::Encoder m_encoder;
@@ -219,12 +246,20 @@ private:
     float m_open_loop_duty;
     float m_vel_setpoint;
     float m_pos_setpoint;
+    float m_vel_feedforward;
+    float m_pos_feedforward;
 
     // Configuration (protected by m_mux; updated by runtime setters)
     float        m_counts_per_rev;
     float        m_gear_ratio;
     float        m_output_min;
     float        m_output_max;
+
+    // Cached feedback state (protected by m_mux)
+    float m_cached_angle_rad;
+    float m_cached_velocity_rad_s;
+    bool  m_cached_angle_valid;
+    bool  m_cached_velocity_valid;
 
     // Spinlock protecting mode and setpoints during concurrent access.
     // Declared mutable so that const getters can acquire it without const_cast.

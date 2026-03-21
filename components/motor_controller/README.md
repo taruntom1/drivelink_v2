@@ -101,6 +101,8 @@ enum class ControlMode {
 | `output_max`    | `float`               | 1.0      | Motor output upper clamp                                        |
 | `velocity_pid`  | `esp_pid::PidConfig`  | defaults | Velocity PID parameters (kp, ki, kd, sample_time_ms, …)        |
 | `position_pid`  | `esp_pid::PidConfig`  | defaults | Position PID parameters (kp, ki, kd, sample_time_ms, …)        |
+| `velocity_feedforward` | `float`         | 0.0      | Constant feedforward term added to velocity PID output          |
+| `position_feedforward` | `float`         | 0.0      | Constant feedforward term added to position PID output          |
 
 The `output_min` / `output_max` from the config are automatically propagated to
 both PID controller output limits on construction.
@@ -143,6 +145,8 @@ ControlMode getMode() const
 
 Switches the active control mode. The motor is stopped momentarily and the
 relevant PID state is reset on every transition to prevent output bumps.
+When switching into `PositionControl`, the position setpoint is initialized to
+the current angle for smoother transitions.
 
 ---
 
@@ -152,6 +156,8 @@ relevant PID state is reset on every transition to prevent output bumps.
 void setOpenLoopDuty(float duty)        // [-1.0, 1.0]
 void setVelocitySetpoint(float rad_s)   // rad/s
 void setPositionSetpoint(float radians) // rad
+void setVelocityFeedforward(float ff)
+void setPositionFeedforward(float ff)
 ```
 
 ---
@@ -164,7 +170,9 @@ float getAngularVelocity() const // current output shaft velocity, rad/s
 ```
 
 Angle is derived from the accumulated encoder count; velocity from the
-encoder HAL's built-in rate sampler.
+encoder HAL's built-in rate sampler. Values are cached during `update()`.
+If the active mode does not update one of the two measurements in `update()`,
+the getter falls back to a fresh encoder read for that specific value.
 
 ---
 
@@ -177,10 +185,12 @@ void setSampleTime(unsigned int ms)   // updates both PID controllers
 void setCountsPerRev(float counts)
 void setGearRatio(float ratio)
 void setOutputLimits(float min, float max)
+void stop()
+void reset()
 ```
 
-These setters should be called from the same task as `update()`, or while the
-update loop is suspended.
+PID tuning setters should be called from the same task as `update()`, or while
+the update loop is suspended.
 
 ---
 
@@ -218,10 +228,12 @@ omega_rad_s = counts_per_sec / (counts_per_rev × gear_ratio) × 2π
 | Operation                                          | Thread-safe with `update()`? |
 |----------------------------------------------------|------------------------------|
 | `setOpenLoopDuty` / `setVelocitySetpoint` / `setPositionSetpoint` | Yes (spinlock) |
+| `setVelocityFeedforward` / `setPositionFeedforward` | Yes (spinlock) |
 | `setMode`                                          | Yes (spinlock)               |
 | `setCountsPerRev` / `setGearRatio` / `setOutputLimits` | Yes (spinlock)           |
 | `getAngle` / `getAngularVelocity`                  | Yes (spinlock + encoder HAL) |
-| `setVelocityPidTunings` / `setPositionPidTunings` / `setSampleTime` | No — suspend update loop |
+| `stop`                                             | Yes (idempotent; coordinate for deterministic sequencing) |
+| `reset` / `setVelocityPidTunings` / `setPositionPidTunings` / `setSampleTime` | No — suspend update loop |
 
 ---
 

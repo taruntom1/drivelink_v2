@@ -4,6 +4,7 @@
 #include <cmath>
 
 static const char *TAG = "motor_controller";
+static constexpr float TWO_PI = 2.0f * static_cast<float>(M_PI);
 
 namespace motor_controller {
 
@@ -32,10 +33,16 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
       m_open_loop_duty(0.0f),
       m_vel_setpoint(0.0f),
       m_pos_setpoint(0.0f),
+      m_vel_feedforward(config.velocity_feedforward),
+      m_pos_feedforward(config.position_feedforward),
       m_counts_per_rev(config.counts_per_rev > 0.0f ? config.counts_per_rev : 1.0f),
       m_gear_ratio(config.gear_ratio > 0.0f ? config.gear_ratio : 1.0f),
       m_output_min(std::clamp(config.output_min, -1.0f, 1.0f)),
-      m_output_max(std::clamp(config.output_max, -1.0f, 1.0f))
+      m_output_max(std::clamp(config.output_max, -1.0f, 1.0f)),
+      m_cached_angle_rad(0.0f),
+      m_cached_velocity_rad_s(0.0f),
+      m_cached_angle_valid(false),
+      m_cached_velocity_valid(false)
 {
     m_mux = portMUX_INITIALIZER_UNLOCKED;
     if (m_output_min >= m_output_max) {
@@ -78,6 +85,7 @@ void MotorController::update()
     // concurrent setters from other tasks see a consistent view.
     ControlMode mode;
     float open_duty, vel_sp, pos_sp;
+    float vel_ff, pos_ff;
     float counts_per_rev, gear_ratio, out_min, out_max;
 
     taskENTER_CRITICAL(&m_mux);
@@ -85,14 +93,13 @@ void MotorController::update()
     open_duty     = m_open_loop_duty;
     vel_sp        = m_vel_setpoint;
     pos_sp        = m_pos_setpoint;
+    vel_ff        = m_vel_feedforward;
+    pos_ff        = m_pos_feedforward;
     counts_per_rev = m_counts_per_rev;
     gear_ratio    = m_gear_ratio;
     out_min       = m_output_min;
     out_max       = m_output_max;
     taskEXIT_CRITICAL(&m_mux);
-
-    const float two_pi_over_cpr_gear =
-        (2.0f * static_cast<float>(M_PI)) / (counts_per_rev * gear_ratio);
 
     float output = 0.0f;
 
@@ -102,18 +109,37 @@ void MotorController::update()
             break;
 
         case ControlMode::VelocityControl: {
-            float omega = m_encoder.getRate() * two_pi_over_cpr_gear;
-            output = m_vel_pid.compute(omega, vel_sp);
+            float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
+            output = m_vel_pid.compute(omega, vel_sp, vel_ff);
+            taskENTER_CRITICAL(&m_mux);
+            m_cached_velocity_rad_s = omega;
+            m_cached_velocity_valid = true;
+            taskEXIT_CRITICAL(&m_mux);
             ESP_LOGD(TAG, "VelCtrl: sp=%.3f meas=%.3f out=%.3f", vel_sp, omega, output);
             break;
         }
 
         case ControlMode::PositionControl: {
-            float angle = static_cast<float>(m_encoder.getCount()) * two_pi_over_cpr_gear;
-            output = m_pos_pid.compute(angle, pos_sp);
+            float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
+            output = m_pos_pid.compute(angle, pos_sp, pos_ff);
+            taskENTER_CRITICAL(&m_mux);
+            m_cached_angle_rad = angle;
+            m_cached_angle_valid = true;
+            taskEXIT_CRITICAL(&m_mux);
             ESP_LOGD(TAG, "PosCtrl: sp=%.3f meas=%.3f out=%.3f", pos_sp, angle, output);
             break;
         }
+    }
+
+    if (mode == ControlMode::OpenLoop) {
+        float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
+        float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
+        taskENTER_CRITICAL(&m_mux);
+        m_cached_angle_rad = angle;
+        m_cached_velocity_rad_s = omega;
+        m_cached_angle_valid = true;
+        m_cached_velocity_valid = true;
+        taskEXIT_CRITICAL(&m_mux);
     }
 
     m_motor.setSpeed(output);
@@ -128,6 +154,14 @@ void MotorController::setMode(ControlMode mode)
     // Stop motor first for safety, then switch mode.
     m_motor.stop();
 
+    float cpr;
+    float gr;
+    taskENTER_CRITICAL(&m_mux);
+    cpr = m_counts_per_rev;
+    gr = m_gear_ratio;
+    taskEXIT_CRITICAL(&m_mux);
+    const float current_angle = countsToRadians(m_encoder.getCount(), cpr, gr);
+
     // Reset PID state when entering a closed-loop mode to prevent
     // integral windup accumulated while in a different mode.
     if (mode == ControlMode::VelocityControl) {
@@ -138,6 +172,9 @@ void MotorController::setMode(ControlMode mode)
         m_pos_pid.reset();
         m_pos_pid.setMode(esp_pid::Mode::Automatic);
         m_vel_pid.setMode(esp_pid::Mode::Manual);
+        taskENTER_CRITICAL(&m_mux);
+        m_pos_setpoint = current_angle;
+        taskEXIT_CRITICAL(&m_mux);
     } else {
         // OpenLoop
         m_vel_pid.setMode(esp_pid::Mode::Manual);
@@ -189,6 +226,20 @@ void MotorController::setPositionSetpoint(float radians)
     taskEXIT_CRITICAL(&m_mux);
 }
 
+void MotorController::setVelocityFeedforward(float feedforward)
+{
+    taskENTER_CRITICAL(&m_mux);
+    m_vel_feedforward = feedforward;
+    taskEXIT_CRITICAL(&m_mux);
+}
+
+void MotorController::setPositionFeedforward(float feedforward)
+{
+    taskENTER_CRITICAL(&m_mux);
+    m_pos_feedforward = feedforward;
+    taskEXIT_CRITICAL(&m_mux);
+}
+
 // ---------------------------------------------------------------------------
 // Feedback
 // ---------------------------------------------------------------------------
@@ -199,11 +250,16 @@ float MotorController::getAngle() const
         return 0.0f;
     }
     taskENTER_CRITICAL(&m_mux);
+    const ControlMode mode = m_mode;
+    const bool cached_valid = m_cached_angle_valid;
+    const float cached_angle = m_cached_angle_rad;
     const float cpr = m_counts_per_rev;
     const float gr  = m_gear_ratio;
     taskEXIT_CRITICAL(&m_mux);
-    return static_cast<float>(m_encoder.getCount())
-           * (2.0f * static_cast<float>(M_PI)) / (cpr * gr);
+    if (!cached_valid || mode == ControlMode::VelocityControl) {
+        return countsToRadians(m_encoder.getCount(), cpr, gr);
+    }
+    return cached_angle;
 }
 
 float MotorController::getAngularVelocity() const
@@ -212,11 +268,16 @@ float MotorController::getAngularVelocity() const
         return 0.0f;
     }
     taskENTER_CRITICAL(&m_mux);
+    const ControlMode mode = m_mode;
+    const bool cached_valid = m_cached_velocity_valid;
+    const float cached_velocity = m_cached_velocity_rad_s;
     const float cpr = m_counts_per_rev;
     const float gr  = m_gear_ratio;
     taskEXIT_CRITICAL(&m_mux);
-    return m_encoder.getRate()
-           * (2.0f * static_cast<float>(M_PI)) / (cpr * gr);
+    if (!cached_valid || mode == ControlMode::PositionControl) {
+        return rateToAngularVelocity(m_encoder.getRate(), cpr, gr);
+    }
+    return cached_velocity;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +352,44 @@ void MotorController::setOutputLimits(float min, float max)
 bool MotorController::isValid() const
 {
     return m_motor.isValid() && m_encoder.isValid();
+}
+
+void MotorController::stop()
+{
+    m_motor.stop();
+    taskENTER_CRITICAL(&m_mux);
+    m_open_loop_duty = 0.0f;
+    taskEXIT_CRITICAL(&m_mux);
+}
+
+void MotorController::reset()
+{
+    m_vel_pid.reset();
+    m_pos_pid.reset();
+    m_encoder.reset();
+    m_motor.stop();
+
+    taskENTER_CRITICAL(&m_mux);
+    m_open_loop_duty = 0.0f;
+    m_vel_setpoint = 0.0f;
+    m_pos_setpoint = 0.0f;
+    m_cached_angle_rad = 0.0f;
+    m_cached_velocity_rad_s = 0.0f;
+    m_cached_angle_valid = false;
+    m_cached_velocity_valid = false;
+    taskEXIT_CRITICAL(&m_mux);
+}
+
+float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const
+{
+    return static_cast<float>(counts) * TWO_PI
+           / (counts_per_rev * gear_ratio);
+}
+
+float MotorController::rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const
+{
+    return counts_per_sec * TWO_PI
+           / (counts_per_rev * gear_ratio);
 }
 
 } // namespace motor_controller
