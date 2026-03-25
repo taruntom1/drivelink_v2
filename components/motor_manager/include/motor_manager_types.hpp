@@ -46,10 +46,10 @@ enum class SetpointKind : uint8_t {
 };
 
 constexpr uint8_t kProtocolVersion = 0x01;
-constexpr uint8_t kManagerMsgConfigure = 0x21;
-constexpr uint8_t kManagerMsgConfigureResp = 0x61;
-constexpr uint8_t kManagerSetpointStreamChannel = 0x80;
-constexpr uint8_t kManagerTelemetryStreamChannel = 0x81;
+constexpr uint8_t kManagerMsgConfigure = CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE;
+constexpr uint8_t kManagerMsgConfigureResp = CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE;
+constexpr uint8_t kManagerSetpointStreamChannel = CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL;
+constexpr uint8_t kManagerTelemetryStreamChannel = CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL;
 
 constexpr size_t kSetpointEntrySize = 6;  // motor_id(1) + kind(1) + float(4)
 
