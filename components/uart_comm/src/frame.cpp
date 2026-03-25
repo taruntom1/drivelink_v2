@@ -1,52 +1,15 @@
 #include "frame.hpp"
 #include <cstring>
+#include "esp_rom_crc.h"
 
 namespace uart_comm {
 namespace detail {
 
-/// CRC-16/CCITT lookup table generation (polynomial 0x1021, init 0xFFFF)
-
-
-
-constexpr uint16_t crc16_ccitt_entry(uint8_t index)
-{
-    uint16_t crc = static_cast<uint16_t>(index) << 8;
-
-    for (int i = 0; i < 8; ++i)
-    {
-        if (crc & 0x8000)
-            crc = (crc << 1) ^ 0x1021;
-        else
-            crc <<= 1;
-    }
-
-    return crc;
-}
-
-constexpr std::array<uint16_t, 256> generate_crc16_table()
-{
-    std::array<uint16_t, 256> table = {};
-
-    for (uint16_t i = 0; i < 256; ++i)
-    {
-        table[i] = crc16_ccitt_entry(static_cast<uint8_t>(i));
-    }
-
-    return table;
-}
-
-//Compile-time generated table
-constexpr auto kCrcTable = generate_crc16_table();
-
-
 uint16_t crc16Ccitt(const uint8_t* data, size_t len)
 {
-    uint16_t crc = 0xFFFF;
-    for (size_t i = 0; i < len; i++) {
-        uint8_t index = static_cast<uint8_t>((crc >> 8) ^ data[i]);
-        crc = kCrcTable[index] ^ (crc << 8);
-    }
-    return crc;
+    uint16_t crc = ~(uint16_t)0xFFFF;  // invert init
+    crc = esp_rom_crc16_be(crc, data, len);
+    return ~crc;                       // final invert
 }
 
 size_t encodeFrame(uint8_t* buf, uint8_t msg_type, const uint8_t* payload, uint8_t len)
