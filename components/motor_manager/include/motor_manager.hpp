@@ -32,6 +32,8 @@ public:
     ResultCode setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode stopMotor(uint8_t motor_id);
     ResultCode resetMotor(uint8_t motor_id);
+    ResultCode setTelemetryGlobal(bool enabled, uint8_t field_mask);
+    ResultCode setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
 
     void updateAll();
     void publishTelemetry();
@@ -41,6 +43,8 @@ public:
 private:
     struct MotorSlot {
         uint8_t id = 0;
+        bool telemetry_enabled = true;
+        uint8_t telemetry_field_mask = kTelemetryFieldAll;
         std::unique_ptr<motor_controller::MotorController> motor;
     };
 
@@ -59,6 +63,8 @@ private:
     std::atomic<bool> m_valid;
     std::atomic<bool> m_stop_update_task;
     std::atomic<bool> m_stop_config_task;
+    bool m_telemetry_enabled;
+    uint8_t m_telemetry_field_mask;
     TaskHandle_t m_update_task;
     TaskHandle_t m_config_task;
     QueueHandle_t m_config_queue;

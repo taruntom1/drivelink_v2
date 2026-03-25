@@ -91,6 +91,8 @@ Subcommands:
 - `0x06` SET_SETPOINT
 - `0x07` STOP_MOTOR
 - `0x08` RESET_MOTOR
+- `0x09` SET_TELEMETRY_GLOBAL
+- `0x0A` SET_TELEMETRY_MOTOR
 
 CREATE/CONFIGURE payload body (after first 3 bytes):
 
@@ -131,6 +133,19 @@ SET_SETPOINT body:
 - `setpoint_kind` `uint8_t`: 0=open-loop duty, 1=velocity rad/s, 2=position rad
 - `value` `float32`
 
+SET_TELEMETRY_GLOBAL body:
+
+- `enabled` `uint8_t`: `0` disable all telemetry, non-zero enable telemetry output
+- `field_mask` `uint8_t`:
+  - bit0 (`0x01`) angle (`angle_rad`)
+  - bit1 (`0x02`) velocity (`angular_velocity_rad_s`)
+
+SET_TELEMETRY_MOTOR body:
+
+- `enabled` `uint8_t`: `0` disable telemetry for this motor, non-zero enable
+- `field_mask` `uint8_t`: same bit mapping as global `field_mask`
+- `apply_field_mask` `uint8_t`: `0` keep previous per-motor field mask, non-zero update it from `field_mask`
+
 Configure response:
 
 - UART message type: `0x61` (default)
@@ -160,9 +175,18 @@ No per-packet dynamic allocation is used while parsing.
 - Payload:
   - `version` (`uint8_t`)
   - `entry_count` (`uint8_t`)
+  - `timestamp_ms` (`uint32_t`, milliseconds since boot, shared by all entries in the packet)
   - repeated entries:
     - `motor_id` (`uint8_t`)
-    - `angle_rad` (`float32`)
-    - `angular_velocity_rad_s` (`float32`)
+    - `field_mask` (`uint8_t`)
+    - optional fields in this order, present when the corresponding `field_mask` bit is set:
+      - bit0: `angle_rad` (`float32`)
+      - bit1: `angular_velocity_rad_s` (`float32`)
+
+Effective per-entry field selection is:
+
+- `effective_field_mask = global_field_mask & motor_field_mask`
+
+If telemetry is globally disabled, no telemetry packet is sent.
 
 Use `MotorManager::publishTelemetry()` periodically (or enable the internal update task).

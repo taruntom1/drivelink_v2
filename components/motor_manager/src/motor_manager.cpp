@@ -29,6 +29,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
       m_valid(false),
       m_stop_update_task(false),
       m_stop_config_task(false),
+    m_telemetry_enabled(true),
+    m_telemetry_field_mask(kTelemetryFieldAll),
       m_update_task(nullptr),
       m_config_task(nullptr),
       m_config_queue(nullptr)
@@ -212,6 +214,8 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
 
     MotorSlot slot{};
     slot.id = motor_id;
+    slot.telemetry_enabled = true;
+    slot.telemetry_field_mask = kTelemetryFieldAll;
     slot.motor = std::move(motor);
     m_motors.push_back(std::move(slot));
     xSemaphoreGive(m_mutex);
@@ -400,6 +404,63 @@ ResultCode MotorManager::resetMotor(uint8_t motor_id)
     return ResultCode::Ok;
 }
 
+ResultCode MotorManager::setTelemetryGlobal(bool enabled, uint8_t field_mask)
+{
+    if (!isValid()) {
+        return ResultCode::InvalidState;
+    }
+    if ((field_mask & ~kTelemetryFieldAll) != 0U) {
+        return ResultCode::InvalidArgument;
+    }
+    if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
+        return ResultCode::InternalError;
+    }
+
+    m_telemetry_enabled = enabled;
+    m_telemetry_field_mask = field_mask;
+
+    xSemaphoreGive(m_mutex);
+
+    ESP_LOGI(TAG, "Telemetry global updated (enabled=%u field_mask=0x%02X)",
+             static_cast<unsigned>(enabled ? 1U : 0U),
+             static_cast<unsigned>(field_mask));
+    return ResultCode::Ok;
+}
+
+ResultCode MotorManager::setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask)
+{
+    if (!isValid()) {
+        return ResultCode::InvalidState;
+    }
+    if ((field_mask & ~kTelemetryFieldAll) != 0U) {
+        return ResultCode::InvalidArgument;
+    }
+    if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
+        return ResultCode::InternalError;
+    }
+
+    size_t index = 0;
+    if (findSlotIndexById(motor_id, index) != ResultCode::Ok) {
+        xSemaphoreGive(m_mutex);
+        return ResultCode::NotFound;
+    }
+
+    auto &slot = m_motors[index];
+    slot.telemetry_enabled = enabled;
+    if (update_field_mask) {
+        slot.telemetry_field_mask = field_mask;
+    }
+
+    xSemaphoreGive(m_mutex);
+
+    ESP_LOGI(TAG, "Telemetry motor updated (id=%u enabled=%u field_mask=0x%02X apply=%u)",
+             motor_id,
+             static_cast<unsigned>(enabled ? 1U : 0U),
+             static_cast<unsigned>(field_mask),
+             static_cast<unsigned>(update_field_mask ? 1U : 0U));
+    return ResultCode::Ok;
+}
+
 void MotorManager::updateAll()
 {
     if (!isValid()) {
@@ -473,31 +534,56 @@ void MotorManager::configTaskEntry(void *arg)
 
 ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const
 {
-    if (cap < 2U) {
+    if (cap < kTelemetryPacketHeaderSize) {
         return ResultCode::InvalidArgument;
     }
 
+    if (!m_telemetry_enabled) {
+        out_len = 0;
+        return ResultCode::Ok;
+    }
+
+    const uint32_t timestamp_ms = esp_log_timestamp();
+
     out[0] = kProtocolVersion;
     out[1] = 0;
-    size_t write_idx = 2;
+    std::memcpy(&out[2], &timestamp_ms, sizeof(uint32_t));
+    size_t write_idx = kTelemetryPacketHeaderSize;
     uint8_t entry_count = 0;
 
     for (const auto &slot : m_motors) {
-        if (slot.motor == nullptr) {
+        if (slot.motor == nullptr || !slot.telemetry_enabled) {
             continue;
         }
-        if ((write_idx + kTelemetryEntrySize) > cap) {
+
+        const uint8_t field_mask = static_cast<uint8_t>(slot.telemetry_field_mask & m_telemetry_field_mask);
+
+        size_t required = kTelemetryEntryBaseSize;
+        if ((field_mask & kTelemetryFieldAngle) != 0U) {
+            required += sizeof(float);
+        }
+        if ((field_mask & kTelemetryFieldVelocity) != 0U) {
+            required += sizeof(float);
+        }
+
+        if ((write_idx + required) > cap) {
             break;
         }
 
-        const float angle = slot.motor->getAngle();
-        const float velocity = slot.motor->getAngularVelocity();
-
         out[write_idx++] = slot.id;
-        std::memcpy(&out[write_idx], &angle, sizeof(float));
-        write_idx += sizeof(float);
-        std::memcpy(&out[write_idx], &velocity, sizeof(float));
-        write_idx += sizeof(float);
+        out[write_idx++] = field_mask;
+
+        if ((field_mask & kTelemetryFieldAngle) != 0U) {
+            const float angle = slot.motor->getAngle();
+            std::memcpy(&out[write_idx], &angle, sizeof(float));
+            write_idx += sizeof(float);
+        }
+        if ((field_mask & kTelemetryFieldVelocity) != 0U) {
+            const float velocity = slot.motor->getAngularVelocity();
+            std::memcpy(&out[write_idx], &velocity, sizeof(float));
+            write_idx += sizeof(float);
+        }
+
         ++entry_count;
     }
 

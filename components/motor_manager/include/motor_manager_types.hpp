@@ -29,7 +29,9 @@ enum class ConfigureSubcommand : uint8_t {
     SetPidParams = 0x05,
     SetSetpoint = 0x06,
     StopMotor = 0x07,
-    ResetMotor = 0x08
+    ResetMotor = 0x08,
+    SetTelemetryGlobal = 0x09,
+    SetTelemetryMotor = 0x0A
 };
 
 enum class PidKind : uint8_t {
@@ -50,7 +52,15 @@ constexpr uint8_t kManagerSetpointStreamChannel = 0x80;
 constexpr uint8_t kManagerTelemetryStreamChannel = 0x81;
 
 constexpr size_t kSetpointEntrySize = 6;  // motor_id(1) + kind(1) + float(4)
-constexpr size_t kTelemetryEntrySize = 9; // motor_id(1) + angle(float) + velocity(float)
+
+enum TelemetryFieldMask : uint8_t {
+    kTelemetryFieldAngle = 1U << 0,
+    kTelemetryFieldVelocity = 1U << 1,
+    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity
+};
+
+constexpr size_t kTelemetryPacketHeaderSize = 6; // version(1) + entry_count(1) + timestamp_ms(4)
+constexpr size_t kTelemetryEntryBaseSize = 2;    // motor_id(1) + field_mask(1)
 
 struct MotorConfigPayload {
     gpio_num_t pwm_gpio;

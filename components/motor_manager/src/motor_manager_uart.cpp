@@ -16,6 +16,9 @@ constexpr size_t kCreateConfigureFloatCount = 14U;
 constexpr size_t kPidSetFloatCount = 3U;
 constexpr size_t kPidKindBytes = 1U;
 constexpr size_t kSetpointKindBytes = 1U;
+constexpr size_t kTelemetryEnabledBytes = 1U;
+constexpr size_t kTelemetryFieldMaskBytes = 1U;
+constexpr size_t kTelemetryFieldApplyBytes = 1U;
 
 bool readFloatLe(const uint8_t *src, size_t src_len, size_t &offset, float &out)
 {
@@ -248,6 +251,32 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         case ConfigureSubcommand::ResetMotor:
             rc = resetMotor(motor_id);
             break;
+
+        case ConfigureSubcommand::SetTelemetryGlobal: {
+            if (len < kConfigureHeaderBytes + kTelemetryEnabledBytes + kTelemetryFieldMaskBytes) {
+                rc = ResultCode::InvalidArgument;
+                break;
+            }
+            size_t offset = kConfigureHeaderBytes;
+            const bool enabled = (payload[offset++] != 0U);
+            const uint8_t field_mask = payload[offset++];
+            rc = setTelemetryGlobal(enabled, field_mask);
+            break;
+        }
+
+        case ConfigureSubcommand::SetTelemetryMotor: {
+            if (len < kConfigureHeaderBytes + kTelemetryEnabledBytes +
+                          kTelemetryFieldMaskBytes + kTelemetryFieldApplyBytes) {
+                rc = ResultCode::InvalidArgument;
+                break;
+            }
+            size_t offset = kConfigureHeaderBytes;
+            const bool enabled = (payload[offset++] != 0U);
+            const uint8_t field_mask = payload[offset++];
+            const bool update_field_mask = (payload[offset++] != 0U);
+            rc = setTelemetryForMotor(motor_id, enabled, field_mask, update_field_mask);
+            break;
+        }
 
         default:
             rc = ResultCode::NotSupported;
