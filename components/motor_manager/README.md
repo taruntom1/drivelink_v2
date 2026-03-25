@@ -73,7 +73,7 @@ All payloads begin with:
 
 ### Configure command (single callback)
 
-- UART message type: `0x21` (default)
+- UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE` (default `0x21`)
 - Callback: only one callback registered for this message type
 - Payload format:
   - `version` (`uint8_t`)
@@ -133,7 +133,7 @@ SET_SETPOINT body:
 
 Configure response:
 
-- UART message type: `0x61` (default)
+- UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x61`)
 - Payload:
   - `version` (`uint8_t`)
   - `subcommand` (`uint8_t`)
@@ -143,7 +143,7 @@ Configure response:
 
 ### Setpoint stream (PC → ESP)
 
-- Channel: `0x80` (default)
+- Channel: `CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL` (default `0x80`)
 - Payload:
   - `version` (`uint8_t`)
   - `entry_count` (`uint8_t`)
@@ -156,7 +156,7 @@ No per-packet dynamic allocation is used while parsing.
 
 ### Telemetry stream (ESP → PC)
 
-- Channel: `0x81` (default)
+- Channel: `CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL` (default `0x81`)
 - Payload:
   - `version` (`uint8_t`)
   - `entry_count` (`uint8_t`)
@@ -166,3 +166,12 @@ No per-packet dynamic allocation is used while parsing.
     - `angular_velocity_rad_s` (`float32`)
 
 Use `MotorManager::publishTelemetry()` periodically (or enable the internal update task).
+
+## Kconfig
+
+Under `Motor Manager Configuration` in `menuconfig`, these defaults can be changed without code edits:
+
+- `MOTOR_MANAGER_CONFIGURE_MSG_TYPE`
+- `MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE`
+- `MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL`
+- `MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL`

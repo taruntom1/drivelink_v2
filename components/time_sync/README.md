@@ -14,8 +14,8 @@
 
 Default message types:
 
-- Request: `0x20`
-- Response: `0x60`
+- Request: `CONFIG_TIME_SYNC_REQUEST_MSG_TYPE` (default `0x20`)
+- Response: `CONFIG_TIME_SYNC_RESPONSE_MSG_TYPE` (default `0x60`)
 
 Request payload (`12` bytes, little-endian):
 
@@ -120,3 +120,10 @@ The PC side should:
 - The component does not own UART and must be passed an already initialized `uart_comm::UartComm` instance.
 - Callback execution is in `uart_comm` RX task context; keep callback logic short.
 - Same-instance concurrent `triggerManualSync` calls are serialized internally.
+
+## Kconfig
+
+Under `Time Sync Configuration` in `menuconfig`, these defaults can be changed:
+
+- `TIME_SYNC_REQUEST_MSG_TYPE`
+- `TIME_SYNC_RESPONSE_MSG_TYPE`
