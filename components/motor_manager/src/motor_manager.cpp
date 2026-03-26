@@ -496,7 +496,7 @@ void MotorManager::publishTelemetry()
     const ResultCode rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len);
     xSemaphoreGive(m_mutex);
 
-    if (rc == ResultCode::Ok && payload_len > 0U) {
+    if (rc == ResultCode::Ok && payload_len > kTelemetryPacketHeaderSize) {
         m_uart.sendData(m_config.telemetry_stream_channel, payload, payload_len);
     }
 }
