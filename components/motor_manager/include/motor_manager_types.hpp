@@ -59,7 +59,7 @@ enum TelemetryFieldMask : uint8_t {
     kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity
 };
 
-constexpr size_t kTelemetryPacketHeaderSize = 6; // version(1) + entry_count(1) + timestamp_ms(4)
+constexpr size_t kTelemetryPacketHeaderSize = 10; // version(1) + entry_count(1) + timestamp_us(8)
 constexpr size_t kTelemetryEntryBaseSize = 2;    // motor_id(1) + field_mask(1)
 
 struct MotorConfigPayload {
