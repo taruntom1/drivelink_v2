@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <sys/time.h>
 
 static const char *TAG = "motor_manager";
 
@@ -496,7 +497,7 @@ void MotorManager::publishTelemetry()
     const ResultCode rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len);
     xSemaphoreGive(m_mutex);
 
-    if (rc == ResultCode::Ok && payload_len > 0U) {
+    if (rc == ResultCode::Ok && payload_len > kTelemetryPacketHeaderSize) {
         m_uart.sendData(m_config.telemetry_stream_channel, payload, payload_len);
     }
 }
@@ -543,11 +544,14 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         return ResultCode::Ok;
     }
 
-    const uint32_t timestamp_ms = esp_log_timestamp();
+    timeval now{};
+    gettimeofday(&now, nullptr);
+    const uint64_t timestamp_us = (static_cast<uint64_t>(now.tv_sec) * 1000000ULL) +
+                                  static_cast<uint64_t>(now.tv_usec);
 
     out[0] = kProtocolVersion;
     out[1] = 0;
-    std::memcpy(&out[2], &timestamp_ms, sizeof(uint32_t));
+    std::memcpy(&out[2], &timestamp_us, sizeof(uint64_t));
     size_t write_idx = kTelemetryPacketHeaderSize;
     uint8_t entry_count = 0;
 

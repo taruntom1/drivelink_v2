@@ -175,7 +175,7 @@ No per-packet dynamic allocation is used while parsing.
 - Payload:
   - `version` (`uint8_t`)
   - `entry_count` (`uint8_t`)
-  - `timestamp_ms` (`uint32_t`, milliseconds since boot, shared by all entries in the packet)
+  - `timestamp_us` (`uint64_t`, microseconds since boot, shared by all entries in the packet)
   - repeated entries:
     - `motor_id` (`uint8_t`)
     - `field_mask` (`uint8_t`)
