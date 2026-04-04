@@ -45,6 +45,8 @@ private:
         uint8_t id = 0;
         bool telemetry_enabled = true;
         uint8_t telemetry_field_mask = kTelemetryFieldAll;
+        float mock_angle_rad = 0.0f;
+        float mock_velocity_rad_s = 0.0f;
         std::unique_ptr<motor_controller::MotorController> motor;
     };
 
@@ -63,6 +65,7 @@ private:
     std::atomic<bool> m_valid;
     std::atomic<bool> m_stop_update_task;
     std::atomic<bool> m_stop_config_task;
+    bool m_use_mock_feedback;
     bool m_telemetry_enabled;
     uint8_t m_telemetry_field_mask;
     TaskHandle_t m_update_task;

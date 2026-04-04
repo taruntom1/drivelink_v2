@@ -32,6 +32,14 @@ menu "Motor Manager Configuration"
             UART stream channel for telemetry data from target to host
             (stream class range 0x80..0xBF).
 
+    config MOTOR_MANAGER_USE_MOCK_FEEDBACK
+        bool "Use setpoint-backed mock telemetry"
+        default n
+        help
+            Enables a hardware-free mock mode for motor_manager. In this mode,
+            motor setpoints are echoed as telemetry feedback values without
+            creating real motor_controller instances.
+
     config MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK
         int "Default motor manager update task stack size"
         default 4096

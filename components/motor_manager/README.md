@@ -48,6 +48,7 @@ extern "C" void app_main(void)
     cfg.configure_response_msg_type = motor_manager::kManagerMsgConfigureResp; // 0x61
     cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel; // 0x80
     cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0x81
+    cfg.use_mock_feedback = true; // no motor hardware required
     cfg.update_task.enable = true;
     cfg.update_task.period_ms = 10;
 
@@ -64,6 +65,23 @@ extern "C" void app_main(void)
     // }
 }
 ```
+
+## Mock feedback mode
+
+For hardware-free host integration, enable mock feedback mode.
+
+Behavior in this mode:
+
+- No real `motor_controller::MotorController` instances are created.
+- Incoming setpoints are stored per motor.
+- Telemetry echoes stored setpoints as feedback values.
+  - velocity setpoint and open-loop duty update telemetry velocity
+  - position setpoint updates telemetry angle
+
+Enable via either:
+
+- `ManagerConfig::use_mock_feedback = true`
+- Kconfig option `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
 
 ## Binary protocol (version 1)
 
@@ -199,3 +217,4 @@ Under `Motor Manager Configuration` in `menuconfig`, these defaults can be chang
 - `MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE`
 - `MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL`
 - `MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL`
+- `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
