@@ -1,0 +1,159 @@
+menu "IMU BNO055 Configuration"
+
+    config IMU_BMO_055_CONFIGURE_MSG_TYPE
+        hex "Configure command message type"
+        default 0x22
+        range 0x01 0x3F
+        help
+            UART message type used for IMU configure requests.
+
+    config IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE
+        hex "Configure response message type"
+        default 0x42
+        range 0x40 0x7F
+        help
+            UART message type used for IMU configure responses.
+
+    config IMU_BMO_055_EVENT_MSG_TYPE
+        hex "Event message type"
+        default 0xC2
+        range 0xC0 0xFE
+        help
+            UART message type used for asynchronous IMU events.
+
+    config IMU_BMO_055_STREAM_CHANNEL
+        hex "Telemetry stream channel"
+        default 0x82
+        range 0x80 0xBF
+        help
+            UART stream channel for IMU telemetry output.
+
+    config IMU_BMO_055_USE_MOCK_DATA
+        bool "Use mock IMU data source"
+        default n
+        help
+            Bypass BNO055 hardware reads and publish synthesized telemetry
+            over the IMU stream channel. Useful for host integration when
+            sensor hardware is unavailable.
+
+    config IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL
+        bool "Fallback to mock data when BNO055 init fails"
+        default y
+        depends on !IMU_BMO_055_USE_MOCK_DATA
+        help
+            If enabled, the manager stays valid and streams synthesized IMU
+            data when BNO055 initialization fails.
+
+    config IMU_BMO_055_I2C_PORT_NUM
+        int "I2C port number"
+        default 0
+        range 0 1
+        help
+            ESP-IDF I2C controller index used to access BNO055.
+
+    config IMU_BMO_055_I2C_SDA_PIN
+        int "I2C SDA pin"
+        default 8
+        range 0 48
+        help
+            GPIO number used for I2C SDA.
+
+    config IMU_BMO_055_I2C_SCL_PIN
+        int "I2C SCL pin"
+        default 9
+        range 0 48
+        help
+            GPIO number used for I2C SCL.
+
+    config IMU_BMO_055_I2C_CLK_HZ
+        int "I2C clock speed (Hz)"
+        default 400000
+        range 10000 1000000
+        help
+            BNO055 I2C bus speed.
+
+    config IMU_BMO_055_I2C_TIMEOUT_MS
+        int "I2C transaction timeout (ms)"
+        default 50
+        range 1 1000
+        help
+            Timeout for I2C read and write operations.
+
+    config IMU_BMO_055_DEVICE_ADDRESS
+        hex "BNO055 I2C address"
+        default 0x28
+        range 0x28 0x29
+        help
+            BNO055 address set by ADR pin.
+
+    config IMU_BMO_055_DEFAULT_OPERATION_MODE
+        hex "Default operation mode"
+        default 0x0C
+        range 0x00 0x0C
+        help
+            Default BNO055 mode at startup. 0x0C corresponds to NDOF.
+
+    config IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK
+        hex "Default stream field mask"
+        default 0x1FF
+        range 0x0000 0xFFFF
+        help
+            Bitmask selecting fields included in telemetry stream.
+
+    config IMU_BMO_055_DEFAULT_STREAM_PERIOD_MS
+        int "Default stream period (ms)"
+        default 10
+        range 5 1000
+        help
+            Default telemetry stream period.
+
+    config IMU_BMO_055_MIN_STREAM_PERIOD_MS
+        int "Minimum stream period (ms)"
+        default 5
+        range 1 1000
+        help
+            Lower clamp bound for runtime stream period command.
+
+    config IMU_BMO_055_MAX_STREAM_PERIOD_MS
+        int "Maximum stream period (ms)"
+        default 1000
+        range 5 5000
+        help
+            Upper clamp bound for runtime stream period command.
+
+    config IMU_BMO_055_STREAM_TASK_STACK
+        int "Stream task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the IMU stream task.
+
+    config IMU_BMO_055_STREAM_TASK_PRIO
+        int "Stream task priority"
+        default 6
+        range 1 24
+        help
+            FreeRTOS priority for the IMU stream task.
+
+    config IMU_BMO_055_CONFIG_TASK_STACK
+        int "Config task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Stack size in bytes for the IMU configuration task.
+
+    config IMU_BMO_055_CONFIG_TASK_PRIO
+        int "Config task priority"
+        default 6
+        range 1 24
+        help
+            FreeRTOS priority for the IMU configuration task.
+
+    config IMU_BMO_055_CONFIG_QUEUE_DEPTH
+        int "Configure command queue depth"
+        default 8
+        range 1 32
+        help
+            Queue depth for incoming runtime configure commands.
+
+endmenu
