@@ -10,6 +10,12 @@
 
 namespace motor_manager {
 
+#ifdef CONFIG_MOTOR_MANAGER_USE_MOCK_FEEDBACK
+constexpr bool kDefaultUseMockFeedback = true;
+#else
+constexpr bool kDefaultUseMockFeedback = false;
+#endif
+
 enum class ResultCode : uint8_t {
     Ok = 0x00,
     InvalidArgument = 0x01,
@@ -94,6 +100,7 @@ struct ManagerConfig {
     uint8_t configure_response_msg_type = kManagerMsgConfigureResp;
     uint8_t setpoint_stream_channel = kManagerSetpointStreamChannel;
     uint8_t telemetry_stream_channel = kManagerTelemetryStreamChannel;
+    bool use_mock_feedback = kDefaultUseMockFeedback;
     uint8_t max_motors = 8;
     UpdateTaskConfig update_task;
     uint32_t config_task_stack_size = CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK;

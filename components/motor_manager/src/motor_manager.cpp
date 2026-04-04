@@ -30,8 +30,9 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
       m_valid(false),
       m_stop_update_task(false),
       m_stop_config_task(false),
-    m_telemetry_enabled(true),
-    m_telemetry_field_mask(kTelemetryFieldAll),
+      m_use_mock_feedback(false),
+      m_telemetry_enabled(true),
+      m_telemetry_field_mask(kTelemetryFieldAll),
       m_update_task(nullptr),
       m_config_task(nullptr),
       m_config_queue(nullptr)
@@ -57,6 +58,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         ESP_LOGE(TAG, "max_motors must be > 0");
         return;
     }
+
+    m_use_mock_feedback = m_config.use_mock_feedback;
 
     const esp_err_t cfg_cb_ret = m_uart.registerCallback(
         m_config.configure_msg_type,
@@ -119,11 +122,12 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     }
 
     m_valid.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "MotorManager ready (max_motors=%u cfg_msg=0x%02X sp_ch=0x%02X tm_ch=0x%02X)",
+    ESP_LOGI(TAG, "MotorManager ready (max_motors=%u cfg_msg=0x%02X sp_ch=0x%02X tm_ch=0x%02X source=%s)",
              m_config.max_motors,
              m_config.configure_msg_type,
              m_config.setpoint_stream_channel,
-             m_config.telemetry_stream_channel);
+             m_config.telemetry_stream_channel,
+             m_use_mock_feedback ? "mock_setpoint" : "motor_controller");
 }
 
 MotorManager::~MotorManager()
@@ -188,36 +192,41 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         return ResultCode::CapacityReached;
     }
 
-    motor_controller::MotorControllerConfig motor_cfg{};
-    motor_cfg.counts_per_rev = cfg.counts_per_rev;
-    motor_cfg.gear_ratio = cfg.gear_ratio;
-    motor_cfg.output_min = cfg.output_min;
-    motor_cfg.output_max = cfg.output_max;
-    motor_cfg.velocity_pid.kp = cfg.vel_kp;
-    motor_cfg.velocity_pid.ki = cfg.vel_ki;
-    motor_cfg.velocity_pid.kd = cfg.vel_kd;
-    motor_cfg.velocity_pid.sample_time_ms = cfg.sample_time_ms;
-    motor_cfg.position_pid.kp = cfg.pos_kp;
-    motor_cfg.position_pid.ki = cfg.pos_ki;
-    motor_cfg.position_pid.kd = cfg.pos_kd;
-    motor_cfg.position_pid.sample_time_ms = cfg.sample_time_ms;
-    motor_cfg.velocity_feedforward = cfg.velocity_feedforward;
-    motor_cfg.position_feedforward = cfg.position_feedforward;
-
-    auto motor = std::make_unique<motor_controller::MotorController>(
-        cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b, motor_cfg);
-    if (!motor->isValid()) {
-        xSemaphoreGive(m_mutex);
-        ESP_LOGE(TAG, "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d)",
-                 motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
-        return ResultCode::InternalError;
-    }
-
     MotorSlot slot{};
     slot.id = motor_id;
     slot.telemetry_enabled = true;
     slot.telemetry_field_mask = kTelemetryFieldAll;
-    slot.motor = std::move(motor);
+    slot.mock_angle_rad = 0.0f;
+    slot.mock_velocity_rad_s = 0.0f;
+
+    if (!m_use_mock_feedback) {
+        motor_controller::MotorControllerConfig motor_cfg{};
+        motor_cfg.counts_per_rev = cfg.counts_per_rev;
+        motor_cfg.gear_ratio = cfg.gear_ratio;
+        motor_cfg.output_min = cfg.output_min;
+        motor_cfg.output_max = cfg.output_max;
+        motor_cfg.velocity_pid.kp = cfg.vel_kp;
+        motor_cfg.velocity_pid.ki = cfg.vel_ki;
+        motor_cfg.velocity_pid.kd = cfg.vel_kd;
+        motor_cfg.velocity_pid.sample_time_ms = cfg.sample_time_ms;
+        motor_cfg.position_pid.kp = cfg.pos_kp;
+        motor_cfg.position_pid.ki = cfg.pos_ki;
+        motor_cfg.position_pid.kd = cfg.pos_kd;
+        motor_cfg.position_pid.sample_time_ms = cfg.sample_time_ms;
+        motor_cfg.velocity_feedforward = cfg.velocity_feedforward;
+        motor_cfg.position_feedforward = cfg.position_feedforward;
+
+        auto motor = std::make_unique<motor_controller::MotorController>(
+            cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b, motor_cfg);
+        if (!motor->isValid()) {
+            xSemaphoreGive(m_mutex);
+            ESP_LOGE(TAG, "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d)",
+                     motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
+            return ResultCode::InternalError;
+        }
+        slot.motor = std::move(motor);
+    }
+
     m_motors.push_back(std::move(slot));
     xSemaphoreGive(m_mutex);
 
@@ -269,6 +278,12 @@ ResultCode MotorManager::configureMotor(uint8_t motor_id, const MotorConfigPaylo
     }
 
     auto &motor = m_motors[index].motor;
+    if (m_use_mock_feedback || motor == nullptr) {
+        xSemaphoreGive(m_mutex);
+        ESP_LOGI(TAG, "Configured motor id=%u (mock)", motor_id);
+        return ResultCode::Ok;
+    }
+
     motor->setCountsPerRev(cfg.counts_per_rev);
     motor->setGearRatio(cfg.gear_ratio);
     motor->setOutputLimits(cfg.output_min, cfg.output_max);
@@ -297,7 +312,9 @@ ResultCode MotorManager::setMode(uint8_t motor_id, motor_controller::ControlMode
         xSemaphoreGive(m_mutex);
         return ResultCode::NotFound;
     }
-    m_motors[index].motor->setMode(mode);
+    if (!m_use_mock_feedback && m_motors[index].motor != nullptr) {
+        m_motors[index].motor->setMode(mode);
+    }
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
 }
@@ -318,6 +335,11 @@ ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, 
     }
 
     auto &motor = m_motors[index].motor;
+    if (m_use_mock_feedback || motor == nullptr) {
+        xSemaphoreGive(m_mutex);
+        return ResultCode::Ok;
+    }
+
     if (kind == PidKind::Velocity) {
         motor->setVelocityPidTunings(kp, ki, kd);
     } else if (kind == PidKind::Position) {
@@ -347,16 +369,29 @@ ResultCode MotorManager::setSetpoint(uint8_t motor_id, SetpointKind kind, float 
         return ResultCode::NotFound;
     }
 
-    auto &motor = m_motors[index].motor;
+    auto &slot = m_motors[index];
+    auto &motor = slot.motor;
     switch (kind) {
         case SetpointKind::OpenLoopDuty:
-            motor->setOpenLoopDuty(value);
+            if (m_use_mock_feedback || motor == nullptr) {
+                slot.mock_velocity_rad_s = value;
+            } else {
+                motor->setOpenLoopDuty(value);
+            }
             break;
         case SetpointKind::VelocityRadPerSec:
-            motor->setVelocitySetpoint(value);
+            if (m_use_mock_feedback || motor == nullptr) {
+                slot.mock_velocity_rad_s = value;
+            } else {
+                motor->setVelocitySetpoint(value);
+            }
             break;
         case SetpointKind::PositionRad:
-            motor->setPositionSetpoint(value);
+            if (m_use_mock_feedback || motor == nullptr) {
+                slot.mock_angle_rad = value;
+            } else {
+                motor->setPositionSetpoint(value);
+            }
             break;
         default:
             xSemaphoreGive(m_mutex);
@@ -381,7 +416,12 @@ ResultCode MotorManager::stopMotor(uint8_t motor_id)
         xSemaphoreGive(m_mutex);
         return ResultCode::NotFound;
     }
-    m_motors[index].motor->stop();
+    auto &slot = m_motors[index];
+    if (m_use_mock_feedback || slot.motor == nullptr) {
+        slot.mock_velocity_rad_s = 0.0f;
+    } else {
+        slot.motor->stop();
+    }
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
 }
@@ -400,7 +440,13 @@ ResultCode MotorManager::resetMotor(uint8_t motor_id)
         xSemaphoreGive(m_mutex);
         return ResultCode::NotFound;
     }
-    m_motors[index].motor->reset();
+    auto &slot = m_motors[index];
+    if (m_use_mock_feedback || slot.motor == nullptr) {
+        slot.mock_angle_rad = 0.0f;
+        slot.mock_velocity_rad_s = 0.0f;
+    } else {
+        slot.motor->reset();
+    }
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
 }
@@ -473,7 +519,7 @@ void MotorManager::updateAll()
     }
 
     for (auto &slot : m_motors) {
-        if (slot.motor != nullptr) {
+        if (!m_use_mock_feedback && slot.motor != nullptr) {
             slot.motor->update();
         }
     }
@@ -556,7 +602,10 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
     uint8_t entry_count = 0;
 
     for (const auto &slot : m_motors) {
-        if (slot.motor == nullptr || !slot.telemetry_enabled) {
+        if (!slot.telemetry_enabled) {
+            continue;
+        }
+        if (!m_use_mock_feedback && slot.motor == nullptr) {
             continue;
         }
 
@@ -578,12 +627,16 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         out[write_idx++] = field_mask;
 
         if ((field_mask & kTelemetryFieldAngle) != 0U) {
-            const float angle = slot.motor->getAngle();
+            const float angle = (m_use_mock_feedback || slot.motor == nullptr)
+                                    ? slot.mock_angle_rad
+                                    : slot.motor->getAngle();
             std::memcpy(&out[write_idx], &angle, sizeof(float));
             write_idx += sizeof(float);
         }
         if ((field_mask & kTelemetryFieldVelocity) != 0U) {
-            const float velocity = slot.motor->getAngularVelocity();
+            const float velocity = (m_use_mock_feedback || slot.motor == nullptr)
+                                       ? slot.mock_velocity_rad_s
+                                       : slot.motor->getAngularVelocity();
             std::memcpy(&out[write_idx], &velocity, sizeof(float));
             write_idx += sizeof(float);
         }
