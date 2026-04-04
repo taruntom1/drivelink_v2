@@ -28,6 +28,22 @@ menu "IMU BNO055 Configuration"
         help
             UART stream channel for IMU telemetry output.
 
+    config IMU_BMO_055_USE_MOCK_DATA
+        bool "Use mock IMU data source"
+        default n
+        help
+            Bypass BNO055 hardware reads and publish synthesized telemetry
+            over the IMU stream channel. Useful for host integration when
+            sensor hardware is unavailable.
+
+    config IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL
+        bool "Fallback to mock data when BNO055 init fails"
+        default y
+        depends on !IMU_BMO_055_USE_MOCK_DATA
+        help
+            If enabled, the manager stays valid and streams synthesized IMU
+            data when BNO055 initialization fails.
+
     config IMU_BMO_055_I2C_PORT_NUM
         int "I2C port number"
         default 0

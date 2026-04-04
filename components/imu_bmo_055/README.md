@@ -74,6 +74,25 @@ extern "C" void app_main(void)
 }
 ```
 
+## 3.1 Hardware-Free Mock Telemetry
+
+If you do not have a BNO055 connected, enable mock telemetry either with Kconfig
+or directly in code:
+
+```cpp
+imu_bmo_055::ManagerConfig imu_cfg{};
+imu_cfg.use_mock_data = true;
+imu_bmo_055::ImuBno055Manager imu(uart, imu_cfg);
+```
+
+Related Kconfig options:
+
+- `IMU_BMO_055_USE_MOCK_DATA`
+- `IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL`
+
+When mock mode is enabled, the manager keeps the same UART protocol and stream
+channel but publishes synthesized BNO055-like samples.
+
 ## 4. Runtime Data And Behavior
 
 The stream task publishes packets with this fixed prefix:

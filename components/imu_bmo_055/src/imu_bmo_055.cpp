@@ -7,6 +7,8 @@ extern "C" {
 }
 
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 
 #include <algorithm>
 #include <cstring>
@@ -193,6 +195,78 @@ bool encodeStreamSample(const ImuStreamSample &sample,
     return true;
 }
 
+int16_t randomS16(int16_t min_value, int16_t max_value)
+{
+    if (max_value <= min_value) {
+        return min_value;
+    }
+
+    const int32_t span = static_cast<int32_t>(max_value) - static_cast<int32_t>(min_value) + 1;
+    const int32_t value = static_cast<int32_t>(min_value) + static_cast<int32_t>(esp_random() % static_cast<uint32_t>(span));
+    return static_cast<int16_t>(value);
+}
+
+uint8_t randomU8(uint8_t min_value, uint8_t max_value)
+{
+    if (max_value <= min_value) {
+        return min_value;
+    }
+
+    const uint32_t span = static_cast<uint32_t>(max_value - min_value) + 1U;
+    return static_cast<uint8_t>(min_value + static_cast<uint8_t>(esp_random() % span));
+}
+
+void populateMockSample(uint16_t field_mask, ImuStreamSample &sample)
+{
+    sample.timestamp_us = static_cast<uint64_t>(esp_timer_get_time());
+
+    if ((field_mask & static_cast<uint16_t>(StreamField::Euler)) != 0U) {
+        sample.euler.h = randomS16(0, 5760);
+        sample.euler.r = randomS16(-2880, 2880);
+        sample.euler.p = randomS16(-1440, 1440);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::Quaternion)) != 0U) {
+        sample.quaternion.w = randomS16(12000, 16384);
+        sample.quaternion.x = randomS16(-2000, 2000);
+        sample.quaternion.y = randomS16(-2000, 2000);
+        sample.quaternion.z = randomS16(-2000, 2000);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::LinearAccel)) != 0U) {
+        sample.linear_accel.x = randomS16(-200, 200);
+        sample.linear_accel.y = randomS16(-200, 200);
+        sample.linear_accel.z = randomS16(-200, 200);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::Gravity)) != 0U) {
+        sample.gravity.x = randomS16(-100, 100);
+        sample.gravity.y = randomS16(-100, 100);
+        sample.gravity.z = randomS16(950, 1050);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::RawAccel)) != 0U) {
+        sample.raw_accel.x = randomS16(-1500, 1500);
+        sample.raw_accel.y = randomS16(-1500, 1500);
+        sample.raw_accel.z = randomS16(-1500, 1500);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::RawGyro)) != 0U) {
+        sample.raw_gyro.x = randomS16(-700, 700);
+        sample.raw_gyro.y = randomS16(-700, 700);
+        sample.raw_gyro.z = randomS16(-700, 700);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::RawMag)) != 0U) {
+        sample.raw_mag.x = randomS16(-800, 800);
+        sample.raw_mag.y = randomS16(-800, 800);
+        sample.raw_mag.z = randomS16(-800, 800);
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::Temperature)) != 0U) {
+        sample.temperature = static_cast<int8_t>(randomS16(24, 38));
+    }
+    if ((field_mask & static_cast<uint16_t>(StreamField::CalibrationStatus)) != 0U) {
+        sample.calibration_status.sys = randomU8(2, 3);
+        sample.calibration_status.gyro = randomU8(2, 3);
+        sample.calibration_status.accel = randomU8(1, 3);
+        sample.calibration_status.mag = randomU8(1, 3);
+    }
+}
+
 } // namespace
 
 ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfig &config)
@@ -208,6 +282,7 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
       m_stream_state(),
       m_cached_calibration(),
       m_has_cached_calibration(false),
+            m_use_mock_data(false),
       m_device(nullptr)
 {
     if (m_mutex == nullptr) {
@@ -233,15 +308,28 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         return;
     }
 
-    m_device = std::make_unique<Bno055Device>(m_config.i2c);
-    if (!m_device->isValid()) {
-        ESP_LOGE(TAG, "Failed to initialize BNO055 device");
-        return;
+    m_use_mock_data = m_config.use_mock_data;
+    if (!m_use_mock_data) {
+        m_device = std::make_unique<Bno055Device>(m_config.i2c);
+        if (!m_device->isValid()) {
+            if (m_config.fallback_to_mock_on_init_failure) {
+                ESP_LOGW(TAG, "BNO055 init failed; falling back to mock telemetry");
+                m_device.reset();
+                m_use_mock_data = true;
+            } else {
+                ESP_LOGE(TAG, "Failed to initialize BNO055 device");
+                return;
+            }
+        }
     }
 
-    if (m_device->setOperationMode(m_stream_state.operation_mode) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set default operation mode: 0x%02X", m_stream_state.operation_mode);
-        return;
+    if (!m_use_mock_data) {
+        if (m_device->setOperationMode(m_stream_state.operation_mode) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set default operation mode: 0x%02X", m_stream_state.operation_mode);
+            return;
+        }
+    } else {
+        ESP_LOGW(TAG, "IMU mock mode enabled; streaming synthesized BNO055-like data");
     }
 
     m_config_queue = xQueueCreate(m_config.config_queue_depth, sizeof(uart_comm::RxFrame));
@@ -301,12 +389,13 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     }
 
     m_valid.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "IMU manager ready (cmd=0x%02X rsp=0x%02X stream=0x%02X period=%u mask=0x%04X)",
+    ESP_LOGI(TAG, "IMU manager ready (cmd=0x%02X rsp=0x%02X stream=0x%02X period=%u mask=0x%04X source=%s)",
              m_config.configure_msg_type,
              m_config.configure_response_msg_type,
              m_config.telemetry_stream_channel,
              m_stream_state.period_ms,
-             m_stream_state.field_mask);
+             m_stream_state.field_mask,
+             m_use_mock_data ? "mock" : "bno055");
 }
 
 ImuBno055Manager::~ImuBno055Manager()
@@ -387,6 +476,15 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
         return ResultCode::InvalidArgument;
     }
 
+    if (m_use_mock_data) {
+        if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
+            return ResultCode::Busy;
+        }
+        m_stream_state.operation_mode = operation_mode;
+        xSemaphoreGive(m_mutex);
+        return ResultCode::Ok;
+    }
+
     bool resume_stream = false;
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
         return ResultCode::Busy;
@@ -421,6 +519,19 @@ ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
 {
     if (!isValid()) {
         return ResultCode::InvalidState;
+    }
+
+    if (m_use_mock_data) {
+        if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
+            return ResultCode::Busy;
+        }
+        if (!m_has_cached_calibration) {
+            m_cached_calibration = CalibrationBlob{};
+            m_has_cached_calibration = true;
+        }
+        out = m_cached_calibration;
+        xSemaphoreGive(m_mutex);
+        return ResultCode::Ok;
     }
 
     const esp_err_t ret = m_device->readCalibration(out);
@@ -472,6 +583,10 @@ ResultCode ImuBno055Manager::applyCalibration()
     }
     blob = m_cached_calibration;
     xSemaphoreGive(m_mutex);
+
+    if (m_use_mock_data) {
+        return ResultCode::Ok;
+    }
 
     const esp_err_t ret = m_device->writeCalibration(blob);
     if (ret != ESP_OK) {
@@ -631,9 +746,16 @@ void ImuBno055Manager::streamTaskEntry(void *arg)
             xSemaphoreGive(self->m_mutex);
         }
 
-        if (state.enabled && self->m_device != nullptr && self->m_device->isValid()) {
+        if (state.enabled) {
             ImuStreamSample sample{};
-            const esp_err_t read_ret = self->m_device->readSample(state.field_mask, sample);
+            esp_err_t read_ret = ESP_ERR_INVALID_STATE;
+            if (self->m_use_mock_data) {
+                populateMockSample(state.field_mask, sample);
+                read_ret = ESP_OK;
+            } else if (self->m_device != nullptr && self->m_device->isValid()) {
+                read_ret = self->m_device->readSample(state.field_mask, sample);
+            }
+
             if (read_ret == ESP_OK) {
                 uint8_t tx_payload[kMaxStreamPayload] = {0};
                 uint8_t tx_len = 0;

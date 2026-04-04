@@ -6,6 +6,18 @@
 
 namespace imu_bmo_055 {
 
+#ifdef CONFIG_IMU_BMO_055_USE_MOCK_DATA
+constexpr bool kDefaultUseMockData = true;
+#else
+constexpr bool kDefaultUseMockData = false;
+#endif
+
+#ifdef CONFIG_IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL
+constexpr bool kDefaultFallbackToMockOnInitFail = true;
+#else
+constexpr bool kDefaultFallbackToMockOnInitFail = false;
+#endif
+
 enum class ResultCode : uint8_t {
     Ok = 0x00,
     InvalidArgument = 0x01,
@@ -62,6 +74,8 @@ struct ManagerConfig {
     uint8_t configure_response_msg_type = kImuConfigureResponseMsgType;
     uint8_t event_msg_type = kImuEventMsgType;
     uint8_t telemetry_stream_channel = kImuStreamChannel;
+    bool use_mock_data = kDefaultUseMockData;
+    bool fallback_to_mock_on_init_failure = kDefaultFallbackToMockOnInitFail;
     uint8_t default_operation_mode = CONFIG_IMU_BMO_055_DEFAULT_OPERATION_MODE;
     uint16_t default_stream_field_mask = CONFIG_IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK;
     uint16_t min_stream_period_ms = CONFIG_IMU_BMO_055_MIN_STREAM_PERIOD_MS;

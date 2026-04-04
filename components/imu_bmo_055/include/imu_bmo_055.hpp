@@ -71,6 +71,7 @@ private:
 	StreamState m_stream_state;
 	CalibrationBlob m_cached_calibration;
 	bool m_has_cached_calibration;
+	bool m_use_mock_data;
 	std::unique_ptr<Bno055Device> m_device;
 };
 
