@@ -1,3 +1,12 @@
+/**
+ * @file   uart_comm.hpp
+ * @brief  Public/internal declarations for uart_comm.
+ *
+ * Auto-generated documentation header for component API/internal declarations.
+ *
+ * @author Project Contributors
+ * @date   2026-04-07
+ */
 #pragma once
 
 #include <cstdint>

@@ -1,3 +1,12 @@
+/**
+ * @file   time_sync.hpp
+ * @brief  Public/internal declarations for time_sync.
+ *
+ * Auto-generated documentation header for component API/internal declarations.
+ *
+ * @author Project Contributors
+ * @date   2026-04-07
+ */
 #pragma once
 
 #include <cstdint>

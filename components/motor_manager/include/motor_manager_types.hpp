@@ -1,3 +1,12 @@
+/**
+ * @file   motor_manager_types.hpp
+ * @brief  Public/internal declarations for motor_manager_types.
+ *
+ * Auto-generated documentation header for component API/internal declarations.
+ *
+ * @author Project Contributors
+ * @date   2026-04-07
+ */
 #pragma once
 
 #include "driver/gpio.h"

@@ -1,3 +1,12 @@
+/**
+ * @file   imu_bmo_055_protocol.hpp
+ * @brief  Public/internal declarations for imu_bmo_055_protocol.
+ *
+ * Auto-generated documentation header for component API/internal declarations.
+ *
+ * @author Project Contributors
+ * @date   2026-04-07
+ */
 #pragma once
 
 #include <cstddef>
