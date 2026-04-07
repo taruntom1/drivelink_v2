@@ -1,210 +1,104 @@
-# imu_bmo_055 Component
+# imu_bmo_055
 
-ESP-IDF IMU component for Bosch BNO055 with:
+## Overview
+`imu_bmo_055` manages a Bosch BNO055 IMU over I2C and exposes runtime configuration and telemetry over `uart_comm`. It runs a command-processing task and a periodic stream task, with optional mock-data fallback when hardware is unavailable.
 
-- I2C sensor bring-up and sampling
-- Runtime configuration over `uart_comm` commands
-- Periodic telemetry streaming over a dedicated stream channel
-- Calibration read/write/apply command support
+## Features
+- BNO055 initialization and operation-mode control
+- Runtime configure protocol over UART command message type
+- Periodic telemetry streaming with selectable field mask
+- Calibration read/write/apply command set
+- Optional mock telemetry mode and fallback-on-init-failure mode
 
-This component is designed to run on-device (ESP32-S3 in this project) and expose a stable wire protocol to a host application.
+## Dependencies
+Required:
+- `uart_comm`
+- `driver`
+- `freertos`
+- `log`
+- `esp_timer`
 
-## 1. What The Component Does
+Optional:
+- None
 
-At runtime, the component creates an `ImuBno055Manager` that:
+## Configuration
+| Symbol | Type | Default | Description |
+|--------|------|---------|-------------|
+| `CONFIG_IMU_BMO_055_CONFIGURE_MSG_TYPE` | hex | `0x22` | Configure request message type. |
+| `CONFIG_IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE` | hex | `0x42` | Configure response message type. |
+| `CONFIG_IMU_BMO_055_EVENT_MSG_TYPE` | hex | `0xC2` | Reserved event message type. |
+| `CONFIG_IMU_BMO_055_STREAM_CHANNEL` | hex | `0x82` | Telemetry stream channel. |
+| `CONFIG_IMU_BMO_055_USE_MOCK_DATA` | bool | `n` | Force synthesized IMU data source. |
+| `CONFIG_IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL` | bool | `y` | Enter mock mode if sensor init fails. |
+| `CONFIG_IMU_BMO_055_I2C_PORT_NUM` | int | `0` | I2C peripheral index. |
+| `CONFIG_IMU_BMO_055_I2C_SDA_PIN` | int | `8` | I2C SDA pin. |
+| `CONFIG_IMU_BMO_055_I2C_SCL_PIN` | int | `9` | I2C SCL pin. |
+| `CONFIG_IMU_BMO_055_I2C_CLK_HZ` | int | `400000` | I2C bus clock. |
+| `CONFIG_IMU_BMO_055_I2C_TIMEOUT_MS` | int | `50` | I2C transaction timeout. |
+| `CONFIG_IMU_BMO_055_DEVICE_ADDRESS` | hex | `0x28` | BNO055 address. |
+| `CONFIG_IMU_BMO_055_DEFAULT_OPERATION_MODE` | hex | `0x0C` | Startup operation mode. |
+| `CONFIG_IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK` | hex | `0x1FF` | Startup telemetry field mask. |
+| `CONFIG_IMU_BMO_055_DEFAULT_STREAM_PERIOD_MS` | int | `10` | Startup stream period. |
+| `CONFIG_IMU_BMO_055_MIN_STREAM_PERIOD_MS` | int | `5` | Runtime lower clamp for stream period. |
+| `CONFIG_IMU_BMO_055_MAX_STREAM_PERIOD_MS` | int | `1000` | Runtime upper clamp for stream period. |
+| `CONFIG_IMU_BMO_055_STREAM_TASK_STACK` | int | `4096` | Stream task stack size. |
+| `CONFIG_IMU_BMO_055_STREAM_TASK_PRIO` | int | `6` | Stream task priority. |
+| `CONFIG_IMU_BMO_055_CONFIG_TASK_STACK` | int | `4096` | Configure task stack size. |
+| `CONFIG_IMU_BMO_055_CONFIG_TASK_PRIO` | int | `6` | Configure task priority. |
+| `CONFIG_IMU_BMO_055_CONFIG_QUEUE_DEPTH` | int | `8` | Configure command queue depth. |
 
-1. Initializes the BNO055 on I2C.
-2. Registers a command callback on a configurable UART message type.
-3. Runs a config task for command processing.
-4. Runs a stream task for periodic IMU telemetry.
+## Public API
+Public headers:
+- `include/imu_bmo_055.hpp`
+- `include/imu_bmo_055_types.hpp`
+- `include/imu_bmo_055_protocol.hpp`
 
-The manager is non-copyable and exposes `isValid()` so startup can fail early and safely.
+### Main class
+- `ImuBno055Manager(uart_comm::UartComm&, const ManagerConfig&)`
+- `bool isValid() const`
+- Runtime controls: `setStreamEnabled`, `setStreamPeriodMs`, `setStreamFieldMask`, `setOperationMode`
+- Calibration: `readCalibration`, `writeCalibration`, `applyCalibration`
+- RX entrypoint: `handleConfigureCommand`
 
-## 2. Public API (ESP Side)
+### Protocol/typing
+- `ResultCode`, `ConfigureSubcommand`, `StreamField`
+- `ManagerConfig`, `I2cConfig`, `StreamTaskConfig`
+- `CalibrationBlob`, `CalibrationStatus`
 
-Public header: `include/imu_bmo_055.hpp`
-
-Primary class:
-
-- `imu_bmo_055::ImuBno055Manager`
-
-Primary config struct:
-
-- `imu_bmo_055::ManagerConfig` (in `include/imu_bmo_055_types.hpp`)
-
-Important runtime methods:
-
-- `setStreamEnabled(bool)`
-- `setStreamPeriodMs(uint16_t)`
-- `setStreamFieldMask(uint16_t)`
-- `setOperationMode(uint8_t)`
-- `readCalibration(CalibrationBlob&)`
-- `writeCalibration(const CalibrationBlob&)`
-- `applyCalibration()`
-
-## 3. Quick Integration In ESP App
-
-1. Add component dependency where your app component is declared.
-2. Construct `uart_comm::UartComm` first.
-3. Construct `ImuBno055Manager` with UART instance and optional `ManagerConfig` overrides.
-4. Check `isValid()` and fail startup if false.
-
-Example:
-
+## Usage Example
 ```cpp
 #include "uart_comm.hpp"
 #include "imu_bmo_055.hpp"
 
 extern "C" void app_main(void)
 {
-    uart_comm::UartComm uart(uart_comm::UartCommConfig{});
+    uart_comm::UartComm uart({});
     if (!uart.isValid()) {
         return;
     }
 
-    imu_bmo_055::ManagerConfig imu_cfg{}; // defaults from Kconfig
-    imu_bmo_055::ImuBno055Manager imu(uart, imu_cfg);
+    imu_bmo_055::ImuBno055Manager imu(uart, {});
     if (!imu.isValid()) {
         return;
     }
 
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    imu.setStreamEnabled(true);
+    imu.setStreamPeriodMs(20);
 }
 ```
 
-## 3.1 Hardware-Free Mock Telemetry
+## Error Handling
+`ResultCode` values:
+- `Ok`, `InvalidArgument`, `InvalidState`, `NotSupported`, `Busy`, `InternalError`
 
-If you do not have a BNO055 connected, enable mock telemetry either with Kconfig
-or directly in code:
+Device-layer failures are mapped from `esp_err_t` and logged with context.
 
-```cpp
-imu_bmo_055::ManagerConfig imu_cfg{};
-imu_cfg.use_mock_data = true;
-imu_bmo_055::ImuBno055Manager imu(uart, imu_cfg);
-```
+## Thread Safety
+- Shared manager state is mutex-protected.
+- Stop/valid flags are atomic.
+- Callback only enqueues work; heavy parsing executes in config task.
 
-Related Kconfig options:
-
-- `IMU_BMO_055_USE_MOCK_DATA`
-- `IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL`
-
-When mock mode is enabled, the manager keeps the same UART protocol and stream
-channel but publishes synthesized BNO055-like samples.
-
-## 4. Runtime Data And Behavior
-
-The stream task publishes packets with this fixed prefix:
-
-- `version` (1 byte)
-- `field_mask` (uint16, little-endian)
-- `timestamp_us` (uint64, little-endian, from `esp_timer_get_time()`)
-
-Then field data is appended in fixed order based on mask bits:
-
-1. Euler (h, r, p)
-2. Quaternion (w, x, y, z)
-3. Linear Accel (x, y, z)
-4. Gravity (x, y, z)
-5. Raw Accel (x, y, z)
-6. Raw Gyro (x, y, z)
-7. Raw Mag (x, y, z)
-8. Temperature
-9. Calibration Status (sys, gyro, accel, mag)
-
-All vector/scalar numeric values above are encoded as signed 16-bit little-endian except temperature (1 byte) and calibration status (4 bytes total).
-
-For complete host payload details, see:
-
-- `docs/protocol-api-guide.md`
-
-## 5. Kconfig Configuration
-
-Menu path:
-
-- `IMU BNO055 Configuration`
-
-### 5.1 Protocol IDs
-
-- `IMU_BMO_055_CONFIGURE_MSG_TYPE` (default `0x22`)
-- `IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x42`)
-- `IMU_BMO_055_EVENT_MSG_TYPE` (default `0xC2`)
-- `IMU_BMO_055_STREAM_CHANNEL` (default `0x82`)
-
-### 5.2 I2C Sensor Config
-
-- `IMU_BMO_055_I2C_PORT_NUM`
-- `IMU_BMO_055_I2C_SDA_PIN`
-- `IMU_BMO_055_I2C_SCL_PIN`
-- `IMU_BMO_055_I2C_CLK_HZ`
-- `IMU_BMO_055_I2C_TIMEOUT_MS`
-- `IMU_BMO_055_DEVICE_ADDRESS`
-
-### 5.3 IMU Runtime Defaults
-
-- `IMU_BMO_055_DEFAULT_OPERATION_MODE` (default `0x0C`, NDOF)
-- `IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK` (default `0x1FF`, all fields)
-- `IMU_BMO_055_DEFAULT_STREAM_PERIOD_MS` (default `10` ms)
-- `IMU_BMO_055_MIN_STREAM_PERIOD_MS`
-- `IMU_BMO_055_MAX_STREAM_PERIOD_MS`
-
-### 5.4 Tasking And Queue
-
-- `IMU_BMO_055_STREAM_TASK_STACK`
-- `IMU_BMO_055_STREAM_TASK_PRIO`
-- `IMU_BMO_055_CONFIG_TASK_STACK`
-- `IMU_BMO_055_CONFIG_TASK_PRIO`
-- `IMU_BMO_055_CONFIG_QUEUE_DEPTH`
-
-## 6. Calibration Support
-
-Supported command flow:
-
-1. Host requests current calibration (`ReadCalibration`).
-2. Host stores calibration blob externally if desired.
-3. Host writes blob back (`WriteCalibration`).
-4. Host applies blob to sensor (`ApplyCalibration`).
-
-Notes:
-
-- `WriteCalibration` caches data in manager state.
-- `ApplyCalibration` pushes cached data to BNO055 registers.
-- Applying without cached data returns `InvalidState`.
-
-## 7. Build And Validation
-
-Typical workflow:
-
-```bash
-idf.py menuconfig
-idf.py build
-idf.py flash
-idf.py monitor
-```
-
-If target/config state becomes inconsistent:
-
-```bash
-idf.py fullclean
-idf.py build
-```
-
-## 8. Troubleshooting
-
-- `isValid() == false` at startup:
-  - Check I2C pins/port/address Kconfig values.
-  - Check BNO055 wiring and power.
-  - Check UART component validity before constructing IMU manager.
-- No stream packets on host:
-  - Verify stream channel ID matches host expectation.
-  - Verify stream is enabled and period is not too large.
-  - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
-- Command rejected:
-  - Verify protocol version byte is `0x01`.
-  - Verify payload length and little-endian encoding for numeric fields.
-
-## 9. Additional Docs
-
-- Protocol and host integration guide: `docs/protocol-api-guide.md`
-- Internal architecture details: `docs/internal-architecture.md`
+## Limitations & Known Issues
+- Only one active BNO055 device instance is supported due static callback bridge.
+- Event message type is reserved; event payload emission is not implemented.
+- Stream payload is bounded by `CONFIG_UART_COMM_MAX_PAYLOAD`.

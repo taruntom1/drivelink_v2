@@ -1,36 +1,53 @@
 # motor_manager
 
-`motor_manager` manages multiple `motor_controller::MotorController` instances and exposes a single UART-facing control plane using `uart_comm`.
-
-It is designed for ESP32-S3 and keeps UART callbacks short by queuing configuration work onto a dedicated task.
+## Overview
+`motor_manager` multiplexes control of multiple motor instances behind one UART protocol endpoint. It owns motor slot lifecycle, setpoint ingestion, configure command handling, and telemetry publication.
 
 ## Features
+- Runtime create/delete/configure by motor ID
+- Setpoint stream ingestion for multiple motors
+- Global and per-motor telemetry masking
+- Optional mock-feedback mode for hardware-free integration
+- Dedicated configure task and optional update/telemetry periodic task
 
-- Runtime add/remove motor instances by `motor_id`
-- Runtime configuration updates (counts/rev, gear ratio, output limits, PID, feedforward)
-- Runtime mode switching and setpoint updates
-- One command callback for all configuration sub-commands
-- One setpoint stream channel for all motors (PC → ESP)
-- One telemetry stream channel for all motors (ESP → PC)
-- Thread-safe motor map access using FreeRTOS mutex
+## Dependencies
+Required:
+- `motor_controller`
+- `uart_comm`
+- `freertos`
+- `log`
 
-## Add to project
+Optional:
+- None
 
-```cmake
-idf_component_register(
-    ...
-    REQUIRES motor_manager
-)
-```
+## Configuration
+| Symbol | Type | Default | Description |
+|--------|------|---------|-------------|
+| `CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE` | hex | `0x21` | Configure command message type. |
+| `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` | hex | `0x61` | Configure response message type. |
+| `CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL` | hex | `0x80` | Setpoint stream channel. |
+| `CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL` | hex | `0x81` | Telemetry stream channel. |
+| `CONFIG_MOTOR_MANAGER_USE_MOCK_FEEDBACK` | bool | `n` | Enable mock telemetry mode. |
+| `CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK` | int | `4096` | Default update task stack size. |
+| `CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO` | int | `6` | Default update task priority. |
+| `CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK` | int | `4096` | Default config task stack size. |
+| `CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO` | int | `6` | Default config task priority. |
 
-Include:
+## Public API
+Public headers:
+- `include/motor_manager.hpp`
+- `include/motor_manager_types.hpp`
 
-```cpp
-#include "motor_manager.hpp"
-```
+Key methods:
+- Lifecycle: constructor, destructor, `isValid()`
+- Motor lifecycle/config: `createMotor`, `deleteMotor`, `configureMotor`
+- Runtime control: `setMode`, `setPidParams`, `setSetpoint`, `stopMotor`, `resetMotor`
+- Telemetry control: `setTelemetryGlobal`, `setTelemetryForMotor`
+- Scheduling/hooks: `updateAll`, `publishTelemetry`, `handleSetpointStream`, `handleConfigureCommand`
 
-## Basic usage
+Protocol enums/types include `ResultCode`, `ConfigureSubcommand`, `PidKind`, `SetpointKind`, `MotorConfigPayload`, `ManagerConfig`.
 
+## Usage Example
 ```cpp
 #include "motor_manager.hpp"
 #include "uart_comm.hpp"
@@ -42,179 +59,24 @@ extern "C" void app_main(void)
         return;
     }
 
-    motor_manager::ManagerConfig cfg{};
-    cfg.max_motors = 4;
-    cfg.configure_msg_type = motor_manager::kManagerMsgConfigure;       // 0x21
-    cfg.configure_response_msg_type = motor_manager::kManagerMsgConfigureResp; // 0x61
-    cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel; // 0x80
-    cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0x81
-    cfg.use_mock_feedback = true; // no motor hardware required
-    cfg.update_task.enable = true;
-    cfg.update_task.period_ms = 10;
-
-    motor_manager::MotorManager manager(uart, cfg);
-    if (!manager.isValid()) {
+    motor_manager::MotorManager mgr(uart, {});
+    if (!mgr.isValid()) {
         return;
     }
-
-    // Optional for manual scheduling:
-    // while (true) {
-    //     manager.updateAll();
-    //     manager.publishTelemetry();
-    //     vTaskDelay(pdMS_TO_TICKS(10));
-    // }
 }
 ```
 
-## Mock feedback mode
+## Error Handling
+`ResultCode` values:
+- `Ok`, `InvalidArgument`, `NotFound`, `AlreadyExists`, `CapacityReached`, `InvalidState`, `NotSupported`, `InternalError`
 
-For hardware-free host integration, enable mock feedback mode.
+Helper conversion API: `resultCodeToEspErr()`.
 
-Behavior in this mode:
+## Thread Safety
+- Shared slot/telemetry state is protected by a mutex.
+- Valid/stop flags are atomic.
+- Configure callback enqueues frames for task-level processing.
 
-- No real `motor_controller::MotorController` instances are created.
-- Incoming setpoints are stored per motor.
-- Telemetry echoes stored setpoints as feedback values.
-  - velocity setpoint and open-loop duty update telemetry velocity
-  - position setpoint updates telemetry angle
-
-Enable via either:
-
-- `ManagerConfig::use_mock_feedback = true`
-- Kconfig option `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
-
-## Binary protocol (version 1)
-
-All payloads begin with:
-
-- `version` (`uint8_t`) = `0x01`
-
-### Configure command (single callback)
-
-- UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE` (default `0x21`)
-- Callback: only one callback registered for this message type
-- Payload format:
-  - `version` (`uint8_t`)
-  - `subcommand` (`uint8_t`) (`ConfigureSubcommand`)
-  - `motor_id` (`uint8_t`)
-  - subcommand-specific bytes
-
-Subcommands:
-
-- `0x01` CREATE_MOTOR
-- `0x02` DELETE_MOTOR
-- `0x03` CONFIGURE_MOTOR
-- `0x04` SET_MODE
-- `0x05` SET_PID_PARAMS
-- `0x06` SET_SETPOINT
-- `0x07` STOP_MOTOR
-- `0x08` RESET_MOTOR
-- `0x09` SET_TELEMETRY_GLOBAL
-- `0x0A` SET_TELEMETRY_MOTOR
-
-CREATE/CONFIGURE payload body (after first 3 bytes):
-
-- `pwm_gpio` `uint8_t`
-- `dir_gpio` `uint8_t`
-- `enc_a` `uint8_t`
-- `enc_b` `uint8_t`
-- `counts_per_rev` `float32`
-- `gear_ratio` `float32`
-- `output_min` `float32`
-- `output_max` `float32`
-- `vel_kp` `float32`
-- `vel_ki` `float32`
-- `vel_kd` `float32`
-- `pos_kp` `float32`
-- `pos_ki` `float32`
-- `pos_kd` `float32`
-- `velocity_feedforward` `float32`
-- `position_feedforward` `float32`
-- `reserved0` `float32` (for extensibility)
-- `reserved1` `float32` (for extensibility)
-- `sample_time_ms` `uint32_t`
-
-SET_MODE body:
-
-- `mode` `uint8_t`: 0=open-loop, 1=velocity, 2=position
-
-SET_PID_PARAMS body:
-
-- `pid_kind` `uint8_t`: 0=velocity, 1=position
-- `kp` `float32`
-- `ki` `float32`
-- `kd` `float32`
-- `sample_time_ms` `uint32_t`
-
-SET_SETPOINT body:
-
-- `setpoint_kind` `uint8_t`: 0=open-loop duty, 1=velocity rad/s, 2=position rad
-- `value` `float32`
-
-SET_TELEMETRY_GLOBAL body:
-
-- `enabled` `uint8_t`: `0` disable all telemetry, non-zero enable telemetry output
-- `field_mask` `uint8_t`:
-  - bit0 (`0x01`) angle (`angle_rad`)
-  - bit1 (`0x02`) velocity (`angular_velocity_rad_s`)
-
-SET_TELEMETRY_MOTOR body:
-
-- `enabled` `uint8_t`: `0` disable telemetry for this motor, non-zero enable
-- `field_mask` `uint8_t`: same bit mapping as global `field_mask`
-- `apply_field_mask` `uint8_t`: `0` keep previous per-motor field mask, non-zero update it from `field_mask`
-
-Configure response:
-
-- UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x61`)
-- Payload:
-  - `version` (`uint8_t`)
-  - `subcommand` (`uint8_t`)
-  - `motor_id` (`uint8_t`)
-  - `result_code` (`uint8_t`)
-  - `reserved` (`uint8_t`)
-
-### Setpoint stream (PC → ESP)
-
-- Channel: `CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL` (default `0x80`)
-- Payload:
-  - `version` (`uint8_t`)
-  - `entry_count` (`uint8_t`)
-  - repeated entries:
-    - `motor_id` (`uint8_t`)
-    - `setpoint_kind` (`uint8_t`)
-    - `value` (`float32`)
-
-No per-packet dynamic allocation is used while parsing.
-
-### Telemetry stream (ESP → PC)
-
-- Channel: `CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL` (default `0x81`)
-- Payload:
-  - `version` (`uint8_t`)
-  - `entry_count` (`uint8_t`)
-  - `timestamp_us` (`uint64_t`, microseconds since boot, shared by all entries in the packet)
-  - repeated entries:
-    - `motor_id` (`uint8_t`)
-    - `field_mask` (`uint8_t`)
-    - optional fields in this order, present when the corresponding `field_mask` bit is set:
-      - bit0: `angle_rad` (`float32`)
-      - bit1: `angular_velocity_rad_s` (`float32`)
-
-Effective per-entry field selection is:
-
-- `effective_field_mask = global_field_mask & motor_field_mask`
-
-If telemetry is globally disabled, no telemetry packet is sent.
-
-Use `MotorManager::publishTelemetry()` periodically (or enable the internal update task).
-
-## Kconfig
-
-Under `Motor Manager Configuration` in `menuconfig`, these defaults can be changed without code edits:
-
-- `MOTOR_MANAGER_CONFIGURE_MSG_TYPE`
-- `MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE`
-- `MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL`
-- `MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL`
-- `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
+## Limitations & Known Issues
+- Max motors is bounded by `ManagerConfig::max_motors` and downstream HAL resources.
+- Configure queue depth is fixed internally (`kConfigQueueDepth=8`) in current implementation.
