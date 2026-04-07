@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -30,7 +31,7 @@ public:
     /// @param max_payload Maximum payload size to accept
     Parser(uart_port_t port, uint8_t max_payload);
 
-    ~Parser();
+    ~Parser() = default;
 
     Parser(const Parser&) = delete;
     Parser& operator=(const Parser&) = delete;
@@ -46,12 +47,11 @@ public:
 
 private:
     void handlePatternDetected(RxFrame& out_frame, bool& success);
-    void handleOverflow();
-    void discardBufferedData();
+    void handleOverflow() const;
 
     uart_port_t m_port;
     uint8_t m_max_payload;
-    uint8_t* m_buf;
+    std::vector<uint8_t> m_buf;
     Counters m_counters;
 };
 

@@ -2,12 +2,11 @@
 #include <cstring>
 #include "esp_rom_crc.h"
 
-namespace uart_comm {
-namespace detail {
+namespace uart_comm::detail {
 
 uint16_t crc16Ccitt(const uint8_t* data, size_t len)
 {
-    uint16_t crc = ~(uint16_t)0xFFFF;  // invert init
+    uint16_t crc = static_cast<uint16_t>(~uint16_t{0xFFFF});  // NOSONAR: explicit uint16_t keeps protocol CRC width unambiguous.
     crc = esp_rom_crc16_be(crc, data, len);
     return ~crc;                       // final invert
 }
@@ -41,10 +40,10 @@ bool validateCrc(const uint8_t* data, uint8_t payload_len)
     // data points to MSG_TYPE byte
     // Layout: [MSG_TYPE][LEN][PAYLOAD...][CRC_LO][CRC_HI]
     uint16_t computed = crc16Ccitt(data, 2 + payload_len);
-    uint16_t received = static_cast<uint16_t>(data[2 + payload_len])
-                      | (static_cast<uint16_t>(data[3 + payload_len]) << 8);
+    uint16_t received = static_cast<uint16_t>( // NOSONAR: explicit 16-bit reconstruction is intentional for on-wire CRC fields.
+        static_cast<uint16_t>(data[2 + payload_len]) |
+        (static_cast<uint16_t>(data[3 + payload_len]) << 8));
     return computed == received;
 }
 
-} // namespace detail
-} // namespace uart_comm
+} // namespace uart_comm::detail
