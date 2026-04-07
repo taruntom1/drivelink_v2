@@ -184,7 +184,8 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
     const ResultCode find_code = findSlotIndexById(motor_id, existing_index);
     if (find_code == ResultCode::Ok) {
         xSemaphoreGive(m_mutex);
-        return ResultCode::AlreadyExists;
+        configureMotor(motor_id, cfg);
+        return ResultCode::Ok;
     }
 
     if (m_motors.size() >= m_config.max_motors) {
