@@ -1,8 +1,8 @@
 /**
  * @file   bno055_device.hpp
- * @brief  Public/internal declarations for bno055_device.
+ * @brief  Internal BNO055 device wrapper declarations for imu_bmo_055.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

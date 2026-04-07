@@ -1,8 +1,8 @@
 /**
  * @file   encoder.hpp
- * @brief  Public/internal declarations for encoder.
+ * @brief  Public API declarations for rotary_encoder_hal encoder.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

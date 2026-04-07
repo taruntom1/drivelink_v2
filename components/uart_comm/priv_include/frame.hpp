@@ -1,8 +1,8 @@
 /**
  * @file   frame.hpp
- * @brief  Public/internal declarations for frame.
+ * @brief  Internal frame/CRC declarations for uart_comm.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

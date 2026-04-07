@@ -1,8 +1,8 @@
 /**
  * @file   parser.hpp
- * @brief  Public/internal declarations for parser.
+ * @brief  Internal parser declarations for uart_comm.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

@@ -1,8 +1,8 @@
 /**
  * @file   pcnt_pool.hpp
- * @brief  Public/internal declarations for pcnt_pool.
+ * @brief  Internal PCNT pool declarations for rotary_encoder_hal.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

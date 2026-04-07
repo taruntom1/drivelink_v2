@@ -1,8 +1,8 @@
 /**
  * @file   esp_motor.hpp
- * @brief  Public/internal declarations for esp_motor.
+ * @brief  Public API declarations for motor_hal motor control.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

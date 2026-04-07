@@ -1,8 +1,8 @@
 /**
  * @file   mcpwm_pool.hpp
- * @brief  Public/internal declarations for mcpwm_pool.
+ * @brief  Internal MCPWM pool declarations for motor_hal.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

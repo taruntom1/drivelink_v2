@@ -1,8 +1,8 @@
 /**
  * @file   motor_manager.hpp
- * @brief  Public/internal declarations for motor_manager.
+ * @brief  Public API declarations for motor_manager.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

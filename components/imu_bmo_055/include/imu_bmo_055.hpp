@@ -1,8 +1,8 @@
 /**
  * @file   imu_bmo_055.hpp
- * @brief  Public/internal declarations for imu_bmo_055.
+ * @brief  Public API declarations for imu_bmo_055 manager.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

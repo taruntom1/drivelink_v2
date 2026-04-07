@@ -1,8 +1,8 @@
 /**
  * @file   time_sync_protocol.hpp
- * @brief  Public/internal declarations for time_sync_protocol.
+ * @brief  Protocol wire-format declarations for time_sync.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07

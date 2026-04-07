@@ -1,8 +1,8 @@
 /**
  * @file   pid_controller.hpp
- * @brief  Public/internal declarations for pid_controller.
+ * @brief  Public API declarations for pid controller component.
  *
- * Auto-generated documentation header for component API/internal declarations.
+ * Component header documentation.
  *
  * @author Project Contributors
  * @date   2026-04-07
