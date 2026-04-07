@@ -5,24 +5,18 @@
 #include "sdkconfig.h"
 #include <cstring>
 
-static const char *TAG = "uart_parser";
+static const char *const TAG = "uart_parser";
 
-namespace uart_comm {
-namespace detail {
+namespace uart_comm::detail {
 
 static constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 
 Parser::Parser(uart_port_t port, uint8_t max_payload)
     : m_port(port)
     , m_max_payload(max_payload)
-    , m_buf(new uint8_t[kHeaderLen + max_payload + kCrcLen])
+    , m_buf(kHeaderLen + max_payload + kCrcLen)
     , m_counters{}
 {
-}
-
-Parser::~Parser()
-{
-    delete[] m_buf;
 }
 
 bool Parser::processEvent(const uart_event_t& event, RxFrame& out_frame)
@@ -58,7 +52,7 @@ bool Parser::processEvent(const uart_event_t& event, RxFrame& out_frame)
 
     case UART_DATA:
         // Data without pattern detection — discard stray bytes
-        discardBufferedData();
+        uart_flush_input(m_port);
         break;
 
     default:
@@ -75,10 +69,10 @@ void Parser::handlePatternDetected(RxFrame& out_frame, bool& success)
         return; // stale event, pattern queue was reset
     }
 
-    // Discard any data before the pattern.
+    // Discard any data before the pattern and the pattern.
     // pos is the index of the first byte of the pattern in the buffer.
-    // Data before index (pos - 1) is junk.
-    int junk_len = pos -  1;
+    // Data before index (pos - 1) is junk. and the pattern itself is at [pos, pos + kStartLen - 1].
+    int junk_len = pos + kStartLen;
     if (junk_len > 0) {
         uint8_t discard[64];
         int remaining = junk_len;
@@ -89,29 +83,21 @@ void Parser::handlePatternDetected(RxFrame& out_frame, bool& success)
         }
     }
 
-    // Consume the 3 start bytes (0xAA 0xAA 0xAA)
-    uint8_t start[kStartLen];
-    int n = uart_read_bytes(m_port, start, kStartLen, kReadTimeout);
-    if (n < kStartLen) {
-        m_counters.timeouts++;
-        return;
-    }
-
     // Read header: MSG_TYPE + LEN = 2 bytes
-    n = uart_read_bytes(m_port, m_buf, kHeaderLen, kReadTimeout);
+    int n = uart_read_bytes(m_port, m_buf.data(), kHeaderLen, kReadTimeout);
     if (n < kHeaderLen) {
         ESP_LOGW(TAG, "Incomplete header on port %d (got %d bytes)", m_port, n);
         m_counters.timeouts++;
         return;
     }
 
-    uint8_t msg_type = m_buf[0];
-    uint8_t payload_len = m_buf[1];
+    uint8_t const &msg_type = m_buf[0];
+    uint8_t const &payload_len = m_buf[1];
 
     if (payload_len > m_max_payload) {
         ESP_LOGW(TAG, "Payload length %u exceeds max %u, discarding frame", payload_len, m_max_payload);
         m_counters.crc_errors++;
-        discardBufferedData();
+        uart_flush_input(m_port);
         return;
     }
 
@@ -126,7 +112,7 @@ void Parser::handlePatternDetected(RxFrame& out_frame, bool& success)
     }
 
     // Validate CRC over MSG_TYPE + LEN + PAYLOAD
-    if (!validateCrc(m_buf, payload_len)) {
+    if (!validateCrc(m_buf.data(), payload_len)) {
         ESP_LOGW(TAG, "CRC mismatch on port %d, msg_type=0x%02X len=%u",
                  m_port, msg_type, payload_len);
         m_counters.crc_errors++;
@@ -143,30 +129,16 @@ void Parser::handlePatternDetected(RxFrame& out_frame, bool& success)
     success = true;
 }
 
-void Parser::handleOverflow()
+void Parser::handleOverflow() const
 {
     uart_flush_input(m_port);
     uart_pattern_queue_reset(m_port, CONFIG_UART_COMM_PATTERN_QUEUE_SIZE);
 }
 
-void Parser::discardBufferedData()
-{
-    size_t buffered = 0;
-    uart_get_buffered_data_len(m_port, &buffered);
-    if (buffered > 0) {
-        uint8_t discard[128];
-        while (buffered > 0) {
-            size_t chunk = buffered > sizeof(discard) ? sizeof(discard) : buffered;
-            uart_read_bytes(m_port, discard, chunk, 0);
-            buffered -= chunk;
-        }
-    }
-}
 
 Parser::Counters Parser::getCounters() const
 {
     return m_counters;
 }
 
-} // namespace detail
-} // namespace uart_comm
+} // namespace uart_comm::detail
