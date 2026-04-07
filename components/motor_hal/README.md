@@ -1,222 +1,97 @@
 # motor_hal
 
-ESP-IDF C++ component for controlling DC motors via the **MCPWM peripheral** on **ESP32-S3**.
+## Overview
+`motor_hal` is the low-level PWM+DIR motor actuation HAL for ESP32-S3. It owns MCPWM resource allocation, configures generator/comparator/timer state, and exposes a small `esp_motor::Motor` API for signed speed control.
 
-Supports **PWM + DIR** type motor drivers — one PWM signal for speed, one GPIO for direction.
+## Features
+- PWM + DIR motor control with signed speed API (`-1.0..1.0`)
+- Shared MCPWM pool with lazy timer/operator creation
+- Deterministic resource release in destructors
+- Move-only hardware-owning motor objects
+- Kconfig-driven PWM frequency and timer resolution
 
----
+## Dependencies
+Required:
+- `esp_driver_mcpwm`
+- `esp_driver_gpio`
 
-## Hardware Requirements
+Optional:
+- None
 
-- **Target:** ESP32-S3
-- **Driver type:** PWM + DIR (e.g. DRV8833, TB6612FNG, L298N-compatible)
-- **Max motors:** 12 (hardware limit: 2 MCPWM groups × 3 operators × 2 generators)
+## Configuration
+| Symbol | Type | Default | Description |
+|--------|------|---------|-------------|
+| `CONFIG_MOTOR_HAL_PWM_FREQ_HZ` | int | 25000 | PWM frequency used for all allocated channels. |
+| `CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ` | int | 1000000 | MCPWM timer resolution that determines duty granularity. |
 
----
+## Public API
+Public header: `include/esp_motor.hpp`
 
-## Adding to Your Project
+### `esp_motor::Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)`
+- **Signature**: constructor
+- **Purpose**: Allocates one MCPWM channel from the pool and configures DIR GPIO.
+- **Parameters**:
+  | Name | Direction | Type | Description |
+  |------|-----------|------|-------------|
+  | `pwm_gpio` | IN | `gpio_num_t` | PWM output GPIO. |
+  | `dir_gpio` | IN | `gpio_num_t` | Direction output GPIO. |
+- **Returns**: N/A (constructor)
+- **Notes**: Check `isValid()` after construction.
 
-In your component's or `main`'s `CMakeLists.txt`:
+### `esp_motor::Motor::~Motor()`
+- **Purpose**: Stops output and releases MCPWM resources.
 
-```cmake
-idf_component_register(
-    ...
-    REQUIRES motor_hal
-)
-```
+### `void setSpeed(float speed)`
+- **Purpose**: Sets signed motor command.
+- **Parameters**:
+  | Name | Direction | Type | Description |
+  |------|-----------|------|-------------|
+  | `speed` | IN | `float` | Command in `[-1.0, 1.0]` (clamped). |
+- **Returns**: void
 
-Include the header:
+### `void setSpeedPercent(float percent)`
+- **Purpose**: Convenience wrapper for percentage input.
 
-```cpp
-#include "esp_motor.hpp"
-```
+### `void stop()`
+- **Purpose**: Commands zero output.
 
----
+### `bool isValid() const`
+- **Purpose**: Indicates successful hardware initialization.
 
-## Quick Start
+### `float getSpeed() const`
+- **Purpose**: Returns last applied signed speed.
 
+### Move operations
+- `Motor(Motor&&) noexcept`
+- `Motor& operator=(Motor&&) noexcept`
+- **Purpose**: Transfer ownership of hardware-backed instance safely.
+
+## Usage Example
 ```cpp
 #include "esp_motor.hpp"
 
 extern "C" void app_main(void)
 {
-    esp_motor::Motor left(GPIO_NUM_1, GPIO_NUM_2);   // pwm_gpio, dir_gpio
-    esp_motor::Motor right(GPIO_NUM_3, GPIO_NUM_4);
+    esp_motor::Motor m(GPIO_NUM_1, GPIO_NUM_2);
+    if (!m.isValid()) {
+        return;
+    }
 
-    left.setSpeed(0.7f);    // 70% forward
-    right.setSpeed(-0.5f);  // 50% reverse
-
-    left.stop();
-    right.stop();
+    m.setSpeed(0.5f);
+    m.setSpeed(-0.3f);
+    m.stop();
 }
 ```
 
----
-
-## API Reference
-
-### `esp_motor::Motor`
-
-#### Constructor
-
-```cpp
-Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
-```
-
-Allocates one MCPWM generator from the hardware pool and configures the direction GPIO.
-
-| Parameter | Description |
-|-----------|-------------|
-| `pwm_gpio` | GPIO for the PWM speed signal |
-| `dir_gpio` | GPIO for the direction signal |
-
-If no MCPWM hardware is available (all 12 slots in use), construction succeeds but the motor is marked invalid. Always check `isValid()` before use.
-
----
-
-#### `setSpeed(float speed)`
-
-```cpp
-void setSpeed(float speed)
-```
-
-Sets motor speed and direction.
-
-| Value | Behaviour |
-|-------|-----------|
-| `0.0` | Stopped (0% duty) |
-| `> 0.0` | Forward |
-| `< 0.0` | Reverse |
-
-- Range: **-1.0 to 1.0** (values outside this range are clamped)
-- Maps linearly to PWM duty cycle: `duty = |speed| × 100%`
-
----
-
-#### `setSpeedPercent(float percent)`
-
-```cpp
-void setSpeedPercent(float percent)
-```
-
-Convenience wrapper for `setSpeed`. Accepts **-100.0 to 100.0**.
-
-```cpp
-motor.setSpeedPercent(75.0f);   // equivalent to setSpeed(0.75f)
-motor.setSpeedPercent(-50.0f);  // equivalent to setSpeed(-0.5f)
-```
-
----
-
-#### `stop()`
-
-```cpp
-void stop()
-```
-
-Sets PWM duty to 0. Equivalent to `setSpeed(0.0f)`.
-
----
-
-#### `isValid()`
-
-```cpp
-bool isValid() const
-```
-
-Returns `true` if MCPWM hardware was allocated successfully. Returns `false` if:
-- All 12 motor slots are already in use
-- GPIO configuration failed
-- MCPWM driver initialization failed
-
-Always check before using a motor object:
-
-```cpp
-esp_motor::Motor m(GPIO_NUM_5, GPIO_NUM_6);
-if (!m.isValid()) {
-    ESP_LOGE(TAG, "Motor init failed");
-    return;
-}
-```
-
----
-
-#### `getSpeed()`
-
-```cpp
-float getSpeed() const
-```
-
-Returns the last speed value passed to `setSpeed()`, in the range **-1.0 to 1.0**. Returns `0.0` if the motor is invalid.
-
----
-
-#### Copy / Move semantics
-
-```cpp
-Motor(const Motor &) = delete;             // not copyable
-Motor &operator=(const Motor &) = delete;
-
-Motor(Motor &&) noexcept;                  // movable
-Motor &operator=(Motor &&) noexcept;
-```
-
-Motors own hardware resources and cannot be copied. They can be moved into containers:
-
-```cpp
-std::vector<esp_motor::Motor> motors;
-motors.emplace_back(GPIO_NUM_1, GPIO_NUM_2);
-```
-
----
-
-## Configuration (menuconfig)
-
-```
-idf.py menuconfig  →  Motor HAL Configuration
-```
-
-| Option | Default | Range | Description |
-|--------|---------|-------|-------------|
-| `MOTOR_HAL_PWM_FREQ_HZ` | `25000` | 1000–100000 | PWM switching frequency in Hz |
-| `MOTOR_HAL_TIMER_RESOLUTION_HZ` | `1000000` | 100000–80000000 | MCPWM timer resolution in Hz |
-
-**Duty cycle granularity** = `1 / (TIMER_RESOLUTION_HZ / PWM_FREQ_HZ)`:
-
-| Resolution | Frequency | Period ticks | Granularity |
-|-----------|-----------|-------------|-------------|
-| 1 MHz | 25 kHz | 40 | 2.5% |
-| 10 MHz | 25 kHz | 400 | 0.25% |
-| 10 MHz | 50 kHz | 200 | 0.5% |
-
----
-
-## Hardware Allocation Model
-
-MCPWM resources are allocated lazily and shared where possible:
-
-```
-Group 0:  Timer (shared)
-  ├── Operator 0  →  Motor 0 (slot A),  Motor 1  (slot B)
-  ├── Operator 1  →  Motor 2 (slot A),  Motor 3  (slot B)
-  └── Operator 2  →  Motor 4 (slot A),  Motor 5  (slot B)
-
-Group 1:  Timer (shared)
-  ├── Operator 0  →  Motor 6 (slot A),  Motor 7  (slot B)
-  ├── Operator 1  →  Motor 8 (slot A),  Motor 9  (slot B)
-  └── Operator 2  →  Motor 10 (slot A), Motor 11 (slot B)
-```
-
-- **Timers** are created when the first motor in a group is constructed, destroyed when the last one is destructed.
-- **Operators** are created when the first of their two motors is constructed, destroyed when both are destructed.
-- **Comparators and generators** are created and destroyed per motor instance.
-
----
+## Error Handling
+Public API is mostly void/bool. Internal failures are logged with ESP-IDF logging.
+- Invalid init/resource exhaustion -> `isValid()==false`
+- MCPWM/GPIO driver errors -> logged in constructor/pool methods
 
 ## Thread Safety
+- Pool allocation/deallocation is mutex-protected.
+- Concurrent writes to **same** `Motor` instance are externally synchronized by design.
 
-| Operation | Thread safe |
-|-----------|-------------|
-| `Motor` construction / destruction | Yes (pool uses a FreeRTOS mutex) |
-| `setSpeed()` / `stop()` | Yes (comparator register write and GPIO are atomic) |
-| Concurrent `setSpeed` on the **same** Motor from two tasks | No — add external synchronization |
+## Limitations & Known Issues
+- Max active motors is bounded by MCPWM resource topology (12 slots).
+- No explicit per-instance locking in `Motor` methods.
