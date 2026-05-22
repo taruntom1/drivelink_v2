@@ -47,7 +47,7 @@ extern "C" void app_main(void)
     }
 
     imu_bmo_055::ManagerConfig imu_cfg{};
-    imu_cfg.use_mock_data = true;
+    imu_cfg.use_mock_data = false;
     imu_bmo_055::ImuBno055Manager imu_manager(uart, imu_cfg);
     if (!imu_manager.isValid())
     {
