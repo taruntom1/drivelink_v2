@@ -78,6 +78,9 @@ Bno055Device::Bno055Device(const I2cConfig &config)
     m_dev.bus_read = &Bno055Device::busReadThunk;
     m_dev.delay_msec = &Bno055Device::delayThunk;
 
+    // Give sensor a short window after powerup before first Bosch init
+    delayThunk(100U);
+
     s_active_device = this;
 
     const s8 init_ret = bno055_init(&m_dev);
@@ -433,14 +436,47 @@ s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
     }
 
     const i2c_port_t port = static_cast<i2c_port_t>(m_config.port_num);
-    const esp_err_t ret = i2c_master_write_to_device(
-        port,
-        m_config.device_address,
-        tx_buf,
-        static_cast<size_t>(cnt) + 1U,
-        pdMS_TO_TICKS(m_config.timeout_ms));
+    // Targeted retry for initial page-id write to mitigate intermittent
+    // ESP_ERR_TIMEOUT during startup. 
+    const bool is_page_id_write = (reg_addr == BNO055_PAGE_ID_REG && cnt == 1U);
+    const unsigned attempts = is_page_id_write ? 3U : 1U;
+    const uint32_t timeout_ms = is_page_id_write ? 500U : m_config.timeout_ms;
+    esp_err_t ret = ESP_ERR_TIMEOUT;
+    unsigned used_attempts = 0;
+    for (unsigned a = 1; a <= attempts; ++a) {
+        ret = i2c_master_write_to_device(
+            port,
+            m_config.device_address,
+            tx_buf,
+            static_cast<size_t>(cnt) + 1U,
+            pdMS_TO_TICKS(timeout_ms));
+        used_attempts = a;
+        if (ret == ESP_OK) {
+            break;
+        }
+        if (a < attempts) {
+            delayThunk(10U);
+        }
+    }
 
-    return (ret == ESP_OK) ? BNO055_SUCCESS : BNO055_ERROR;
+    if (ret == ESP_OK) {
+        if (is_page_id_write && used_attempts > 1) {
+            ESP_LOGI(TAG, "BNO055 page-id write recovered on attempt %u",
+                     static_cast<unsigned>(used_attempts));
+        }
+        return BNO055_SUCCESS;
+    }
+
+    ESP_LOGW(TAG,
+             "BNO055 bus write failed (port=%d addr=0x%02X reg=0x%02X data=0x%02X cnt=%u): %s",
+             m_config.port_num,
+             m_config.device_address,
+             reg_addr,
+             (cnt > 0U) ? tx_buf[1] : 0U,
+             static_cast<unsigned>(cnt),
+             esp_err_to_name(ret));
+
+    return BNO055_ERROR;
 }
 
 s8 Bno055Device::busRead(u8 reg_addr, u8 *reg_data, u8 cnt) const
@@ -458,6 +494,16 @@ s8 Bno055Device::busRead(u8 reg_addr, u8 *reg_data, u8 cnt) const
         reg_data,
         cnt,
         pdMS_TO_TICKS(m_config.timeout_ms));
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "BNO055 bus read failed (port=%d addr=0x%02X reg=0x%02X cnt=%u): %s",
+                 m_config.port_num,
+                 m_config.device_address,
+                 reg_addr,
+                 static_cast<unsigned>(cnt),
+                 esp_err_to_name(ret));
+    }
 
     return (ret == ESP_OK) ? BNO055_SUCCESS : BNO055_ERROR;
 }
