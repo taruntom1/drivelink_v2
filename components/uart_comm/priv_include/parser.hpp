@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <cstdint>
 #include <vector>
 #include "driver/uart.h"
@@ -49,10 +51,19 @@ private:
     void handlePatternDetected(RxFrame& out_frame, bool& success);
     void handleOverflow() const;
 
+    // Written only by the RX task, read from any task via getCounters().
+    // Each counter is atomic; a snapshot of all four is not taken atomically.
+    struct AtomicCounters {
+        std::atomic<uint32_t> crc_errors;
+        std::atomic<uint32_t> timeouts;
+        std::atomic<uint32_t> uart_errors;
+        std::atomic<uint32_t> overflows;
+    };
+
     uart_port_t m_port;
     uint8_t m_max_payload;
     std::vector<uint8_t> m_buf;
-    Counters m_counters;
+    AtomicCounters m_counters;
 };
 
 } // namespace detail

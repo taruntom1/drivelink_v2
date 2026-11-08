@@ -7,6 +7,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include <array>
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -51,6 +52,17 @@ private:
         std::unique_ptr<motor_controller::MotorController> motor;
     };
 
+    static constexpr size_t kSetpointKindCount = 3;
+
+    // Latest setpoints received from the stream for one motor, waiting to be
+    // applied by the update task. One value per SetpointKind, latest wins.
+    struct PendingSetpoints {
+        uint8_t motor_id = 0;
+        bool in_use = false;
+        std::array<bool, kSetpointKindCount> pending{};
+        std::array<float, kSetpointKindCount> value{};
+    };
+
     void updateTaskLoop();
     void configTaskLoop();
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const;
@@ -58,6 +70,8 @@ private:
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
     ResultCode sendConfigureResponse(ConfigureSubcommand subcommand, uint8_t motor_id, ResultCode code);
     void stopTasks();
+    ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
+    void applyPendingSetpoints();
 
     uart_comm::UartComm &m_uart;
     ManagerConfig m_config;
@@ -72,6 +86,13 @@ private:
     rtos_util::StoppableTask m_config_task;
     uart_comm::CallbackRegistration m_configure_cb;
     uart_comm::CallbackRegistration m_setpoint_cb;
+
+    // Setpoint mailbox (C4): written by the UART RX task under a spinlock so
+    // it never waits on m_mutex; drained by the update task each tick.
+    // Sized to max_motors in the constructor and never resized afterwards.
+    std::vector<PendingSetpoints> m_pending_setpoints;
+    std::vector<PendingSetpoints> m_pending_snapshot; // update task only
+    portMUX_TYPE m_pending_lock = portMUX_INITIALIZER_UNLOCKED;
 };
 
 } // namespace motor_manager

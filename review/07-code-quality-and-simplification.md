@@ -73,7 +73,7 @@ This patches the first register write that happens to fail. The underlying probl
 | `time_sync::protocol::decodeRequest` / `encodeResponse`: server-side helpers, unused on the device | [time_sync_protocol.cpp](../components/time_sync/time_sync_protocol.cpp) (fine for tests, but they are not tested) |
 | `PidController` copy constructor/assignment: deep copy of an object that is only ever a member, never copied | [pid_controller.cpp:105-129](../components/pid/src/pid_controller.cpp) |
 | `ImuStreamSample` carries every field even when the mask selects one | minor |
-| `uart_comm.cpp` constructor zeroes `callbacks[]` and other fields that `Impl{}` value-initialises already | [uart_comm.cpp:153-162](../components/uart_comm/src/uart_comm.cpp) |
+| `uart_comm.cpp` constructor zeroes `callbacks[]` and other fields that `Impl{}` value-initialises already. **Done** with the C1–C3 fix. | [uart_comm.cpp](../components/uart_comm/src/uart_comm.cpp) |
 | `Parser::handlePatternDetected(RxFrame&, bool& success)`: out-param `bool` instead of a return value | [parser.cpp:65](../components/uart_comm/src/parser.cpp) |
 
 ---

@@ -44,11 +44,9 @@ private:
 
     static constexpr int kMaxUnits = 4; // SOC_PCNT_UNITS_PER_GROUP on ESP32-S3
 
-    static SemaphoreHandle_t s_mutex;
-    static bool s_initialized;
     static int s_active_count;
 
-    static void ensureInitialized();
+    static SemaphoreHandle_t poolMutex();
 };
 
 } // namespace detail

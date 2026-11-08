@@ -59,7 +59,7 @@ struct TimeSync::Impl {
     uart_comm::CallbackRegistration response_cb;
     std::atomic<bool> valid;
 
-    uint16_t next_request_id;
+    std::atomic<uint16_t> next_request_id;
 
     int64_t estimated_offset_us;
     uint32_t last_round_trip_us;
@@ -76,7 +76,7 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
     m_impl->state_mutex = nullptr;
     m_impl->response_queue = nullptr;
     m_impl->valid.store(false, std::memory_order_relaxed);
-    m_impl->next_request_id = 1;
+    m_impl->next_request_id.store(1, std::memory_order_relaxed);
     m_impl->estimated_offset_us = 0;
     m_impl->last_round_trip_us = 0;
     m_impl->last_server_unix_us = 0;
@@ -186,7 +186,7 @@ esp_err_t TimeSync::triggerManualSync(bool wait_for_response, TickType_t timeout
 
     if (!wait_for_response) {
         protocol::TimeSyncRequest req = {};
-        req.request_id = m_impl->next_request_id++;
+        req.request_id = m_impl->next_request_id.fetch_add(1, std::memory_order_relaxed);
         req.client_unix_send_us = nowUnixUs();
 
         uint8_t payload[protocol::kRequestEncodedSize] = {};
@@ -330,7 +330,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
     }
 
     protocol::TimeSyncRequest req = {};
-    req.request_id = m_impl->next_request_id++;
+    req.request_id = m_impl->next_request_id.fetch_add(1, std::memory_order_relaxed);
     req.client_unix_send_us = nowUnixUs();
 
     uint8_t payload[protocol::kRequestEncodedSize] = {};

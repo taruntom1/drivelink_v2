@@ -763,6 +763,11 @@ void ImuBno055Manager::configTaskLoop()
         if (xQueueReceive(self->m_config_queue, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
             continue;
         }
+        if (m_config_task.stopRequested()) {
+            // Woken by stopTasks(): this is its wake-up frame (or a late
+            // command). Don't dispatch it or reply to the host during shutdown.
+            break;
+        }
 
         ConfigureSubcommand subcommand = ConfigureSubcommand::SetStreamEnabled;
         if (frame.len >= 2U) {

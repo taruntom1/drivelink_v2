@@ -138,7 +138,12 @@ void Parser::handleOverflow() const
 
 Parser::Counters Parser::getCounters() const
 {
-    return m_counters;
+    Counters out = {};
+    out.crc_errors = m_counters.crc_errors.load(std::memory_order_relaxed);
+    out.timeouts = m_counters.timeouts.load(std::memory_order_relaxed);
+    out.uart_errors = m_counters.uart_errors.load(std::memory_order_relaxed);
+    out.overflows = m_counters.overflows.load(std::memory_order_relaxed);
+    return out;
 }
 
 } // namespace uart_comm::detail

@@ -38,6 +38,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     }
 
     m_motors.reserve(m_config.max_motors);
+    m_pending_setpoints.resize(m_config.max_motors);
+    m_pending_snapshot.resize(m_config.max_motors);
     m_config_queue = xQueueCreate(kConfigQueueDepth, sizeof(uart_comm::RxFrame));
     if (m_config_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create configure queue");
@@ -538,6 +540,7 @@ void MotorManager::updateTaskLoop()
 {
     const TickType_t delay_ticks = pdMS_TO_TICKS(m_config.update_task.period_ms);
     while (!m_update_task.stopRequested()) {
+        applyPendingSetpoints();
         updateAll();
         publishTelemetry();
         m_update_task.sleepFor(delay_ticks);
@@ -640,6 +643,70 @@ ResultCode MotorManager::findSlotIndexById(uint8_t motor_id, size_t &index) cons
         }
     }
     return ResultCode::NotFound;
+}
+
+ResultCode MotorManager::queueSetpoint(uint8_t motor_id, SetpointKind kind, float value)
+{
+    const auto kind_index = static_cast<size_t>(kind);
+    if (kind_index >= kSetpointKindCount) {
+        return ResultCode::InvalidArgument;
+    }
+
+    ResultCode rc = ResultCode::CapacityReached;
+    taskENTER_CRITICAL(&m_pending_lock);
+    PendingSetpoints *entry = nullptr;
+    PendingSetpoints *free_entry = nullptr;
+    for (auto &e : m_pending_setpoints) {
+        if (e.in_use && e.motor_id == motor_id) {
+            entry = &e;
+            break;
+        }
+        if (!e.in_use && free_entry == nullptr) {
+            free_entry = &e;
+        }
+    }
+    if (entry == nullptr && free_entry != nullptr) {
+        entry = free_entry;
+        entry->in_use = true;
+        entry->motor_id = motor_id;
+        entry->pending.fill(false);
+    }
+    if (entry != nullptr) {
+        entry->value[kind_index] = value;
+        entry->pending[kind_index] = true;
+        rc = ResultCode::Ok;
+    }
+    taskEXIT_CRITICAL(&m_pending_lock);
+    return rc;
+}
+
+void MotorManager::applyPendingSetpoints()
+{
+    // Move everything pending out of the mailbox under the spinlock, then
+    // apply it without the spinlock held (setSetpoint takes m_mutex).
+    size_t count = 0;
+    taskENTER_CRITICAL(&m_pending_lock);
+    for (auto &e : m_pending_setpoints) {
+        if (e.in_use) {
+            m_pending_snapshot[count++] = e;
+            e.in_use = false;
+        }
+    }
+    taskEXIT_CRITICAL(&m_pending_lock);
+
+    for (size_t i = 0; i < count; ++i) {
+        const PendingSetpoints &e = m_pending_snapshot[i];
+        for (size_t k = 0; k < kSetpointKindCount; ++k) {
+            if (!e.pending[k]) {
+                continue;
+            }
+            const ResultCode rc = setSetpoint(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
+            if (rc != ResultCode::Ok) {
+                ESP_LOGW(TAG, "Setpoint rejected motor=%u kind=%u rc=%s",
+                         e.motor_id, static_cast<unsigned>(k), resultCodeToString(rc));
+            }
+        }
+    }
 }
 
 void MotorManager::stopTasks()

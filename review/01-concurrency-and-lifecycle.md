@@ -74,6 +74,8 @@ Also, callbacks registered by other managers capture `this`. Because `UartComm` 
 
 Configure commands are already handed off to a queue. The setpoint stream should be too: copy it into a latest-wins buffer under a short critical section, and apply it in the update task.
 
+**Status: fixed.** `handleSetpointStream` now writes each entry into a per-motor mailbox (`m_pending_setpoints`, one latest value per setpoint kind, sized to `max_motors`) under a `portMUX` spinlock, and never takes `m_mutex`. The update task drains the mailbox at the start of each tick (`applyPendingSetpoints`). Setpoints take effect within one update period. If the update task is disabled, the callback applies setpoints directly, as before.
+
 ---
 
 ## C5. Low: unsynchronised shared fields
@@ -85,8 +87,18 @@ Configure commands are already handed off to a queue. The setpoint stream should
 
 ---
 
+**Status: fixed.**
+- **`periodic_task`:** replaced by `StoppableTask` (see C1).
+- **`next_request_id`:** now `std::atomic<uint16_t>` with `fetch_add`.
+- **Parser counters:** each one is `std::atomic<uint32_t>`.
+- **MCPWM/PCNT pool mutexes:** created in a function-local static (`poolMutex()`), whose initialisation C++ guarantees happens once.
+
+---
+
 ## C6. Low: `ImuBno055Manager` config task dispatches the shutdown wake-up frame
 
 [imu_bmo_055.cpp:783-807](../components/imu_bmo_055/src/imu_bmo_055.cpp)
 
 Unlike `MotorManager::configTaskEntry`, the IMU config task does not re-check the stop flag after `xQueueReceive`. The zeroed wake frame is parsed (`len < 2` gives `InvalidArgument`) and a configure **response is transmitted to the host during shutdown**. Add the same `if (stop) break;` check that motor_manager has.
+
+**Status: fixed.** The config task now re-checks `stopRequested()` after `xQueueReceive` and exits without dispatching or replying.

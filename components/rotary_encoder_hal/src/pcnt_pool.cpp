@@ -8,26 +8,28 @@ static const char *TAG = "pcnt_pool";
 namespace esp_rotary_encoder {
 namespace detail {
 
-SemaphoreHandle_t PcntPool::s_mutex = nullptr;
-bool PcntPool::s_initialized = false;
 int PcntPool::s_active_count = 0;
 
-void PcntPool::ensureInitialized()
+SemaphoreHandle_t PcntPool::poolMutex()
 {
-    if (!s_initialized) {
-        s_mutex = xSemaphoreCreateMutex();
-        assert(s_mutex != nullptr);
-        s_initialized = true;
-    }
+    // Function-local static: C++ guarantees one-time, thread-safe
+    // initialisation (ESP-IDF implements the guard with FreeRTOS), so two
+    // tasks creating their first encoder at once can't create two mutexes.
+    static const SemaphoreHandle_t mutex = [] {
+        SemaphoreHandle_t m = xSemaphoreCreateMutex();
+        assert(m != nullptr);
+        return m;
+    }();
+    return mutex;
 }
 
 esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
 {
-    ensureInitialized();
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const SemaphoreHandle_t mtx = poolMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
 
     if (s_active_count >= kMaxUnits) {
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         ESP_LOGE(TAG, "No free PCNT units (max %d encoders)", kMaxUnits);
         return ESP_ERR_NOT_FOUND;
     }
@@ -41,7 +43,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
     esp_err_t ret = pcnt_new_unit(&unit_cfg, &out.unit);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create PCNT unit: %s", esp_err_to_name(ret));
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -53,7 +55,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set glitch filter: %s", esp_err_to_name(ret));
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 #endif
@@ -68,7 +70,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         ESP_LOGE(TAG, "Failed to create channel A (edge=%d level=%d): %s",
                  pin_a, pin_b, esp_err_to_name(ret));
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -79,7 +81,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         ESP_LOGE(TAG, "Failed to set channel A edge action: %s", esp_err_to_name(ret));
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -90,7 +92,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         ESP_LOGE(TAG, "Failed to set channel A level action: %s", esp_err_to_name(ret));
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -105,7 +107,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
                  pin_b, pin_a, esp_err_to_name(ret));
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -117,7 +119,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -129,7 +131,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -140,7 +142,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -151,7 +153,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -164,7 +166,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -178,7 +180,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -192,7 +194,7 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         pcnt_del_channel(out.channel_b);
         pcnt_del_channel(out.channel_a);
         pcnt_del_unit(out.unit);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -200,14 +202,14 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
     ESP_LOGI(TAG, "Allocated encoder: pin_a=%d pin_b=%d (%d/%d units in use)",
              pin_a, pin_b, s_active_count, kMaxUnits);
 
-    xSemaphoreGive(s_mutex);
+    xSemaphoreGive(mtx);
     return ESP_OK;
 }
 
 esp_err_t PcntPool::deallocate(const PcntUnit &unit)
 {
-    ensureInitialized();
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const SemaphoreHandle_t mtx = poolMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
 
     pcnt_unit_stop(unit.unit);
     pcnt_unit_disable(unit.unit);
@@ -221,7 +223,7 @@ esp_err_t PcntPool::deallocate(const PcntUnit &unit)
     ESP_LOGI(TAG, "Deallocated encoder (%d/%d units in use)",
              s_active_count, kMaxUnits);
 
-    xSemaphoreGive(s_mutex);
+    xSemaphoreGive(mtx);
     return ESP_OK;
 }
 
