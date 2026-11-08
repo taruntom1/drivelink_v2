@@ -102,8 +102,8 @@ Atomic flags are used for stop signals and validity state.
 
 1. Host sends configure packet on configured command message type.
 2. UART callback enqueues `RxFrame` to `m_config_queue`.
-3. Config task dequeues frame.
-4. `parseAndDispatchConfigure()` validates version/length.
+3. Config task dequeues frame and checks the header (`version`, `seq`, `subcommand`).
+4. `parseAndDispatchConfigure()` gets the subcommand and the body after the header, and validates the body length.
 5. Subcommand method runs and returns `ResultCode`.
 6. `sendConfigureResponse()` emits standardized response payload.
 
@@ -111,7 +111,8 @@ Atomic flags are used for stop signals and validity state.
 
 - Every command gets a response.
 - Unknown subcommand returns `NotSupported`.
-- Invalid lengths/version return `InvalidArgument`.
+- Invalid lengths/version return `InvalidArgument`. When the header itself is rejected, the response echoes subcommand `0xFF`.
+- Every response echoes the command's `seq`.
 - Stream period is clamped to configured min/max.
 - Mode set pauses stream during mode switch and restores prior stream enabled state.
 

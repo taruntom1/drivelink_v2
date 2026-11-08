@@ -6,9 +6,11 @@ namespace uart_comm::detail {
 
 uint16_t crc16Ccitt(const uint8_t* data, size_t len)
 {
-    uint16_t crc = static_cast<uint16_t>(~uint16_t{0xFFFF});  // NOSONAR: explicit uint16_t keeps protocol CRC width unambiguous.
-    crc = esp_rom_crc16_be(crc, data, len);
-    return ~crc;                       // final invert
+    // esp_rom_crc16_be() inverts the seed on entry and the result on exit
+    // (the zlib convention). To get CRC-16/CCITT-FALSE (init 0xFFFF, no final
+    // XOR) we pass the pre-inverted init (~0xFFFF = 0) and undo its final inversion.
+    const uint16_t crc = esp_rom_crc16_be(static_cast<uint16_t>(~uint16_t{0xFFFF}), data, len);
+    return static_cast<uint16_t>(~crc);
 }
 
 size_t encodeFrame(uint8_t* buf, uint8_t msg_type, const uint8_t* payload, uint8_t len)

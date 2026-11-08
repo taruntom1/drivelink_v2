@@ -42,7 +42,8 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 - `rtos_util` provides `StoppableTask`.
 
 **UART protocol** (`uart_comm`):
-- Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16-CCITT(0x1021, init 0xFFFF)`. The CRC covers MSG_TYPE, LEN and the payload. RX finds frame starts with the UART hardware's pattern detection.
+- Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16-CCITT(0x1021, init 0xFFFF)`. The CRC covers MSG_TYPE, LEN and the payload.
+- RX framing is done in software (`Parser`); hardware pattern detection is not used. Driver events only wake the RX task, and `Parser::nextFrame()` pulls bytes from the ring buffer and scans for the preamble. The preamble is not escaped, so a rejected candidate (bad LEN or CRC) drops one byte and rescans. Never flush the RX buffer: it may already hold the next valid frames.
 - MSG_TYPE ranges: commands `0x01–0x3F`, responses `0x40–0x7F`, streams `0x80–0xBF`, events `0xC0–0xFE`.
 - TX has two paths. `sendCommand()` uses a FIFO queue that is drained first. `sendData()` writes to per-channel stream slots where only the latest value is sent.
 - RX either calls a callback registered for the MSG_TYPE, on the RX task, or pushes the frame to a queue read by `receive()`.
@@ -52,6 +53,8 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - IMU: `0x22` / `0x42`, stream `0x82`
   - Nothing checks for collisions between these IDs.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
+  - motor_manager and IMU are at v2: their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id).
+  - time_sync is at v1. Its ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.

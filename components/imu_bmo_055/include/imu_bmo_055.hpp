@@ -50,11 +50,12 @@ private:
 	void streamTaskLoop();
 	void configTaskLoop();
 
-	ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len,
-										 ConfigureSubcommand &subcommand,
+	ResultCode parseAndDispatchConfigure(ConfigureSubcommand subcommand,
+										 const uint8_t *body, uint8_t len,
 										 uint8_t &response_len, uint8_t *response_payload,
 										 size_t response_capacity);
-	esp_err_t sendConfigureResponse(ConfigureSubcommand subcommand,
+	esp_err_t sendConfigureResponse(uint8_t seq,
+									uint8_t subcommand,
 									ResultCode code,
 									const uint8_t *extra_payload,
 									uint8_t extra_len);

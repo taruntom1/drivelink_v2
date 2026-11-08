@@ -83,11 +83,13 @@ Enable via either:
 - `ManagerConfig::use_mock_feedback = true`
 - Kconfig option `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
 
-## Binary protocol (version 1)
+## Binary protocol (version 2)
 
 All payloads begin with:
 
-- `version` (`uint8_t`) = `0x01`
+- `version` (`uint8_t`) = `0x02`
+
+Version 2 added a `seq` byte after `version` in configure requests and responses, and dropped the trailing `reserved` byte from the response. The stream layouts did not change, but stream payloads carry version `0x02` as well. Version 1 payloads are rejected.
 
 ### Configure command (single callback)
 
@@ -95,9 +97,14 @@ All payloads begin with:
 - Callback: only one callback registered for this message type
 - Payload format:
   - `version` (`uint8_t`)
+  - `seq` (`uint8_t`): chosen by the host and echoed in the response
   - `subcommand` (`uint8_t`) (`ConfigureSubcommand`)
   - `motor_id` (`uint8_t`)
   - subcommand-specific bytes
+
+Commands are queued (up to 8, `kConfigQueueDepth`) and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
+
+Body length checks are minimums: extra trailing bytes after a known body are ignored.
 
 Subcommands:
 
@@ -112,7 +119,7 @@ Subcommands:
 - `0x09` SET_TELEMETRY_GLOBAL
 - `0x0A` SET_TELEMETRY_MOTOR
 
-CREATE/CONFIGURE payload body (after first 3 bytes):
+CREATE/CONFIGURE payload body (after the 4 header bytes, 67 bytes, so 71 bytes in total):
 
 - `pwm_gpio` `uint8_t`
 - `dir_gpio` `uint8_t`
@@ -133,6 +140,8 @@ CREATE/CONFIGURE payload body (after first 3 bytes):
 - `reserved0` `float32` (for extensibility)
 - `reserved1` `float32` (for extensibility)
 - `sample_time_ms` `uint32_t`
+
+`reserved0` and `reserved1` are ignored by the firmware but must be present, because the body has a fixed size and `sample_time_ms` follows them. Send `0.0`.
 
 SET_MODE body:
 
@@ -167,12 +176,14 @@ SET_TELEMETRY_MOTOR body:
 Configure response:
 
 - UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x61`)
-- Payload:
+- Payload (5 bytes):
   - `version` (`uint8_t`)
-  - `subcommand` (`uint8_t`)
-  - `motor_id` (`uint8_t`)
+  - `seq` (`uint8_t`): echoed from the request
+  - `subcommand` (`uint8_t`): echoed from the request
+  - `motor_id` (`uint8_t`): echoed from the request
   - `result_code` (`uint8_t`)
-  - `reserved` (`uint8_t`)
+
+If the request header could not be parsed (payload shorter than 4 bytes, or wrong `version`), the response has `subcommand = 0xFF`, `motor_id = 0xFF` and `result_code = INVALID_ARGUMENT`. `seq` is echoed when the request's version was right and it carried a `seq` byte; otherwise it is `0`.
 
 ### Setpoint stream (PC → ESP)
 
@@ -184,6 +195,8 @@ Configure response:
     - `motor_id` (`uint8_t`)
     - `setpoint_kind` (`uint8_t`)
     - `value` (`float32`)
+
+The payload length must be exactly `2 + entry_count * 6`. A frame with missing or extra bytes is dropped as a whole.
 
 No per-packet dynamic allocation is used while parsing.
 

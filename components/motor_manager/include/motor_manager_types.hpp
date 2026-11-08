@@ -51,7 +51,12 @@ enum class SetpointKind : uint8_t {
     PositionRad = 0x02
 };
 
-constexpr uint8_t kProtocolVersion = 0x01;
+// v2 added a seq byte after the version in configure requests and responses.
+// It covers every motor_manager payload, including both streams.
+constexpr uint8_t kProtocolVersion = 0x02;
+// Sent as subcommand and motor_id in a configure response when the request
+// header could not be parsed (too short or wrong version).
+constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 constexpr uint8_t kManagerMsgConfigure = CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE;
 constexpr uint8_t kManagerMsgConfigureResp = CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE;
 constexpr uint8_t kManagerSetpointStreamChannel = CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL;

@@ -28,7 +28,12 @@ enum class StreamField : uint16_t {
     CalibrationStatus = 1U << 8
 };
 
-constexpr uint8_t kProtocolVersion = 0x01;
+// v2 added a seq byte after the version in configure requests and responses.
+// It covers every IMU payload, including the stream.
+constexpr uint8_t kProtocolVersion = 0x02;
+// Sent as the subcommand in a configure response when the request header
+// could not be parsed (too short or wrong version).
+constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 
 constexpr uint8_t kImuConfigureMsgType = CONFIG_IMU_BMO_055_CONFIGURE_MSG_TYPE;
 constexpr uint8_t kImuConfigureResponseMsgType = CONFIG_IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE;
@@ -47,6 +52,7 @@ constexpr uint16_t kStreamFieldAll =
     static_cast<uint16_t>(StreamField::CalibrationStatus);
 
 constexpr size_t kStreamHeaderSize = 11U; // version(1) + field_mask(2) + timestamp_us(8)
-constexpr size_t kConfigureResponseHeaderSize = 3U; // version + subcommand + result
+constexpr size_t kConfigureRequestHeaderSize = 3U;  // version + seq + subcommand
+constexpr size_t kConfigureResponseHeaderSize = 4U; // version + seq + subcommand + result
 
 } // namespace imu_bmo_055

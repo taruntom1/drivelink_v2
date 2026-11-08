@@ -592,60 +592,52 @@ void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
     }
 }
 
-ResultCode ImuBno055Manager::parseAndDispatchConfigure(const uint8_t *payload,
+ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
+                                                       const uint8_t *body,
                                                        uint8_t len,
-                                                       ConfigureSubcommand &subcommand,
                                                        uint8_t &response_len,
                                                        uint8_t *response_payload,
                                                        size_t response_capacity)
 {
+    // body is the payload after the configure request header; len is its length.
     response_len = 0;
-    if (payload == nullptr || len < 2U) {
-        return ResultCode::InvalidArgument;
-    }
-
-    if (payload[0] != kProtocolVersion) {
-        return ResultCode::InvalidArgument;
-    }
-
-    subcommand = static_cast<ConfigureSubcommand>(payload[1]);
 
     switch (subcommand) {
         case ConfigureSubcommand::SetStreamEnabled: {
-            if (len < 3U) {
+            if (len < 1U) {
                 return ResultCode::InvalidArgument;
             }
-            return setStreamEnabled(payload[2] != 0U);
+            return setStreamEnabled(body[0] != 0U);
         }
         case ConfigureSubcommand::SetStreamPeriodMs: {
-            if (len < 4U) {
+            if (len < 2U) {
                 return ResultCode::InvalidArgument;
             }
-            size_t offset = 2U;
+            size_t offset = 0U;
             bool ok = true;
-            const uint16_t period_ms = readU16Le(payload, len, offset, ok);
+            const uint16_t period_ms = readU16Le(body, len, offset, ok);
             if (!ok) {
                 return ResultCode::InvalidArgument;
             }
             return setStreamPeriodMs(period_ms);
         }
         case ConfigureSubcommand::SetStreamFieldMask: {
-            if (len < 4U) {
+            if (len < 2U) {
                 return ResultCode::InvalidArgument;
             }
-            size_t offset = 2U;
+            size_t offset = 0U;
             bool ok = true;
-            const uint16_t mask = readU16Le(payload, len, offset, ok);
+            const uint16_t mask = readU16Le(body, len, offset, ok);
             if (!ok) {
                 return ResultCode::InvalidArgument;
             }
             return setStreamFieldMask(mask);
         }
         case ConfigureSubcommand::SetOperationMode: {
-            if (len < 3U) {
+            if (len < 1U) {
                 return ResultCode::InvalidArgument;
             }
-            return setOperationMode(payload[2]);
+            return setOperationMode(body[0]);
         }
         case ConfigureSubcommand::ReadCalibration: {
             CalibrationBlob blob{};
@@ -660,9 +652,9 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(const uint8_t *payload,
             return ResultCode::Ok;
         }
         case ConfigureSubcommand::WriteCalibration: {
-            size_t offset = 2U;
+            size_t offset = 0U;
             CalibrationBlob blob{};
-            if (!decodeCalibrationBlob(payload, len, offset, blob)) {
+            if (!decodeCalibrationBlob(body, len, offset, blob)) {
                 return ResultCode::InvalidArgument;
             }
             return writeCalibration(blob);
@@ -674,24 +666,27 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(const uint8_t *payload,
     }
 }
 
-esp_err_t ImuBno055Manager::sendConfigureResponse(ConfigureSubcommand subcommand,
+esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
+                                                  uint8_t subcommand,
                                                   ResultCode code,
                                                   const uint8_t *extra_payload,
                                                   uint8_t extra_len)
 {
-    uint8_t payload[3U + kMaxResponseExtraPayload] = {0};
+    uint8_t payload[kConfigureResponseHeaderSize + kMaxResponseExtraPayload] = {0};
     if (extra_len > kMaxResponseExtraPayload) {
         return ESP_ERR_INVALID_ARG;
     }
 
     payload[0] = kProtocolVersion;
-    payload[1] = static_cast<uint8_t>(subcommand);
-    payload[2] = static_cast<uint8_t>(code);
+    payload[1] = seq;
+    payload[2] = subcommand;
+    payload[3] = static_cast<uint8_t>(code);
     if (extra_len > 0U && extra_payload != nullptr) {
-        std::memcpy(&payload[3], extra_payload, extra_len);
+        std::memcpy(&payload[kConfigureResponseHeaderSize], extra_payload, extra_len);
     }
 
-    return m_uart.sendCommand(m_config.configure_response_msg_type, payload, static_cast<uint8_t>(3U + extra_len));
+    return m_uart.sendCommand(m_config.configure_response_msg_type, payload,
+                              static_cast<uint8_t>(kConfigureResponseHeaderSize + extra_len));
 }
 
 void ImuBno055Manager::stopTasks()
@@ -769,22 +764,34 @@ void ImuBno055Manager::configTaskLoop()
             break;
         }
 
-        ConfigureSubcommand subcommand = ConfigureSubcommand::SetStreamEnabled;
-        if (frame.len >= 2U) {
-            subcommand = static_cast<ConfigureSubcommand>(frame.payload[1]);
-        }
         uint8_t response_extra[kMaxResponseExtraPayload] = {0};
         uint8_t response_extra_len = 0;
+        uint8_t seq = 0;
+        uint8_t subcommand_raw = kUnparsedHeaderByte;
+        ResultCode rc = ResultCode::InvalidArgument;
 
-        const ResultCode rc = self->parseAndDispatchConfigure(
-            frame.payload,
-            frame.len,
-            subcommand,
-            response_extra_len,
-            response_extra,
-            sizeof(response_extra));
+        const bool version_ok = (frame.len >= 1U) && (frame.payload[0] == kProtocolVersion);
+        if (version_ok && frame.len >= kConfigureRequestHeaderSize) {
+            seq = frame.payload[1];
+            subcommand_raw = frame.payload[2];
+            rc = self->parseAndDispatchConfigure(
+                static_cast<ConfigureSubcommand>(subcommand_raw),
+                &frame.payload[kConfigureRequestHeaderSize],
+                static_cast<uint8_t>(frame.len - kConfigureRequestHeaderSize),
+                response_extra_len,
+                response_extra,
+                sizeof(response_extra));
+        } else {
+            // The header layout is unknown, so the subcommand cannot be
+            // echoed. seq is echoed when the version matches and it is present.
+            if (version_ok && frame.len >= 2U) {
+                seq = frame.payload[1];
+            }
+            ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
+                     frame.len, (frame.len >= 1U) ? frame.payload[0] : 0U, kProtocolVersion);
+        }
 
-        const esp_err_t send_ret = self->sendConfigureResponse(subcommand, rc, response_extra, response_extra_len);
+        const esp_err_t send_ret = self->sendConfigureResponse(seq, subcommand_raw, rc, response_extra, response_extra_len);
         if (send_ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to send IMU configure response: %s", esp_err_to_name(send_ret));
         }

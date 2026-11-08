@@ -176,11 +176,14 @@ class UartCommProto:
         self.send_command(0x02)
         msg_type, payload = self.read_frame(timeout)
         assert msg_type == 0x42, f"Expected RSP_COUNTERS (0x42), got 0x{msg_type:02X}"
-        assert len(payload) == 16, f"Expected 16-byte counter payload, got {len(payload)}"
-        crc_errors, timeouts, uart_errors, overflows = struct.unpack_from("<IIII", payload)
+        assert len(payload) == 24, f"Expected 24-byte counter payload, got {len(payload)}"
+        (crc_errors, timeouts, uart_errors, overflows,
+         length_errors, discarded_bytes) = struct.unpack_from("<IIIIII", payload)
         return {
             "crc_errors": crc_errors,
             "timeouts": timeouts,
             "uart_errors": uart_errors,
             "overflows": overflows,
+            "length_errors": length_errors,
+            "discarded_bytes": discarded_bytes,
         }
