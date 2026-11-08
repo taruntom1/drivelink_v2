@@ -23,10 +23,12 @@ class CallbackRegistration;
 
 /// Cumulative error counters for diagnostics.
 struct ErrorCounters {
-    uint32_t crc_errors;
-    uint32_t timeouts;
-    uint32_t uart_errors;
-    uint32_t overflows;
+    uint32_t crc_errors;      ///< Frame candidates rejected for a CRC mismatch
+    uint32_t timeouts;        ///< Partial frames dropped because the sender stopped mid-frame
+    uint32_t uart_errors;     ///< UART framing or parity errors
+    uint32_t overflows;       ///< RX hardware FIFO overflows or ring buffer full events
+    uint32_t length_errors;   ///< Frame candidates rejected because LEN exceeded the max payload
+    uint32_t discarded_bytes; ///< Received bytes that were not part of any valid frame
 };
 
 /// Configuration for UartComm. All fields default to Kconfig values.
@@ -76,18 +78,24 @@ public:
     /// MSG_TYPE must be in ranges 0x01–0x3F, 0x40–0x7F, or 0xC0–0xFE.
     /// @param msg_type  Message type byte
     /// @param payload   Payload data (may be nullptr if len == 0)
-    /// @param len       Payload length (0–255)
+    /// @param len       Payload length (0 to CONFIG_UART_COMM_MAX_PAYLOAD)
     /// @return ESP_OK on success, ESP_ERR_NO_MEM if queue full,
-    ///         ESP_ERR_INVALID_ARG if msg_type is a stream type
+    ///         ESP_ERR_INVALID_STATE if not initialized,
+    ///         ESP_ERR_INVALID_ARG if msg_type is a stream type or outside every
+    ///         range (0x00, 0xFF), len is too large, or payload is null with len > 0
     esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_t len);
 
     /// Update a data stream channel with the latest value.
     /// The payload overwrites any pending data for this channel.
-    /// Fire-and-forget: always succeeds.
+    /// Fire-and-forget: there is no delivery confirmation.
     /// @param channel  Stream channel (0x80–0xBF)
-    /// @param payload  Payload data
-    /// @param len      Payload length
-    void sendData(uint8_t channel, const uint8_t* payload, uint8_t len);
+    /// @param payload  Payload data (may be nullptr if len == 0)
+    /// @param len      Payload length (0 to CONFIG_UART_COMM_MAX_PAYLOAD)
+    /// @return ESP_OK when the slot was updated,
+    ///         ESP_ERR_INVALID_STATE if not initialized,
+    ///         ESP_ERR_INVALID_ARG if channel is not a stream channel, len is
+    ///         too large, or payload is null with len > 0
+    esp_err_t sendData(uint8_t channel, const uint8_t* payload, uint8_t len);
 
     /// Register a callback for a specific MSG_TYPE.
     /// The callback fires from the RX task context. If a callback is

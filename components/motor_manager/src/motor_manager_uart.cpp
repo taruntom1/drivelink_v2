@@ -10,7 +10,7 @@ namespace motor_manager {
 
 namespace {
 
-constexpr size_t kConfigureHeaderBytes = 3U;
+constexpr size_t kConfigureHeaderBytes = 4U; // version + seq + subcommand + motor_id
 constexpr size_t kCreateConfigureGpioBytes = 4U;
 constexpr size_t kCreateConfigureFloatCount = 14U;
 constexpr size_t kPidSetFloatCount = 3U;
@@ -76,9 +76,10 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
         return;
     }
 
+    // Exact match: trailing bytes mean the host and firmware disagree on the layout.
     const size_t expected_len = 2U + static_cast<size_t>(count) * kSetpointEntrySize;
-    if (frame.len < expected_len) {
-        ESP_LOGW(TAG, "Setpoint stream length mismatch: len=%u expected>=%u", frame.len, static_cast<unsigned>(expected_len));
+    if (frame.len != expected_len) {
+        ESP_LOGW(TAG, "Setpoint stream length mismatch: len=%u expected=%u", frame.len, static_cast<unsigned>(expected_len));
         return;
     }
 
@@ -111,11 +112,8 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
     if (!isValid()) {
         return;
     }
-    if (frame.len < 3U) {
-        ESP_LOGW(TAG, "Configure payload too short: len=%u", frame.len);
-        return;
-    }
-
+    // Short or wrong-version payloads are forwarded too, so the config task
+    // can answer them with a "header not parsed" response.
     if (m_config_queue == nullptr) {
         return;
     }
@@ -126,13 +124,21 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
 
 ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t len)
 {
-    const uint8_t version = payload[0];
-    const auto subcommand = static_cast<ConfigureSubcommand>(payload[1]);
-    const uint8_t motor_id = payload[2];
-
-    if (version != kProtocolVersion) {
-        return sendConfigureResponse(subcommand, motor_id, ResultCode::InvalidArgument);
+    if (len < kConfigureHeaderBytes || payload[0] != kProtocolVersion) {
+        // The header layout is unknown, so subcommand and motor_id cannot be
+        // echoed. seq is echoed when the version matches and it is present.
+        const bool version_ok = (len >= 1U) && (payload[0] == kProtocolVersion);
+        const uint8_t seq = (version_ok && len >= 2U) ? payload[1] : 0U;
+        ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
+                 len, (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
+        return sendConfigureResponse(seq, kUnparsedHeaderByte, kUnparsedHeaderByte,
+                                     ResultCode::InvalidArgument);
     }
+
+    const uint8_t seq = payload[1];
+    const uint8_t subcommand_raw = payload[2];
+    const auto subcommand = static_cast<ConfigureSubcommand>(subcommand_raw);
+    const uint8_t motor_id = payload[3];
 
     ResultCode rc = ResultCode::InvalidArgument;
 
@@ -198,12 +204,12 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
             break;
 
         case ConfigureSubcommand::SetMode: {
-            if (len < 4U) {
+            if (len < kConfigureHeaderBytes + 1U) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
             motor_controller::ControlMode mode{};
-            if (!parseControlMode(payload[3], mode)) {
+            if (!parseControlMode(payload[kConfigureHeaderBytes], mode)) {
                 rc = ResultCode::InvalidArgument;
                 break;
             }
@@ -289,17 +295,17 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
             break;
     }
 
-    return sendConfigureResponse(subcommand, motor_id, rc);
+    return sendConfigureResponse(seq, subcommand_raw, motor_id, rc);
 }
 
-ResultCode MotorManager::sendConfigureResponse(ConfigureSubcommand subcommand, uint8_t motor_id, ResultCode code)
+ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code)
 {
     uint8_t payload[5] = {
         kProtocolVersion,
-        static_cast<uint8_t>(subcommand),
+        seq,
+        subcommand,
         motor_id,
-        static_cast<uint8_t>(code),
-        0x00
+        static_cast<uint8_t>(code)
     };
 
     const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload, sizeof(payload));

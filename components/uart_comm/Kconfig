@@ -98,13 +98,14 @@ menu "UART Comm Configuration"
         help
             FreeRTOS priority for the internal transmit task.
 
-    config UART_COMM_PATTERN_QUEUE_SIZE
-        int "Pattern detection queue size"
+    config UART_COMM_EVENT_QUEUE_SIZE
+        int "UART driver event queue size"
         default 20
         range 5 100
         help
-            Number of pattern detection positions to buffer.
-            Each detected 3x0xAA start sequence consumes one slot.
+            Length of the UART driver's event queue. Events only wake the
+            RX task and report errors; received bytes are read straight from
+            the ring buffer, so a full event queue does not lose data.
 
     config UART_COMM_RX_TIMEOUT_SYMBOLS
         int "RX timeout in symbol periods"

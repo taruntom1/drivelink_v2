@@ -201,7 +201,7 @@ idf.py build
   - Verify stream is enabled and period is not too large.
   - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
 - Command rejected:
-  - Verify protocol version byte is `0x01`.
+  - Verify protocol version byte is `0x02` and is followed by a `seq` byte.
   - Verify payload length and little-endian encoding for numeric fields.
 
 ## 9. Additional Docs

@@ -9,12 +9,13 @@
  *
  * ─── Test Command Protocol ────────────────────────────────────────────────────
  *
- *  PC → ESP (commands, MSG_TYPE 0x01-0x06):
+ *  PC → ESP (commands, MSG_TYPE 0x01-0x07):
  *
  *  0x01  CMD_ECHO           Payload: N bytes  → ESP replies RSP_ECHO (0x41) with same payload
- *  0x02  CMD_GET_COUNTERS   Payload: empty    → RSP_COUNTERS (0x42), 16 bytes:
+ *  0x02  CMD_GET_COUNTERS   Payload: empty    → RSP_COUNTERS (0x42), 24 bytes:
  *                               [crc_errors:u32le][timeouts:u32le]
  *                               [uart_errors:u32le][overflows:u32le]
+ *                               [length_errors:u32le][discarded_bytes:u32le]
  *  0x03  CMD_READ_STREAM    Payload: empty    → RSP_STREAM_DATA (0x44)
  *                               If the stream-receive callback has fired since last read:
  *                                 [1:u8][stored_payload...]
@@ -31,6 +32,13 @@
  *                               Order: ACK may arrive before stream due to TX priority.
  *  0x06  CMD_BAUD_ACK       Payload: empty    → RSP_BAUD_ACK (0x47), empty payload
  *                               Used to confirm the link is alive after baud-rate change.
+ *  0x07  CMD_SEND_INVALID   Payload: empty    → RSP_SEND_INVALID (0x48), 1 byte bitmask.
+ *                               The ESP makes four invalid TX calls; bit n is set
+ *                               when call n returned ESP_ERR_INVALID_ARG:
+ *                                 bit0 sendCommand(0x00, ...)    reserved MSG_TYPE
+ *                                 bit1 sendCommand(0xFF, ...)    reserved MSG_TYPE
+ *                                 bit2 sendCommand(0x41, nullptr, 3)
+ *                                 bit3 sendData(0x80, nullptr, 3)
  *
  *  PC can also send a stream frame (MSG_TYPE=0x80) at any time; the ESP's
  *  callback will capture the payload for readback via CMD_READ_STREAM.
@@ -66,6 +74,7 @@ static constexpr uint8_t CMD_READ_STREAM    = 0x03;
 static constexpr uint8_t CMD_SENDCMD_STREAM = 0x04;
 static constexpr uint8_t CMD_TRIGGER_STREAM = 0x05;
 static constexpr uint8_t CMD_BAUD_ACK       = 0x06;
+static constexpr uint8_t CMD_SEND_INVALID   = 0x07;
 
 // ── Response MSG_TYPE values ─────────────────────────────────────────────────
 static constexpr uint8_t RSP_ECHO           = 0x41;
@@ -74,6 +83,7 @@ static constexpr uint8_t RSP_STREAM_DATA    = 0x44;
 static constexpr uint8_t RSP_SENDCMD_RESULT = 0x45;
 static constexpr uint8_t RSP_TRIGGER_ACK    = 0x46;
 static constexpr uint8_t RSP_BAUD_ACK       = 0x47;
+static constexpr uint8_t RSP_SEND_INVALID   = 0x48;
 
 // ── Stream channel used throughout tests ────────────────────────────────────
 static constexpr uint8_t STREAM_TEST = 0x80;
@@ -133,11 +143,13 @@ extern "C" void app_main(void)
         case CMD_GET_COUNTERS: {
                 ESP_LOGI(TAG, "Test: CMD_GET_COUNTERS started");
             ErrorCounters ec = comm.getErrorCounters();
-            uint8_t buf[16];
-            std::memcpy(buf + 0,  &ec.crc_errors,  4);
-            std::memcpy(buf + 4,  &ec.timeouts,     4);
-            std::memcpy(buf + 8,  &ec.uart_errors,  4);
-            std::memcpy(buf + 12, &ec.overflows,    4);
+            uint8_t buf[24];
+            std::memcpy(buf + 0,  &ec.crc_errors,      4);
+            std::memcpy(buf + 4,  &ec.timeouts,        4);
+            std::memcpy(buf + 8,  &ec.uart_errors,     4);
+            std::memcpy(buf + 12, &ec.overflows,       4);
+            std::memcpy(buf + 16, &ec.length_errors,   4);
+            std::memcpy(buf + 20, &ec.discarded_bytes, 4);
             comm.sendCommand(RSP_COUNTERS, buf, sizeof(buf));
             break;
         }
@@ -191,6 +203,28 @@ extern "C" void app_main(void)
         case CMD_BAUD_ACK: {
                 ESP_LOGI(TAG, "Test: CMD_BAUD_ACK started");
             comm.sendCommand(RSP_BAUD_ACK, nullptr, 0);
+            break;
+        }
+
+        // ── 0x07  CMD_SEND_INVALID ────────────────────────────────────────────
+        // Verifies that the TX API rejects reserved MSG_TYPEs and null payloads.
+        case CMD_SEND_INVALID: {
+            ESP_LOGI(TAG, "Test: CMD_SEND_INVALID started");
+            const uint8_t dummy[3] = {0x01, 0x02, 0x03};
+            uint8_t mask = 0;
+            if (comm.sendCommand(0x00, dummy, sizeof(dummy)) == ESP_ERR_INVALID_ARG) {
+                mask |= 0x01;
+            }
+            if (comm.sendCommand(0xFF, dummy, sizeof(dummy)) == ESP_ERR_INVALID_ARG) {
+                mask |= 0x02;
+            }
+            if (comm.sendCommand(RSP_ECHO, nullptr, 3) == ESP_ERR_INVALID_ARG) {
+                mask |= 0x04;
+            }
+            if (comm.sendData(STREAM_TEST, nullptr, 3) == ESP_ERR_INVALID_ARG) {
+                mask |= 0x08;
+            }
+            comm.sendCommand(RSP_SEND_INVALID, &mask, 1);
             break;
         }
 

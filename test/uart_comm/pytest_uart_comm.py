@@ -36,6 +36,15 @@ TC-13  test_response_msg_type_in_rsp_range   All responses have 0x40 <= type <= 
 TC-14  test_baud_ack_alive_ping             CMD_BAUD_ACK round-trip (link health)
 TC-15  test_stray_bytes_ignored_before_frame Garbage bytes before a valid frame
                                              must not confuse the parser
+TC-16  test_back_to_back_burst               8 frames in one write (payloads hold
+                                             AA AA AA) -> 8 echoes, in order
+TC-17  test_oversized_len_does_not_flush     False preamble with LEN > max before a
+                                             valid frame -> frame still delivered,
+                                             length_errors += 1
+TC-18  test_truncated_frame_then_valid       Frame cut short, then a valid frame ->
+                                             valid frame delivered, timeouts += 1
+TC-19  test_invalid_send_args_rejected       Reserved MSG_TYPEs and null payloads
+                                             are rejected by the TX API
 """
 
 import struct
@@ -52,6 +61,7 @@ CMD_READ_STREAM = 0x03
 CMD_SENDCMD_STREAM = 0x04
 CMD_TRIGGER_STREAM = 0x05
 CMD_BAUD_ACK = 0x06
+CMD_SEND_INVALID = 0x07
 
 RSP_ECHO = 0x41
 RSP_COUNTERS = 0x42
@@ -59,6 +69,7 @@ RSP_STREAM_DATA = 0x44
 RSP_SENDCMD_RESULT = 0x45
 RSP_TRIGGER_ACK = 0x46
 RSP_BAUD_ACK = 0x47
+RSP_SEND_INVALID = 0x48
 
 STREAM_TEST = 0x80
 
@@ -180,6 +191,7 @@ def test_counter_delta_isolation(proto: UartCommProto) -> None:
     assert after["timeouts"] - before["timeouts"] == 0, "Unexpected timeout increment"
     assert after["uart_errors"] - before["uart_errors"] == 0, "Unexpected uart_error increment"
     assert after["overflows"] - before["overflows"] == 0, "Unexpected overflow increment"
+    assert after["length_errors"] - before["length_errors"] == 0, "Unexpected length_error increment"
 
 
 def test_stream_received_by_callback(proto: UartCommProto) -> None:
@@ -350,3 +362,91 @@ def test_stray_bytes_ignored_before_frame(proto: UartCommProto) -> None:
     assert after["crc_errors"] == before["crc_errors"], (
         "crc_errors incremented due to stray bytes - parser discarded them incorrectly"
     )
+
+
+def test_back_to_back_burst(proto: UartCommProto) -> None:
+    """
+    Send 8 echo frames in a single write, with no gaps between them.
+    Some payloads contain AA AA AA (a false preamble) and AA bytes next to
+    the frame boundary. Every frame must be echoed, in order, with no errors.
+
+    8 frames fit in the firmware's RX delivery and TX command queues
+    (CONFIG_UART_COMM_RX_QUEUE_DEPTH / CMD_QUEUE_DEPTH default to 8).
+    """
+    payloads = [
+        b"\x01",
+        b"\xAA\xAA\xAA",
+        b"\x2B\xAA\xAA\xAA",                  # float 5.3e-13 as big-endian bytes
+        b"\xAA\xAA\xAA\x01\x05\x00\x00",      # looks like a nested frame header
+        b"",
+        bytes(range(32)),
+        b"\x00\xAA",
+        b"\xAA" * 16,
+    ]
+    before = get_counters(proto)
+
+    proto.ser.write(b"".join(encode_frame(CMD_ECHO, p) for p in payloads))
+
+    for i, expected in enumerate(payloads):
+        msg_type, payload = proto.read_frame(timeout=3.0)
+        assert msg_type == RSP_ECHO, f"Frame {i}: expected RSP_ECHO, got 0x{msg_type:02X}"
+        assert payload == expected, (
+            f"Frame {i}: payload mismatch: expected {expected.hex()}, got {payload.hex()}"
+        )
+
+    after = get_counters(proto)
+    for key in ("crc_errors", "length_errors", "timeouts", "discarded_bytes"):
+        assert after[key] == before[key], f"{key} changed during a clean burst"
+
+
+def test_oversized_len_does_not_flush(proto: UartCommProto) -> None:
+    """
+    A false preamble whose LEN exceeds the max payload, followed straight
+    away by a valid frame. The parser must skip the bad header and still
+    deliver the valid frame (the old parser flushed the whole RX buffer here).
+    """
+    before = get_counters(proto)
+
+    bad_header = b"\xAA\xAA\xAA" + bytes([CMD_ECHO, 0xFF])
+    proto.ser.write(bad_header + encode_frame(CMD_ECHO, b"\x5A\x5B"))
+
+    msg_type, payload = proto.read_frame(timeout=3.0)
+    after = get_counters(proto)
+
+    assert msg_type == RSP_ECHO, f"Expected RSP_ECHO, got 0x{msg_type:02X}"
+    assert payload == b"\x5A\x5B"
+    assert after["length_errors"] - before["length_errors"] == 1
+    assert after["crc_errors"] == before["crc_errors"], "Length error was counted as a CRC error"
+
+
+def test_truncated_frame_then_valid(proto: UartCommProto) -> None:
+    """
+    A frame that announces 64 payload bytes but stops after 10, then a valid
+    frame. Once the partial frame goes stale (about 100 ms) the parser must
+    drop it and deliver the valid frame that was hiding inside its length.
+    """
+    before = get_counters(proto)
+
+    truncated = b"\xAA\xAA\xAA" + bytes([CMD_ECHO, 64]) + bytes(range(1, 11))
+    proto.ser.write(truncated + encode_frame(CMD_ECHO, b"\x77"))
+
+    msg_type, payload = proto.read_frame(timeout=3.0)
+    after = get_counters(proto)
+
+    assert msg_type == RSP_ECHO, f"Expected RSP_ECHO, got 0x{msg_type:02X}"
+    assert payload == b"\x77"
+    assert after["timeouts"] - before["timeouts"] == 1
+
+
+def test_invalid_send_args_rejected(proto: UartCommProto) -> None:
+    """
+    CMD_SEND_INVALID makes the firmware try sendCommand(0x00), sendCommand(0xFF),
+    sendCommand(rsp, nullptr, 3) and sendData(0x80, nullptr, 3).
+    All four must return ESP_ERR_INVALID_ARG (bitmask 0x0F).
+    """
+    proto.send_command(CMD_SEND_INVALID)
+    msg_type, payload = proto.read_frame()
+
+    assert msg_type == RSP_SEND_INVALID, f"Expected 0x{RSP_SEND_INVALID:02X}, got 0x{msg_type:02X}"
+    assert len(payload) == 1
+    assert payload[0] == 0x0F, f"Rejected-call bitmask 0x{payload[0]:02X}, expected 0x0F"

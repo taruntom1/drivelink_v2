@@ -80,29 +80,30 @@ void UartComm::rxTaskBody(Impl* impl)
     RxFrame frame = {};
 
     while (!impl->rx_task.stopRequested()) {
-        if (xQueueReceive(impl->uart_event_queue, &event, pdMS_TO_TICKS(100)) != pdTRUE) {
-            continue;
+        // Driver events only wake us up (and report errors); the parser pulls
+        // the bytes itself. On a timeout we still scan, so a partial frame
+        // that never completes is eventually dropped.
+        if (xQueueReceive(impl->uart_event_queue, &event, pdMS_TO_TICKS(100)) == pdTRUE) {
+            impl->parser->processEvent(event);
         }
 
-        if (!impl->parser->processEvent(event, frame)) {
-            continue;
-        }
+        while (!impl->rx_task.stopRequested() && impl->parser->nextFrame(frame)) {
+            // Invoke the callback with callback_mutex held so that an unregister
+            // (CallbackRegistration::reset) waits until it has returned. Calling a
+            // local copy keeps it valid even if the callback unregisters itself.
+            xSemaphoreTakeRecursive(impl->callback_mutex, portMAX_DELAY);
+            RxCallback cb = impl->callbacks[frame.msg_type];
+            const bool handled = static_cast<bool>(cb);
+            if (handled) {
+                cb(frame);
+            }
+            xSemaphoreGiveRecursive(impl->callback_mutex);
 
-        // Invoke the callback with callback_mutex held so that an unregister
-        // (CallbackRegistration::reset) waits until it has returned. Calling a
-        // local copy keeps it valid even if the callback unregisters itself.
-        xSemaphoreTakeRecursive(impl->callback_mutex, portMAX_DELAY);
-        RxCallback cb = impl->callbacks[frame.msg_type];
-        const bool handled = static_cast<bool>(cb);
-        if (handled) {
-            cb(frame);
-        }
-        xSemaphoreGiveRecursive(impl->callback_mutex);
-
-        if (!handled) {
-            // No callback: push to RX delivery queue (non-blocking)
-            if (xQueueSend(impl->rx_queue, &frame, 0) != pdTRUE) {
-                ESP_LOGW(TAG, "RX queue full, dropping frame msg_type=0x%02X", frame.msg_type);
+            if (!handled) {
+                // No callback: push to RX delivery queue (non-blocking)
+                if (xQueueSend(impl->rx_queue, &frame, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "RX queue full, dropping frame msg_type=0x%02X", frame.msg_type);
+                }
             }
         }
     }
@@ -182,11 +183,13 @@ UartComm::UartComm(const UartCommConfig& config)
         return;
     }
 
-    // Install UART driver with event queue
+    // Install UART driver with event queue. Frames are found in software
+    // (see Parser); hardware pattern detection is not used because the start
+    // pattern is not escaped and can also appear inside payloads.
     ret = uart_driver_install(m_impl->port,
                               CONFIG_UART_COMM_RX_BUF_SIZE,
                               CONFIG_UART_COMM_TX_BUF_SIZE,
-                              CONFIG_UART_COMM_PATTERN_QUEUE_SIZE,
+                              CONFIG_UART_COMM_EVENT_QUEUE_SIZE,
                               &m_impl->uart_event_queue,
                               0);
     if (ret != ESP_OK) {
@@ -195,27 +198,8 @@ UartComm::UartComm(const UartCommConfig& config)
         return;
     }
 
-    // Enable hardware pattern detection: 3 consecutive 0xAA bytes
-    // chr_tout=9 means the gap between pattern bytes must be ≤9 baud-rate cycles
-    ret = uart_enable_pattern_det_baud_intr(m_impl->port, detail::kStartByte,
-                                            detail::kStartLen, 9, 0, 0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to enable pattern detection on port %d: %s",
-                 m_impl->port, esp_err_to_name(ret));
-        uart_driver_delete(m_impl->port);
-        return;
-    }
-
-    // Allocate pattern detection queue
-    ret = uart_pattern_queue_reset(m_impl->port, CONFIG_UART_COMM_PATTERN_QUEUE_SIZE);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to reset pattern queue on port %d: %s",
-                 m_impl->port, esp_err_to_name(ret));
-        uart_driver_delete(m_impl->port);
-        return;
-    }
-
-    // Set RX timeout for packet boundary detection
+    // RX timeout: the driver posts UART_DATA after this many idle symbols,
+    // which wakes the RX task promptly at the end of each burst.
     ret = uart_set_rx_timeout(m_impl->port, CONFIG_UART_COMM_RX_TIMEOUT_SYMBOLS);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to set RX timeout on port %d: %s",
@@ -375,7 +359,19 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (!detail::isCommand(msg_type) && !detail::isResponse(msg_type) && !detail::isEvent(msg_type)) {
+        ESP_LOGE(TAG, "sendCommand called with reserved msg_type 0x%02X", msg_type);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (len > detail::kMaxPayload) {
+        ESP_LOGE(TAG, "sendCommand payload too long: msg_type=0x%02X len=%u max=%u",
+                 msg_type, len, detail::kMaxPayload);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (payload == nullptr && len > 0) {
+        ESP_LOGE(TAG, "sendCommand called with null payload, msg_type=0x%02X len=%u", msg_type, len);
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -393,27 +389,40 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_
 
 // ── sendData ────────────────────────────────────────────────────────────
 
-void UartComm::sendData(uint8_t channel, const uint8_t* payload, uint8_t len)
+esp_err_t UartComm::sendData(uint8_t channel, const uint8_t* payload, uint8_t len)
 {
     if (!m_impl || !m_impl->valid) {
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     if (!detail::isStream(channel)) {
         ESP_LOGE(TAG, "sendData called with non-stream channel 0x%02X", channel);
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
-    len = std::min(len, detail::kMaxPayload);
-    int index = channel - detail::kStreamMin;
+    if (len > detail::kMaxPayload) {
+        ESP_LOGE(TAG, "sendData payload too long: channel=0x%02X len=%u max=%u",
+                 channel, len, detail::kMaxPayload);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (payload == nullptr && len > 0) {
+        ESP_LOGE(TAG, "sendData called with null payload, channel=0x%02X len=%u", channel, len);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const int index = channel - detail::kStreamMin;
 
     xSemaphoreTake(m_impl->stream_mutex, portMAX_DELAY);
-    std::memcpy(m_impl->stream_slots[index].payload.data(), payload, len);
+    if (len > 0) {
+        std::memcpy(m_impl->stream_slots[index].payload.data(), payload, len);
+    }
     m_impl->stream_slots[index].len = len;
     m_impl->stream_slots[index].dirty = true;
     xSemaphoreGive(m_impl->stream_mutex);
 
     m_impl->tx_task.notify();
+    return ESP_OK;
 }
 
 // ── registerCallback ────────────────────────────────────────────────────
@@ -513,6 +522,8 @@ ErrorCounters UartComm::getErrorCounters() const
     out.timeouts = pc.timeouts;
     out.uart_errors = pc.uart_errors;
     out.overflows = pc.overflows;
+    out.length_errors = pc.length_errors;
+    out.discarded_bytes = pc.discarded_bytes;
     return out;
 }
 

@@ -2,42 +2,44 @@
 #include "frame.hpp"
 #include "uart_comm.hpp"
 #include "esp_log.h"
-#include "sdkconfig.h"
+#include <algorithm>
 #include <cstring>
 
 static const char *const TAG = "uart_parser";
 
 namespace uart_comm::detail {
 
-static constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
+// A partial frame that gets no new bytes for this long is dropped. It must be
+// longer than the gaps USB-UART adapters leave inside a frame (a few ms).
+static constexpr TickType_t kStaleFrameTimeout = pdMS_TO_TICKS(100);
 
 Parser::Parser(uart_port_t port, uint8_t max_payload)
     : m_port(port)
     , m_max_payload(max_payload)
-    , m_buf(kHeaderLen + max_payload + kCrcLen)
+    // Two maximum-size frames, so a full window always holds one whole
+    // candidate and the scan can always make progress.
+    , m_buf(2U * (kStartLen + kHeaderLen + max_payload + kCrcLen))
+    , m_len(0)
+    , m_last_rx_tick(xTaskGetTickCount())
     , m_counters{}
 {
 }
 
-bool Parser::processEvent(const uart_event_t& event, RxFrame& out_frame)
+void Parser::processEvent(const uart_event_t& event)
 {
-    bool success = false;
-
     switch (event.type) {
-    case UART_PATTERN_DET:
-        handlePatternDetected(out_frame, success);
-        break;
-
     case UART_FIFO_OVF:
+        // The driver has already reset the hardware FIFO, so bytes were lost.
+        // The frame they belonged to fails its CRC and the scan resyncs.
         ESP_LOGW(TAG, "UART FIFO overflow on port %d", m_port);
         m_counters.overflows++;
-        handleOverflow();
         break;
 
     case UART_BUFFER_FULL:
+        // The driver stashes the FIFO and stops RX interrupts until we read,
+        // so no bytes are lost here. nextFrame() drains the ring buffer.
         ESP_LOGW(TAG, "UART ring buffer full on port %d", m_port);
         m_counters.overflows++;
-        handleOverflow();
         break;
 
     case UART_FRAME_ERR:
@@ -51,90 +53,161 @@ bool Parser::processEvent(const uart_event_t& event, RxFrame& out_frame)
         break;
 
     case UART_DATA:
-        // Data without pattern detection — discard stray bytes
-        uart_flush_input(m_port);
-        break;
-
+        // Bytes are pulled from the ring buffer by nextFrame(). Never flush
+        // here: the ring buffer may already hold the next valid frames.
     default:
         break;
     }
-
-    return success;
 }
 
-void Parser::handlePatternDetected(RxFrame& out_frame, bool& success)
+bool Parser::nextFrame(RxFrame& out_frame)
 {
-    int pos = uart_pattern_pop_pos(m_port);
-    if (pos == -1) {
-        return; // stale event, pattern queue was reset
-    }
+    (void)fillFromDriver();
 
-    // Discard any data before the pattern and the pattern.
-    // pos is the index of the first byte of the pattern in the buffer.
-    // Data before index (pos - 1) is junk. and the pattern itself is at [pos, pos + kStartLen - 1].
-    int junk_len = pos + kStartLen;
-    if (junk_len > 0) {
-        uint8_t discard[64];
-        int remaining = junk_len;
-        while (remaining > 0) {
-            int chunk = remaining > (int)sizeof(discard) ? (int)sizeof(discard) : remaining;
-            uart_read_bytes(m_port, discard, chunk, 0);
-            remaining -= chunk;
+    while (true) {
+        switch (scan(out_frame)) {
+        case ScanResult::Frame:
+            return true;
+
+        case ScanResult::Dropped:
+            continue;
+
+        case ScanResult::NeedMore:
+            if (fillFromDriver() > 0) {
+                continue;
+            }
+            if (m_len == 0 || (xTaskGetTickCount() - m_last_rx_tick) < kStaleFrameTimeout) {
+                return false;
+            }
+            // The sender stopped part-way through a frame. Drop its first
+            // byte and rescan, in case a real frame starts inside it.
+            if (m_len >= kStartLen) {
+                ESP_LOGW(TAG, "Incomplete frame on port %d (have %u bytes), dropping",
+                         m_port, static_cast<unsigned>(m_len));
+                m_counters.timeouts++;
+                discard(1);
+            } else {
+                discard(m_len); // a lone partial preamble
+            }
+            continue;
         }
     }
+}
 
-    // Read header: MSG_TYPE + LEN = 2 bytes
-    int n = uart_read_bytes(m_port, m_buf.data(), kHeaderLen, kReadTimeout);
-    if (n < kHeaderLen) {
-        ESP_LOGW(TAG, "Incomplete header on port %d (got %d bytes)", m_port, n);
-        m_counters.timeouts++;
-        return;
+size_t Parser::fillFromDriver()
+{
+    const size_t space = m_buf.size() - m_len;
+    if (space == 0) {
+        return 0;
     }
 
-    uint8_t const &msg_type = m_buf[0];
-    uint8_t const &payload_len = m_buf[1];
+    size_t buffered = 0;
+    if (uart_get_buffered_data_len(m_port, &buffered) != ESP_OK || buffered == 0) {
+        return 0;
+    }
+
+    const size_t want = std::min(buffered, space);
+    const int n = uart_read_bytes(m_port, &m_buf[m_len], static_cast<uint32_t>(want), 0);
+    if (n <= 0) {
+        return 0;
+    }
+
+    m_len += static_cast<size_t>(n);
+    m_last_rx_tick = xTaskGetTickCount();
+    return static_cast<size_t>(n);
+}
+
+Parser::ScanResult Parser::scan(RxFrame& out_frame)
+{
+    // Find the first preamble in the window.
+    size_t start = 0;
+    while (start + kStartLen <= m_len &&
+           !(m_buf[start] == kStartByte && m_buf[start + 1] == kStartByte &&
+             m_buf[start + 2] == kStartByte)) {
+        ++start;
+    }
+
+    if (start + kStartLen > m_len) {
+        // No full preamble. Keep a trailing run of up to kStartLen - 1 start
+        // bytes, which may be the beginning of the next preamble.
+        size_t keep = 0;
+        while (keep < kStartLen - 1U && keep < m_len &&
+               m_buf[m_len - 1U - keep] == kStartByte) {
+            ++keep;
+        }
+        if (m_len > keep) {
+            discard(m_len - keep);
+        }
+        return ScanResult::NeedMore;
+    }
+
+    if (start > 0) {
+        discard(start);
+    }
+
+    if (m_len < kStartLen + kHeaderLen) {
+        return ScanResult::NeedMore;
+    }
+
+    const uint8_t msg_type = m_buf[kStartLen];
+    const uint8_t payload_len = m_buf[kStartLen + 1];
+
+    // A start byte right after the preamble means this window starts with a
+    // run of 4+ start bytes. That is either a frame with MSG_TYPE 0xAA or a
+    // stray start byte just before a real preamble. Rejecting it is part of
+    // normal resync, so it is not counted as an error.
+    const bool ambiguous = (msg_type == kStartByte);
 
     if (payload_len > m_max_payload) {
-        ESP_LOGW(TAG, "Payload length %u exceeds max %u, discarding frame", payload_len, m_max_payload);
-        m_counters.crc_errors++;
-        uart_flush_input(m_port);
-        return;
+        if (!ambiguous) {
+            ESP_LOGW(TAG, "Payload length %u exceeds max %u on port %d, resyncing",
+                     payload_len, m_max_payload, m_port);
+            m_counters.length_errors++;
+        }
+        discard(1);
+        return ScanResult::Dropped;
     }
 
-    // Read payload + CRC
-    int remaining = payload_len + kCrcLen;
-    n = uart_read_bytes(m_port, &m_buf[kHeaderLen], remaining, kReadTimeout);
-    if (n < remaining) {
-        ESP_LOGW(TAG, "Incomplete frame on port %d (expected %d, got %d bytes)",
-                 m_port, remaining, n);
-        m_counters.timeouts++;
-        return;
+    const size_t frame_len = kStartLen + kHeaderLen + payload_len + kCrcLen;
+    if (m_len < frame_len) {
+        return ScanResult::NeedMore;
     }
 
-    // Validate CRC over MSG_TYPE + LEN + PAYLOAD
-    if (!validateCrc(m_buf.data(), payload_len)) {
-        ESP_LOGW(TAG, "CRC mismatch on port %d, msg_type=0x%02X len=%u",
-                 m_port, msg_type, payload_len);
-        m_counters.crc_errors++;
-        return;
+    if (!validateCrc(&m_buf[kStartLen], payload_len)) {
+        if (!ambiguous) {
+            ESP_LOGW(TAG, "CRC mismatch on port %d, msg_type=0x%02X len=%u, resyncing",
+                     m_port, msg_type, payload_len);
+            m_counters.crc_errors++;
+        }
+        // Only the first byte is dropped: a real frame may start inside this one.
+        discard(1);
+        return ScanResult::Dropped;
     }
 
-    // Frame valid — fill output
     out_frame.msg_type = msg_type;
     out_frame.len = payload_len;
     if (payload_len > 0) {
-        std::memcpy(out_frame.payload, &m_buf[kHeaderLen], payload_len);
+        std::memcpy(out_frame.payload, &m_buf[kStartLen + kHeaderLen], payload_len);
     }
-
-    success = true;
+    consume(frame_len);
+    return ScanResult::Frame;
 }
 
-void Parser::handleOverflow() const
+void Parser::consume(size_t n)
 {
-    uart_flush_input(m_port);
-    uart_pattern_queue_reset(m_port, CONFIG_UART_COMM_PATTERN_QUEUE_SIZE);
+    n = std::min(n, m_len);
+    if (n < m_len) {
+        std::memmove(m_buf.data(), &m_buf[n], m_len - n);
+    }
+    m_len -= n;
 }
 
+void Parser::discard(size_t n)
+{
+    n = std::min(n, m_len);
+    m_counters.discarded_bytes += static_cast<uint32_t>(n);
+    consume(n);
+}
 
 Parser::Counters Parser::getCounters() const
 {
@@ -143,6 +216,8 @@ Parser::Counters Parser::getCounters() const
     out.timeouts = m_counters.timeouts.load(std::memory_order_relaxed);
     out.uart_errors = m_counters.uart_errors.load(std::memory_order_relaxed);
     out.overflows = m_counters.overflows.load(std::memory_order_relaxed);
+    out.length_errors = m_counters.length_errors.load(std::memory_order_relaxed);
+    out.discarded_bytes = m_counters.discarded_bytes.load(std::memory_order_relaxed);
     return out;
 }
 

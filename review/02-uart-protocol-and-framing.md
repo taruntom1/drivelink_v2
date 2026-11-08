@@ -32,6 +32,8 @@ The test suite does not catch this because every test sends one frame and waits 
 
 The same "flush everything" reflex appears when the payload length is too large ([parser.cpp:97-101](../components/uart_comm/src/parser.cpp)). That also wipes valid frames that follow, and the event is counted as a `crc_error`, which is misleading. Add a `length_errors` counter.
 
+**Status: fixed** (together with P2). The parser was rewritten as a software scanner and hardware pattern detection was removed. Driver events now only wake the RX task. `Parser::nextFrame()` pulls bytes from the ring buffer into a two-frame window and scans for `AA AA AA | MSG_TYPE | LEN | PAYLOAD | CRC`. Nothing is ever flushed: an oversized LEN or a CRC mismatch drops only the candidate's first byte and rescans. A partial frame that gets no new bytes for 100 ms is dropped (`timeouts`). `UART_BUFFER_FULL` no longer flushes either (the driver stashes the FIFO, so no bytes are lost), and `UART_FIFO_OVF` relies on the CRC to resync. New counters: `length_errors` and `discarded_bytes`. `CONFIG_UART_COMM_PATTERN_QUEUE_SIZE` became `CONFIG_UART_COMM_EVENT_QUEUE_SIZE`. Hardware tests TC-16 to TC-18 cover a back-to-back burst, an oversized LEN before a valid frame, and a truncated frame before a valid frame.
+
 ---
 
 ## P2. Medium: the start pattern is not unique, and is detected with zero idle gaps
@@ -51,28 +53,34 @@ The effects are extra `PATTERN_DET` events and position-queue entries. Usually t
 - Or require an idle gap before the preamble (`pre_idle` > 0) and have the host insert one. That costs some bandwidth.
 - At minimum, after a CRC failure, resync by scanning for the next valid header instead of trusting the next pattern position.
 
+**Status: fixed** with the third option, done fully in software (see P1). The wire format is unchanged and there is no byte stuffing, so false `AA AA AA` sequences still occur inside payloads, but they can no longer cost a real frame: a rejected candidate drops one byte and the scan resumes inside it. A candidate whose MSG_TYPE byte is `0xAA` (a run of four or more start bytes) is not counted as an error when rejected, because it is usually a stray start byte just before a real preamble. The residual risk is a false candidate that passes the 16-bit CRC by chance (about 1 in 65536 per false candidate), the same as any CRC-framed protocol without stuffing.
+
 ---
 
 ## P3. Medium: the setpoint stream does heavy work in RX context
 
 See C4 in [01](01-concurrency-and-lifecycle.md). `handleSetpointStream` takes the manager mutex up to `count` times per frame, with a 50 ms timeout each. One frame with 20 entries can stall RX for up to a second.
 
+**Status: fixed** by C4 (setpoints go into a mailbox that the update task applies).
+
 ---
 
 ## P4. Low: protocol edge cases
 
-| Location | Issue |
-|----------|-------|
-| [uart_comm.cpp:395-416](../components/uart_comm/src/uart_comm.cpp) | `sendData(ch, nullptr, len>0)` calls `memcpy` from null. There is also no way to report failure: it returns `void` even if the component is invalid. |
-| [uart_comm.cpp:366-391](../components/uart_comm/src/uart_comm.cpp) | `sendCommand` does not reject `msg_type == 0x00` or `0xFF`, which fall outside every documented range. The doc comment says these ranges are enforced. |
-| [motor_manager_uart.cpp:79-83](../components/motor_manager/src/motor_manager_uart.cpp) | The setpoint stream accepts `frame.len > expected_len` (trailing junk is ignored silently). Use `!=` to catch host-side framing bugs. |
-| [motor_manager_uart.cpp:121-129](../components/motor_manager/src/motor_manager_uart.cpp) | On a version mismatch, the response echoes `subcommand` and `motor_id` from a payload whose layout is unknown. Harmless, but the host may misinterpret it. |
-| [motor_manager_uart.cpp:166-173](../components/motor_manager/src/motor_manager_uart.cpp) | Two "reserved extension slot" floats are required but ignored. The protocol size is fixed at 67 bytes, so a v1 host must send padding. Fine, but document it in the README packet table. |
-| [imu_bmo_055.cpp:789-792](../components/imu_bmo_055/src/imu_bmo_055.cpp) | When `len < 2`, the response reports subcommand `SetStreamEnabled` (0) even though the host never sent it. |
-| Response coupling | Motor responses carry `motor_id` but no request sequence number. With the config queue depth of 8 and several commands in flight, the host cannot match a response to the request when it sends two commands to the same motor. Add a sequence byte (it fits in the reserved `0x00` at payload[4]). |
+| Location | Issue | Status |
+|----------|-------|--------|
+| [uart_comm.cpp:395-416](../components/uart_comm/src/uart_comm.cpp) | `sendData(ch, nullptr, len>0)` calls `memcpy` from null. There is also no way to report failure: it returns `void` even if the component is invalid. | **Fixed.** `sendData` returns `esp_err_t` and rejects a null payload with `len > 0`, a `len` above the max (it used to be clamped silently) and a non-stream channel. |
+| [uart_comm.cpp:366-391](../components/uart_comm/src/uart_comm.cpp) | `sendCommand` does not reject `msg_type == 0x00` or `0xFF`, which fall outside every documented range. The doc comment says these ranges are enforced. | **Fixed.** Reserved types and a null payload with `len > 0` return `ESP_ERR_INVALID_ARG`. Covered by TC-19. |
+| [motor_manager_uart.cpp:79-83](../components/motor_manager/src/motor_manager_uart.cpp) | The setpoint stream accepts `frame.len > expected_len` (trailing junk is ignored silently). Use `!=` to catch host-side framing bugs. | **Fixed.** |
+| [motor_manager_uart.cpp:121-129](../components/motor_manager/src/motor_manager_uart.cpp) | On a version mismatch, the response echoes `subcommand` and `motor_id` from a payload whose layout is unknown. Harmless, but the host may misinterpret it. | **Fixed.** When the header is too short or has the wrong version, the response carries `subcommand = motor_id = 0xFF` (`kUnparsedHeaderByte`). Short payloads now get this response too, instead of being dropped silently. |
+| [motor_manager_uart.cpp:166-173](../components/motor_manager/src/motor_manager_uart.cpp) | Two "reserved extension slot" floats are required but ignored. The protocol size is fixed at 67 bytes, so a v1 host must send padding. Fine, but document it in the README packet table. | **Fixed** (documented in the motor_manager README). |
+| [imu_bmo_055.cpp:789-792](../components/imu_bmo_055/src/imu_bmo_055.cpp) | When `len < 2`, the response reports subcommand `SetStreamEnabled` (0) even though the host never sent it. | **Fixed.** The IMU uses the same `0xFF` sentinel for an unparsed header. |
+| Response coupling | Motor responses carry `motor_id` but no request sequence number. With the config queue depth of 8 and several commands in flight, the host cannot match a response to the request when it sends two commands to the same motor. Add a sequence byte (it fits in the reserved `0x00` at payload[4]). | **Fixed** as protocol v2 for motor_manager and IMU. Requests are `[ver][seq][sub][motor_id][body]` (IMU: `[ver][seq][sub][body]`). Responses are `[ver][seq][sub][motor_id][result]` (IMU: `[ver][seq][sub][result][extra]`), and the motor response's reserved byte is gone. `kProtocolVersion` is `0x02` for each component as a whole, streams included. time_sync is unchanged: its ESP-initiated request already carries a `u16 request_id` that is echoed and checked. **Breaking:** hosts must move to v2. |
 
 ---
 
 ## P5. Low: CRC implementation is correct but opaque
 
 [frame.cpp:8-13](../components/uart_comm/src/frame.cpp) passes `~0xFFFF` (= 0) into `esp_rom_crc16_be` and inverts the result, relying on the ROM routine inverting input and output internally. The result matches CRC-16/CCITT-FALSE and the Python reference. Replace the NOSONAR comment with one line explaining *why* the double inversion is needed.
+
+**Status: fixed.**

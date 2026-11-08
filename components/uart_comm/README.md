@@ -29,7 +29,8 @@ Behavior:
 - Enqueued into an internal TX command queue (FIFO)
 - Returns `ESP_OK` on success
 - Returns `ESP_ERR_NO_MEM` if TX command queue is full
-- Returns `ESP_ERR_INVALID_ARG` if you pass a stream type (`0x80..0xBF`)
+- Returns `ESP_ERR_INVALID_ARG` if you pass a stream type (`0x80..0xBF`), a reserved type (`0x00`, `0xFF`), a `len` above the max payload, or a null `payload` with `len > 0`
+- Returns `ESP_ERR_INVALID_STATE` if the component is not initialized
 
 Use this when dropping intermediate messages is not acceptable.
 
@@ -40,7 +41,8 @@ Behavior:
 
 - Updates one stream slot per channel (latest value overwrites older unsent value)
 - TX task sends stream slots after draining all pending commands
-- Fire-and-forget (`void`), length is clamped to max payload
+- Fire-and-forget: there is no delivery confirmation
+- Returns `ESP_OK` when the slot was updated, `ESP_ERR_INVALID_ARG` for a non-stream channel, a `len` above the max payload or a null `payload` with `len > 0`, and `ESP_ERR_INVALID_STATE` if the component is not initialized
 
 Use this when only the newest value matters (for example sensor snapshots or periodic control state).
 
@@ -72,10 +74,14 @@ Use this for main-loop style command dispatch.
 ### `getErrorCounters()`
 Use this for diagnostics. Counters include:
 
-- `crc_errors`
-- `timeouts`
-- `uart_errors`
-- `overflows`
+- `crc_errors`: frame candidates rejected for a CRC mismatch
+- `timeouts`: partial frames dropped because no more bytes arrived for 100 ms
+- `uart_errors`: UART framing or parity errors
+- `overflows`: hardware FIFO overflows (bytes lost) and ring-buffer-full events (no bytes lost, the RX task fell behind)
+- `length_errors`: frame candidates rejected because `LEN` exceeded the max payload
+- `discarded_bytes`: received bytes that were not part of any valid frame
+
+A candidate whose `MSG_TYPE` byte is `0xAA` (a run of four or more start bytes) is not counted when it is rejected. That is either a stray start byte before a real preamble or a corrupted frame on stream channel `0xAA`.
 
 ## Message Type Ranges
 
@@ -84,7 +90,7 @@ Use this for diagnostics. Counters include:
 - `0x80..0xBF`: Stream channels
 - `0xC0..0xFE`: Events
 
-`0x00` and `0xFF` are outside the defined ranges and should be avoided.
+`0x00` and `0xFF` are outside the defined ranges. `sendCommand()` rejects them.
 
 ## Minimal Usage Example
 
@@ -140,7 +146,7 @@ Component settings are under:
 Key options:
 
 - UART selection: port, TX pin, RX pin, baud rate
-- Protocol sizing: max payload, pattern queue size
+- Protocol sizing: max payload, UART driver event queue size
 - Buffers/queues: RX/TX ring buffers, command queue depth, RX queue depth
 - Task tuning: RX/TX task stack and priority
 - RX timeout symbols
@@ -158,7 +164,9 @@ All fields in `UartCommConfig` default to Kconfig values.
 ## Operational Notes
 
 - Internal tasks:
-  - RX task parses frames using UART hardware pattern detection (`3 x 0xAA`)
+  - RX task parses frames in software. Driver events only wake it up. It pulls bytes from the UART ring buffer and scans for `AA AA AA | MSG_TYPE | LEN | PAYLOAD | CRC`
+  - The start marker is not escaped, so `AA AA AA` can also appear inside a payload or CRC. Those false starts are rejected by the length or CRC check, and only one byte is dropped before rescanning, so a real frame that follows is never lost. Received bytes are never flushed
+  - A partial frame that gets no new bytes for 100 ms is dropped (`timeouts`), and the scan resumes inside it
   - TX task prioritizes command queue, then transmits dirty stream slots
 - If a callback is registered for a message type, that type bypasses `receive()` queueing.
 - Same-instance concurrent API calls are protected for internal shared state, but application-level ordering semantics are still your responsibility.
