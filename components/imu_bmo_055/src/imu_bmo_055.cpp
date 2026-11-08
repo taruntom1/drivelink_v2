@@ -19,7 +19,6 @@ namespace {
 
 static const char *TAG = "imu_bno055";
 constexpr TickType_t kMutexTimeout = pdMS_TO_TICKS(50);
-constexpr TickType_t kTaskStopDelay = pdMS_TO_TICKS(20);
 constexpr size_t kMaxResponseExtraPayload = 64U;
 constexpr size_t kMaxStreamPayload = CONFIG_UART_COMM_MAX_PAYLOAD;
 constexpr size_t kCalibrationPayloadSize = 41U;
@@ -274,11 +273,7 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
       m_config(config),
       m_mutex(xSemaphoreCreateMutex()),
       m_config_queue(nullptr),
-      m_stream_task(nullptr),
-      m_config_task(nullptr),
       m_valid(false),
-      m_stop_stream_task(false),
-      m_stop_config_task(false),
       m_stream_state(),
       m_cached_calibration(),
       m_has_cached_calibration(false),
@@ -342,7 +337,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         m_config.configure_msg_type,
         [this](const uart_comm::RxFrame &frame) {
             this->handleConfigureCommand(frame);
-        });
+        },
+        m_configure_cb);
     if (cb_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register configure callback (msg=0x%02X): %s",
                  m_config.configure_msg_type,
@@ -350,40 +346,27 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         return;
     }
 
-    BaseType_t cfg_task_ok = xTaskCreate(
-        &ImuBno055Manager::configTaskEntry,
+    const esp_err_t cfg_task_ret = m_config_task.start(
         "imu_cfg",
         m_config.config_task_stack_size,
-        this,
         m_config.config_task_priority,
-        &m_config_task);
-    if (cfg_task_ok != pdPASS) {
-        m_config_task = nullptr;
-        m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
-        ESP_LOGE(TAG, "Failed to create config task");
+        [this] { configTaskLoop(); });
+    if (cfg_task_ret != ESP_OK) {
+        m_configure_cb.reset();
+        ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_task_ret));
         return;
     }
 
     if (m_config.stream_task.enable) {
-        BaseType_t stream_task_ok = xTaskCreate(
-            &ImuBno055Manager::streamTaskEntry,
+        const esp_err_t stream_task_ret = m_stream_task.start(
             "imu_stream",
             m_config.stream_task.stack_size,
-            this,
             m_config.stream_task.priority,
-            &m_stream_task);
-        if (stream_task_ok != pdPASS) {
-            m_stream_task = nullptr;
-            m_stop_config_task.store(true, std::memory_order_relaxed);
-            uart_comm::RxFrame wake{};
-            (void)xQueueSend(m_config_queue, &wake, 0);
-            vTaskDelay(kTaskStopDelay);
-            if (m_config_task != nullptr) {
-                vTaskDelete(m_config_task);
-                m_config_task = nullptr;
-            }
-            m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
-            ESP_LOGE(TAG, "Failed to create stream task");
+            [this] { streamTaskLoop(); });
+        if (stream_task_ret != ESP_OK) {
+            m_configure_cb.reset();
+            stopTasks();
+            ESP_LOGE(TAG, "Failed to create stream task: %s", esp_err_to_name(stream_task_ret));
             return;
         }
     }
@@ -400,7 +383,9 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
 
 ImuBno055Manager::~ImuBno055Manager()
 {
-    m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
+    // Unregister first. reset() waits for a callback that is already running
+    // on the UART RX task, so none can touch this object afterwards.
+    m_configure_cb.reset();
     stopTasks();
 
     if (m_config_queue != nullptr) {
@@ -711,35 +696,30 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(ConfigureSubcommand subcommand
 
 void ImuBno055Manager::stopTasks()
 {
-    m_stop_stream_task.store(true, std::memory_order_relaxed);
-    m_stop_config_task.store(true, std::memory_order_relaxed);
+    m_stream_task.requestStop();
+    m_config_task.requestStop();
 
-    if (m_config_queue != nullptr) {
+    if (m_config_queue != nullptr && m_config_task.isRunning()) {
+        // Wake the config task out of xQueueReceive. If the queue is full,
+        // its 100 ms receive timeout wakes it instead.
         uart_comm::RxFrame wake{};
         (void)xQueueSend(m_config_queue, &wake, 0);
     }
 
-    vTaskDelay(kTaskStopDelay);
-
-    if (m_stream_task != nullptr) {
-        vTaskDelete(m_stream_task);
-        m_stream_task = nullptr;
-    }
-
-    if (m_config_task != nullptr) {
-        vTaskDelete(m_config_task);
-        m_config_task = nullptr;
-    }
+    // Join: wait until both task bodies have returned. Neither is ever
+    // deleted while it holds m_mutex or is inside an I2C transaction.
+    m_stream_task.stop();
+    m_config_task.stop();
 
     m_valid.store(false, std::memory_order_release);
 }
 
-void ImuBno055Manager::streamTaskEntry(void *arg)
+void ImuBno055Manager::streamTaskLoop()
 {
-    auto *self = static_cast<ImuBno055Manager *>(arg);
+    ImuBno055Manager *const self = this;
     TickType_t last_wake = xTaskGetTickCount();
 
-    while (!self->m_stop_stream_task.load(std::memory_order_relaxed)) {
+    while (!m_stream_task.stopRequested()) {
         StreamState state{};
         if (xSemaphoreTake(self->m_mutex, kMutexTimeout) == pdTRUE) {
             state = self->m_stream_state;
@@ -770,17 +750,15 @@ void ImuBno055Manager::streamTaskEntry(void *arg)
         }
 
         const TickType_t period = std::max<TickType_t>(1, pdMS_TO_TICKS(state.period_ms));
-        vTaskDelayUntil(&last_wake, period);
+        m_stream_task.sleepUntil(last_wake, period);
     }
-
-    vTaskDelete(nullptr);
 }
 
-void ImuBno055Manager::configTaskEntry(void *arg)
+void ImuBno055Manager::configTaskLoop()
 {
-    auto *self = static_cast<ImuBno055Manager *>(arg);
+    ImuBno055Manager *const self = this;
 
-    while (!self->m_stop_config_task.load(std::memory_order_relaxed)) {
+    while (!m_config_task.stopRequested()) {
         uart_comm::RxFrame frame{};
         if (xQueueReceive(self->m_config_queue, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
             continue;
@@ -806,8 +784,6 @@ void ImuBno055Manager::configTaskEntry(void *arg)
             ESP_LOGE(TAG, "Failed to send IMU configure response: %s", esp_err_to_name(send_ret));
         }
     }
-
-    vTaskDelete(nullptr);
 }
 
 const char *resultCodeToString(ResultCode code)

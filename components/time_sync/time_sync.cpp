@@ -10,6 +10,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "stoppable_task.hpp"
 
 static const char* TAG = "time_sync";
 
@@ -54,8 +55,8 @@ struct TimeSync::Impl {
     SemaphoreHandle_t state_mutex;
     QueueHandle_t response_queue;
 
-    TaskHandle_t periodic_task;
-    std::atomic<bool> stop_task;
+    rtos_util::StoppableTask periodic_task;
+    uart_comm::CallbackRegistration response_cb;
     std::atomic<bool> valid;
 
     uint16_t next_request_id;
@@ -74,8 +75,6 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
     m_impl->sync_mutex = nullptr;
     m_impl->state_mutex = nullptr;
     m_impl->response_queue = nullptr;
-    m_impl->periodic_task = nullptr;
-    m_impl->stop_task.store(false, std::memory_order_relaxed);
     m_impl->valid.store(false, std::memory_order_relaxed);
     m_impl->next_request_id = 1;
     m_impl->estimated_offset_us = 0;
@@ -116,7 +115,8 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
         m_impl->config.response_msg_type,
         [this](const uart_comm::RxFrame& frame) {
             onResponseFrame(frame);
-        });
+        },
+        m_impl->response_cb);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register callback for msg_type=0x%02X: %s",
                  m_impl->config.response_msg_type, esp_err_to_name(ret));
@@ -151,11 +151,13 @@ TimeSync::~TimeSync()
         return;
     }
 
-    stopPeriodicSync();
+    m_impl->valid.store(false, std::memory_order_relaxed);
 
-    if (m_impl->uart && m_impl->uart->isValid()) {
-        m_impl->uart->registerCallback(m_impl->config.response_msg_type, {});
-    }
+    // Join the periodic task first (an in-progress sync finishes or times
+    // out), then unregister; reset() waits for a callback that is already
+    // running on the UART RX task. Only then free what they use.
+    stopPeriodicSync();
+    m_impl->response_cb.reset();
 
     if (m_impl->response_queue) {
         vQueueDelete(m_impl->response_queue);
@@ -210,22 +212,13 @@ esp_err_t TimeSync::startPeriodicSync()
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (m_impl->periodic_task != nullptr) {
+    if (m_impl->periodic_task.isRunning()) {
         return ESP_OK;
     }
 
-    m_impl->stop_task.store(false, std::memory_order_relaxed);
-
-    BaseType_t ok = xTaskCreate(
-        periodicTaskEntry,
-        "time_sync_task",
-        4096,
-        this,
-        6,
-        &m_impl->periodic_task);
-    if (ok != pdPASS) {
-        m_impl->periodic_task = nullptr;
-        ESP_LOGE(TAG, "Failed to create periodic sync task");
+    esp_err_t ret = m_impl->periodic_task.start("time_sync_task", 4096, 6, [this] { periodicTask(); });
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create periodic sync task: %s", esp_err_to_name(ret));
         return ESP_FAIL;
     }
 
@@ -234,30 +227,18 @@ esp_err_t TimeSync::startPeriodicSync()
 
 void TimeSync::stopPeriodicSync()
 {
-    if (!m_impl || m_impl->periodic_task == nullptr) {
+    if (!m_impl) {
         return;
     }
 
-    m_impl->stop_task.store(true, std::memory_order_relaxed);
-    TaskHandle_t task = m_impl->periodic_task;
-
-    for (int i = 0; i < 20; ++i) {
-        if (m_impl->periodic_task == nullptr) {
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    if (task != nullptr) {
-        ESP_LOGW(TAG, "Periodic task did not exit in time; forcing delete");
-        vTaskDelete(task);
-        m_impl->periodic_task = nullptr;
-    }
+    // Wakes the task if it is sleeping between syncs and waits until it has
+    // returned. Never force-deletes it, so sync_mutex can't be left held.
+    m_impl->periodic_task.stop();
 }
 
 bool TimeSync::isPeriodicSyncRunning() const
 {
-    return m_impl && m_impl->periodic_task != nullptr;
+    return m_impl && m_impl->periodic_task.isRunning();
 }
 
 int64_t TimeSync::getEstimatedOffsetUs() const
@@ -312,28 +293,19 @@ uint64_t TimeSync::getLastSyncMonotonicUs() const
     return value;
 }
 
-void TimeSync::periodicTaskEntry(void* arg)
-{
-    auto* self = static_cast<TimeSync*>(arg);
-    self->periodicTask();
-}
-
 void TimeSync::periodicTask()
 {
     TickType_t last_wake = xTaskGetTickCount();
 
-    while (!m_impl->stop_task.load(std::memory_order_relaxed)) {
+    while (!m_impl->periodic_task.stopRequested()) {
         TickType_t timeout = pdMS_TO_TICKS(m_impl->config.response_timeout_ms);
         esp_err_t ret = performSync(timeout);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "Periodic sync failed: %s", esp_err_to_name(ret));
         }
 
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(m_impl->config.sync_interval_ms));
+        m_impl->periodic_task.sleepUntil(last_wake, pdMS_TO_TICKS(m_impl->config.sync_interval_ms));
     }
-
-    m_impl->periodic_task = nullptr;
-    vTaskDelete(nullptr);
 }
 
 void TimeSync::onResponseFrame(const uart_comm::RxFrame& frame)

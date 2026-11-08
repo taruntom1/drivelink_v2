@@ -44,13 +44,16 @@ Behavior:
 
 Use this when only the newest value matters (for example sensor snapshots or periodic control state).
 
-### `registerCallback(msg_type, callback)`
+### `registerCallback(msg_type, callback, registration)`
 Use this when a specific message type should be handled immediately in RX task context.
 
 Behavior:
 
 - Callback is invoked directly from the internal RX task
 - Frames of that `msg_type` are not pushed into `receive()` queue
+- The callback stays registered while the `CallbackRegistration` object is alive. Destroying it, or calling `reset()`, unregisters the callback. Unregistering waits for a callback that is already running, so after `reset()` returns it is safe to destroy whatever the callback captured.
+- Only one callback per `msg_type`: registering a second one returns `ESP_ERR_INVALID_STATE`
+- Every registration must be released before the `UartComm` is destroyed. If one is still active, the destructor logs an error and aborts. In practice, declare the registration after the `UartComm` it belongs to, or reset it in the owner's destructor.
 
 Use this for event-like handling or low-latency processing.
 Keep callbacks short and non-blocking.
@@ -102,11 +105,13 @@ extern "C" void app_main(void)
         return;
     }
 
-    // Low-latency stream callback for channel 0x80
+    // Low-latency stream callback for channel 0x80.
+    // stream_cb unregisters it when destroyed (declared after comm, so it goes first).
+    CallbackRegistration stream_cb;
     comm.registerCallback(0x80, [](const RxFrame& f) {
         // Keep callback brief; runs in RX task context
         (void)f;
-    });
+    }, stream_cb);
 
     // Send a command (queued, FIFO)
     const uint8_t cmd_payload[] = {0x10, 0x20};

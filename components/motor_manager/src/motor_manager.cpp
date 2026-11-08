@@ -18,7 +18,6 @@ namespace {
 constexpr TickType_t kMutexTimeoutTicks = pdMS_TO_TICKS(50);
 constexpr UBaseType_t kConfigQueueDepth = 8;
 constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
-constexpr TickType_t kTaskStopGraceTicks = pdMS_TO_TICKS(20);
 
 } // namespace
 
@@ -28,13 +27,9 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
       m_mutex(xSemaphoreCreateMutex()),
       m_motors(),
       m_valid(false),
-      m_stop_update_task(false),
-      m_stop_config_task(false),
       m_use_mock_feedback(false),
       m_telemetry_enabled(true),
       m_telemetry_field_mask(kTelemetryFieldAll),
-      m_update_task(nullptr),
-      m_config_task(nullptr),
       m_config_queue(nullptr)
 {
     if (m_mutex == nullptr) {
@@ -65,7 +60,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         m_config.configure_msg_type,
         [this](const uart_comm::RxFrame &frame) {
             this->handleConfigureCommand(frame);
-        });
+        },
+        m_configure_cb);
     if (cfg_cb_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register configure callback (msg=0x%02X): %s",
                  m_config.configure_msg_type, esp_err_to_name(cfg_cb_ret));
@@ -76,9 +72,10 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         m_config.setpoint_stream_channel,
         [this](const uart_comm::RxFrame &frame) {
             this->handleSetpointStream(frame);
-        });
+        },
+        m_setpoint_cb);
     if (sp_cb_ret != ESP_OK) {
-        m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
+        m_configure_cb.reset();
         ESP_LOGE(TAG, "Failed to register setpoint stream callback (ch=0x%02X): %s",
                  m_config.setpoint_stream_channel, esp_err_to_name(sp_cb_ret));
         return;
@@ -90,34 +87,29 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
             return;
         }
 
-        BaseType_t ok = xTaskCreate(
-            &MotorManager::updateTaskEntry,
+        const esp_err_t upd_ret = m_update_task.start(
             "motor_mgr_upd",
             m_config.update_task.stack_size,
-            this,
             m_config.update_task.priority,
-            &m_update_task);
-        if (ok != pdPASS) {
-            m_update_task = nullptr;
-            m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
-            m_uart.registerCallback(m_config.setpoint_stream_channel, uart_comm::RxCallback{});
-            ESP_LOGE(TAG, "Failed to create update task");
+            [this] { updateTaskLoop(); });
+        if (upd_ret != ESP_OK) {
+            m_setpoint_cb.reset();
+            m_configure_cb.reset();
+            ESP_LOGE(TAG, "Failed to create update task: %s", esp_err_to_name(upd_ret));
             return;
         }
     }
 
-    BaseType_t cfg_ok = xTaskCreate(
-        &MotorManager::configTaskEntry,
+    const esp_err_t cfg_ret = m_config_task.start(
         "motor_mgr_cfg",
         m_config.config_task_stack_size,
-        this,
         m_config.config_task_priority,
-        &m_config_task);
-    if (cfg_ok != pdPASS) {
-        m_config_task = nullptr;
-        m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
-        m_uart.registerCallback(m_config.setpoint_stream_channel, uart_comm::RxCallback{});
-        ESP_LOGE(TAG, "Failed to create config task");
+        [this] { configTaskLoop(); });
+    if (cfg_ret != ESP_OK) {
+        m_setpoint_cb.reset();
+        m_configure_cb.reset();
+        m_update_task.stop();
+        ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_ret));
         return;
     }
 
@@ -132,20 +124,14 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
 
 MotorManager::~MotorManager()
 {
-    m_uart.registerCallback(m_config.configure_msg_type, uart_comm::RxCallback{});
-    m_uart.registerCallback(m_config.setpoint_stream_channel, uart_comm::RxCallback{});
+    m_valid.store(false, std::memory_order_release);
 
-    stopUpdateTask();
-    m_stop_config_task.store(true, std::memory_order_relaxed);
-    if (m_config_queue != nullptr) {
-        uart_comm::RxFrame wake{};
-        xQueueSend(m_config_queue, &wake, 0);
-    }
-    vTaskDelay(kTaskStopGraceTicks);
-    if (m_config_task != nullptr) {
-        vTaskDelete(m_config_task);
-        m_config_task = nullptr;
-    }
+    // Unregister first. reset() waits for a callback that is already running
+    // on the UART RX task, so none can touch this object afterwards.
+    m_setpoint_cb.reset();
+    m_configure_cb.reset();
+
+    stopTasks();
 
     if (m_mutex != nullptr) {
         xSemaphoreTake(m_mutex, portMAX_DELAY);
@@ -548,35 +534,31 @@ void MotorManager::publishTelemetry()
     }
 }
 
-void MotorManager::updateTaskEntry(void *arg)
+void MotorManager::updateTaskLoop()
 {
-    auto *self = static_cast<MotorManager *>(arg);
-    const TickType_t delay_ticks = pdMS_TO_TICKS(self->m_config.update_task.period_ms);
-    while (!self->m_stop_update_task.load(std::memory_order_relaxed)) {
-        self->updateAll();
-        self->publishTelemetry();
-        vTaskDelay(delay_ticks);
+    const TickType_t delay_ticks = pdMS_TO_TICKS(m_config.update_task.period_ms);
+    while (!m_update_task.stopRequested()) {
+        updateAll();
+        publishTelemetry();
+        m_update_task.sleepFor(delay_ticks);
     }
-    vTaskDelete(nullptr);
 }
 
-void MotorManager::configTaskEntry(void *arg)
+void MotorManager::configTaskLoop()
 {
-    auto *self = static_cast<MotorManager *>(arg);
     uart_comm::RxFrame frame{};
-    while (!self->m_stop_config_task.load(std::memory_order_relaxed)) {
-        if (xQueueReceive(self->m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
+    while (!m_config_task.stopRequested()) {
+        if (xQueueReceive(m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
             continue;
         }
-        if (self->m_stop_config_task.load(std::memory_order_relaxed)) {
+        if (m_config_task.stopRequested()) {
             break;
         }
-        const ResultCode rc = self->parseAndDispatchConfigure(frame.payload, frame.len);
+        const ResultCode rc = parseAndDispatchConfigure(frame.payload, frame.len);
         if (rc != ResultCode::Ok) {
             ESP_LOGW(TAG, "Configure command failed: %s", resultCodeToString(rc));
         }
     }
-    vTaskDelete(nullptr);
 }
 
 ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const
@@ -660,17 +642,19 @@ ResultCode MotorManager::findSlotIndexById(uint8_t motor_id, size_t &index) cons
     return ResultCode::NotFound;
 }
 
-void MotorManager::stopUpdateTask()
+void MotorManager::stopTasks()
 {
-    if (m_update_task == nullptr) {
-        return;
+    m_update_task.requestStop();
+    m_config_task.requestStop();
+    if (m_config_queue != nullptr && m_config_task.isRunning()) {
+        // Wake the config task out of xQueueReceive. It re-checks the stop
+        // flag before handling a frame, so this frame is never dispatched.
+        // If the queue is full, the 100 ms receive timeout wakes it instead.
+        uart_comm::RxFrame wake{};
+        (void)xQueueSend(m_config_queue, &wake, 0);
     }
-    m_stop_update_task.store(true, std::memory_order_relaxed);
-    vTaskDelay(kTaskStopGraceTicks);
-    if (m_update_task != nullptr) {
-        vTaskDelete(m_update_task);
-        m_update_task = nullptr;
-    }
+    m_update_task.stop();
+    m_config_task.stop();
 }
 
 } // namespace motor_manager

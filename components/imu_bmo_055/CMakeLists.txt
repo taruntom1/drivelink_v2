@@ -4,5 +4,5 @@ idf_component_register(
          "src/imu_bmo_055.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES uart_comm driver freertos log esp_timer
+    REQUIRES uart_comm rtos_util driver freertos log esp_timer
 )

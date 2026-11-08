@@ -5,4 +5,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
     REQUIRES driver esp_driver_uart
+    PRIV_REQUIRES rtos_util
 )

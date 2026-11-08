@@ -19,6 +19,8 @@ struct RxFrame {
 /// Called from the internal RX task context.
 using RxCallback = std::function<void(const RxFrame&)>;
 
+class CallbackRegistration;
+
 /// Cumulative error counters for diagnostics.
 struct ErrorCounters {
     uint32_t crc_errors;
@@ -46,7 +48,8 @@ struct UartCommConfig {
 /// Usage:
 ///   uart_comm::UartComm comm({});
 ///   if (!comm.isValid()) { /* handle error */ }
-///   comm.registerCallback(0x81, [](const RxFrame& f) { /* motor cmd */ });
+///   uart_comm::CallbackRegistration motor_cb;  // unregisters when destroyed
+///   comm.registerCallback(0x81, [](const RxFrame& f) { /* motor cmd */ }, motor_cb);
 ///   comm.sendData(0x80, sensor_buf, sizeof(sensor_buf));
 ///
 class UartComm {
@@ -90,10 +93,26 @@ public:
     /// The callback fires from the RX task context. If a callback is
     /// registered, frames of this type are NOT queued (delivered via
     /// callback only).
-    /// @param msg_type  Message type to listen for
-    /// @param callback  Function to call on frame reception
-    /// @return ESP_OK on success
-    esp_err_t registerCallback(uint8_t msg_type, RxCallback callback);
+    ///
+    /// The callback stays registered while `registration` is alive.
+    /// Destroying or resetting `registration` unregisters it and waits until
+    /// any invocation that is already running has returned, so it is safe to
+    /// destroy objects the callback captures right after that.
+    /// If `registration` is already active, it is reset first.
+    ///
+    /// Callbacks run with the internal callback lock held. They may register
+    /// or unregister callbacks, but must not block on another task that is
+    /// itself waiting to register or unregister a callback.
+    ///
+    /// Every registration must be released before this UartComm is destroyed.
+    ///
+    /// @param msg_type      Message type to listen for
+    /// @param callback      Function to call on frame reception (must not be empty)
+    /// @param registration  Receives ownership of the registration
+    /// @return ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized or
+    ///         another callback is already registered for `msg_type`,
+    ///         ESP_ERR_INVALID_ARG if `callback` is empty
+    esp_err_t registerCallback(uint8_t msg_type, RxCallback callback, CallbackRegistration& registration);
 
     /// Receive the next frame from the RX queue.
     /// Only returns frames for MSG_TYPEs that do NOT have a registered callback.
@@ -106,11 +125,43 @@ public:
     ErrorCounters getErrorCounters() const;
 
 private:
-    static void rxTaskEntry(void* arg);
-    static void txTaskEntry(void* arg);
+    friend class CallbackRegistration;
 
     struct Impl;
+
+    static void rxTaskBody(Impl* impl);
+    static void txTaskBody(Impl* impl);
+    static void unregisterCallback(Impl* impl, uint8_t msg_type);
+
     Impl* m_impl;
+};
+
+/// Owns one callback registration made with UartComm::registerCallback().
+/// Unregisters the callback when destroyed or reset. Move-only.
+/// Must not outlive the UartComm it was registered with.
+class CallbackRegistration {
+public:
+    CallbackRegistration() = default;
+    ~CallbackRegistration();
+
+    CallbackRegistration(const CallbackRegistration&) = delete;
+    CallbackRegistration& operator=(const CallbackRegistration&) = delete;
+
+    CallbackRegistration(CallbackRegistration&& other) noexcept;
+    CallbackRegistration& operator=(CallbackRegistration&& other) noexcept;
+
+    /// Unregister now. Blocks until any running invocation of the callback
+    /// has returned (unless called from inside that callback). Idempotent.
+    void reset();
+
+    /// True while a callback is registered through this object.
+    bool isActive() const { return m_impl != nullptr; }
+
+private:
+    friend class UartComm;
+
+    UartComm::Impl* m_impl = nullptr;
+    uint8_t m_msg_type = 0;
 };
 
 } // namespace uart_comm

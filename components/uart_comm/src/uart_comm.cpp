@@ -1,6 +1,7 @@
 #include "uart_comm.hpp"
 #include "frame.hpp"
 #include "parser.hpp"
+#include "stoppable_task.hpp"
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "driver/uart.h"
@@ -10,6 +11,7 @@
 #include "freertos/semphr.h"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 #include <atomic>
@@ -43,9 +45,8 @@ struct UartComm::Impl {
     QueueHandle_t uart_event_queue;
 
     // Tasks
-    TaskHandle_t rx_task;
-    TaskHandle_t tx_task;
-    std::atomic<bool> stop_flag;
+    rtos_util::StoppableTask rx_task;
+    rtos_util::StoppableTask tx_task;
 
     // TX: high-priority command queue
     QueueHandle_t cmd_queue;
@@ -57,25 +58,28 @@ struct UartComm::Impl {
     // RX: delivery queue for frames without a registered callback
     QueueHandle_t rx_queue;
 
-    // RX: per-MSG_TYPE callback table
+    // RX: per-MSG_TYPE callback table.
+    // callback_mutex is recursive. The RX task holds it while a callback runs,
+    // so unregistering waits for an in-flight invocation, and a callback may
+    // still register/unregister callbacks itself.
     std::array<RxCallback, 256> callbacks{};
     SemaphoreHandle_t callback_mutex;
+    uint32_t active_registrations; // guarded by callback_mutex
 
     // Parser
     detail::Parser* parser;
 
-    bool valid;
+    std::atomic<bool> valid;
 };
 
 // ── Task entry points ────────────────────────────────────────────────────
 
-void UartComm::rxTaskEntry(void* arg)
+void UartComm::rxTaskBody(Impl* impl)
 {
-    auto* impl = static_cast<UartComm::Impl*>(arg);
     uart_event_t event = {};
     RxFrame frame = {};
 
-    while (!impl->stop_flag.load(std::memory_order_relaxed)) { // NOSONAR: relaxed atomic is sufficient for a stop flag coordinated by RTOS task lifecycle.
+    while (!impl->rx_task.stopRequested()) {
         if (xQueueReceive(impl->uart_event_queue, &event, pdMS_TO_TICKS(100)) != pdTRUE) {
             continue;
         }
@@ -84,35 +88,36 @@ void UartComm::rxTaskEntry(void* arg)
             continue;
         }
 
-        // Frame valid — check for registered callback
-        xSemaphoreTake(impl->callback_mutex, portMAX_DELAY);
+        // Invoke the callback with callback_mutex held so that an unregister
+        // (CallbackRegistration::reset) waits until it has returned. Calling a
+        // local copy keeps it valid even if the callback unregisters itself.
+        xSemaphoreTakeRecursive(impl->callback_mutex, portMAX_DELAY);
         RxCallback cb = impl->callbacks[frame.msg_type];
-        xSemaphoreGive(impl->callback_mutex);
-
-        if (cb) {
+        const bool handled = static_cast<bool>(cb);
+        if (handled) {
             cb(frame);
-        } else {
-            // No callback — push to RX delivery queue (non-blocking)
+        }
+        xSemaphoreGiveRecursive(impl->callback_mutex);
+
+        if (!handled) {
+            // No callback: push to RX delivery queue (non-blocking)
             if (xQueueSend(impl->rx_queue, &frame, 0) != pdTRUE) {
                 ESP_LOGW(TAG, "RX queue full, dropping frame msg_type=0x%02X", frame.msg_type);
             }
         }
     }
-
-    vTaskDelete(nullptr);
 }
 
-void UartComm::txTaskEntry(void* arg)
+void UartComm::txTaskBody(Impl* impl)
 {
-    auto* impl = static_cast<UartComm::Impl*>(arg);
     TxItem item = {};
 
     // Local buffer for encoding stream frames
     std::array<uint8_t, detail::kMaxFrameSize> stream_buf{};
     std::array<uint8_t, CONFIG_UART_COMM_MAX_PAYLOAD> payload_copy{};
 
-    while (!impl->stop_flag.load(std::memory_order_relaxed)) { // NOSONAR: relaxed atomic is sufficient for this cooperative stop condition.
-        // Block until notified that there's work to do
+    while (!impl->tx_task.stopRequested()) {
+        // Block until notified that there's work to do (or a stop request)
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
 
         // Phase 1: Drain ALL pending commands (high priority)
@@ -141,8 +146,6 @@ void UartComm::txTaskEntry(void* arg)
             }
         }
     }
-
-    vTaskDelete(nullptr);
 }
 
 // ── Constructor ─────────────────────────────────────────────────────────
@@ -151,15 +154,9 @@ UartComm::UartComm(const UartCommConfig& config)
     : m_impl(new Impl{}) // NOSONAR: explicit ownership is paired with staged teardown ordering for RTOS/driver resources.
 {
     m_impl->port = static_cast<uart_port_t>(config.port_num);
-    m_impl->rx_task = nullptr;
-    m_impl->tx_task = nullptr;
-    m_impl->stop_flag.store(false, std::memory_order_relaxed); // NOSONAR: relaxed is sufficient for one-bit stop signaling.
     m_impl->parser = nullptr;
+    m_impl->active_registrations = 0;
     m_impl->valid = false;
-
-    for (auto& cb : m_impl->callbacks) {
-        cb = nullptr;
-    }
 
     // Configure UART parameters
     uart_config_t uart_cfg = {};
@@ -250,7 +247,7 @@ UartComm::UartComm(const UartCommConfig& config)
         return;
     }
 
-    m_impl->callback_mutex = xSemaphoreCreateMutex();
+    m_impl->callback_mutex = xSemaphoreCreateRecursiveMutex();
     if (m_impl->callback_mutex == nullptr) {
         ESP_LOGE(TAG, "Failed to create callback mutex");
         vSemaphoreDelete(m_impl->stream_mutex);
@@ -264,12 +261,12 @@ UartComm::UartComm(const UartCommConfig& config)
     m_impl->parser = new detail::Parser(m_impl->port, detail::kMaxPayload); // NOSONAR: parser lifetime is explicitly coordinated with task shutdown.
 
     // Create RX task
-    BaseType_t ok = xTaskCreate(rxTaskEntry, "uart_rx",
-                                CONFIG_UART_COMM_RX_TASK_STACK,
-                                m_impl,
-                                CONFIG_UART_COMM_RX_TASK_PRIO,
-                                &m_impl->rx_task);
-    if (ok != pdPASS) {
+    Impl* impl = m_impl;
+    esp_err_t task_ret = m_impl->rx_task.start("uart_rx",
+                                               CONFIG_UART_COMM_RX_TASK_STACK,
+                                               CONFIG_UART_COMM_RX_TASK_PRIO,
+                                               [impl] { rxTaskBody(impl); });
+    if (task_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create RX task");
         delete m_impl->parser; // NOSONAR: explicit destruction keeps teardown deterministic after task creation failure.
         m_impl->parser = nullptr;
@@ -282,16 +279,13 @@ UartComm::UartComm(const UartCommConfig& config)
     }
 
     // Create TX task
-    ok = xTaskCreate(txTaskEntry, "uart_tx",
-                     CONFIG_UART_COMM_TX_TASK_STACK,
-                     m_impl,
-                     CONFIG_UART_COMM_TX_TASK_PRIO,
-                     &m_impl->tx_task);
-    if (ok != pdPASS) {
+    task_ret = m_impl->tx_task.start("uart_tx",
+                                     CONFIG_UART_COMM_TX_TASK_STACK,
+                                     CONFIG_UART_COMM_TX_TASK_PRIO,
+                                     [impl] { txTaskBody(impl); });
+    if (task_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create TX task");
-        m_impl->stop_flag.store(true, std::memory_order_relaxed); // NOSONAR: relaxed is sufficient for stop notification.
-        // RX task will self-delete on next loop iteration
-        vTaskDelay(pdMS_TO_TICKS(150));
+        m_impl->rx_task.stop();
         delete m_impl->parser; // NOSONAR: explicit parser cleanup on partial construction failure.
         m_impl->parser = nullptr;
         vSemaphoreDelete(m_impl->callback_mutex);
@@ -312,16 +306,23 @@ UartComm::UartComm(const UartCommConfig& config)
 UartComm::~UartComm()
 {
     if (m_impl) {
-        if (m_impl->valid) {
-            m_impl->stop_flag.store(true, std::memory_order_relaxed); // NOSONAR: relaxed stop flag with RTOS task join delay is intentional.
-
-            // Wake TX task so it can exit
-            if (m_impl->tx_task) {
-                xTaskNotifyGive(m_impl->tx_task);
+        if (m_impl->valid.exchange(false)) {
+            xSemaphoreTakeRecursive(m_impl->callback_mutex, portMAX_DELAY);
+            const uint32_t active = m_impl->active_registrations;
+            xSemaphoreGiveRecursive(m_impl->callback_mutex);
+            if (active != 0U) {
+                // A CallbackRegistration still points at this instance and
+                // would touch freed memory when it is reset. Fail loudly.
+                ESP_LOGE(TAG, "Destroyed with %lu active callback registration(s); "
+                              "reset them before destroying UartComm",
+                         static_cast<unsigned long>(active));
+                abort();
             }
 
-            // Wait for tasks to finish (they call vTaskDelete(nullptr))
-            vTaskDelay(pdMS_TO_TICKS(200));
+            // Join both tasks: after this nothing touches the driver,
+            // queues, mutexes or parser.
+            m_impl->rx_task.stop();
+            m_impl->tx_task.stop();
 
             uart_driver_delete(m_impl->port);
 
@@ -386,7 +387,7 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_
         return ESP_ERR_NO_MEM;
     }
 
-    xTaskNotifyGive(m_impl->tx_task);
+    m_impl->tx_task.notify();
     return ESP_OK;
 }
 
@@ -412,22 +413,76 @@ void UartComm::sendData(uint8_t channel, const uint8_t* payload, uint8_t len)
     m_impl->stream_slots[index].dirty = true;
     xSemaphoreGive(m_impl->stream_mutex);
 
-    xTaskNotifyGive(m_impl->tx_task);
+    m_impl->tx_task.notify();
 }
 
 // ── registerCallback ────────────────────────────────────────────────────
 
-esp_err_t UartComm::registerCallback(uint8_t msg_type, RxCallback callback)
+esp_err_t UartComm::registerCallback(uint8_t msg_type, RxCallback callback, CallbackRegistration& registration)
 {
     if (!m_impl || !m_impl->valid) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!callback) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    xSemaphoreTake(m_impl->callback_mutex, portMAX_DELAY);
+    registration.reset();
+
+    xSemaphoreTakeRecursive(m_impl->callback_mutex, portMAX_DELAY);
+    if (m_impl->callbacks[msg_type]) {
+        xSemaphoreGiveRecursive(m_impl->callback_mutex);
+        ESP_LOGE(TAG, "Callback already registered for msg_type=0x%02X", msg_type);
+        return ESP_ERR_INVALID_STATE;
+    }
     m_impl->callbacks[msg_type] = std::move(callback);
-    xSemaphoreGive(m_impl->callback_mutex);
+    ++m_impl->active_registrations;
+    xSemaphoreGiveRecursive(m_impl->callback_mutex);
 
+    registration.m_impl = m_impl;
+    registration.m_msg_type = msg_type;
     return ESP_OK;
+}
+
+void UartComm::unregisterCallback(Impl* impl, uint8_t msg_type)
+{
+    // The RX task holds callback_mutex while a callback runs, so taking it
+    // here waits until any in-flight invocation has returned.
+    xSemaphoreTakeRecursive(impl->callback_mutex, portMAX_DELAY);
+    impl->callbacks[msg_type] = nullptr;
+    --impl->active_registrations;
+    xSemaphoreGiveRecursive(impl->callback_mutex);
+}
+
+// ── CallbackRegistration ────────────────────────────────────────────────
+
+CallbackRegistration::~CallbackRegistration()
+{
+    reset();
+}
+
+CallbackRegistration::CallbackRegistration(CallbackRegistration&& other) noexcept
+    : m_impl(std::exchange(other.m_impl, nullptr)),
+      m_msg_type(other.m_msg_type)
+{
+}
+
+CallbackRegistration& CallbackRegistration::operator=(CallbackRegistration&& other) noexcept
+{
+    if (this != &other) {
+        reset();
+        m_impl = std::exchange(other.m_impl, nullptr);
+        m_msg_type = other.m_msg_type;
+    }
+    return *this;
+}
+
+void CallbackRegistration::reset()
+{
+    if (m_impl != nullptr) {
+        UartComm::unregisterCallback(m_impl, m_msg_type);
+        m_impl = nullptr;
+    }
 }
 
 // ── receive ─────────────────────────────────────────────────────────────

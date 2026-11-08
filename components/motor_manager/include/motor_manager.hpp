@@ -2,6 +2,7 @@
 
 #include "motor_manager_types.hpp"
 #include "uart_comm.hpp"
+#include "stoppable_task.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -50,27 +51,27 @@ private:
         std::unique_ptr<motor_controller::MotorController> motor;
     };
 
-    static void updateTaskEntry(void *arg);
-    static void configTaskEntry(void *arg);
+    void updateTaskLoop();
+    void configTaskLoop();
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const;
     ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
     ResultCode sendConfigureResponse(ConfigureSubcommand subcommand, uint8_t motor_id, ResultCode code);
-    void stopUpdateTask();
+    void stopTasks();
 
     uart_comm::UartComm &m_uart;
     ManagerConfig m_config;
     mutable SemaphoreHandle_t m_mutex;
     std::vector<MotorSlot> m_motors;
     std::atomic<bool> m_valid;
-    std::atomic<bool> m_stop_update_task;
-    std::atomic<bool> m_stop_config_task;
     bool m_use_mock_feedback;
     bool m_telemetry_enabled;
     uint8_t m_telemetry_field_mask;
-    TaskHandle_t m_update_task;
-    TaskHandle_t m_config_task;
     QueueHandle_t m_config_queue;
+    rtos_util::StoppableTask m_update_task;
+    rtos_util::StoppableTask m_config_task;
+    uart_comm::CallbackRegistration m_configure_cb;
+    uart_comm::CallbackRegistration m_setpoint_cb;
 };
 
 } // namespace motor_manager
