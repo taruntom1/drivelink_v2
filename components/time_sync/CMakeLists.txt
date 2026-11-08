@@ -3,4 +3,5 @@ idf_component_register(
          "time_sync_protocol.cpp"
     INCLUDE_DIRS "include" "."
     REQUIRES uart_comm esp_timer
+    PRIV_REQUIRES rtos_util
 )

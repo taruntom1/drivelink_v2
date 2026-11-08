@@ -102,11 +102,13 @@ extern "C" void app_main(void)
 
     // ── Register callback for the stream test channel (0x80) ─────────────────
     // Frames arriving on 0x80 are NOT pushed to the RX queue; they go here.
+    // stream_cb must be destroyed before comm; declaring it after comm ensures that.
+    uart_comm::CallbackRegistration stream_cb;
     comm.registerCallback(STREAM_TEST, [](const RxFrame& f) {
         g_stream_len = f.len;
         std::memcpy(g_stream_payload, f.payload, f.len);
         g_stream_received = true;
-    });
+    }, stream_cb);
 
     // ── Main dispatch loop ────────────────────────────────────────────────────
     RxFrame frame{};

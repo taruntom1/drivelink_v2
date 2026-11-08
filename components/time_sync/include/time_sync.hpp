@@ -43,7 +43,6 @@ private:
     struct Impl;
     Impl* m_impl;
 
-    static void periodicTaskEntry(void* arg);
     void periodicTask();
     void onResponseFrame(const uart_comm::RxFrame& frame);
     esp_err_t performSync(TickType_t timeout);

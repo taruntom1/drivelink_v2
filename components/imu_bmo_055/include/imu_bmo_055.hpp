@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "imu_bmo_055_types.hpp"
 #include "uart_comm.hpp"
+#include "stoppable_task.hpp"
 
 #include <atomic>
 #include <memory>
@@ -46,8 +47,8 @@ private:
 		uint8_t operation_mode = 0x0C;
 	};
 
-	static void streamTaskEntry(void *arg);
-	static void configTaskEntry(void *arg);
+	void streamTaskLoop();
+	void configTaskLoop();
 
 	ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len,
 										 ConfigureSubcommand &subcommand,
@@ -63,16 +64,15 @@ private:
 	ManagerConfig m_config;
 	mutable SemaphoreHandle_t m_mutex;
 	QueueHandle_t m_config_queue;
-	TaskHandle_t m_stream_task;
-	TaskHandle_t m_config_task;
+	rtos_util::StoppableTask m_stream_task;
+	rtos_util::StoppableTask m_config_task;
 	std::atomic<bool> m_valid;
-	std::atomic<bool> m_stop_stream_task;
-	std::atomic<bool> m_stop_config_task;
 	StreamState m_stream_state;
 	CalibrationBlob m_cached_calibration;
 	bool m_has_cached_calibration;
 	bool m_use_mock_data;
 	std::unique_ptr<Bno055Device> m_device;
+	uart_comm::CallbackRegistration m_configure_cb;
 };
 
 } // namespace imu_bmo_055

@@ -9,16 +9,18 @@ namespace esp_motor {
 namespace detail {
 
 McpwmPool::GroupState McpwmPool::s_groups[kNumGroups] = {};
-SemaphoreHandle_t McpwmPool::s_mutex = nullptr;
-bool McpwmPool::s_initialized = false;
 
-void McpwmPool::ensureInitialized()
+SemaphoreHandle_t McpwmPool::poolMutex()
 {
-    if (!s_initialized) {
-        s_mutex = xSemaphoreCreateMutex();
-        assert(s_mutex != nullptr);
-        s_initialized = true;
-    }
+    // Function-local static: C++ guarantees one-time, thread-safe
+    // initialisation (ESP-IDF implements the guard with FreeRTOS), so two
+    // tasks creating their first motor at once can't create two mutexes.
+    static const SemaphoreHandle_t mutex = [] {
+        SemaphoreHandle_t m = xSemaphoreCreateMutex();
+        assert(m != nullptr);
+        return m;
+    }();
+    return mutex;
 }
 
 bool McpwmPool::findFreeSlot(int &group_id, int &oper_index, int &slot)
@@ -114,12 +116,12 @@ esp_err_t McpwmPool::ensureOperator(int group_id, int oper_index)
 
 esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
 {
-    ensureInitialized();
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const SemaphoreHandle_t mtx = poolMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
 
     int gid, oidx, slot;
     if (!findFreeSlot(gid, oidx, slot)) {
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         ESP_LOGE(TAG, "No free MCPWM slots (max %d motors)",
                  kNumGroups * kOpersPerGroup * kSlotsPerOper);
         return ESP_ERR_NOT_FOUND;
@@ -127,13 +129,13 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
 
     esp_err_t ret = ensureTimer(gid);
     if (ret != ESP_OK) {
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
     ret = ensureOperator(gid, oidx);
     if (ret != ESP_OK) {
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -145,7 +147,7 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
     ret = mcpwm_new_comparator(s_groups[gid].opers[oidx].handle, &cmp_cfg, &cmpr);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create comparator: %s", esp_err_to_name(ret));
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -160,7 +162,7 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create generator: %s", esp_err_to_name(ret));
         mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -173,7 +175,7 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
         ESP_LOGE(TAG, "Failed to set timer action: %s", esp_err_to_name(ret));
         mcpwm_del_generator(gen);
         mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -185,7 +187,7 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
         ESP_LOGE(TAG, "Failed to set compare action: %s", esp_err_to_name(ret));
         mcpwm_del_generator(gen);
         mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(s_mutex);
+        xSemaphoreGive(mtx);
         return ret;
     }
 
@@ -206,14 +208,14 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
     ESP_LOGI(TAG, "Allocated motor: group=%d oper=%d slot=%d gpio=%d",
              gid, oidx, slot, pwm_gpio);
 
-    xSemaphoreGive(s_mutex);
+    xSemaphoreGive(mtx);
     return ESP_OK;
 }
 
 esp_err_t McpwmPool::deallocate(const McpwmChannel &ch)
 {
-    ensureInitialized();
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const SemaphoreHandle_t mtx = poolMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
 
     // Force generator output low before deleting
     mcpwm_generator_set_force_level(ch.generator, 0, true);
@@ -245,7 +247,7 @@ esp_err_t McpwmPool::deallocate(const McpwmChannel &ch)
     ESP_LOGI(TAG, "Deallocated motor: group=%d oper=%d slot=%d",
              ch.group_id, ch.oper_index, ch.slot);
 
-    xSemaphoreGive(s_mutex);
+    xSemaphoreGive(mtx);
     return ESP_OK;
 }
 

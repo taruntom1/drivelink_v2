@@ -56,10 +56,8 @@ private:
     };
 
     static GroupState s_groups[kNumGroups];
-    static SemaphoreHandle_t s_mutex;
-    static bool s_initialized;
 
-    static void ensureInitialized();
+    static SemaphoreHandle_t poolMutex();
     static esp_err_t ensureTimer(int group_id);
     static esp_err_t ensureOperator(int group_id, int oper_index);
     static bool findFreeSlot(int& group_id, int& oper_index, int& slot);

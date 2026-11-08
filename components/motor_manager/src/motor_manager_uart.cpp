@@ -82,6 +82,11 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
         return;
     }
 
+    // With the update task running, setpoints go into the mailbox and are
+    // applied on its next tick, so this RX-task callback never waits on
+    // m_mutex. Without it, apply them directly as before.
+    const bool use_mailbox = m_update_task.isRunning();
+
     size_t offset = 2;
     for (uint8_t i = 0; i < count; ++i) {
         const uint8_t motor_id = frame.payload[offset++];
@@ -92,7 +97,8 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
             return;
         }
         const auto kind = static_cast<SetpointKind>(kind_raw);
-        const ResultCode rc = setSetpoint(motor_id, kind, value);
+        const ResultCode rc = use_mailbox ? queueSetpoint(motor_id, kind, value)
+                                          : setSetpoint(motor_id, kind, value);
         if (rc != ResultCode::Ok) {
             ESP_LOGW(TAG, "Setpoint rejected motor=%u kind=%u rc=%s",
                      motor_id, kind_raw, resultCodeToString(rc));
