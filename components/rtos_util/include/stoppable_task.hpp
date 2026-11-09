@@ -42,10 +42,12 @@ public:
     StoppableTask& operator=(StoppableTask&&) = delete;
 
     /// Create the task and run `body` on it.
+    /// @param core_id  Core to pin the task to, or tskNO_AFFINITY (default).
     /// @return ESP_OK, ESP_ERR_INVALID_STATE if already running,
-    ///         ESP_ERR_INVALID_ARG if `body` is empty,
+    ///         ESP_ERR_INVALID_ARG if `body` is empty or `core_id` is invalid,
     ///         ESP_ERR_NO_MEM if the task could not be created.
-    esp_err_t start(const char* name, uint32_t stack_size, UBaseType_t priority, Body body);
+    esp_err_t start(const char* name, uint32_t stack_size, UBaseType_t priority, Body body,
+                    BaseType_t core_id = tskNO_AFFINITY);
 
     /// Ask the body to return and wake it if it is sleeping. Does not wait.
     /// Safe to call when not running.
