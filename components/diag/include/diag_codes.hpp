@@ -77,9 +77,84 @@ inline constexpr ::diag::Code kEventTxDropped{9, ::diag::Source::Diag, 0x0002, :
 inline constexpr ::diag::Code kQueryDropped{10, ::diag::Source::Diag, 0x0003, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
 } // namespace diag
 
+namespace motor_manager {
+/// MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+/// arg0: stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task. arg1: unused.
+inline constexpr ::diag::Code kInitFailed{11, ::diag::Source::MotorManager, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR.
+/// arg0: motor id. arg1: hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT).
+inline constexpr ::diag::Code kMotorCreateFailed{12, ::diag::Source::MotorManager, 0x0002, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// SET_TIMING could not restart the control timer at the new period. The old period stays in effect.
+/// arg0: requested control period (us). arg1: unused.
+inline constexpr ::diag::Code kTimerRestartFailed{13, ::diag::Source::MotorManager, 0x0003, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// The control timer stopped waking the update task, so the control loop is not running. Cleared when it fires again.
+/// arg0: wait without a tick (ms). arg1: unused.
+inline constexpr ::diag::Code kControlTimerStalled{14, ::diag::Source::MotorManager, 0x0004, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
+/// Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex).
+inline constexpr ::diag::Code kControlOverrun{15, ::diag::Source::MotorManager, 0x0005, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A setpoint stream frame was dropped because its header or length was invalid.
+inline constexpr ::diag::Code kSetpointBadFrame{16, ::diag::Source::MotorManager, 0x0006, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox).
+inline constexpr ::diag::Code kSetpointRejected{17, ::diag::Source::MotorManager, 0x0007, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A configure command was dropped without a response because the config queue was full.
+inline constexpr ::diag::Code kConfigQueueFull{18, ::diag::Source::MotorManager, 0x0008, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.
+inline constexpr ::diag::Code kResponseTxDropped{19, ::diag::Source::MotorManager, 0x0009, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+} // namespace motor_manager
+
+namespace time_sync {
+/// TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+/// arg0: stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback. arg1: unused.
+inline constexpr ::diag::Code kInitFailed{20, ::diag::Source::TimeSync, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync.
+/// arg0: stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock. arg1: host status byte (stage 3), else 0.
+inline constexpr ::diag::Code kSyncFailed{21, ::diag::Source::TimeSync, 0x0002, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
+/// A time sync response was dropped because it could not be decoded (bad length or version).
+inline constexpr ::diag::Code kBadResponseFrame{22, ::diag::Source::TimeSync, 0x0003, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+} // namespace time_sync
+
+namespace imu {
+/// The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+/// arg0: stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer. arg1: unused.
+inline constexpr ::diag::Code kInitFailed{23, ::diag::Source::Imu, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
+/// arg0: I2C port. arg1: BNO055 I2C address.
+inline constexpr ::diag::Code kFallbackToMock{24, ::diag::Source::Imu, 0x0002, ::diag::Severity::Warning, ::diag::CodeKind::Record, false};
+/// SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.
+/// arg0: requested operation mode. arg1: unused.
+inline constexpr ::diag::Code kModeSwitchFailed{25, ::diag::Source::Imu, 0x0003, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.
+/// arg0: cause: 1 manager mutex busy, 2 sampling timer did not restart. arg1: unused.
+inline constexpr ::diag::Code kStreamReenableFailed{26, ::diag::Source::Imu, 0x0004, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.
+/// arg0: unused. arg1: unused.
+inline constexpr ::diag::Code kCalibrationReadFailed{27, ::diag::Source::Imu, 0x0005, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.
+/// arg0: unused. arg1: unused.
+inline constexpr ::diag::Code kCalibrationApplyFailed{28, ::diag::Source::Imu, 0x0006, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
+/// arg0: requested sample period (us). arg1: unused.
+inline constexpr ::diag::Code kTimerRestartFailed{29, ::diag::Source::Imu, 0x0007, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
+/// The stream is enabled, but the sampling timer stopped waking the stream task. Cleared when it fires again or the stream is disabled.
+/// arg0: wait without a tick (ms). arg1: unused.
+inline constexpr ::diag::Code kSamplerStalled{30, ::diag::Source::Imu, 0x0008, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
+/// Sample periods that were missed because the stream task ran late.
+inline constexpr ::diag::Code kSampleLate{31, ::diag::Source::Imu, 0x0009, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// Samples skipped because a configure operation held the BNO055.
+inline constexpr ::diag::Code kDeviceBusy{32, ::diag::Source::Imu, 0x000A, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// Samples that failed to read from the BNO055.
+inline constexpr ::diag::Code kReadError{33, ::diag::Source::Imu, 0x000B, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// Samples that could not be encoded into a stream packet.
+inline constexpr ::diag::Code kEncodeError{34, ::diag::Source::Imu, 0x000C, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A configure command was dropped without a response because the config queue was full.
+inline constexpr ::diag::Code kConfigQueueFull{35, ::diag::Source::Imu, 0x000D, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+/// A configure response could not be queued for UART transmission and was dropped.
+inline constexpr ::diag::Code kResponseTxDropped{36, ::diag::Source::Imu, 0x000E, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
+} // namespace imu
+
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 11;
+inline constexpr size_t kSlotCount = 37;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -94,6 +169,32 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::diag::kRecordDropped,
     codes::diag::kEventTxDropped,
     codes::diag::kQueryDropped,
+    codes::motor_manager::kInitFailed,
+    codes::motor_manager::kMotorCreateFailed,
+    codes::motor_manager::kTimerRestartFailed,
+    codes::motor_manager::kControlTimerStalled,
+    codes::motor_manager::kControlOverrun,
+    codes::motor_manager::kSetpointBadFrame,
+    codes::motor_manager::kSetpointRejected,
+    codes::motor_manager::kConfigQueueFull,
+    codes::motor_manager::kResponseTxDropped,
+    codes::time_sync::kInitFailed,
+    codes::time_sync::kSyncFailed,
+    codes::time_sync::kBadResponseFrame,
+    codes::imu::kInitFailed,
+    codes::imu::kFallbackToMock,
+    codes::imu::kModeSwitchFailed,
+    codes::imu::kStreamReenableFailed,
+    codes::imu::kCalibrationReadFailed,
+    codes::imu::kCalibrationApplyFailed,
+    codes::imu::kTimerRestartFailed,
+    codes::imu::kSamplerStalled,
+    codes::imu::kSampleLate,
+    codes::imu::kDeviceBusy,
+    codes::imu::kReadError,
+    codes::imu::kEncodeError,
+    codes::imu::kConfigQueueFull,
+    codes::imu::kResponseTxDropped,
 }};
 
 } // namespace diag

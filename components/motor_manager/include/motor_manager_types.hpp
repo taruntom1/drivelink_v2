@@ -64,8 +64,9 @@ struct ManagerConfig {
 };
 
 /// Setpoint stream problems, counted instead of logged per entry (the stream
-/// is handled on the UART RX task and applied on the control tick). The
-/// config task logs a summary of new counts at most once per second.
+/// is handled on the UART RX task and applied on the control tick). diag
+/// sends the same counts to the host (motor_manager.SetpointBadFrame and
+/// motor_manager.SetpointRejected).
 struct SetpointStreamCounters {
     uint32_t bad_frames = 0;       ///< wrong version or length; whole frame dropped
     uint32_t rejected_entries = 0; ///< entries rejected (unknown motor id, bad kind, mailbox full, ...)

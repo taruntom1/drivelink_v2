@@ -1,5 +1,6 @@
 #include "motor_manager.hpp"
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "motor_protocol.hpp"
 
@@ -31,10 +32,11 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     }
 
     // This runs on the UART RX task (a real-time path): problems are counted,
-    // not logged. The config task logs a rate-limited summary.
+    // not logged. diag sends the counts to the host.
     uint8_t count = 0;
     if (!protocol::decodeSetpointStreamHeader(frame.payload, frame.len, count)) {
         m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
+        DIAG_COUNT(diag::codes::motor_manager::kSetpointBadFrame);
         return;
     }
 
@@ -50,6 +52,7 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
                                           : setSetpoint(entry.motor_id, kind, entry.value);
         if (rc != ResultCode::Ok) {
             m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
+            DIAG_COUNT(diag::codes::motor_manager::kSetpointRejected);
         }
     }
 }
@@ -65,7 +68,8 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
         return;
     }
     if (xQueueSend(m_config_queue, &frame, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "Configure queue full; dropping command");
+        // RX task: count, don't log.
+        DIAG_COUNT(diag::codes::motor_manager::kConfigQueueFull);
     }
 }
 
@@ -163,9 +167,10 @@ ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, 
     const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload,
                                              static_cast<uint8_t>(payload_len));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send configure response (msg=0x%02X): %s",
-                 m_config.configure_response_msg_type, esp_err_to_name(ret));
-        return ResultCode::InternalError;
+        // The command's own result stands: it may have been applied.
+        DIAG_COUNT(diag::codes::motor_manager::kResponseTxDropped);
+        ESP_LOGW(TAG, "Failed to send configure response (msg=0x%02X result=%s): %s",
+                 m_config.configure_response_msg_type, resultCodeToString(code), esp_err_to_name(ret));
     }
     return code;
 }

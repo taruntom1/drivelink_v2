@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "driver/gpio.h"
+#include "esp_err.h"
 
 namespace rotary_encoder_hal {
 
@@ -79,6 +80,11 @@ public:
 
     /// Returns true if the PCNT hardware was allocated and configured successfully.
     bool isValid() const;
+
+    /// Why construction failed: ESP_OK when valid, ESP_ERR_INVALID_ARG for
+    /// bad pins, ESP_ERR_NOT_FOUND when the PCNT pool is full, otherwise the
+    /// driver error. ESP_ERR_INVALID_STATE for a moved-from object.
+    esp_err_t initError() const;
 
 private:
     detail::EncoderImpl *m_impl;

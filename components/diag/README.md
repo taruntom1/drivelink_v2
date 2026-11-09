@@ -47,7 +47,7 @@ DIAG_CLEAR(code);                                           // a `clears: true` 
 | `DIAG_CLEAR` | Task only | Clears the active bit, and queues a `Cleared` event if it was set. |
 
 - The macros check at compile time that the code has the right kind and severity, so the code must be a constant.
-- Don't call `DIAG_ERROR` / `DIAG_WARN` / `DIAG_CLEAR` on a real-time path (see "Real-time paths" in the root `CLAUDE.md`): they read the clock, post to a queue and may log. Count on the real-time path instead.
+- Don't call `DIAG_ERROR` / `DIAG_WARN` / `DIAG_CLEAR` on a real-time path (see "Real-time paths" in the root `CLAUDE.md`): they read the clock, post to a queue and may log. Count on the real-time path instead. The one exception is a task-level loop reporting a condition once when it starts and clearing it once when it ends, outside any lock (the motor update task's `ControlTimerStalled`): that is rate-limited by construction. Never in ISRs, timer callbacks, critical sections or under `m_mutex`.
 
 Other functions:
 - `diag::init()`: creates the record queue in static storage, so it can't fail. Call it first in `app_main`. It is idempotent, and `Reporter` calls it too. Records reported before `init()` are counted as `RecordDropped`.
@@ -174,5 +174,31 @@ Header, 5 bytes: `version u8 (=0x01) | seq u16 | kind u8 | flags u8`
 | `diag` (0x03) | 0x0001 | RecordDropped | warning | counter | no | - | - | A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet). |
 | `diag` (0x03) | 0x0002 | EventTxDropped | warning | counter | no | - | - | A diag query response could not be queued for UART transmission and was dropped. |
 | `diag` (0x03) | 0x0003 | QueryDropped | warning | counter | no | - | - | A diag query was dropped because the reporter's query queue was full. |
+| `motor_manager` (0x10) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task | unused | MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
+| `motor_manager` (0x10) | 0x0002 | MotorCreateFailed | error | record | no | motor id | hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT) | CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR. |
+| `motor_manager` (0x10) | 0x0003 | TimerRestartFailed | error | record | no | requested control period (us) | unused | SET_TIMING could not restart the control timer at the new period. The old period stays in effect. |
+| `motor_manager` (0x10) | 0x0004 | ControlTimerStalled | warning | record | yes | wait without a tick (ms) | unused | The control timer stopped waking the update task, so the control loop is not running. Cleared when it fires again. |
+| `motor_manager` (0x10) | 0x0005 | ControlOverrun | warning | counter | no | - | - | Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex). |
+| `motor_manager` (0x10) | 0x0006 | SetpointBadFrame | warning | counter | no | - | - | A setpoint stream frame was dropped because its header or length was invalid. |
+| `motor_manager` (0x10) | 0x0007 | SetpointRejected | warning | counter | no | - | - | A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox). |
+| `motor_manager` (0x10) | 0x0008 | ConfigQueueFull | warning | counter | no | - | - | A configure command was dropped without a response because the config queue was full. |
+| `motor_manager` (0x10) | 0x0009 | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. The command itself was still applied. |
+| `time_sync` (0x11) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback | unused | TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
+| `time_sync` (0x11) | 0x0002 | SyncFailed | warning | record | yes | stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock | host status byte (stage 3), else 0 | A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync. |
+| `time_sync` (0x11) | 0x0003 | BadResponseFrame | warning | counter | no | - | - | A time sync response was dropped because it could not be decoded (bad length or version). |
+| `imu` (0x12) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer | unused | The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
+| `imu` (0x12) | 0x0002 | FallbackToMock | warning | record | no | I2C port | BNO055 I2C address | The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error. |
+| `imu` (0x12) | 0x0003 | ModeSwitchFailed | error | record | no | requested operation mode | unused | SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0004 | StreamReenableFailed | error | record | no | cause: 1 manager mutex busy, 2 sampling timer did not restart | unused | The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled. |
+| `imu` (0x12) | 0x0005 | CalibrationReadFailed | error | record | no | unused | unused | ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0006 | CalibrationApplyFailed | error | record | no | unused | unused | ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0007 | TimerRestartFailed | error | record | no | requested sample period (us) | unused | SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect. |
+| `imu` (0x12) | 0x0008 | SamplerStalled | warning | record | yes | wait without a tick (ms) | unused | The stream is enabled, but the sampling timer stopped waking the stream task. Cleared when it fires again or the stream is disabled. |
+| `imu` (0x12) | 0x0009 | SampleLate | warning | counter | no | - | - | Sample periods that were missed because the stream task ran late. |
+| `imu` (0x12) | 0x000A | DeviceBusy | warning | counter | no | - | - | Samples skipped because a configure operation held the BNO055. |
+| `imu` (0x12) | 0x000B | ReadError | warning | counter | no | - | - | Samples that failed to read from the BNO055. |
+| `imu` (0x12) | 0x000C | EncodeError | warning | counter | no | - | - | Samples that could not be encoded into a stream packet. |
+| `imu` (0x12) | 0x000D | ConfigQueueFull | warning | counter | no | - | - | A configure command was dropped without a response because the config queue was full. |
+| `imu` (0x12) | 0x000E | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. |
 
 <!-- diag-codes:end -->

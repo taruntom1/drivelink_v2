@@ -39,7 +39,6 @@ constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 
 constexpr uint8_t kImuConfigureMsgType = CONFIG_IMU_BMO_055_CONFIGURE_MSG_TYPE;
 constexpr uint8_t kImuConfigureResponseMsgType = CONFIG_IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE;
-constexpr uint8_t kImuEventMsgType = CONFIG_IMU_BMO_055_EVENT_MSG_TYPE;
 constexpr uint8_t kImuStreamChannel = CONFIG_IMU_BMO_055_STREAM_CHANNEL;
 
 enum class ResultCode : uint8_t {

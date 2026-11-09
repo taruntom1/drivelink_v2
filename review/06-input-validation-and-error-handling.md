@@ -70,6 +70,8 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 ## E6. Low: error codes are lossy
 
+**Fixed.** `createMotor` answers `CAPACITY_REACHED` when the MCPWM or PCNT pool is empty (the HALs keep their `initError()`, and `MotorController::hardwareFailure()` names the stage), and reports `motor_manager.MotorCreateFailed` with the motor id, the stage and the `esp_err` through diag. `sendConfigureResponse` no longer overwrites the result when TX fails: it counts `motor_manager.ResponseTxDropped` and returns the command's own result. The `detail` byte in configure responses (diag plan, phase 3) is still to come.
+
 - `createMotor` returns `InternalError` for every HAL failure, including running out of PCNT units, which is really `CapacityReached`.
 - `sendConfigureResponse` returns `InternalError` when TX fails, which overwrites the real result `code` that the caller then logs. The motor operation may have succeeded.
 - `Parser` counts an oversized `LEN` as a `crc_error`. **Fixed** by the parser rewrite (P1): it has its own `length_errors` counter.

@@ -14,13 +14,6 @@ menu "IMU BNO055 Configuration"
         help
             UART message type used for IMU configure responses.
 
-    config IMU_BMO_055_EVENT_MSG_TYPE
-        hex "Event message type"
-        default 0xC2
-        range 0xC0 0xFE
-        help
-            UART message type used for asynchronous IMU events.
-
     config IMU_BMO_055_STREAM_CHANNEL
         hex "Telemetry stream channel"
         default 0x82

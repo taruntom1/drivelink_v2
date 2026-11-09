@@ -15,6 +15,7 @@ struct Motor::Impl {
     detail::McpwmChannel channel;
     gpio_num_t dir_gpio;
     float current_speed;
+    esp_err_t init_error;
     bool valid;
 };
 
@@ -24,6 +25,7 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
     m_impl->dir_gpio = dir_gpio;
     m_impl->current_speed = 0.0f;
     m_impl->valid = false;
+    m_impl->init_error = ESP_ERR_INVALID_ARG;
 
     if (!GPIO_IS_VALID_OUTPUT_GPIO(pwm_gpio) || !GPIO_IS_VALID_OUTPUT_GPIO(dir_gpio) || pwm_gpio == dir_gpio) {
         ESP_LOGE(TAG, "Invalid motor pins: pwm_gpio=%d dir_gpio=%d (must be distinct output-capable GPIOs)",
@@ -43,6 +45,7 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure direction GPIO %d: %s",
                  dir_gpio, esp_err_to_name(ret));
+        m_impl->init_error = ret;
         return;
     }
     gpio_set_level(dir_gpio, 0);
@@ -52,9 +55,11 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate MCPWM channel for GPIO %d: %s",
                  pwm_gpio, esp_err_to_name(ret));
+        m_impl->init_error = ret;
         return;
     }
 
+    m_impl->init_error = ESP_OK;
     m_impl->valid = true;
     ESP_LOGI(TAG, "Motor created: pwm_gpio=%d dir_gpio=%d", pwm_gpio, dir_gpio);
 }
@@ -130,6 +135,11 @@ void Motor::stop()
 bool Motor::isValid() const
 {
     return m_impl && m_impl->valid;
+}
+
+esp_err_t Motor::initError() const
+{
+    return m_impl ? m_impl->init_error : ESP_ERR_INVALID_STATE;
 }
 
 float Motor::getSpeed() const

@@ -105,6 +105,19 @@ struct MotorControllerConfig {
 ///   - stop() is idempotent but should still be coordinated with the update task
 ///     for deterministic command sequencing.
 ///   - update() is not re-entrant; call it from a single task only.
+/// The hardware part that failed to initialise. The values are reported to
+/// the host (diag motor_manager.MotorCreateFailed arg1), so never renumber.
+enum class HardwareStage : uint8_t {
+    None = 0,
+    MotorDriver = 1, ///< DIR GPIO or MCPWM channel (motor_hal::Motor)
+    Encoder = 2,     ///< PCNT unit (rotary_encoder_hal::Encoder)
+};
+
+struct HardwareFailure {
+    HardwareStage stage;
+    esp_err_t error; ///< ESP_ERR_NOT_FOUND: the MCPWM or PCNT pool is full
+};
+
 class MotorController {
 public:
     /// Construct a MotorController.
@@ -243,6 +256,10 @@ public:
 
     /// @return true if both motor and encoder hardware initialised successfully.
     bool isValid() const;
+
+    /// Which hardware failed to initialise, and why. The motor driver is
+    /// checked first. {None, ESP_OK} when valid.
+    HardwareFailure hardwareFailure() const;
 
     /// Stop motor output immediately (idempotent).
     /// Leaves controller mode unchanged.

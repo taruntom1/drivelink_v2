@@ -59,7 +59,6 @@ private:
 
 	/// Set the enabled flag and start/stop the timer. Caller holds m_mutex.
 	ResultCode applyStreamEnabledLocked(bool enabled);
-	void logStreamCountersIfChanged(StreamCounters &last_logged, int64_t &last_log_us);
 
 	ResultCode parseAndDispatchConfigure(ConfigureSubcommand subcommand,
 										 const uint8_t *body, uint8_t len,

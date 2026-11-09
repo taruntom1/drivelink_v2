@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "driver/gpio.h"
+#include "esp_err.h"
 
 namespace motor_hal {
 
@@ -50,6 +51,11 @@ public:
 
     /// Returns true if hardware was allocated successfully.
     bool isValid() const;
+
+    /// Why construction failed: ESP_OK when valid, ESP_ERR_INVALID_ARG for
+    /// bad pins, ESP_ERR_NOT_FOUND when the MCPWM pool is full, otherwise
+    /// the driver error. ESP_ERR_INVALID_STATE for a moved-from object.
+    esp_err_t initError() const;
 
     /// Returns the current speed setting in [-1.0, 1.0].
     float getSpeed() const;

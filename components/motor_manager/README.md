@@ -78,7 +78,7 @@ On each wake the update task:
 3. Applies the setpoints queued from the stream, then calls `MotorController::update(dt)` for every motor. Each controller estimates velocity from the encoder count delta and passes the same `dt` to its PIDs.
 4. Every `N = ceil(telemetry_period_us / control_period_us)` ticks, encodes a telemetry packet. Its timestamp is taken when the motors are sampled, and the packet is sent after the mutex is released.
 
-Late and skipped ticks are counted (`getControlOverrunCount()`) and logged at most once per second. With `MOTOR_MANAGER_LOG_LOOP_STATS` enabled, the interval and run-time statistics are logged every 5 s.
+Late and skipped ticks are counted (`getControlOverrunCount()`, and the diag counter `motor_manager.ControlOverrun`). If the timer does not wake the task for 250 ms, `motor_manager.ControlTimerStalled` is reported once and cleared when the timer fires again. With `MOTOR_MANAGER_LOG_LOOP_STATS` enabled, the interval and run-time statistics are logged every 5 s.
 
 The task is pinned to `update_task.core_id` (default core 1) at `update_task.priority` (default 20, below the esp_timer task's 22).
 
@@ -136,7 +136,7 @@ Code layout: the wire-level enums, field values and sizes, and `MotorConfigPaylo
   - `motor_id` (`uint8_t`)
   - subcommand-specific bytes
 
-Commands are queued (up to `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH`, default 8) and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
+Commands are queued (up to `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH`, default 8) and answered in order. A command that arrives while the queue is full is dropped without a response and counted as `motor_manager.ConfigQueueFull`. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
 
 Every subcommand body has a fixed size, and the body must be exactly that size. A body with missing or extra bytes gets `INVALID_ARGUMENT`. DELETE_MOTOR, STOP_MOTOR and RESET_MOTOR have an empty body. All multi-byte values are little-endian.
 
@@ -256,7 +256,7 @@ No per-packet dynamic allocation is used while parsing.
 
 When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next control tick (within one control period). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
 
-Each entry is checked on the RX task before it is queued: the motor id must exist, the kind must be 0–2 and the value finite. Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged one by one: neither the RX task nor the control tick logs. `getSetpointStreamCounters()` returns the totals, and the config task logs a summary of new counts at most once per second.
+Each entry is checked on the RX task before it is queued: the motor id must exist, the kind must be 0–2 and the value finite. Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged: neither the RX task nor the control tick logs. `getSetpointStreamCounters()` returns the totals, and diag sends them to the host as `motor_manager.SetpointBadFrame` and `motor_manager.SetpointRejected`.
 
 ### Telemetry stream (ESP → PC)
 
@@ -280,6 +280,20 @@ Effective per-entry field selection is:
 If telemetry is globally disabled, no telemetry packet is sent.
 
 With the internal update task, telemetry is sent every N control ticks (see [Control loop and timing](#control-loop-and-timing)). Without it, call `MotorManager::publishTelemetry()` yourself.
+
+## Errors reported to the host
+
+Besides the configure `result_code`, the manager reports through the `diag` component (events on `0xC0`, see `components/diag/README.md` for the full code table). Source `motor_manager`:
+
+| Code | Kind | When |
+|---|---|---|
+| `InitFailed` | error | The constructor failed. `arg0` is the stage (mutex, queue, config, callbacks, tasks, timer). |
+| `MotorCreateFailed` | error | CREATE_MOTOR passed validation but the hardware did not come up. `arg0` is the motor id, and `arg1` is 1 for the motor driver (DIR GPIO, MCPWM) or 2 for the encoder (PCNT). When the MCPWM or PCNT pool is empty (`esp_err` `ESP_ERR_NOT_FOUND`), the response is `CAPACITY_REACHED`; otherwise it is `INTERNAL_ERROR`. |
+| `TimerRestartFailed` | error | SET_TIMING could not restart the control timer. |
+| `ControlTimerStalled` | warning, clears | The control loop stopped ticking. |
+| `ControlOverrun`, `SetpointBadFrame`, `SetpointRejected`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. |
+
+If a configure response cannot be queued for TX, it is counted (`ResponseTxDropped`) and the command keeps its own result; the command may still have been applied.
 
 ## Kconfig
 

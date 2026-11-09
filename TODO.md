@@ -13,7 +13,6 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
 
 ## Error codes over the control UART (`diag`)
 
-Design and decisions: [plans/uart-diagnostics.md](plans/uart-diagnostics.md). One PR per phase. Phase 1 (the `diag` component, the code generator, degraded-mode `main.cpp`, CI checks) is done.
+Design and decisions: [plans/uart-diagnostics.md](plans/uart-diagnostics.md). One PR per phase. Phase 1 (the `diag` component, the code generator, degraded-mode `main.cpp`, CI checks) and phase 2 (the managers report through diag, `createMotor` names the failing HAL stage, the IMU event MSG_TYPE is gone) are done.
 
-- **Phase 2, managers:** move motor_manager, imu_bmo_055 and time_sync to `DIAG_ERROR/WARN/COUNT/CLEAR`, report the HAL stage that failed in `createMotor` (review E6), and remove the unused IMU event MSG_TYPE.
 - **Phase 3, response detail:** add a `detail` byte to the motor and IMU configure responses (both v4), and send a response instead of dropping the command when a config queue is full.

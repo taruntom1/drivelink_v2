@@ -101,7 +101,6 @@ private:
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
     void applyPendingSetpointsLocked();
-    void logSetpointCountersIfChanged(SetpointStreamCounters &last_logged, int64_t &last_log_us) const;
     ResultCode checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
     void setMotorKnown(uint8_t motor_id, bool known);
     bool isMotorKnown(uint8_t motor_id) const;

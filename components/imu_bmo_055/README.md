@@ -139,7 +139,8 @@ For complete host payload details, see:
   - `busy`: ticks skipped because the device was in use
   - `read_errors`: I2C failures
   - `encode_errors`: payload overflows
-  - A summary is logged at most once per second, only when something changed.
+  - The same counts go to the host as diag counters (`imu.SampleLate`, `imu.DeviceBusy`, `imu.ReadError`, `imu.EncodeError`), sent as 1 Hz deltas. Nothing is logged per tick.
+  - If the stream is enabled but the timer stops waking the task, `imu.SamplerStalled` is reported once and cleared when it fires again.
 - When a publish tick fails (busy or read error), the next good sample is published, so the telemetry rate holds.
 - Disabling the stream stops the timer. `SetOperationMode` stops it for the duration of the mode switch and restarts it if the stream was enabled. The first sample after re-enabling is always published.
 
@@ -153,7 +154,6 @@ Menu path:
 
 - `IMU_BMO_055_CONFIGURE_MSG_TYPE` (default `0x22`)
 - `IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x42`)
-- `IMU_BMO_055_EVENT_MSG_TYPE` (default `0xC2`)
 - `IMU_BMO_055_STREAM_CHANNEL` (default `0x82`)
 
 ### 5.2 I2C Sensor Config
@@ -219,16 +219,31 @@ idf.py fullclean
 idf.py build
 ```
 
+## 4.2 Errors reported to the host
+
+Besides the configure `result`, the manager reports through the `diag` component (events on `0xC0`, see `components/diag/README.md` for the full code table). Source `imu`:
+
+| Code | Kind | When |
+|---|---|---|
+| `InitFailed` | error | The constructor failed. `arg0` is the stage (mutex, config, BNO055 device, default mode, queue, callback, tasks, timer). |
+| `FallbackToMock` | warning | The BNO055 did not come up and `fallback_to_mock_on_init_failure` switched to mock data. `esp_err` is the device error. |
+| `ModeSwitchFailed`, `CalibrationReadFailed`, `CalibrationApplyFailed` | error | A device operation failed on the bus. A busy device is only answered with `BUSY`. |
+| `StreamReenableFailed` | error | The stream stayed off after a mode switch. |
+| `TimerRestartFailed` | error | `SetStreamTiming` could not restart the sampling timer. |
+| `SamplerStalled` | warning, clears | See 4.1. |
+| `SampleLate`, `DeviceBusy`, `ReadError`, `EncodeError`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. A command that arrives while the config queue is full is dropped without a response. |
+
 ## 8. Troubleshooting
 
 - `isValid() == false` at startup:
+  - The host gets `imu.InitFailed` (its `arg0` names the stage) and `system.ManagerStartFailed`.
   - Check I2C pins/port/address Kconfig values.
   - Check BNO055 wiring and power.
   - Check UART component validity before constructing IMU manager.
 - No stream packets on host:
   - Verify stream channel ID matches host expectation.
   - Verify stream is enabled and the periods are not too large (`SetStreamTiming(0, 0)` reads them back).
-  - Watch the log for the rate-limited `IMU stream:` counter line (busy, read errors).
+  - Watch the diag counters `imu.DeviceBusy` and `imu.ReadError`, and the `imu.SamplerStalled` record.
   - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
 - Command rejected:
   - Verify protocol version byte is `0x03` and is followed by a `seq` byte.

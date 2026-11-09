@@ -9,10 +9,11 @@ The IMU component uses the `uart_comm` type/channel model:
 
 - Configure command message type: default `0x22`
 - Configure response message type: default `0x42`
-- Event message type: default `0xC2` (reserved; no event payload currently emitted)
 - Telemetry stream channel: default `0x82`
 
 These IDs are configurable in ESP Kconfig, so host and firmware must use the same values.
+
+The IMU has no event message type of its own. Errors and stream health counters are reported by the `diag` component (event `0xC0`, source `imu`; see `components/diag/README.md`).
 
 All multi-byte integers in IMU payloads are little-endian.
 

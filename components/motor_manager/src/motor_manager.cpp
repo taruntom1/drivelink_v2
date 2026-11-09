@@ -1,5 +1,6 @@
 #include "motor_manager.hpp"
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -25,13 +26,25 @@ constexpr UBaseType_t kConfigQueueDepth = CONFIG_MOTOR_MANAGER_CONFIG_QUEUE_DEPT
 constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
 
 // The update task waits for the timer at most this long (longer than the
-// largest control period) before logging that the timer is not firing.
+// largest control period) before reporting that the timer is not firing.
 constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
 // Cap on the ticks folded into one dt after a stall, so a long hiccup cannot
 // dump a huge step into the PID integrators.
 constexpr uint32_t kMaxCatchUpTicks = 10;
-constexpr int64_t kOverrunLogIntervalUs = 1000000;
-constexpr int64_t kRejectLogIntervalUs = 1000000;
+
+namespace codes = diag::codes::motor_manager;
+
+// motor_manager.InitFailed arg0. Reported to the host: never renumber.
+namespace init_stage {
+constexpr uint32_t kMutex = 1;
+constexpr uint32_t kConfigQueue = 2;
+constexpr uint32_t kInvalidConfig = 3;
+constexpr uint32_t kConfigureCallback = 4;
+constexpr uint32_t kSetpointCallback = 5;
+constexpr uint32_t kUpdateTask = 6;
+constexpr uint32_t kControlTimer = 7;
+constexpr uint32_t kConfigTask = 8;
+} // namespace init_stage
 
 static_assert(gpio_policy::kGpioCount == GPIO_NUM_MAX, "gpio_policy is written for the ESP32-S3");
 
@@ -72,7 +85,7 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
       m_config_queue(nullptr)
 {
     if (m_mutex == nullptr) {
-        ESP_LOGE(TAG, "Failed to create manager mutex");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kMutex, 0, "Failed to create manager mutex");
         return;
     }
 
@@ -81,17 +94,18 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     m_pending_snapshot.resize(m_config.max_motors);
     m_config_queue = xQueueCreate(kConfigQueueDepth, sizeof(uart_comm::RxFrame));
     if (m_config_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create configure queue");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kConfigQueue, 0,
+                   "Failed to create configure queue");
         return;
     }
 
     if (!m_uart.isValid()) {
-        ESP_LOGE(TAG, "UartComm is invalid");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_STATE, init_stage::kInvalidConfig, 0, "UartComm is invalid");
         return;
     }
 
     if (m_config.max_motors == 0U) {
-        ESP_LOGE(TAG, "max_motors must be > 0");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_ARG, init_stage::kInvalidConfig, 0, "max_motors must be > 0");
         return;
     }
 
@@ -118,8 +132,9 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         },
         m_configure_cb);
     if (cfg_cb_ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register configure callback (msg=0x%02X): %s",
-                 m_config.configure_msg_type, esp_err_to_name(cfg_cb_ret));
+        DIAG_ERROR(codes::kInitFailed, cfg_cb_ret, init_stage::kConfigureCallback, 0,
+                   "Failed to register configure callback (msg=0x%02X): %s",
+                   m_config.configure_msg_type, esp_err_to_name(cfg_cb_ret));
         return;
     }
 
@@ -131,8 +146,9 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         m_setpoint_cb);
     if (sp_cb_ret != ESP_OK) {
         m_configure_cb.reset();
-        ESP_LOGE(TAG, "Failed to register setpoint stream callback (ch=0x%02X): %s",
-                 m_config.setpoint_stream_channel, esp_err_to_name(sp_cb_ret));
+        DIAG_ERROR(codes::kInitFailed, sp_cb_ret, init_stage::kSetpointCallback, 0,
+                   "Failed to register setpoint stream callback (ch=0x%02X): %s",
+                   m_config.setpoint_stream_channel, esp_err_to_name(sp_cb_ret));
         return;
     }
 
@@ -146,8 +162,9 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         if (upd_ret != ESP_OK) {
             m_setpoint_cb.reset();
             m_configure_cb.reset();
-            ESP_LOGE(TAG, "Failed to create update task (core=%d): %s",
-                     static_cast<int>(m_config.update_task.core_id), esp_err_to_name(upd_ret));
+            DIAG_ERROR(codes::kInitFailed, upd_ret, init_stage::kUpdateTask, 0,
+                       "Failed to create update task (core=%d): %s",
+                       static_cast<int>(m_config.update_task.core_id), esp_err_to_name(upd_ret));
             return;
         }
 
@@ -161,6 +178,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
             m_setpoint_cb.reset();
             m_configure_cb.reset();
             m_update_task.stop();
+            DIAG_ERROR(codes::kInitFailed, tmr_ret, init_stage::kControlTimer, 0,
+                       "Failed to start control timer: %s", esp_err_to_name(tmr_ret));
             return;
         }
     }
@@ -175,7 +194,8 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         m_configure_cb.reset();
         m_control_timer.destroy();
         m_update_task.stop();
-        ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_ret));
+        DIAG_ERROR(codes::kInitFailed, cfg_ret, init_stage::kConfigTask, 0,
+                   "Failed to create config task: %s", esp_err_to_name(cfg_ret));
         return;
     }
 
@@ -287,9 +307,13 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
             static_cast<gpio_num_t>(cfg.pwm_gpio), static_cast<gpio_num_t>(cfg.dir_gpio),
             static_cast<gpio_num_t>(cfg.enc_a), static_cast<gpio_num_t>(cfg.enc_b), motor_cfg);
         if (!motor->isValid()) {
-            ESP_LOGE(TAG, "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d)",
-                     motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
-            return ResultCode::InternalError;
+            const motor_controller::HardwareFailure failure = motor->hardwareFailure();
+            DIAG_ERROR(codes::kMotorCreateFailed, failure.error, motor_id, static_cast<uint32_t>(failure.stage),
+                       "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d stage=%u): %s",
+                       motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b,
+                       static_cast<unsigned>(failure.stage), esp_err_to_name(failure.error));
+            // An empty MCPWM or PCNT pool is a capacity limit, not a fault.
+            return (failure.error == ESP_ERR_NOT_FOUND) ? ResultCode::CapacityReached : ResultCode::InternalError;
         }
         slot.motor = std::move(motor);
     }
@@ -624,14 +648,13 @@ ResultCode MotorManager::setTiming(uint32_t control_period_us, uint32_t telemetr
     const uint32_t divider = telemetryDivider(m_requested_telemetry_period_us, new_period);
 
     ResultCode rc = ResultCode::Ok;
+    esp_err_t timer_err = ESP_OK;
     if (new_period != old_period && m_control_timer.isCreated()) {
         // The update task reads the period on every wake, so PID dt and the
         // filter coefficients follow from the next tick on.
-        const esp_err_t err = m_control_timer.setPeriod(new_period);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to restart control timer at %" PRIu32 " us: %s",
-                     new_period, esp_err_to_name(err));
-            rc = ResultCode::InternalError;
+        timer_err = m_control_timer.setPeriod(new_period);
+        if (timer_err != ESP_OK) {
+            rc = ResultCode::InternalError; // reported below, after m_mutex is released
         }
     }
     if (rc == ResultCode::Ok) {
@@ -643,6 +666,11 @@ ResultCode MotorManager::setTiming(uint32_t control_period_us, uint32_t telemetr
                                      : telemetryDivider(m_requested_telemetry_period_us, period_now);
     m_telemetry_divider.store(divider_now, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
+
+    if (timer_err != ESP_OK) {
+        DIAG_ERROR(codes::kTimerRestartFailed, timer_err, new_period, 0,
+                   "Failed to restart control timer at %" PRIu32 " us: %s", new_period, esp_err_to_name(timer_err));
+    }
 
     applied_control_period_us = period_now;
     applied_telemetry_period_us = divider_now * period_now;
@@ -663,24 +691,6 @@ SetpointStreamCounters MotorManager::getSetpointStreamCounters() const
     c.bad_frames = m_bad_setpoint_frames.load(std::memory_order_relaxed);
     c.rejected_entries = m_rejected_setpoints.load(std::memory_order_relaxed);
     return c;
-}
-
-void MotorManager::logSetpointCountersIfChanged(SetpointStreamCounters &last_logged, int64_t &last_log_us) const
-{
-    const int64_t now_us = esp_timer_get_time();
-    if ((now_us - last_log_us) < kRejectLogIntervalUs) {
-        return;
-    }
-    const SetpointStreamCounters now = getSetpointStreamCounters();
-    if (now.bad_frames == last_logged.bad_frames && now.rejected_entries == last_logged.rejected_entries) {
-        return;
-    }
-    ESP_LOGW(TAG, "Setpoint stream: bad frames +%" PRIu32 ", rejected entries +%" PRIu32
-                  " (totals %" PRIu32 "/%" PRIu32 ")",
-             now.bad_frames - last_logged.bad_frames, now.rejected_entries - last_logged.rejected_entries,
-             now.bad_frames, now.rejected_entries);
-    last_logged = now;
-    last_log_us = now_us;
 }
 
 void MotorManager::updateAll(float dt_s)
@@ -733,9 +743,7 @@ void MotorManager::updateTaskLoop()
     uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD] = {};
     uint32_t pending_ticks = 0;
     int32_t telemetry_countdown = 0; // publish on the first run
-    uint32_t last_logged_overruns = 0;
-    int64_t last_overrun_log_us = 0;
-    int64_t last_timeout_log_us = 0;
+    bool timer_stalled = false;      // motor_manager.ControlTimerStalled is active
 
 #if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
     constexpr int64_t kStatsIntervalUs = 5000000;
@@ -754,13 +762,18 @@ void MotorManager::updateTaskLoop()
             break;
         }
         if (fired == 0U) {
-            const int64_t now_us = esp_timer_get_time();
-            if ((now_us - last_timeout_log_us) >= kOverrunLogIntervalUs) {
-                last_timeout_log_us = now_us;
-                ESP_LOGW(TAG, "Control timer has not fired for %u ms",
-                         static_cast<unsigned>(pdTICKS_TO_MS(kControlWakeTimeoutTicks)));
+            // Reported once per stall (m_mutex is not held here), cleared below.
+            if (!timer_stalled) {
+                timer_stalled = true;
+                DIAG_WARN(codes::kControlTimerStalled, ESP_ERR_TIMEOUT, pdTICKS_TO_MS(kControlWakeTimeoutTicks), 0,
+                          "Control timer has not fired for %u ms",
+                          static_cast<unsigned>(pdTICKS_TO_MS(kControlWakeTimeoutTicks)));
             }
             continue;
+        }
+        if (timer_stalled) {
+            timer_stalled = false;
+            DIAG_CLEAR(codes::kControlTimerStalled);
         }
         pending_ticks += fired;
 
@@ -784,6 +797,7 @@ void MotorManager::updateTaskLoop()
 
         if (pending_ticks > 1U) {
             m_overrun_count.fetch_add(pending_ticks - 1U, std::memory_order_relaxed);
+            DIAG_COUNT_N(codes::kControlOverrun, pending_ticks - 1U);
         }
         const uint32_t ticks = std::min(pending_ticks, kMaxCatchUpTicks);
         pending_ticks = 0;
@@ -814,16 +828,9 @@ void MotorManager::updateTaskLoop()
             m_uart.sendData(m_config.telemetry_stream_channel, payload, payload_len);
         }
 
+#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
         const int64_t now_us = esp_timer_get_time();
         const uint32_t overruns = m_overrun_count.load(std::memory_order_relaxed);
-        if (overruns != last_logged_overruns && (now_us - last_overrun_log_us) >= kOverrunLogIntervalUs) {
-            ESP_LOGW(TAG, "Control loop overruns: +%" PRIu32 " (total %" PRIu32 ") period=%" PRIu32 " us core=%d",
-                     overruns - last_logged_overruns, overruns, period_us, xPortGetCoreID());
-            last_logged_overruns = overruns;
-            last_overrun_log_us = now_us;
-        }
-
-#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
         const int64_t dur = now_us - run_start_us;
         dur_min = std::min(dur_min, dur);
         dur_max = std::max(dur_max, dur);
@@ -846,13 +853,7 @@ void MotorManager::updateTaskLoop()
 void MotorManager::configTaskLoop()
 {
     uart_comm::RxFrame frame{};
-    SetpointStreamCounters last_logged{};
-    int64_t last_log_us = 0;
     while (!m_config_task.stopRequested()) {
-        // This task wakes at least every kConfigQueueRxTimeoutTicks, so it
-        // also logs the setpoint counters that the RX task and the control
-        // tick only count.
-        logSetpointCountersIfChanged(last_logged, last_log_us);
         if (xQueueReceive(m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
             continue;
         }
@@ -1026,6 +1027,7 @@ void MotorManager::applyPendingSetpointsLocked()
             const ResultCode rc = setSetpointLocked(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
             if (rc != ResultCode::Ok) {
                 m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
+                DIAG_COUNT(codes::kSetpointRejected);
             }
         }
     }

@@ -196,3 +196,14 @@ DIAG_CLEAR(code);            // clears `active`, queues a Cleared event if it wa
 - **Code namespaces.** The generated constants are `diag::codes::<source>::k<Name>`, with a `diag::Code` struct holding the slot, source, code, severity, kind and `clears`. The macros `static_assert` on kind and severity.
 - **time_synced.** time_sync calls `diag::setTimeSynced()` after it first applies the time (time_sync now has a private dependency on diag).
 - **Log switch.** The root `CMakeLists.txt` applies `LOG_LOCAL_LEVEL=ESP_LOG_NONE` to every component under `components/` and `main/` when `CONFIG_DIAG_CONSOLE_LOG=n`, so no per-component CMake changes are needed. When disabled, the macros use an `if (false)` call to a printf-checked no-op instead of `(void)sizeof`. The format string and arguments are still type-checked but never emitted or evaluated.
+
+## Implementation notes (phase 2)
+
+- **Per-manager `InitFailed`.** Each manager reports its own `<source>.InitFailed` with the failing stage in `arg0` and the real `esp_err`, and `main` still reports `system.ManagerStartFailed` after it. The stage numbers are named constants in each `.cpp` and documented in the YAML.
+- **Codes.** The plan's lists were kept, plus `InitFailed` and `ResponseTxDropped` for each configure-handling manager, `TimerRestartFailed` for the IMU, and `time_sync.BadResponseFrame` (a counter for undecodable responses on the RX task). `time_sync.ServerErrorStatus` and `ApplyFailed` became stages of `SyncFailed` (`arg0`), with the host's status byte in `arg1`, so a run of failures is one record.
+- **Once per condition.** `ControlTimerStalled`, `SamplerStalled` and `SyncFailed` are reported when the condition starts and `DIAG_CLEAR`ed when it ends; repeat time sync failures are `ESP_LOGD` only. `SamplerStalled` also clears when the stream is disabled.
+- **Host rejections stay console-only.** Commands rejected with a result code keep their `ESP_LOGW`/`ESP_LOGD`: the response already tells the host, and phase 3's `detail` byte will say why. Busy-device failures (`ESP_ERR_TIMEOUT`, answered `BUSY`) are not reported either.
+- **HAL failure stage.** `Motor::initError()`, `Encoder::initError()` and `Bno055Device::initError()` keep the construction error; `MotorController::hardwareFailure()` returns `{stage, esp_err}` (1 motor driver, 2 encoder). `ESP_ERR_NOT_FOUND` (an empty MCPWM or PCNT pool) answers `CAPACITY_REACHED`.
+- **Response TX failure.** `MotorManager::sendConfigureResponse` returns the command's own result when the response can't be queued, and counts `ResponseTxDropped` (review E6).
+- **Mutex rule.** `TimerRestartFailed` (motor and IMU) is reported after `m_mutex` is released; the old motor code logged while holding it.
+- **Counters kept.** `getControlOverrunCount()`, `getSetpointStreamCounters()` and `getStreamCounters()` stay as public API; the diag counters are counted alongside them. The 1 s console summaries are gone.

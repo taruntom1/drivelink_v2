@@ -113,7 +113,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 - **Periodic timers:** fixed-rate loops (the motor control loop, the IMU sampler) use `rtos_util::TaskTimer`: a periodic `esp_timer` whose callback only notifies a `StoppableTask`. The task takes the count with `ulTaskNotifyTake` (bounded timeout) and counts extra periods as overruns. Owners serialize timer calls under their mutex and call `destroy()` (fenced) before stopping the task.
 - **IMU sampling loop:**
   - The `TaskTimer` wakes the IMU stream task every sample period. A packet is sent every N samples, with N derived from the telemetry period. The loop does not depend on `CONFIG_FREERTOS_HZ`.
-  - The tick reads stream settings from atomics and only try-locks the `Bno055Device` mutex. A busy device skips the tick and counts it. Late, busy, read-error and encode-error counts are logged at most once per second.
+  - The tick reads stream settings from atomics and only try-locks the `Bno055Device` mutex. A busy device skips the tick and counts it. Late, busy, read-error and encode-error counts are diag counters (`DIAG_COUNT`), and nothing is logged per tick.
   - The timer is stopped while the stream is disabled and during an operation-mode switch.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
 
@@ -154,7 +154,8 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
   - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
   - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
   - Each new code goes in `diag_codes.yaml`, then regenerate.
-  - Plain `ESP_LOGx` is for info and for programmer errors.
+  - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
+  - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`. Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery, not on every occurrence.
   - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (the root `CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `components/` and `main/`). Code must build warning-free that way too, which CI checks.
 - **Never abort on runtime errors** that the host or the hardware can cause. Return `esp_err_t` or `bool`, expose `isValid()`, and log the failure.
   - No `ESP_ERROR_CHECK` anywhere.

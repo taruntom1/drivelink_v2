@@ -368,6 +368,17 @@ bool MotorController::isValid() const
     return m_motor.isValid() && m_encoder.isValid();
 }
 
+HardwareFailure MotorController::hardwareFailure() const
+{
+    if (!m_motor.isValid()) {
+        return {HardwareStage::MotorDriver, m_motor.initError()};
+    }
+    if (!m_encoder.isValid()) {
+        return {HardwareStage::Encoder, m_encoder.initError()};
+    }
+    return {HardwareStage::None, ESP_OK};
+}
+
 void MotorController::stop()
 {
     m_motor.stop();
