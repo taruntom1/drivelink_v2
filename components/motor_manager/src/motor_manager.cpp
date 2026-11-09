@@ -3,11 +3,11 @@
 #include "esp_log.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "wire_codec.hpp"
 
 #include <algorithm>
 #include <cinttypes>
 #include <cstddef>
-#include <cstring>
 #include <limits>
 #include <sys/time.h>
 
@@ -819,10 +819,10 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         return ResultCode::Ok;
     }
 
-    out[0] = kProtocolVersion;
-    out[1] = 0;
-    std::memcpy(&out[2], &timestamp_us, sizeof(uint64_t));
-    size_t write_idx = kTelemetryPacketHeaderSize;
+    uart_comm::wire::Writer w(out, cap);
+    w.appendU8(kProtocolVersion);
+    w.appendU8(0); // entry count, patched below
+    w.appendU64Le(timestamp_us);
     uint8_t entry_count = 0;
 
     for (const auto &slot : m_motors) {
@@ -846,41 +846,42 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
             required += sizeof(float);
         }
 
-        if ((write_idx + required) > cap) {
+        if (required > w.remaining()) {
             break;
         }
 
-        out[write_idx++] = slot.id;
-        out[write_idx++] = field_mask;
+        w.appendU8(slot.id);
+        w.appendU8(field_mask);
 
         if ((field_mask & kTelemetryFieldAngle) != 0U) {
             const float angle = (m_use_mock_feedback || slot.motor == nullptr)
                                     ? slot.mock_angle_rad
                                     : slot.motor->getAngle();
-            std::memcpy(&out[write_idx], &angle, sizeof(float));
-            write_idx += sizeof(float);
+            w.appendF32Le(angle);
         }
         if ((field_mask & kTelemetryFieldVelocity) != 0U) {
             const float velocity = (m_use_mock_feedback || slot.motor == nullptr)
                                        ? slot.mock_velocity_rad_s
                                        : slot.motor->getAngularVelocity();
-            std::memcpy(&out[write_idx], &velocity, sizeof(float));
-            write_idx += sizeof(float);
+            w.appendF32Le(velocity);
         }
         if ((field_mask & kTelemetryFieldOutput) != 0U) {
             // Mock mode has no motor output to report.
             const float output = (m_use_mock_feedback || slot.motor == nullptr)
                                      ? 0.0f
                                      : slot.motor->getOutput();
-            std::memcpy(&out[write_idx], &output, sizeof(float));
-            write_idx += sizeof(float);
+            w.appendF32Le(output);
         }
 
         ++entry_count;
     }
 
-    out[1] = entry_count;
-    out_len = static_cast<uint8_t>(write_idx);
+    w.patchU8(1, entry_count);
+    if (!w.ok() || w.size() > UINT8_MAX) {
+        out_len = 0;
+        return ResultCode::InternalError;
+    }
+    out_len = static_cast<uint8_t>(w.size());
     return ResultCode::Ok;
 }
 

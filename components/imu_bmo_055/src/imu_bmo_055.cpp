@@ -3,6 +3,7 @@
 #include "bno055_device.hpp"
 #include "tick_util.hpp"
 #include "wall_clock.hpp"
+#include "wire_codec.hpp"
 
 extern "C" {
 #include "bno055.h"
@@ -14,7 +15,6 @@ extern "C" {
 
 #include <algorithm>
 #include <cinttypes>
-#include <cstring>
 
 namespace imu_bmo_055 {
 
@@ -34,127 +34,73 @@ bool isValidOperationMode(uint8_t mode)
     return mode <= BNO055_OPERATION_MODE_NDOF;
 }
 
-void appendU16Le(uint8_t *dst, size_t cap, size_t &offset, uint16_t value)
-{
-    if (offset + 2U > cap) {
-        return;
-    }
-    dst[offset++] = static_cast<uint8_t>(value & 0xFFU);
-    dst[offset++] = static_cast<uint8_t>((value >> 8) & 0xFFU);
-}
-
-void appendU32Le(uint8_t *dst, size_t cap, size_t &offset, uint32_t value)
-{
-    if (offset + 4U > cap) {
-        return;
-    }
-    for (size_t i = 0; i < 4U; ++i) {
-        dst[offset++] = static_cast<uint8_t>((value >> (8U * i)) & 0xFFU);
-    }
-}
-
-void appendU64Le(uint8_t *dst, size_t cap, size_t &offset, uint64_t value)
-{
-    if (offset + 8U > cap) {
-        return;
-    }
-    for (size_t i = 0; i < 8U; ++i) {
-        dst[offset++] = static_cast<uint8_t>((value >> (8U * i)) & 0xFFU);
-    }
-}
-
-void appendS16Le(uint8_t *dst, size_t cap, size_t &offset, int16_t value)
-{
-    appendU16Le(dst, cap, offset, static_cast<uint16_t>(value));
-}
-
-uint16_t readU16Le(const uint8_t *src, size_t src_len, size_t &offset, bool &ok)
-{
-    if ((offset + 2U) > src_len) {
-        ok = false;
-        return 0;
-    }
-    const uint16_t value = static_cast<uint16_t>(src[offset]) |
-                           (static_cast<uint16_t>(src[offset + 1U]) << 8U);
-    offset += 2U;
-    return value;
-}
-
-uint32_t readU32Le(const uint8_t *src, size_t src_len, size_t &offset, bool &ok)
-{
-    if ((offset + 4U) > src_len) {
-        ok = false;
-        return 0;
-    }
-    uint32_t value = 0;
-    for (size_t i = 0; i < 4U; ++i) {
-        value |= static_cast<uint32_t>(src[offset + i]) << (8U * i);
-    }
-    offset += 4U;
-    return value;
-}
-
 void encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap, uint8_t &out_len)
 {
     out_len = 0;
-    if (cap < kCalibrationBlobSize) {
-        return;
-    }
+    uart_comm::wire::Writer w(out, cap);
+    w.appendU8(blob.has_sic ? 1U : 0U);
+    w.appendI16Le(blob.accel_offset_x);
+    w.appendI16Le(blob.accel_offset_y);
+    w.appendI16Le(blob.accel_offset_z);
+    w.appendI16Le(blob.accel_radius);
 
-    size_t offset = 0;
-    out[offset++] = blob.has_sic ? 1U : 0U;
-    appendS16Le(out, cap, offset, blob.accel_offset_x);
-    appendS16Le(out, cap, offset, blob.accel_offset_y);
-    appendS16Le(out, cap, offset, blob.accel_offset_z);
-    appendS16Le(out, cap, offset, blob.accel_radius);
+    w.appendI16Le(blob.gyro_offset_x);
+    w.appendI16Le(blob.gyro_offset_y);
+    w.appendI16Le(blob.gyro_offset_z);
 
-    appendS16Le(out, cap, offset, blob.gyro_offset_x);
-    appendS16Le(out, cap, offset, blob.gyro_offset_y);
-    appendS16Le(out, cap, offset, blob.gyro_offset_z);
-
-    appendS16Le(out, cap, offset, blob.mag_offset_x);
-    appendS16Le(out, cap, offset, blob.mag_offset_y);
-    appendS16Le(out, cap, offset, blob.mag_offset_z);
-    appendS16Le(out, cap, offset, blob.mag_radius);
+    w.appendI16Le(blob.mag_offset_x);
+    w.appendI16Le(blob.mag_offset_y);
+    w.appendI16Le(blob.mag_offset_z);
+    w.appendI16Le(blob.mag_radius);
 
     for (size_t i = 0; i < 9U; ++i) {
-        appendS16Le(out, cap, offset, blob.sic[i]);
+        w.appendI16Le(blob.sic[i]);
     }
 
-    out_len = static_cast<uint8_t>(offset);
+    if (w.ok()) {
+        out_len = static_cast<uint8_t>(w.size());
+    }
 }
 
 /// Decode an exactly kCalibrationBlobSize-byte blob. Rejects a has_sic byte
 /// other than 0 or 1.
 bool decodeCalibrationBlob(const uint8_t *payload, size_t payload_len, CalibrationBlob &out)
 {
-    if (payload_len != kCalibrationBlobSize || payload[0] > 1U) {
+    if (payload_len != kCalibrationBlobSize) {
         return false;
     }
 
-    size_t offset = 0;
-    out.has_sic = payload[offset++] != 0U;
-
-    bool ok = true;
-    out.accel_offset_x = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.accel_offset_y = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.accel_offset_z = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.accel_radius = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-
-    out.gyro_offset_x = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.gyro_offset_y = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.gyro_offset_z = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-
-    out.mag_offset_x = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.mag_offset_y = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.mag_offset_z = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-    out.mag_radius = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
-
-    for (size_t i = 0; i < 9U; ++i) {
-        out.sic[i] = static_cast<int16_t>(readU16Le(payload, payload_len, offset, ok));
+    uart_comm::wire::Reader r(payload, payload_len);
+    const uint8_t has_sic = r.readU8();
+    if (has_sic > 1U) {
+        return false;
     }
 
-    return ok;
+    CalibrationBlob blob{};
+    blob.has_sic = (has_sic != 0U);
+    blob.accel_offset_x = r.readI16Le();
+    blob.accel_offset_y = r.readI16Le();
+    blob.accel_offset_z = r.readI16Le();
+    blob.accel_radius = r.readI16Le();
+
+    blob.gyro_offset_x = r.readI16Le();
+    blob.gyro_offset_y = r.readI16Le();
+    blob.gyro_offset_z = r.readI16Le();
+
+    blob.mag_offset_x = r.readI16Le();
+    blob.mag_offset_y = r.readI16Le();
+    blob.mag_offset_z = r.readI16Le();
+    blob.mag_radius = r.readI16Le();
+
+    for (size_t i = 0; i < 9U; ++i) {
+        blob.sic[i] = r.readI16Le();
+    }
+
+    if (!r.done()) {
+        return false;
+    }
+    out = blob;
+    return true;
 }
 
 bool encodeStreamSample(const ImuStreamSample &sample,
@@ -164,29 +110,25 @@ bool encodeStreamSample(const ImuStreamSample &sample,
                         uint8_t &out_len)
 {
     out_len = 0;
-    if (cap < kStreamHeaderSize) {
-        return false;
-    }
+    uart_comm::wire::Writer w(out, cap);
+    w.appendU8(kProtocolVersion);
+    w.appendU16Le(field_mask);
+    w.appendU64Le(sample.timestamp_us);
 
-    size_t offset = 0;
-    out[offset++] = kProtocolVersion;
-    appendU16Le(out, cap, offset, field_mask);
-    appendU64Le(out, cap, offset, sample.timestamp_us);
-
-    const auto append_xyz = [&](int16_t x, int16_t y, int16_t z) {
-        appendS16Le(out, cap, offset, x);
-        appendS16Le(out, cap, offset, y);
-        appendS16Le(out, cap, offset, z);
+    const auto append_xyz = [&w](int16_t x, int16_t y, int16_t z) {
+        w.appendI16Le(x);
+        w.appendI16Le(y);
+        w.appendI16Le(z);
     };
 
     if ((field_mask & static_cast<uint16_t>(StreamField::Euler)) != 0U) {
         append_xyz(sample.euler.h, sample.euler.r, sample.euler.p);
     }
     if ((field_mask & static_cast<uint16_t>(StreamField::Quaternion)) != 0U) {
-        appendS16Le(out, cap, offset, sample.quaternion.w);
-        appendS16Le(out, cap, offset, sample.quaternion.x);
-        appendS16Le(out, cap, offset, sample.quaternion.y);
-        appendS16Le(out, cap, offset, sample.quaternion.z);
+        w.appendI16Le(sample.quaternion.w);
+        w.appendI16Le(sample.quaternion.x);
+        w.appendI16Le(sample.quaternion.y);
+        w.appendI16Le(sample.quaternion.z);
     }
     if ((field_mask & static_cast<uint16_t>(StreamField::LinearAccel)) != 0U) {
         append_xyz(sample.linear_accel.x, sample.linear_accel.y, sample.linear_accel.z);
@@ -204,26 +146,20 @@ bool encodeStreamSample(const ImuStreamSample &sample,
         append_xyz(sample.raw_mag.x, sample.raw_mag.y, sample.raw_mag.z);
     }
     if ((field_mask & static_cast<uint16_t>(StreamField::Temperature)) != 0U) {
-        if (offset + 1U > cap) {
-            return false;
-        }
-        out[offset++] = static_cast<uint8_t>(sample.temperature);
+        w.appendU8(static_cast<uint8_t>(sample.temperature));
     }
     if ((field_mask & static_cast<uint16_t>(StreamField::CalibrationStatus)) != 0U) {
-        if (offset + 4U > cap) {
-            return false;
-        }
-        out[offset++] = sample.calibration_status.sys;
-        out[offset++] = sample.calibration_status.gyro;
-        out[offset++] = sample.calibration_status.accel;
-        out[offset++] = sample.calibration_status.mag;
+        w.appendU8(sample.calibration_status.sys);
+        w.appendU8(sample.calibration_status.gyro);
+        w.appendU8(sample.calibration_status.accel);
+        w.appendU8(sample.calibration_status.mag);
     }
 
-    if (offset > cap || offset > static_cast<size_t>(UINT8_MAX)) {
+    if (!w.ok() || w.size() > static_cast<size_t>(UINT8_MAX)) {
         return false;
     }
 
-    out_len = static_cast<uint8_t>(offset);
+    out_len = static_cast<uint8_t>(w.size());
     return true;
 }
 
@@ -784,24 +720,23 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
             if (len != kSetStreamTimingBodySize) {
                 return ResultCode::InvalidArgument;
             }
-            size_t offset = 0U;
-            bool ok = true;
-            const uint32_t sample_us = readU32Le(body, len, offset, ok);
-            const uint32_t telemetry_us = readU32Le(body, len, offset, ok);
-            if (!ok) {
+            uart_comm::wire::Reader r(body, len);
+            const uint32_t sample_us = r.readU32Le();
+            const uint32_t telemetry_us = r.readU32Le();
+            if (!r.done()) {
                 return ResultCode::InvalidArgument;
             }
             uint32_t applied_sample_us = 0;
             uint32_t applied_telemetry_us = 0;
             const ResultCode rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
             if (rc == ResultCode::Ok) {
-                if (response_capacity < kSetStreamTimingResponseBodySize) {
+                uart_comm::wire::Writer w(response_payload, response_capacity);
+                w.appendU32Le(applied_sample_us);
+                w.appendU32Le(applied_telemetry_us);
+                if (!w.ok()) {
                     return ResultCode::InternalError;
                 }
-                size_t out = 0U;
-                appendU32Le(response_payload, response_capacity, out, applied_sample_us);
-                appendU32Le(response_payload, response_capacity, out, applied_telemetry_us);
-                response_len = static_cast<uint8_t>(out);
+                response_len = static_cast<uint8_t>(w.size());
             }
             return rc;
         }
@@ -809,10 +744,9 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
             if (len != kSetStreamFieldMaskBodySize) {
                 return ResultCode::InvalidArgument;
             }
-            size_t offset = 0U;
-            bool ok = true;
-            const uint16_t mask = readU16Le(body, len, offset, ok);
-            if (!ok) {
+            uart_comm::wire::Reader r(body, len);
+            const uint16_t mask = r.readU16Le();
+            if (!r.done()) {
                 return ResultCode::InvalidArgument;
             }
             return setStreamFieldMask(mask);
@@ -862,20 +796,18 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
                                                   uint8_t extra_len)
 {
     uint8_t payload[kConfigureResponseHeaderSize + kMaxResponseExtraPayload] = {0};
-    if (extra_len > kMaxResponseExtraPayload) {
+    uart_comm::wire::Writer w(payload, sizeof(payload));
+    w.appendU8(kProtocolVersion);
+    w.appendU8(seq);
+    w.appendU8(subcommand);
+    w.appendU8(static_cast<uint8_t>(code));
+    w.appendBytes(extra_payload, extra_len);
+    if (!w.ok()) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    payload[0] = kProtocolVersion;
-    payload[1] = seq;
-    payload[2] = subcommand;
-    payload[3] = static_cast<uint8_t>(code);
-    if (extra_len > 0U && extra_payload != nullptr) {
-        std::memcpy(&payload[kConfigureResponseHeaderSize], extra_payload, extra_len);
-    }
-
     return m_uart.sendCommand(m_config.configure_response_msg_type, payload,
-                              static_cast<uint8_t>(kConfigureResponseHeaderSize + extra_len));
+                              static_cast<uint8_t>(w.size()));
 }
 
 void ImuBno055Manager::stopTasks()

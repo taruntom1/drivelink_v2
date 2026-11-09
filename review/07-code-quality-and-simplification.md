@@ -36,6 +36,8 @@ The repeated `if (m_use_mock_feedback || motor == nullptr)` branches (8 occurren
 
 ## Q3. Duplicated little-endian helpers
 
+**Fixed.** All three components now use `uart_comm::wire::Reader` / `Writer` from `uart_comm/include/wire_codec.hpp`, which has a sticky error flag.
+
 Byte-order helpers are implemented separately in:
 - [motor_manager_uart.cpp:23-41](../components/motor_manager/src/motor_manager_uart.cpp): `readFloatLe`, `readU32Le`
 - [time_sync_protocol.cpp:3-33](../components/time_sync/src/time_sync_protocol.cpp): `writeU16LE`, `writeI64LE`, `readU16LE`, `readI64LE`

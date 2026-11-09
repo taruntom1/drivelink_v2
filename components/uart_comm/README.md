@@ -153,6 +153,34 @@ Key options:
 
 All fields in `UartCommConfig` default to Kconfig values.
 
+## Payload Codec (`wire_codec.hpp`)
+
+`uart_comm` frames carry opaque bytes. The protocol-facing components encode
+and decode their payloads field by field with the header-only helpers in
+`include/wire_codec.hpp` (namespace `uart_comm::wire`). The header has no
+ESP-IDF dependency, so host unit tests include it directly.
+
+- `Reader(data, len)`: `readU8`, `readU16Le`, `readU32Le`, `readU64Le`,
+  `readI16Le`, `readI32Le`, `readI64Le`, `readF32Le`, `skip(n)`.
+- `Writer(data, capacity)`: `appendU8`, `appendU16Le`, ..., `appendF32Le`,
+  `appendBytes(src, n)`, and `patchU8(offset, value)` for a count that is only
+  known after the entries are written.
+- All multi-byte fields are little-endian; floats are IEEE-754 binary32.
+- Both have a sticky error flag. The first read or append past the end sets
+  it, and that call and every later one do nothing (reads return 0). Check
+  `ok()` once after a sequence of calls. `Reader::done()` is `ok()` plus "the
+  whole buffer was consumed", which is the exact-length check for fixed-size
+  bodies.
+
+```cpp
+uart_comm::wire::Reader r(body, body_len);
+const uint32_t control_us = r.readU32Le();
+const uint32_t telemetry_us = r.readU32Le();
+if (!r.done()) {
+    return ResultCode::InvalidArgument; // short or trailing bytes
+}
+```
+
 ## Integration Notes
 
 - The component CMake already declares required dependencies (`driver`, `esp_driver_uart`).
