@@ -45,7 +45,9 @@ These rules apply to every component under `components/`. They add to the projec
 
 ## Errors and logging
 
-- Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`.
+- Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`. The `DIAG_*` macros log with it.
+- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `components/diag/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
+- Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports.
 - Make logs actionable: include GPIOs, channels, operator or slot IDs, and the config values involved.
 - Fail early, and leave the object in a consistent state after any failure. For example, release the DIR GPIO if MCPWM allocation fails afterwards.
 

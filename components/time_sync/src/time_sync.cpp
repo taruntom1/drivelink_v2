@@ -6,6 +6,7 @@
 #include <cstring>
 #include <sys/time.h>
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/queue.h"
@@ -416,6 +417,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         m_impl->last_server_unix_us = t2;
         m_impl->last_sync_monotonic_us = static_cast<uint64_t>(esp_timer_get_time());
         xSemaphoreGive(m_impl->state_mutex);
+        diag::setTimeSynced(); // diag events now carry the time_synced flag
 
         ESP_LOGI(TAG,
                  "Synced request_id=%u offset_us=%lld rtt_us=%lu",

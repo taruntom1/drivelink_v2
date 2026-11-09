@@ -185,3 +185,14 @@ DIAG_CLEAR(code);            // clears `active`, queues a Cleared event if it wa
 - Retransmission or ACKs for events.
 - Runtime severity filtering, and a replay buffer of recent records (both can be added later as query subcommands).
 - Reporting when `UartComm` itself fails (console only, since there is no link).
+
+## Implementation notes (phase 1: where the code differs from the plan above)
+
+- **Startup order.** The Reporter is constructed *after* the managers, not before them, so the `Boot` event carries the final `started_mask`. Records reported during startup wait in the record queue and go out right after `Boot`.
+- **GetEntries listing.** A slot is listed when its count is non-zero **or** any state bit is set. A slot whose count was zeroed but whose occurred bit is still set therefore stays visible.
+- **Active bit.** Only codes with `clears: true` ever set `active`. Other record codes set only `occurred`, so they never look permanently active.
+- **seq.** It counts only event frames that were actually queued for UART TX. When the TX queue is full, events stay in the diag queue and are retried after a 100 ms back-off, so a `seq` gap now means a loss on the link. Losses inside the ESP are counted instead: `diag.RecordDropped` (record queue full), `diag.EventTxDropped` (a query response could not be queued) and `diag.QueryDropped` (query queue full, a code added in phase 1).
+- **Codes.** `UartCommStartFailed` has no code, because it can never be sent; it is a console log only. `system.PeriodicSyncStartFailed` was added for the `startPeriodicSync()` failure that used to make `app_main` return.
+- **Code namespaces.** The generated constants are `diag::codes::<source>::k<Name>`, with a `diag::Code` struct holding the slot, source, code, severity, kind and `clears`. The macros `static_assert` on kind and severity.
+- **time_synced.** time_sync calls `diag::setTimeSynced()` after it first applies the time (time_sync now has a private dependency on diag).
+- **Log switch.** The root `CMakeLists.txt` applies `LOG_LOCAL_LEVEL=ESP_LOG_NONE` to every component under `components/` and `main/` when `CONFIG_DIAG_CONSOLE_LOG=n`, so no per-component CMake changes are needed. When disabled, the macros use an `if (false)` call to a printf-checked no-op instead of `(void)sizeof`. The format string and arguments are still type-checked but never emitted or evaluated.

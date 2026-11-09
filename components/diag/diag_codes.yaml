@@ -1,0 +1,115 @@
+# diag code table: the single source of every error and warning code sent
+# over the control UART. After editing, run:
+#
+#   python tools/gen_diag_codes.py
+#
+# and commit the regenerated files with this one (CI fails if they are stale):
+#   components/diag/include/diag_codes.hpp
+#   components/diag/host/diag_codes.py
+#   the code table in components/diag/README.md
+#
+# Rules:
+#   - Never renumber or reuse a code. Retire it with `retired: true`; it
+#     keeps its number and gets no firmware slot.
+#   - severity: error | warning
+#   - kind: record  (DIAG_ERROR / DIAG_WARN: queued with esp_err and two args)
+#           counter (DIAG_COUNT: an atomic counter, sent as 1 Hz deltas)
+#   - clears: true when the firmware calls DIAG_CLEAR on recovery; the code
+#     then has an `active` bit. Only record codes can clear.
+#   - arg0 / arg1: what the args mean ("unused" when not used). Counters
+#     carry no args.
+
+sources:
+  system: 0x01
+  uart_comm: 0x02
+  diag: 0x03
+  motor_manager: 0x10
+  time_sync: 0x11
+  imu: 0x12
+
+codes:
+  # ── system (app_main) ────────────────────────────────────────────────
+  - source: system
+    code: 0x0001
+    name: ManagerStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: manager id (1 motor_manager, 2 time_sync, 3 imu)
+    arg1: unused
+    description: A manager failed to start. It is left out, and the rest of the firmware keeps running.
+
+  - source: system
+    code: 0x0002
+    name: PeriodicSyncStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: unused
+    arg1: unused
+    description: time_sync started, but its periodic sync task did not. esp_err gives the reason.
+
+  # ── uart_comm link counters (read from UartComm::getErrorCounters) ───
+  - source: uart_comm
+    code: 0x0001
+    name: CrcError
+    severity: warning
+    kind: counter
+    description: A frame candidate was rejected for a CRC mismatch.
+
+  - source: uart_comm
+    code: 0x0002
+    name: PartialFrame
+    severity: warning
+    kind: counter
+    description: A partial frame was dropped because the sender stopped mid-frame.
+
+  - source: uart_comm
+    code: 0x0003
+    name: FrameOrParityError
+    severity: warning
+    kind: counter
+    description: The UART reported a framing or parity error.
+
+  - source: uart_comm
+    code: 0x0004
+    name: RxOverflow
+    severity: warning
+    kind: counter
+    description: The RX hardware FIFO overflowed or the ring buffer was full.
+
+  - source: uart_comm
+    code: 0x0005
+    name: LengthError
+    severity: warning
+    kind: counter
+    description: A frame candidate was rejected because LEN exceeded the maximum payload.
+
+  - source: uart_comm
+    code: 0x0006
+    name: DiscardedBytes
+    severity: warning
+    kind: counter
+    description: Received bytes that were not part of any valid frame (counts bytes, not events).
+
+  # ── diag itself ──────────────────────────────────────────────────────
+  - source: diag
+    code: 0x0001
+    name: RecordDropped
+    severity: warning
+    kind: counter
+    description: A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet).
+
+  - source: diag
+    code: 0x0002
+    name: EventTxDropped
+    severity: warning
+    kind: counter
+    description: A diag query response could not be queued for UART transmission and was dropped.
+
+  - source: diag
+    code: 0x0003
+    name: QueryDropped
+    severity: warning
+    kind: counter
+    description: A diag query was dropped because the reporter's query queue was full.

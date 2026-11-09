@@ -62,6 +62,8 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 ## E5. Low: `app_main` fails silently
 
+**Fixed.** `app_main` never returns. A manager that fails to start is reported to the host as `system.ManagerStartFailed` over the diag event channel, then destroyed, and the others keep running. A failed periodic sync start is reported as `system.PeriodicSyncStartFailed`. If `UartComm` itself fails, the error goes to the console only, and the board idles. See `components/diag/README.md`.
+
 [main.cpp:13-62](../main/main.cpp): every init failure does a bare `return` with the comment `// … failed`, and no log. Then (C1 in [01](01-concurrency-and-lifecycle.md)) the destructors run and may crash. At minimum, `ESP_LOGE` the reason. For a field device, prefer staying alive in a degraded state (UART up, report the error over an event message) so the host can diagnose it.
 
 ---
