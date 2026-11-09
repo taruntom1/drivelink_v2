@@ -11,6 +11,10 @@ DriveLink v2 is ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It driv
 ESP-IDF must be exported in the shell first:
 - PowerShell: `. $HOME\esp\v5.5.2\esp-idf\export.ps1`
 - On this machine, the IDF Python env is built for Python 3.11. If `export.ps1` reports a missing `py3.14` env, put `C:\Espressif\tools\idf-python\3.11.2` first on `PATH` and run export again.
+- The shell's `IDF_TOOLS_PATH` points at `~\.espressif\Espressif`, which has no `python_env`. `export.ps1` then fails ("ESP-IDF Python virtual environment ... not found"), and `idf.py` is not found. The env is under `~\.espressif`. Shell state does not persist between agent tool calls, so run everything in one PowerShell call:
+  ```powershell
+  $env:IDF_TOOLS_PATH = "$HOME\.espressif"; $env:PATH = "C:\Espressif\tools\idf-python\3.11.2;" + $env:PATH; . $HOME\esp\v5.5.2\esp-idf\export.ps1 *> $null; idf.py build
+  ```
 
 ```bash
 idf.py build                 # firmware (target esp32s3, from sdkconfig.defaults)
