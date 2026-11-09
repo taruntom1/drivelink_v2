@@ -36,6 +36,8 @@ test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
 
 A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `shim/sdkconfig.h`.
 
+**CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`: `idf.py build` for `/` and `test/uart_comm` in the `espressif/idf:v5.5.2` container (it fails on any compiler warning), and the host tests on Ubuntu.
+
 **Hardware-in-the-loop tests** for `uart_comm` live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
 
 ```bash
@@ -144,7 +146,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py build` and `idf.py -C test/uart_comm build` both succeed with zero warnings.
+- **Builds:** `idf.py build` and `idf.py -C test/uart_comm build` both succeed with zero warnings, and the host tests pass. CI checks all three.
 - **Docs in the same commit:**
   - Any public API, protocol or Kconfig change updates the component README in that commit.
   - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.

@@ -21,7 +21,7 @@ The protocol is re-implemented in Python ([protocol.py](../test/uart_comm/protoc
 | G4 | **Fixed.** `test/host/tests/test_pid.cpp` covers `dt` scaling of I and D, the derivative cutoff, anti-windup, derivative on measurement, invalid `dt` and the setters; `test_velocity_estimator.cpp` covers the velocity estimator. Was: no PID unit tests. | The PID is pure math. Step-response, anti-windup, derivative-kick and `dt`-scaling tests would have caught M2. M2 is fixed now (`compute()` takes `dt`), but there are still no tests. `dt` scaling and the cutoff filters are good first cases. |
 | G5 | No teardown tests. | Constructing and destroying each manager in a loop on target would immediately hit C1 / C2 (double `vTaskDelete`). |
 | G6 | Length-limit test does not cover `LEN > CONFIG_UART_COMM_MAX_PAYLOAD`. | The parser's oversize path flushes the buffer. Assert that a valid frame sent right after an oversized one is still received (it currently isn't, because of the flush). **Fixed:** TC-17 covers an oversized LEN followed by a valid frame, and the parser no longer flushes (P1). |
-| G7 | No CI. | Nothing builds the firmware or the test app automatically. A GitHub Actions job with `espressif/idf:v5.5.2` running `idf.py build` for `/` and `test/uart_comm` would at least catch build breaks such as I3 (`bno055_support.c`). |
+| G7 | **Fixed.** `.github/workflows/ci.yml` builds `/` and `test/uart_comm` in `espressif/idf:v5.5.2` (failing on warnings) and runs the host tests. Was: no CI. | Nothing builds the firmware or the test app automatically. A GitHub Actions job with `espressif/idf:v5.5.2` running `idf.py build` for `/` and `test/uart_comm` would at least catch build breaks such as I3 (`bno055_support.c`). |
 
 ## Harness inconsistencies
 
