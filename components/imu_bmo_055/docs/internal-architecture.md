@@ -24,6 +24,8 @@ This document describes the internal architecture of the `imu_bmo_055` ESP-IDF c
   - I2C + Bosch driver integration and raw sensor/calibration access
 - `src/imu_bmo_055.cpp`
   - Manager lifecycle, command decode/dispatch, stream encode/send, tasks
+- `vendor/bno055.c`, `vendor/bno055.h`
+  - Bosch BNO055 driver, unmodified (private include dir)
 - `Kconfig`
   - Protocol IDs, I2C defaults, runtime limits, task/queue sizing
 - `CMakeLists.txt`

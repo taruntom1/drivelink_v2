@@ -1,4 +1,5 @@
 #include "time_sync.hpp"
+#include "time_sync_protocol.hpp"
 
 #include <algorithm>
 #include <atomic>

@@ -12,14 +12,6 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
   - the protocol codecs: motor_manager configure and telemetry, IMU configure and stream, `time_sync::protocol`
 - Wire them into CI together with `idf.py build` for `/` and `test/uart_comm` (review G3, G4, G7).
 
-**Layout**
-- `time_sync`:
-  - Move `time_sync.cpp` and `time_sync_protocol.cpp` to `src/`, and `time_sync_protocol.hpp` to `priv_include/`.
-  - Stop the public `time_sync.hpp` from including the protocol header. Forward-declare, or move the types it needs into a public `time_sync_types.hpp`.
-- `imu_bmo_055`:
-  - Move `bno055.c`, `bno055.h` and `bno055_support.c` into `vendor/`.
-  - Delete `bno055_support.c` or drop it from the build (review I3).
-
 **Host input validation** (review E1, E2)
 - Check host GPIOs against an allowed set: no flash/PSRAM/UART0/USB pins, and nothing ≥ `GPIO_NUM_MAX`.
 - Reject non-finite gains, limits and setpoints with an error result code.

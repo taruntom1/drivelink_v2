@@ -27,7 +27,7 @@ Consequences:
 
 ## T2. Medium: `settimeofday()` steps the clock on every sync
 
-[time_sync.cpp:427-428](../components/time_sync/time_sync.cpp)
+[time_sync.cpp:427-428](../components/time_sync/src/time_sync.cpp)
 
 Each successful sync overwrites the system time. Besides the telemetry jumps in T1, this:
 - applies RTT noise directly to the clock. With a 921 kbps UART and USB-serial latency, RTT jitter on the PC side is commonly 1–10 ms, so the clock jitters by about half that every 5 s.
@@ -39,8 +39,8 @@ Each successful sync overwrites the system time. Besides the telemetry jumps in 
 
 ## T3. Low: algorithm details
 
-- The non-compensated branch ([time_sync.cpp:414](../components/time_sync/time_sync.cpp)) uses `offset = t2 - t3`. That ignores the return-path delay entirely, so it is biased by the full one-way delay. A better fallback without server rx/tx timestamps is `t2 - (t0 + t3)/2`.
+- The non-compensated branch ([time_sync.cpp:414](../components/time_sync/src/time_sync.cpp)) uses `offset = t2 - t3`. That ignores the return-path delay entirely, so it is biased by the full one-way delay. A better fallback without server rx/tx timestamps is `t2 - (t0 + t3)/2`.
 - `corrected_now_us = t3 + offset` is applied a few µs to ms after `t3`: logging, mutex, and other tasks preempting at priority 6. Recompute "now" right before `settimeofday`: `nowUnixUs() + offset`.
-- `TimeSync` starts the periodic task inside its constructor when `sync_interval_ms > 0` ([time_sync.cpp:134-139](../components/time_sync/time_sync.cpp)), and `main.cpp` calls `startPeriodicSync()` again ([main.cpp:58](../main/main.cpp)). The second call is a no-op. Remove one of them; the explicit call in `main` is clearer.
-- Task stack (4096) and priority (6) are hard-coded ([time_sync.cpp:219-225](../components/time_sync/time_sync.cpp)), unlike every other component, which uses Kconfig.
+- `TimeSync` starts the periodic task inside its constructor when `sync_interval_ms > 0` ([time_sync.cpp:134-139](../components/time_sync/src/time_sync.cpp)), and `main.cpp` calls `startPeriodicSync()` again ([main.cpp:58](../main/main.cpp)). The second call is a no-op. Remove one of them; the explicit call in `main` is clearer.
+- Task stack (4096) and priority (6) are hard-coded ([time_sync.cpp:219-225](../components/time_sync/src/time_sync.cpp)), unlike every other component, which uses Kconfig.
 - Shutdown: see C2 in [01](01-concurrency-and-lifecycle.md). The periodic task sleeps 5 s, so `stopPeriodicSync()` always force-deletes it. **Fixed** by C1/C2: the task is a `StoppableTask`, and `sleepUntil` wakes as soon as a stop is requested.

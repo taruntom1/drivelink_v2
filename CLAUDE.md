@@ -142,9 +142,7 @@ A change is done when all of the following are true:
 
 - **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand.
 - **Vendor code:**
-  - `components/imu_bmo_055/bno055.c` / `include/bno055.h` are the Bosch driver.
-  - `bno055_support.c` is Bosch's example template. It is compiled in, but none of our code calls it.
-  - These files are due to move to `components/imu_bmo_055/vendor/` (see `TODO.md`).
+  - `components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
 
 ## Review notes and TODO

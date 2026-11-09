@@ -2,13 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include "sdkconfig.h"
 
 namespace time_sync::protocol {
 
 constexpr uint8_t kProtocolVersion = 1;
-constexpr uint8_t kDefaultRequestMsgType = CONFIG_TIME_SYNC_REQUEST_MSG_TYPE;
-constexpr uint8_t kDefaultResponseMsgType = CONFIG_TIME_SYNC_RESPONSE_MSG_TYPE;
 
 struct TimeSyncRequest {
     uint16_t request_id;

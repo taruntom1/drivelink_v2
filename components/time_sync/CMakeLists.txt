@@ -1,7 +1,8 @@
 idf_component_register(
-    SRCS "time_sync.cpp"
-         "time_sync_protocol.cpp"
-    INCLUDE_DIRS "include" "."
+    SRCS "src/time_sync.cpp"
+         "src/time_sync_protocol.cpp"
+    INCLUDE_DIRS "include"
+    PRIV_INCLUDE_DIRS "priv_include"
     REQUIRES uart_comm esp_timer
     PRIV_REQUIRES rtos_util
 )

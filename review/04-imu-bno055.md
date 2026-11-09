@@ -27,6 +27,8 @@ If the sensor is unplugged or the I²C bus fails at boot, the manager logs a war
 
 ## I3. Low: uncommitted change compiles the Bosch template `bno055_support.c`
 
+**Fixed.** `bno055_support.c` was deleted, and the driver moved to `vendor/`.
+
 - [CMakeLists.txt:2](../components/imu_bmo_055/CMakeLists.txt) (working tree): `SRCS "bno055_support.c" "bno055.c" …`
 - [bno055_support.c:103](../components/imu_bmo_055/bno055_support.c): `struct bno055_t bno055;` (a non-static global)
 - [bno055_support.c:319](../components/imu_bmo_055/bno055_support.c): `bno055_init(&bno055);` inside `bno055_data_readout_template()`

@@ -4,7 +4,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "uart_comm.hpp"
-#include "time_sync_protocol.hpp"
+#include "time_sync_types.hpp"
 
 namespace time_sync {
 
@@ -12,8 +12,8 @@ struct TimeSyncConfig {
     uint32_t sync_interval_ms = 0;
     uint32_t response_timeout_ms = 250;
     bool enable_round_trip_compensation = true;
-    uint8_t request_msg_type = protocol::kDefaultRequestMsgType;
-    uint8_t response_msg_type = protocol::kDefaultResponseMsgType;
+    uint8_t request_msg_type = kDefaultRequestMsgType;
+    uint8_t response_msg_type = kDefaultResponseMsgType;
 };
 
 class TimeSync {

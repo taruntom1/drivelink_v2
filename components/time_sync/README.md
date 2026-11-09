@@ -65,7 +65,7 @@ With compensation disabled:
 
 ## Public API
 
-Header: `include/time_sync.hpp`
+Header: `include/time_sync.hpp`. The default request/response MSG_TYPEs (`kDefaultRequestMsgType`, `kDefaultResponseMsgType`, from Kconfig) are in `include/time_sync_types.hpp`. The wire codec (`time_sync_protocol.hpp`) is private.
 
 - `TimeSync(uart_comm::UartComm&, const TimeSyncConfig&)`
 - `bool isValid() const`

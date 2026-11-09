@@ -44,7 +44,7 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 | [encoder.cpp:125](../components/rotary_encoder_hal/src/encoder.cpp) | `pcnt_unit_get_count` in `getCount()`: on failure it returns 0, which looks like a valid position |
 | [encoder.cpp:164](../components/rotary_encoder_hal/src/encoder.cpp) | `pcnt_unit_clear_count` |
 | [mcpwm_pool.cpp:213-250](../components/motor_hal/src/mcpwm_pool.cpp), [pcnt_pool.cpp:207-226](../components/rotary_encoder_hal/src/pcnt_pool.cpp) | All teardown calls in `deallocate()` |
-| [time_sync.cpp:157](../components/time_sync/time_sync.cpp), [motor_manager.cpp:135-136](../components/motor_manager/src/motor_manager.cpp) | `registerCallback` on unregister. **No longer applicable:** unregistering is now `CallbackRegistration::reset()`, which has no return code to check (see C3). |
+| [time_sync.cpp:157](../components/time_sync/src/time_sync.cpp), [motor_manager.cpp:135-136](../components/motor_manager/src/motor_manager.cpp) | `registerCallback` on unregister. **No longer applicable:** unregistering is now `CallbackRegistration::reset()`, which has no return code to check (see C3). |
 
 ---
 
