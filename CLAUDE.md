@@ -23,7 +23,22 @@ idf.py menuconfig            # all component tunables live under their Kconfig m
 idf.py fullclean             # when target/config changes leave the build inconsistent
 ```
 
-The only automated tests are hardware-in-the-loop tests for `uart_comm`. They live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components`.
+There are two kinds of automated tests.
+
+**Host unit tests** (`test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync protocol codecs, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`third_party/doctest`). It compiles those firmware sources directly with the host compiler. `shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+
+```bash
+cmake -S test/host -B test/host/build -G Ninja
+cmake --build test/host/build
+ctest --test-dir test/host/build --output-on-failure   # or run test/host/build/host_tests directly
+test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
+```
+
+A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `shim/sdkconfig.h`.
+
+**CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`: `idf.py build` for `/` and `test/uart_comm` in the `espressif/idf:v5.5.2` container (it fails on any compiler warning), and the host tests on Ubuntu.
+
+**Hardware-in-the-loop tests** for `uart_comm` live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
 
 ```bash
 idf.py -C test/uart_comm build flash           # flash the test firmware
@@ -39,10 +54,10 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 **Startup** (`main/main.cpp`): `UartComm` comes first. `MotorManager`, `TimeSync` and `ImuBno055Manager` then each take a reference to it. Each one is checked with `isValid()`. An early `return` destroys the objects in reverse order, so destructors must be safe at any point.
 
 **Layering** (each one is an ESP-IDF component under `components/`):
-- `motor_hal` (`esp_motor::Motor`) and `rotary_encoder_hal` (`esp_rotary_encoder::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
+- `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
-- `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes.
-- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks.
+- `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
+- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `uart_comm::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
 - `rtos_util` provides `StoppableTask`.
 
 **UART protocol** (`uart_comm`):
@@ -112,7 +127,7 @@ Rules for them:
 Each protocol-facing manager defines its own messages on top of the `uart_comm` frame. All of them follow these rules:
 - **Version byte first.** Every payload starts with `kProtocolVersion`. Any change to the wire format bumps it. No backward compatibility is kept: the host and the firmware are updated together.
 - **Request correlation.** Configure commands carry a host-chosen `seq` byte right after the version, and the response echoes it. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for the subcommand and for the id fields. ESP-initiated requests carry their own id, like time_sync's `u16 request_id`.
-- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with bounds-checked little-endian helpers (`readU16Le`, `appendU16Le`, ...). Never `memcpy` a whole struct to or from the wire.
+- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with the bounds-checked little-endian `uart_comm::wire::Reader` / `Writer` (`uart_comm/include/wire_codec.hpp`). Never `memcpy` a whole struct to or from the wire, and never write a component-local byte-order helper.
 - **Exact lengths.** A fixed-size body must be exactly its size, or it is rejected. A variable-size body carries an explicit count, and `count × entry size` must equal the remaining length.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
 - **IDs from Kconfig.** MSG_TYPE values and stream channels come only from Kconfig, within the `uart_comm` ranges above.
@@ -131,20 +146,18 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py build` and `idf.py -C test/uart_comm build` both succeed with zero warnings.
+- **Builds:** `idf.py build` and `idf.py -C test/uart_comm build` both succeed with zero warnings, and the host tests pass. CI checks all three.
 - **Docs in the same commit:**
   - Any public API, protocol or Kconfig change updates the component README in that commit.
   - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.
 - **Review status:** a change that fixes or affects a `review/` item marks its status in the same change: **Fixed**, **Partly fixed** or **No longer applicable**, with a one-line note.
-- **Host tests for pure logic:** new pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host-side unit tests. The harness does not exist yet (see `TODO.md`), so it has to be set up first.
+- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `test/host/`, and they pass.
 
 ### Files not to edit
 
 - **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand.
 - **Vendor code:**
-  - `components/imu_bmo_055/bno055.c` / `include/bno055.h` are the Bosch driver.
-  - `bno055_support.c` is Bosch's example template. It is compiled in, but none of our code calls it.
-  - These files are due to move to `components/imu_bmo_055/vendor/` (see `TODO.md`).
+  - `components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
 
 ## Review notes and TODO

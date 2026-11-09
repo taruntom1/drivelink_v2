@@ -3,9 +3,9 @@
 #include "esp_log.h"
 #include "driver/mcpwm_prelude.h"
 
-static const char *TAG = "mcpwm_pool";
+static const char *const TAG = "mcpwm_pool";
 
-namespace esp_motor {
+namespace motor_hal {
 namespace detail {
 
 McpwmPool::GroupState McpwmPool::s_groups[kNumGroups] = {};
@@ -252,4 +252,4 @@ esp_err_t McpwmPool::deallocate(const McpwmChannel &ch)
 }
 
 } // namespace detail
-} // namespace esp_motor
+} // namespace motor_hal

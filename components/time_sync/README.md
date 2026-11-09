@@ -65,7 +65,7 @@ With compensation disabled:
 
 ## Public API
 
-Header: `include/time_sync.hpp`
+Header: `include/time_sync.hpp`. The default request/response MSG_TYPEs (`kDefaultRequestMsgType`, `kDefaultResponseMsgType`, from Kconfig) are in `include/time_sync_types.hpp`. The wire codec (`time_sync_protocol.hpp`) is private.
 
 - `TimeSync(uart_comm::UartComm&, const TimeSyncConfig&)`
 - `bool isValid() const`
@@ -127,3 +127,5 @@ Under `Time Sync Configuration` in `menuconfig`, these defaults can be changed:
 
 - `TIME_SYNC_REQUEST_MSG_TYPE`
 - `TIME_SYNC_RESPONSE_MSG_TYPE`
+- `TIME_SYNC_TASK_STACK` (default 4096): default `TimeSyncConfig::task_stack_size` for the periodic sync task
+- `TIME_SYNC_TASK_PRIO` (default 6): default `TimeSyncConfig::task_priority`

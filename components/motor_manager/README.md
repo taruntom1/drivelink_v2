@@ -123,6 +123,8 @@ Changes from version 2:
 
 The PID `dt` now always comes from the control loop timing (see [Control loop and timing](#control-loop-and-timing)), so the host no longer sends a sample time.
 
+Code layout: the wire-level enums, field values and sizes, and `MotorConfigPayload` (the CreateMotor / ConfigureMotor body, with `uint8_t` GPIO numbers) are in the pure public header `include/motor_manager_protocol.hpp`. The codec that turns payloads into requests and back (`priv_include/motor_protocol.hpp`, `src/motor_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`. The MSG_TYPEs and stream channels come from Kconfig and are in `motor_manager_types.hpp`.
+
 ### Configure command (single callback)
 
 - UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE` (default `0x21`)
@@ -134,9 +136,17 @@ The PID `dt` now always comes from the control loop timing (see [Control loop an
   - `motor_id` (`uint8_t`)
   - subcommand-specific bytes
 
-Commands are queued (up to 8, `kConfigQueueDepth`) and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
+Commands are queued (up to `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH`, default 8) and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
 
 Every subcommand body has a fixed size, and the body must be exactly that size. A body with missing or extra bytes gets `INVALID_ARGUMENT`. DELETE_MOTOR, STOP_MOTOR and RESET_MOTOR have an empty body. All multi-byte values are little-endian.
+
+Invalid values are rejected with `INVALID_ARGUMENT`, and nothing is applied:
+- any non-finite `float32` (NaN, ±Inf) in any body
+- an unknown `mode`, `pid_kind` or `setpoint_kind`
+- telemetry `field_mask` bits outside `0x07`
+- CREATE_MOTOR pins (when not in mock mode) that are not four distinct GPIOs a host may use: they must exist on the ESP32-S3 (0–21, 26–48), and must not be USB (19, 20), flash/PSRAM (26–37), the uart_comm TX/RX pins, or a pin another motor already owns. CONFIGURE_MOTOR does not change pins, so it ignores them.
+
+Valid numbers outside their range are clamped or ignored as before (for example `output_min`/`output_max` are clamped to [-1, 1], and a non-positive `counts_per_rev` keeps the previous value).
 
 Subcommands:
 
@@ -174,7 +184,7 @@ CREATE/CONFIGURE payload body (after the 4 header bytes, 64 bytes, so 68 bytes i
 - `position_feedforward` `float32`
 - `vel_filter_cutoff_hz` `float32`: low-pass cutoff of the velocity estimate, `0` = unfiltered
 
-The cutoffs are frequencies, not per-sample coefficients, so they behave the same at any control rate. A negative or non-finite cutoff disables that filter at creation and is ignored by CONFIGURE.
+The cutoffs are frequencies, not per-sample coefficients, so they behave the same at any control rate. A negative cutoff disables that filter at creation and is ignored by CONFIGURE.
 
 SET_MODE body:
 
@@ -246,6 +256,8 @@ No per-packet dynamic allocation is used while parsing.
 
 When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next control tick (within one control period). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
 
+Each entry is checked on the RX task before it is queued: the motor id must exist, the kind must be 0–2 and the value finite. Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged one by one: neither the RX task nor the control tick logs. `getSetpointStreamCounters()` returns the totals, and the config task logs a summary of new counts at most once per second.
+
 ### Telemetry stream (ESP → PC)
 
 - Channel: `CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL` (default `0x81`)
@@ -282,3 +294,6 @@ Under `Motor Manager Configuration` in `menuconfig`, these defaults can be chang
 - `MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US` (default 1000)
 - `MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US` (default 10000)
 - `MOTOR_MANAGER_LOG_LOOP_STATS` (default off)
+- `MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK`, `MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO` (default 6)
+- `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH` (default 8): configure frames queued for the config task
+- `MOTOR_MANAGER_MUTEX_TIMEOUT_MS` (default 50): how long configure commands and the manual `updateAll()` / `publishTelemetry()` wait for the manager mutex. The control tick never waits.

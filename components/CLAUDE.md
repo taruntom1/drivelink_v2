@@ -53,7 +53,6 @@ These rules apply to every component under `components/`. They add to the projec
 
 - **Files:** `snake_case.hpp` / `snake_case.cpp`, and every header starts with `#pragma once`.
 - **Namespaces:** the namespace equals the component name (`uart_comm`, `motor_manager`). Internals go in a nested `detail` namespace.
-  - `esp_motor` (motor_hal), `esp_pid` (pid) and `esp_rotary_encoder` (rotary_encoder_hal) still break this rule. They are due to be renamed (see `TODO.md`).
 - **Types** (classes, structs, `enum class`) and their enumerators use PascalCase. Use `enum class`, never plain `enum`.
 - **Functions and methods:** camelCase (`isValid`, `setTiming`, `readU16Le`).
 - **Variables and struct fields:** snake_case. Members are prefixed `m_`, file-scope statics `s_`.

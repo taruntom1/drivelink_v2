@@ -36,9 +36,11 @@ The repeated `if (m_use_mock_feedback || motor == nullptr)` branches (8 occurren
 
 ## Q3. Duplicated little-endian helpers
 
+**Fixed.** All three components now use `uart_comm::wire::Reader` / `Writer` from `uart_comm/include/wire_codec.hpp`, which has a sticky error flag.
+
 Byte-order helpers are implemented separately in:
 - [motor_manager_uart.cpp:23-41](../components/motor_manager/src/motor_manager_uart.cpp): `readFloatLe`, `readU32Le`
-- [time_sync_protocol.cpp:3-33](../components/time_sync/time_sync_protocol.cpp): `writeU16LE`, `writeI64LE`, `readU16LE`, `readI64LE`
+- [time_sync_protocol.cpp:3-33](../components/time_sync/src/time_sync_protocol.cpp): `writeU16LE`, `writeI64LE`, `readU16LE`, `readI64LE`
 - [imu_bmo_055.cpp:32-66](../components/imu_bmo_055/src/imu_bmo_055.cpp): `appendU16Le`, `appendU64Le`, `appendS16Le`, `readU16Le`
 - `encodeTelemetryLocked` uses raw `memcpy` for the same job.
 
@@ -68,9 +70,9 @@ This patches the first register write that happens to fail. The underlying probl
 
 | Item | Location |
 |------|----------|
-| `bno055_support.c` (Bosch template), now being added to the build | see I3 in [04](04-imu-bno055.md) |
+| `bno055_support.c` (Bosch template), now being added to the build | **Fixed:** deleted (I3 in [04](04-imu-bno055.md)). |
 | `IMU_BMO_055_EVENT_MSG_TYPE` Kconfig: defined, never used | [imu Kconfig](../components/imu_bmo_055/Kconfig) |
-| `time_sync::protocol::decodeRequest` / `encodeResponse`: server-side helpers, unused on the device | [time_sync_protocol.cpp](../components/time_sync/time_sync_protocol.cpp) (fine for tests, but they are not tested) |
+| `time_sync::protocol::decodeRequest` / `encodeResponse`: server-side helpers, unused on the device | [time_sync_protocol.cpp](../components/time_sync/src/time_sync_protocol.cpp) (fine for tests, but they are not tested) |
 | `PidController` copy constructor/assignment: deep copy of an object that is only ever a member, never copied | [pid_controller.cpp:105-129](../components/pid/src/pid_controller.cpp) |
 | `ImuStreamSample` carries every field even when the mask selects one | minor |
 | `uart_comm.cpp` constructor zeroes `callbacks[]` and other fields that `Impl{}` value-initialises already. **Done** with the C1–C3 fix. | [uart_comm.cpp](../components/uart_comm/src/uart_comm.cpp) |

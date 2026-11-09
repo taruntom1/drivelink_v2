@@ -3,9 +3,9 @@
 #include "esp_log.h"
 #include "driver/pulse_cnt.h"
 
-static const char *TAG = "pcnt_pool";
+static const char *const TAG = "pcnt_pool";
 
-namespace esp_rotary_encoder {
+namespace rotary_encoder_hal {
 namespace detail {
 
 int PcntPool::s_active_count = 0;
@@ -228,4 +228,4 @@ esp_err_t PcntPool::deallocate(const PcntUnit &unit)
 }
 
 } // namespace detail
-} // namespace esp_rotary_encoder
+} // namespace rotary_encoder_hal

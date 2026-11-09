@@ -3,8 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-static const char *TAG = "motor_controller";
-static constexpr float TWO_PI = 2.0f * static_cast<float>(M_PI);
+static const char *const TAG = "motor_controller";
 
 namespace motor_controller {
 
@@ -15,14 +14,14 @@ bool isValidCutoff(float hz)
     return std::isfinite(hz) && hz >= 0.0f;
 }
 
-// Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
-// `dt_s` seconds. 1 means "no filtering".
-float lowPassAlpha(float hz, float dt_s)
+bool isPositiveFinite(float v)
 {
-    if (hz <= 0.0f) {
-        return 1.0f;
-    }
-    return 1.0f - std::exp(-TWO_PI * hz * dt_s);
+    return std::isfinite(v) && v > 0.0f;
+}
+
+float finiteOr(float v, float fallback)
+{
+    return std::isfinite(v) ? v : fallback;
 }
 
 } // namespace
@@ -37,13 +36,13 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
     : m_motor(pwm_gpio, dir_gpio),
       m_encoder(enc_a, enc_b),
       m_vel_pid([&]() {
-          esp_pid::PidConfig vc = config.velocity_pid;
+          pid::PidConfig vc = config.velocity_pid;
           vc.output_min = config.output_min;
           vc.output_max = config.output_max;
           return vc;
       }()),
       m_pos_pid([&]() {
-          esp_pid::PidConfig pc = config.position_pid;
+          pid::PidConfig pc = config.position_pid;
           pc.output_min = config.output_min;
           pc.output_max = config.output_max;
           return pc;
@@ -52,19 +51,17 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
       m_open_loop_duty(0.0f),
       m_vel_setpoint(0.0f),
       m_pos_setpoint(0.0f),
-      m_vel_feedforward(config.velocity_feedforward),
-      m_pos_feedforward(config.position_feedforward),
-      m_counts_per_rev(config.counts_per_rev > 0.0f ? config.counts_per_rev : 1.0f),
-      m_gear_ratio(config.gear_ratio > 0.0f ? config.gear_ratio : 1.0f),
-      m_output_min(std::clamp(config.output_min, -1.0f, 1.0f)),
-      m_output_max(std::clamp(config.output_max, -1.0f, 1.0f)),
+      m_vel_feedforward(finiteOr(config.velocity_feedforward, 0.0f)),
+      m_pos_feedforward(finiteOr(config.position_feedforward, 0.0f)),
+      m_counts_per_rev(isPositiveFinite(config.counts_per_rev) ? config.counts_per_rev : 1.0f),
+      m_gear_ratio(isPositiveFinite(config.gear_ratio) ? config.gear_ratio : 1.0f),
+      m_output_min(std::clamp(finiteOr(config.output_min, -1.0f), -1.0f, 1.0f)),
+      m_output_max(std::clamp(finiteOr(config.output_max, 1.0f), -1.0f, 1.0f)),
       m_vel_filter_cutoff_hz(isValidCutoff(config.velocity_filter_cutoff_hz)
                                  ? config.velocity_filter_cutoff_hz
                                  : 0.0f),
       m_estimator_reset_requested(false),
-      m_estimator_primed(false),
-      m_prev_count(0),
-      m_vel_estimate(0.0f),
+      m_vel_estimator(),
       m_cached_angle_rad(0.0f),
       m_cached_velocity_rad_s(0.0f),
       m_cached_output(0.0f),
@@ -109,32 +106,10 @@ float MotorController::estimateVelocity(int32_t count, float dt_s,
                                         float counts_per_rev, float gear_ratio)
 {
     if (m_estimator_reset_requested.exchange(false, std::memory_order_acq_rel)) {
-        m_estimator_primed = false;
+        m_vel_estimator.reset();
     }
-
-    if (!m_estimator_primed) {
-        // First sample: there is no previous count to difference against.
-        m_prev_count = count;
-        m_vel_estimate = 0.0f;
-        m_estimator_primed = true;
-        return m_vel_estimate;
-    }
-
-    if (!(dt_s > 0.0f) || !std::isfinite(dt_s)) {
-        return m_vel_estimate;
-    }
-
-    // The PCNT accumulator makes the count effectively unbounded; difference
-    // in unsigned arithmetic so a wrap of the int32 value stays well-defined.
-    const int32_t delta = static_cast<int32_t>(
-        static_cast<uint32_t>(count) - static_cast<uint32_t>(m_prev_count));
-    m_prev_count = count;
-
-    const float raw = rateToAngularVelocity(static_cast<float>(delta) / dt_s,
-                                            counts_per_rev, gear_ratio);
-    const float alpha = lowPassAlpha(m_vel_filter_cutoff_hz.load(std::memory_order_relaxed), dt_s);
-    m_vel_estimate += alpha * (raw - m_vel_estimate);
-    return m_vel_estimate;
+    return m_vel_estimator.update(count, dt_s, counts_per_rev, gear_ratio,
+                                  m_vel_filter_cutoff_hz.load(std::memory_order_relaxed));
 }
 
 void MotorController::update(float dt_s)
@@ -207,17 +182,17 @@ void MotorController::setMode(ControlMode mode)
     // integral windup accumulated while in a different mode.
     if (mode == ControlMode::VelocityControl) {
         m_vel_pid.reset();
-        m_vel_pid.setMode(esp_pid::Mode::Automatic);
-        m_pos_pid.setMode(esp_pid::Mode::Manual);
+        m_vel_pid.setMode(pid::Mode::Automatic);
+        m_pos_pid.setMode(pid::Mode::Manual);
     } else if (mode == ControlMode::PositionControl) {
         m_pos_pid.reset();
-        m_pos_pid.setMode(esp_pid::Mode::Automatic);
-        m_vel_pid.setMode(esp_pid::Mode::Manual);
+        m_pos_pid.setMode(pid::Mode::Automatic);
+        m_vel_pid.setMode(pid::Mode::Manual);
         m_pos_setpoint.store(current_angle);
     } else {
         // OpenLoop
-        m_vel_pid.setMode(esp_pid::Mode::Manual);
-        m_pos_pid.setMode(esp_pid::Mode::Manual);
+        m_vel_pid.setMode(pid::Mode::Manual);
+        m_pos_pid.setMode(pid::Mode::Manual);
     }
 
     taskENTER_CRITICAL(&m_mux);
@@ -243,30 +218,42 @@ ControlMode MotorController::getMode() const
 // Setpoint setters
 // ---------------------------------------------------------------------------
 
+// Non-finite values are ignored: NaN would pass every clamp and reach the PWM.
 void MotorController::setOpenLoopDuty(float duty)
 {
+    if (!std::isfinite(duty)) {
+        return;
+    }
     duty = std::clamp(duty, -1.0f, 1.0f);
     m_open_loop_duty.store(duty);
 }
 
 void MotorController::setVelocitySetpoint(float rad_per_sec)
 {
-    m_vel_setpoint.store(rad_per_sec);
+    if (std::isfinite(rad_per_sec)) {
+        m_vel_setpoint.store(rad_per_sec);
+    }
 }
 
 void MotorController::setPositionSetpoint(float radians)
 {
-    m_pos_setpoint.store(radians);
+    if (std::isfinite(radians)) {
+        m_pos_setpoint.store(radians);
+    }
 }
 
 void MotorController::setVelocityFeedforward(float feedforward)
 {
-    m_vel_feedforward.store(feedforward);
+    if (std::isfinite(feedforward)) {
+        m_vel_feedforward.store(feedforward);
+    }
 }
 
 void MotorController::setPositionFeedforward(float feedforward)
 {
-    m_pos_feedforward.store(feedforward);
+    if (std::isfinite(feedforward)) {
+        m_pos_feedforward.store(feedforward);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,8 +320,8 @@ void MotorController::setVelocityFilterCutoff(float hz)
 
 void MotorController::setCountsPerRev(float counts)
 {
-    if (counts <= 0.0f) {
-        ESP_LOGW(TAG, "setCountsPerRev: value must be > 0 (got %.2f); ignoring", counts);
+    if (!isPositiveFinite(counts)) {
+        ESP_LOGW(TAG, "setCountsPerRev: value must be finite and > 0 (got %.2f); ignoring", counts);
         return;
     }
     m_counts_per_rev.store(counts);
@@ -343,8 +330,8 @@ void MotorController::setCountsPerRev(float counts)
 
 void MotorController::setGearRatio(float ratio)
 {
-    if (ratio <= 0.0f) {
-        ESP_LOGW(TAG, "setGearRatio: value must be > 0 (got %.4f); ignoring", ratio);
+    if (!isPositiveFinite(ratio)) {
+        ESP_LOGW(TAG, "setGearRatio: value must be finite and > 0 (got %.4f); ignoring", ratio);
         return;
     }
     m_gear_ratio.store(ratio);
@@ -353,8 +340,8 @@ void MotorController::setGearRatio(float ratio)
 
 void MotorController::setOutputLimits(float min, float max)
 {
-    if (min >= max) {
-        ESP_LOGW(TAG, "setOutputLimits: min (%.3f) must be < max (%.3f); ignoring", min, max);
+    if (!std::isfinite(min) || !std::isfinite(max) || min >= max) {
+        ESP_LOGW(TAG, "setOutputLimits: limits must be finite and min (%.3f) < max (%.3f); ignoring", min, max);
         return;
     }
     min = std::clamp(min, -1.0f, 1.0f);
@@ -406,18 +393,6 @@ void MotorController::reset()
     m_cached_angle_rad.store(0.0f, std::memory_order_relaxed);
     m_cached_velocity_rad_s.store(0.0f, std::memory_order_relaxed);
     m_cached_output.store(0.0f, std::memory_order_relaxed);
-}
-
-float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const
-{
-    return static_cast<float>(counts) * TWO_PI
-           / (counts_per_rev * gear_ratio);
-}
-
-float MotorController::rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const
-{
-    return counts_per_sec * TWO_PI
-           / (counts_per_rev * gear_ratio);
 }
 
 } // namespace motor_controller

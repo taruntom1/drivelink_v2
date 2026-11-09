@@ -3,7 +3,7 @@
 #include "sdkconfig.h"
 #include <cstdint>
 
-namespace esp_pid {
+namespace pid {
 
 /// PID operating mode.
 enum class Mode {
@@ -52,12 +52,12 @@ struct PidImpl;
 ///
 /// Usage:
 /// @code
-///   esp_pid::PidConfig cfg;
+///   pid::PidConfig cfg;
 ///   cfg.kp = 1.0f;
 ///   cfg.ki = 0.5f;
 ///   cfg.kd = 0.1f;
-///   esp_pid::PidController pid(cfg);
-///   pid.setMode(esp_pid::Mode::Automatic);
+///   pid::PidController pid(cfg);
+///   pid.setMode(pid::Mode::Automatic);
 ///
 ///   // In the control loop, with dt_s = seconds since the previous call:
 ///   float output = pid.compute(measured_value, target_value, dt_s);
@@ -96,13 +96,13 @@ public:
     /// @param mode Mode::Manual or Mode::Automatic.
     void setMode(Mode mode);
 
-    /// Set PID gains. Negative values are rejected (no change applied).
+    /// Set PID gains. Negative or non-finite values are rejected (no change applied).
     /// @param kp Proportional gain (>= 0).
     /// @param ki Integral gain (>= 0).
     /// @param kd Derivative gain (>= 0).
     void setTunings(float kp, float ki, float kd);
 
-    /// Set output limits. min must be less than max; otherwise no change.
+    /// Set output limits. Both must be finite and min < max; otherwise no change.
     /// @param min Lower output clamp.
     /// @param max Upper output clamp.
     void setOutputLimits(float min, float max);
@@ -146,4 +146,4 @@ private:
     detail::PidImpl *m_impl;
 };
 
-} // namespace esp_pid
+} // namespace pid

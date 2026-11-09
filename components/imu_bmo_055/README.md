@@ -33,6 +33,8 @@ Primary config struct:
 
 - `imu_bmo_055::ManagerConfig` (in `include/imu_bmo_055_types.hpp`)
 
+Wire-level types (`ResultCode`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
+
 Important runtime methods:
 
 - `setStreamEnabled(bool)`: also starts or stops the sampling timer
@@ -181,6 +183,8 @@ The constructor fails (`isValid() == false`) if min is 0 or greater than max.
 - `IMU_BMO_055_CONFIG_TASK_STACK`
 - `IMU_BMO_055_CONFIG_TASK_PRIO`
 - `IMU_BMO_055_CONFIG_QUEUE_DEPTH`
+- `IMU_BMO_055_MUTEX_TIMEOUT_MS` (default `50`): configure commands wait this long for the manager mutex, then fail with `BUSY`
+- `IMU_BMO_055_DEVICE_LOCK_TIMEOUT_MS` (default `100`): mode switches and calibration read/write wait this long for the BNO055 device lock. The stream tick never waits.
 
 ## 6. Calibration Support
 

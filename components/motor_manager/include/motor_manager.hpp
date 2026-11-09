@@ -55,6 +55,9 @@ public:
     /// overran or the manager mutex was busy) since construction.
     uint32_t getControlOverrunCount() const;
 
+    /// Setpoint stream frames and entries rejected since construction.
+    SetpointStreamCounters getSetpointStreamCounters() const;
+
     /// Run one control cycle for every motor with the given dt. Only needed
     /// when the internal update task is disabled.
     void updateAll(float dt_s);
@@ -67,6 +70,7 @@ public:
 private:
     struct MotorSlot {
         uint8_t id = 0;
+        uint64_t pin_mask = 0; ///< GPIOs this motor owns (one bit per pin), 0 in mock mode
         bool telemetry_enabled = true;
         uint8_t telemetry_field_mask = kTelemetryFieldAll;
         float mock_angle_rad = 0.0f;
@@ -97,6 +101,10 @@ private:
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
     void applyPendingSetpointsLocked();
+    void logSetpointCountersIfChanged(SetpointStreamCounters &last_logged, int64_t &last_log_us) const;
+    ResultCode checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
+    void setMotorKnown(uint8_t motor_id, bool known);
+    bool isMotorKnown(uint8_t motor_id) const;
 
     uart_comm::UartComm &m_uart;
     ManagerConfig m_config;
@@ -119,6 +127,13 @@ private:
     std::atomic<uint32_t> m_telemetry_divider{1};
     uint32_t m_requested_telemetry_period_us = 0; // guarded by m_mutex
     std::atomic<uint32_t> m_overrun_count{0};
+    std::atomic<uint32_t> m_bad_setpoint_frames{0};
+    std::atomic<uint32_t> m_rejected_setpoints{0};
+
+    // Motor ids that exist, one bit per id. Written under m_mutex when a
+    // motor is created or deleted; read lock-free by queueSetpoint() on the
+    // RX task, so setpoints for unknown ids never reach the mailbox.
+    std::array<std::atomic<uint32_t>, 8> m_known_motor_ids{};
 
     // Setpoint mailbox (C4): written by the UART RX task under a spinlock so
     // it never waits on m_mutex; drained by the update task each tick.

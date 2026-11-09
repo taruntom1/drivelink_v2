@@ -16,4 +16,20 @@ menu "Time Sync Configuration"
             UART message type for time sync responses sent by the host
             (response class range 0x40..0x7F).
 
+    config TIME_SYNC_TASK_STACK
+        int "Periodic sync task stack size"
+        default 4096
+        range 2048 16384
+        help
+            Default stack size in bytes for the periodic sync task
+            (TimeSyncConfig::task_stack_size).
+
+    config TIME_SYNC_TASK_PRIO
+        int "Periodic sync task priority"
+        default 6
+        range 1 24
+        help
+            Default FreeRTOS priority for the periodic sync task
+            (TimeSyncConfig::task_priority).
+
 endmenu

@@ -27,7 +27,7 @@ Public header: `components/rotary_encoder_hal/include/encoder.hpp`
 - Each `Encoder` consumes 1 PCNT unit
 - Maximum active encoders at once: 4
 
-If all units are in use, construction fails internally and `isValid()` returns `false`.
+If all units are in use, or the pins are not two distinct valid GPIOs (`GPIO_IS_VALID_GPIO`), construction fails internally and `isValid()` returns `false`.
 
 ## API: When to Use What
 
@@ -77,7 +77,7 @@ Call immediately after construction and before reads.
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-using namespace esp_rotary_encoder;
+using namespace rotary_encoder_hal;
 
 extern "C" void app_main(void)
 {

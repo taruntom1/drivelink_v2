@@ -5,25 +5,12 @@ extern "C" {
 }
 
 #include "imu_bmo_055_types.hpp"
+#include "imu_protocol.hpp"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 namespace imu_bmo_055 {
-
-struct ImuStreamSample {
-    uint64_t timestamp_us = 0;
-
-    bno055_euler_t euler{};
-    bno055_quaternion_t quaternion{};
-    bno055_linear_accel_t linear_accel{};
-    bno055_gravity_t gravity{};
-    bno055_accel_t raw_accel{};
-    bno055_gyro_t raw_gyro{};
-    bno055_mag_t raw_mag{};
-    int8_t temperature = 0;
-    CalibrationStatus calibration_status{};
-};
 
 class Bno055Device {
 public:

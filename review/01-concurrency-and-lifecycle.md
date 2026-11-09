@@ -32,7 +32,7 @@ Use a real join. Each task signals completion (`xTaskNotifyGive(owner)` or a bin
 
 ## C2. High: forced `vTaskDelete()` while the task holds a mutex
 
-**Where**: the same call sites, plus [time_sync.cpp:244-255](../components/time_sync/time_sync.cpp).
+**Where**: the same call sites, plus [time_sync.cpp:244-255](../components/time_sync/src/time_sync.cpp).
 
 When the grace period is too short, the task is still running and gets force-deleted:
 - The IMU stream task blocks in `vTaskDelayUntil(period)` for up to `max_stream_period_ms`, or sits in an I²C transaction while holding `Bno055Device::m_mutex` and the I²C driver lock.
@@ -82,8 +82,8 @@ Configure commands are already handed off to a queue. The setpoint stream should
 
 ## C5. Low: unsynchronised shared fields
 
-- `TimeSync::Impl::periodic_task` is written by the task ([time_sync.cpp:335](../components/time_sync/time_sync.cpp)) and polled by the owner ([time_sync.cpp:245](../components/time_sync/time_sync.cpp)) as a plain pointer. It should be atomic, or replaced with a join signal.
-- `TimeSync::triggerManualSync(false, …)` increments `next_request_id` outside `sync_mutex` ([time_sync.cpp:187](../components/time_sync/time_sync.cpp)), racing with `performSync()`.
+- `TimeSync::Impl::periodic_task` is written by the task ([time_sync.cpp:335](../components/time_sync/src/time_sync.cpp)) and polled by the owner ([time_sync.cpp:245](../components/time_sync/src/time_sync.cpp)) as a plain pointer. It should be atomic, or replaced with a join signal.
+- `TimeSync::triggerManualSync(false, …)` increments `next_request_id` outside `sync_mutex` ([time_sync.cpp:187](../components/time_sync/src/time_sync.cpp)), racing with `performSync()`.
 - `Parser::m_counters` is written by the RX task and read by `getErrorCounters()` from any task. 32-bit reads are atomic on Xtensa, so this is benign today, but the struct copy is not atomic as a whole.
 - `PcntPool::ensureInitialized()` / `McpwmPool::ensureInitialized()` lazily create the pool mutex with no protection ([pcnt_pool.cpp:15](../components/rotary_encoder_hal/src/pcnt_pool.cpp), [mcpwm_pool.cpp:15](../components/motor_hal/src/mcpwm_pool.cpp)). Two tasks constructing the first motor or encoder at the same time can each create a mutex, and one leaks. Use a function-local static or create the mutex in a `static` initializer.
 

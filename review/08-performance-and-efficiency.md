@@ -37,11 +37,11 @@ Every `sendCommand` and `sendData` wakes the TX task, which then does 64 `xSemap
 ## F4. Low: logging in hot paths
 
 - [motor_controller.cpp:117,126](../components/motor_controller/src/motor_controller.cpp): `ESP_LOGD` with 3 floats per motor per 10 ms tick. It is compiled in at the default log level and evaluated whenever `LOG_LOCAL_LEVEL ≥ DEBUG`. Fine as debug, but don't enable it in production builds. **Fixed:** `update()` no longer logs.
-- [motor_manager_uart.cpp:96-99](../components/motor_manager/src/motor_manager_uart.cpp): `ESP_LOGW` per rejected setpoint entry, on the RX task. A host streaming setpoints for a deleted motor at 100 Hz floods the log and slows RX. Rate-limit it. **Still open, and it now matters more:**
+- **Fixed:** neither the RX task nor the control tick logs setpoint problems any more. Bad frames and rejected entries are counted (`getSetpointStreamCounters()`), and the config task logs a summary at most once per second. Was: [motor_manager_uart.cpp:96-99](../components/motor_manager/src/motor_manager_uart.cpp): `ESP_LOGW` per rejected setpoint entry, on the RX task. A host streaming setpoints for a deleted motor at 100 Hz floods the log and slows RX. Rate-limit it. **Still open, and it now matters more:**
   - With the update task running, the RX task only fills the mailbox and rejects only on capacity.
   - An unknown motor id is rejected later, in `applyPendingSetpointsLocked()`. That runs on the control task while it holds `m_mutex`, and it logs one `ESP_LOGW` per entry.
   - If the console blocks, the control tick stalls and config commands time out.
-  - Fix: rate-limit the warning, or reject unknown ids in `queueSetpoint()`.
+  - Fix: rate-limit the warning, or reject unknown ids in `queueSetpoint()`. **Both done:** counters plus a rate-limited summary, and `queueSetpoint()` rejects unknown ids.
 - `PidController::setMode`/`reset` log at INFO, and `setMode` on the controller resets twice, so each mode change prints 3–4 lines.
 
 ---

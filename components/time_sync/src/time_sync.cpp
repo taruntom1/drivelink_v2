@@ -1,4 +1,5 @@
 #include "time_sync.hpp"
+#include "time_sync_protocol.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -13,7 +14,7 @@
 #include "stoppable_task.hpp"
 #include "tick_util.hpp"
 
-static const char* TAG = "time_sync";
+static const char *const TAG = "time_sync";
 
 namespace time_sync {
 
@@ -217,7 +218,10 @@ esp_err_t TimeSync::startPeriodicSync()
         return ESP_OK;
     }
 
-    esp_err_t ret = m_impl->periodic_task.start("time_sync_task", 4096, 6, [this] { periodicTask(); });
+    esp_err_t ret = m_impl->periodic_task.start("time_sync_task",
+                                                m_impl->config.task_stack_size,
+                                                m_impl->config.task_priority,
+                                                [this] { periodicTask(); });
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create periodic sync task: %s", esp_err_to_name(ret));
         return ESP_FAIL;

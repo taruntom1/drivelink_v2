@@ -4,9 +4,9 @@
 #include <cmath>
 #include <utility>
 
-static const char *TAG = "pid_controller";
+static const char *const TAG = "pid_controller";
 
-namespace esp_pid {
+namespace pid {
 namespace detail {
 
 struct PidImpl {
@@ -41,6 +41,16 @@ constexpr float kTwoPi = 6.28318530717958647692f;
 bool isValidCutoff(float hz)
 {
     return std::isfinite(hz) && hz >= 0.0f;
+}
+
+bool isValidGain(float g)
+{
+    return std::isfinite(g) && g >= 0.0f;
+}
+
+bool areValidLimits(float min, float max)
+{
+    return std::isfinite(min) && std::isfinite(max) && min < max;
 }
 
 // Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
@@ -85,7 +95,7 @@ PidController::PidController(const PidConfig &config)
     m_impl->first_compute = true;
 
     // Validate output limits
-    if (m_impl->out_min >= m_impl->out_max) {
+    if (!areValidLimits(m_impl->out_min, m_impl->out_max)) {
         ESP_LOGW(TAG, "Invalid output limits (min=%.4f >= max=%.4f), using defaults [-1, 1]",
                  m_impl->out_min, m_impl->out_max);
         m_impl->out_min = -1.0f;
@@ -99,13 +109,13 @@ PidController::PidController(const PidConfig &config)
         m_impl->derivative_cutoff_hz = 0.0f;
     }
 
-    // Warn on negative gains (but still store them clamped to 0)
-    if (config.kp < 0.0f || config.ki < 0.0f || config.kd < 0.0f) {
-        ESP_LOGW(TAG, "Negative gains clamped to 0 (kp=%.4f ki=%.4f kd=%.4f)",
+    // Negative or non-finite gains are replaced by 0, with a warning.
+    if (!isValidGain(config.kp) || !isValidGain(config.ki) || !isValidGain(config.kd)) {
+        ESP_LOGW(TAG, "Invalid gains replaced by 0 (kp=%.4f ki=%.4f kd=%.4f)",
                  config.kp, config.ki, config.kd);
-        m_impl->kp = std::max(0.0f, m_impl->kp);
-        m_impl->ki = std::max(0.0f, m_impl->ki);
-        m_impl->kd = std::max(0.0f, m_impl->kd);
+        m_impl->kp = isValidGain(config.kp) ? config.kp : 0.0f;
+        m_impl->ki = isValidGain(config.ki) ? config.ki : 0.0f;
+        m_impl->kd = isValidGain(config.kd) ? config.kd : 0.0f;
     }
 
     ESP_LOGI(TAG, "PID created: kp=%.4f ki=%.4f kd=%.4f d_cutoff=%.1f Hz dir=%s",
@@ -251,8 +261,8 @@ void PidController::setTunings(float kp, float ki, float kd)
         return;
     }
 
-    if (kp < 0.0f || ki < 0.0f || kd < 0.0f) {
-        ESP_LOGW(TAG, "setTunings rejected: negative gains not allowed (kp=%.4f ki=%.4f kd=%.4f)",
+    if (!isValidGain(kp) || !isValidGain(ki) || !isValidGain(kd)) {
+        ESP_LOGW(TAG, "setTunings rejected: gains must be finite and >= 0 (kp=%.4f ki=%.4f kd=%.4f)",
                  kp, ki, kd);
         return;
     }
@@ -270,8 +280,8 @@ void PidController::setOutputLimits(float min, float max)
         return;
     }
 
-    if (min >= max) {
-        ESP_LOGW(TAG, "setOutputLimits rejected: min (%.4f) must be less than max (%.4f)",
+    if (!areValidLimits(min, max)) {
+        ESP_LOGW(TAG, "setOutputLimits rejected: limits must be finite and min (%.4f) < max (%.4f)",
                  min, max);
         return;
     }
@@ -382,4 +392,4 @@ bool PidController::isValid() const
     return m_impl != nullptr;
 }
 
-} // namespace esp_pid
+} // namespace pid

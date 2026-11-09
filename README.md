@@ -59,9 +59,9 @@ Each module validates initialization through `isValid()`. If any required subsys
 	- Binary framing and transport over UART.
 	- RX/TX tasks, callback registration, queued receive path, and diagnostics counters.
 - `components/motor_hal`:
-	- Low-level motor control API (`esp_motor::Motor`) over MCPWM + DIR GPIO.
+	- Low-level motor control API (`motor_hal::Motor`) over MCPWM + DIR GPIO.
 - `components/rotary_encoder_hal`:
-	- Encoder position/rate/direction API (`esp_rotary_encoder::Encoder`) using PCNT.
+	- Encoder position/rate/direction API (`rotary_encoder_hal::Encoder`) using PCNT.
 - `components/pid`:
 	- Hardware-independent PID algorithm implementation.
 - `components/motor_controller`:

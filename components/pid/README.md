@@ -31,7 +31,7 @@ This module supports:
 ## File Structure
 
 ```
-esp_pid/
+pid/
 ├── include/
 │   └── pid_controller.hpp
 ├── src/
@@ -54,7 +54,7 @@ esp_pid/
 ### 2. Configure the controller
 
 ```cpp
-esp_pid::PidConfig cfg;
+pid::PidConfig cfg;
 cfg.kp = 1.0f;
 cfg.ki = 0.5f;
 cfg.kd = 0.1f;
@@ -65,8 +65,8 @@ Optional parameters:
 ```cpp
 cfg.output_min = -1.0f;
 cfg.output_max = 1.0f;
-cfg.direction = esp_pid::Direction::Direct;
-cfg.derivative_mode = esp_pid::DerivativeMode::OnMeasurement;
+cfg.direction = pid::Direction::Direct;
+cfg.derivative_mode = pid::DerivativeMode::OnMeasurement;
 cfg.derivative_cutoff_hz = 50.0f; // 0 = unfiltered (Kconfig default)
 ```
 
@@ -75,7 +75,7 @@ cfg.derivative_cutoff_hz = 50.0f; // 0 = unfiltered (Kconfig default)
 ### 3. Create the controller
 
 ```cpp
-esp_pid::PidController pid(cfg);
+pid::PidController pid(cfg);
 ```
 
 ---
@@ -83,7 +83,7 @@ esp_pid::PidController pid(cfg);
 ### 4. Enable automatic mode
 
 ```cpp
-pid.setMode(esp_pid::Mode::Automatic);
+pid.setMode(pid::Mode::Automatic);
 ```
 
 ---
@@ -109,13 +109,13 @@ If `dt_s` is not positive (or not finite), the state is left untouched and the p
 ## Example
 
 ```cpp
-esp_pid::PidConfig cfg;
+pid::PidConfig cfg;
 cfg.kp = 2.0f;
 cfg.ki = 1.0f;
 cfg.kd = 0.2f;
 
-esp_pid::PidController pid(cfg);
-pid.setMode(esp_pid::Mode::Automatic);
+pid::PidController pid(cfg);
+pid.setMode(pid::Mode::Automatic);
 
 int64_t last_us = esp_timer_get_time();
 while (true) {
@@ -141,7 +141,7 @@ while (true) {
 ### Manual Mode
 
 ```cpp
-pid.setMode(esp_pid::Mode::Manual);
+pid.setMode(pid::Mode::Manual);
 ```
 
 * `compute()` returns `0`
@@ -152,7 +152,7 @@ pid.setMode(esp_pid::Mode::Manual);
 ### Automatic Mode
 
 ```cpp
-pid.setMode(esp_pid::Mode::Automatic);
+pid.setMode(pid::Mode::Automatic);
 ```
 
 * PID computation is active
@@ -189,7 +189,7 @@ pid.setOutputLimits(min, max);
 ## Direction Control
 
 ```cpp
-pid.setDirection(esp_pid::Direction::Reverse);
+pid.setDirection(pid::Direction::Reverse);
 ```
 
 Use **Reverse** when:

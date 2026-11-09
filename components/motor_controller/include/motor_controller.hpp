@@ -3,6 +3,7 @@
 #include "esp_motor.hpp"
 #include "encoder.hpp"
 #include "pid_controller.hpp"
+#include "velocity_estimator.hpp"
 #include "sdkconfig.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -41,11 +42,11 @@ struct MotorControllerConfig {
 
     /// Velocity PID parameters. output_min/output_max are overridden by the
     /// MotorController constructor to match the above limits.
-    esp_pid::PidConfig velocity_pid;
+    pid::PidConfig velocity_pid;
 
     /// Position PID parameters. output_min/output_max are overridden by the
     /// MotorController constructor to match the above limits.
-    esp_pid::PidConfig position_pid;
+    pid::PidConfig position_pid;
 
     /// Constant feedforward term added to velocity PID output.
     float velocity_feedforward = 0.0f;
@@ -253,17 +254,15 @@ public:
     void reset();
 
 private:
-    float countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const;
-    float rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const;
     float estimateVelocity(int32_t count, float dt_s, float counts_per_rev, float gear_ratio);
 
     // Hardware handles
-    esp_motor::Motor            m_motor;
-    esp_rotary_encoder::Encoder m_encoder;
+    motor_hal::Motor            m_motor;
+    rotary_encoder_hal::Encoder m_encoder;
 
     // Controllers (velocity and position)
-    esp_pid::PidController m_vel_pid;
-    esp_pid::PidController m_pos_pid;
+    pid::PidController m_vel_pid;
+    pid::PidController m_pos_pid;
 
     // Active control mode (protected by m_mux)
     ControlMode m_mode;
@@ -281,13 +280,11 @@ private:
     float        m_output_min;
     float        m_output_max;
 
-    // Velocity estimator. m_prev_count / m_vel_estimate / m_estimator_primed
-    // are owned by update(); other tasks only request a re-prime.
+    // Velocity estimator. m_vel_estimator is owned by update(); other tasks
+    // only request a re-prime through m_estimator_reset_requested.
     std::atomic<float> m_vel_filter_cutoff_hz;
     std::atomic<bool>  m_estimator_reset_requested;
-    bool    m_estimator_primed;
-    int32_t m_prev_count;
-    float   m_vel_estimate;
+    VelocityEstimator  m_vel_estimator;
 
     // Feedback cached by update() for the getters
     std::atomic<float> m_cached_angle_rad;

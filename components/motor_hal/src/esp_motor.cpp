@@ -7,9 +7,9 @@
 #include <cmath>
 #include <utility>
 
-static const char *TAG = "esp_motor";
+static const char *const TAG = "esp_motor";
 
-namespace esp_motor {
+namespace motor_hal {
 
 struct Motor::Impl {
     detail::McpwmChannel channel;
@@ -24,6 +24,12 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
     m_impl->dir_gpio = dir_gpio;
     m_impl->current_speed = 0.0f;
     m_impl->valid = false;
+
+    if (!GPIO_IS_VALID_OUTPUT_GPIO(pwm_gpio) || !GPIO_IS_VALID_OUTPUT_GPIO(dir_gpio) || pwm_gpio == dir_gpio) {
+        ESP_LOGE(TAG, "Invalid motor pins: pwm_gpio=%d dir_gpio=%d (must be distinct output-capable GPIOs)",
+                 pwm_gpio, dir_gpio);
+        return;
+    }
 
     // Configure direction GPIO as output
     gpio_config_t io_conf = {};
@@ -91,6 +97,9 @@ void Motor::setSpeed(float speed)
         return;
     }
 
+    if (!std::isfinite(speed)) {
+        speed = 0.0f; // NaN would survive the clamp and break the compare value
+    }
     speed = std::clamp(speed, -1.0f, 1.0f);
 
     bool reverse = speed < 0.0f;
@@ -131,4 +140,4 @@ float Motor::getSpeed() const
     return m_impl->current_speed;
 }
 
-} // namespace esp_motor
+} // namespace motor_hal

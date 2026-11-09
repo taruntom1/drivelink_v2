@@ -63,7 +63,7 @@
 #include "esp_log.h"
 #include "uart_comm.hpp"
 
-static const char* TAG = "uc_test";
+static const char *const TAG = "uc_test";
 
 using namespace uart_comm;
 
