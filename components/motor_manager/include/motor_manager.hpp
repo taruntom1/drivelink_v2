@@ -37,7 +37,7 @@ public:
     ResultCode setTelemetryGlobal(bool enabled, uint8_t field_mask);
     ResultCode setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
 
-    void updateAll();
+    void updateAll(float dt_s);
     void publishTelemetry();
     void handleSetpointStream(const uart_comm::RxFrame &frame);
     void handleConfigureCommand(const uart_comm::RxFrame &frame);

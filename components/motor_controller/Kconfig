@@ -10,14 +10,18 @@ menu "Motor Controller Configuration"
             set this to N * 4. Example: a 360 CPR encoder gives 1440 counts/rev.
             Overridden per-instance via MotorControllerConfig::counts_per_rev.
 
-    config MOTOR_CTRL_DEFAULT_SAMPLE_TIME_MS
-        int "Default PID sample time in milliseconds"
-        default 10
-        range 1 1000
+    config MOTOR_CTRL_DEFAULT_VEL_FILTER_CUTOFF_HZ
+        int "Default velocity estimate filter cutoff (Hz)"
+        default 50
+        range 0 10000
         help
-            Default control loop sample time for both velocity and position PID
-            controllers. 10 ms (100 Hz) is typical for DC motor speed control.
-            Overridden per-instance via the esp_pid::PidConfig fields inside
-            MotorControllerConfig.
+            Cutoff frequency of the first-order low-pass filter applied to the
+            velocity estimate. Velocity is computed every update() from the
+            encoder count delta divided by dt, which is coarsely quantized at
+            high loop rates (one count per period), so some filtering is
+            usually needed. Lower cutoffs give smoother readings but add phase
+            lag to the velocity loop. 0 disables the filter.
+            Overridden per-instance via
+            MotorControllerConfig::velocity_filter_cutoff_hz.
 
 endmenu

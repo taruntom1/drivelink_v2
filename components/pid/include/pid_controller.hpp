@@ -30,11 +30,13 @@ struct PidConfig {
     float ki = 0.0f;
     float kd = 0.0f;
     Direction direction = Direction::Direct;
-    unsigned int sample_time_ms = CONFIG_PID_DEFAULT_SAMPLE_TIME_MS;
     float output_min = CONFIG_PID_DEFAULT_OUTPUT_MIN / 1000.0f;
     float output_max = CONFIG_PID_DEFAULT_OUTPUT_MAX / 1000.0f;
     DerivativeMode derivative_mode = DerivativeMode::OnMeasurement;
-    float derivative_filter_alpha = CONFIG_PID_DEFAULT_DERIVATIVE_FILTER_ALPHA / 1000.0f;
+    /// Cutoff of the first-order low-pass filter on the derivative term, in Hz.
+    /// 0 disables the filter (raw derivative). Expressed as a frequency so the
+    /// filter behaves the same at any loop rate.
+    float derivative_cutoff_hz = static_cast<float>(CONFIG_PID_DEFAULT_DERIVATIVE_CUTOFF_HZ);
 };
 
 namespace detail {
@@ -43,8 +45,10 @@ struct PidImpl;
 
 /// PID controller for real-time control loops.
 ///
-/// Pure algorithm component with no hardware dependencies. Designed to be
-/// called at a fixed interval matching sample_time_ms.
+/// Pure algorithm component with no hardware dependencies. The caller passes
+/// the elapsed time since the previous compute() as `dt_s`, so the I and D
+/// terms are scaled correctly even if the loop period changes or a cycle is
+/// skipped.
 ///
 /// Usage:
 /// @code
@@ -55,8 +59,8 @@ struct PidImpl;
 ///   esp_pid::PidController pid(cfg);
 ///   pid.setMode(esp_pid::Mode::Automatic);
 ///
-///   // In control loop (called every sample_time_ms):
-///   float output = pid.compute(measured_value, target_value);
+///   // In the control loop, with dt_s = seconds since the previous call:
+///   float output = pid.compute(measured_value, target_value, dt_s);
 /// @endcode
 class PidController {
 public:
@@ -79,9 +83,12 @@ public:
     /// Compute one PID iteration.
     /// @param input      Current process measurement.
     /// @param setpoint   Desired target value.
+    /// @param dt_s       Seconds elapsed since the previous compute(). If not
+    ///                   > 0, the state is left untouched and the previous
+    ///                   output is returned.
     /// @param feedforward Optional feedforward term added to output (default 0).
     /// @return Clamped control output, or 0.0f if in Manual mode.
-    float compute(float input, float setpoint, float feedforward = 0.0f);
+    float compute(float input, float setpoint, float dt_s, float feedforward = 0.0f);
 
     /// Set operating mode.
     /// Transitioning from Manual to Automatic calls reset() internally
@@ -104,9 +111,13 @@ public:
     /// @param dir Direction::Direct or Direction::Reverse.
     void setDirection(Direction dir);
 
-    /// Set computation sample time.
-    /// @param ms Sample time in milliseconds (must be > 0).
-    void setSampleTime(unsigned int ms);
+    /// Set the derivative low-pass filter cutoff.
+    /// @param hz Cutoff in Hz (>= 0; 0 disables the filter). Negative or
+    ///           non-finite values are rejected (no change applied).
+    void setDerivativeCutoff(float hz);
+
+    /// @return Current derivative filter cutoff in Hz (0 = unfiltered).
+    float getDerivativeCutoff() const;
 
     /// Reset internal state (integral accumulator, derivative history).
     /// Idempotent. Safe to call in any mode.

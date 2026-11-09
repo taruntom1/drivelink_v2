@@ -196,11 +196,9 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         motor_cfg.velocity_pid.kp = cfg.vel_kp;
         motor_cfg.velocity_pid.ki = cfg.vel_ki;
         motor_cfg.velocity_pid.kd = cfg.vel_kd;
-        motor_cfg.velocity_pid.sample_time_ms = cfg.sample_time_ms;
         motor_cfg.position_pid.kp = cfg.pos_kp;
         motor_cfg.position_pid.ki = cfg.pos_ki;
         motor_cfg.position_pid.kd = cfg.pos_kd;
-        motor_cfg.position_pid.sample_time_ms = cfg.sample_time_ms;
         motor_cfg.velocity_feedforward = cfg.velocity_feedforward;
         motor_cfg.position_feedforward = cfg.position_feedforward;
 
@@ -277,7 +275,6 @@ ResultCode MotorManager::configureMotor(uint8_t motor_id, const MotorConfigPaylo
     motor->setOutputLimits(cfg.output_min, cfg.output_max);
     motor->setVelocityPidTunings(cfg.vel_kp, cfg.vel_ki, cfg.vel_kd);
     motor->setPositionPidTunings(cfg.pos_kp, cfg.pos_ki, cfg.pos_kd);
-    motor->setSampleTime(cfg.sample_time_ms);
     motor->setVelocityFeedforward(cfg.velocity_feedforward);
     motor->setPositionFeedforward(cfg.position_feedforward);
     xSemaphoreGive(m_mutex);
@@ -336,7 +333,8 @@ ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, 
         xSemaphoreGive(m_mutex);
         return ResultCode::InvalidArgument;
     }
-    motor->setSampleTime(sample_time_ms);
+    // The PID dt now comes from the update loop; sample_time_ms is ignored.
+    (void)sample_time_ms;
 
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
@@ -496,7 +494,7 @@ ResultCode MotorManager::setTelemetryForMotor(uint8_t motor_id, bool enabled, ui
     return ResultCode::Ok;
 }
 
-void MotorManager::updateAll()
+void MotorManager::updateAll(float dt_s)
 {
     if (!isValid()) {
         return;
@@ -508,7 +506,7 @@ void MotorManager::updateAll()
 
     for (auto &slot : m_motors) {
         if (!m_use_mock_feedback && slot.motor != nullptr) {
-            slot.motor->update();
+            slot.motor->update(dt_s);
         }
     }
 
@@ -539,9 +537,10 @@ void MotorManager::publishTelemetry()
 void MotorManager::updateTaskLoop()
 {
     const TickType_t delay_ticks = pdMS_TO_TICKS(m_config.update_task.period_ms);
+    const float dt_s = static_cast<float>(m_config.update_task.period_ms) / 1000.0f;
     while (!m_update_task.stopRequested()) {
         applyPendingSetpoints();
-        updateAll();
+        updateAll(dt_s);
         publishTelemetry();
         m_update_task.sleepFor(delay_ticks);
     }
