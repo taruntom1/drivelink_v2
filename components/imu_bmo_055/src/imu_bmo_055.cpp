@@ -1,6 +1,8 @@
 #include "imu_bmo_055.hpp"
 
 #include "bno055_device.hpp"
+#include "tick_util.hpp"
+#include "wall_clock.hpp"
 
 extern "C" {
 #include "bno055.h"
@@ -11,6 +13,7 @@ extern "C" {
 #include "esp_timer.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstring>
 
 namespace imu_bmo_055 {
@@ -21,7 +24,10 @@ static const char *TAG = "imu_bno055";
 constexpr TickType_t kMutexTimeout = pdMS_TO_TICKS(50);
 constexpr size_t kMaxResponseExtraPayload = 64U;
 constexpr size_t kMaxStreamPayload = CONFIG_UART_COMM_MAX_PAYLOAD;
-constexpr size_t kCalibrationPayloadSize = 41U;
+// The stream task waits for the timer at most 2 periods + this margin before
+// it reports that the timer is not firing.
+constexpr uint32_t kWakeTimeoutMarginMs = 100U;
+constexpr int64_t kStreamLogIntervalUs = 1000000;
 
 bool isValidOperationMode(uint8_t mode)
 {
@@ -35,6 +41,16 @@ void appendU16Le(uint8_t *dst, size_t cap, size_t &offset, uint16_t value)
     }
     dst[offset++] = static_cast<uint8_t>(value & 0xFFU);
     dst[offset++] = static_cast<uint8_t>((value >> 8) & 0xFFU);
+}
+
+void appendU32Le(uint8_t *dst, size_t cap, size_t &offset, uint32_t value)
+{
+    if (offset + 4U > cap) {
+        return;
+    }
+    for (size_t i = 0; i < 4U; ++i) {
+        dst[offset++] = static_cast<uint8_t>((value >> (8U * i)) & 0xFFU);
+    }
 }
 
 void appendU64Le(uint8_t *dst, size_t cap, size_t &offset, uint64_t value)
@@ -64,10 +80,24 @@ uint16_t readU16Le(const uint8_t *src, size_t src_len, size_t &offset, bool &ok)
     return value;
 }
 
+uint32_t readU32Le(const uint8_t *src, size_t src_len, size_t &offset, bool &ok)
+{
+    if ((offset + 4U) > src_len) {
+        ok = false;
+        return 0;
+    }
+    uint32_t value = 0;
+    for (size_t i = 0; i < 4U; ++i) {
+        value |= static_cast<uint32_t>(src[offset + i]) << (8U * i);
+    }
+    offset += 4U;
+    return value;
+}
+
 void encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap, uint8_t &out_len)
 {
     out_len = 0;
-    if (cap < kCalibrationPayloadSize) {
+    if (cap < kCalibrationBlobSize) {
         return;
     }
 
@@ -94,12 +124,15 @@ void encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap
     out_len = static_cast<uint8_t>(offset);
 }
 
-bool decodeCalibrationBlob(const uint8_t *payload, size_t payload_len, size_t &offset, CalibrationBlob &out)
+/// Decode an exactly kCalibrationBlobSize-byte blob. Rejects a has_sic byte
+/// other than 0 or 1.
+bool decodeCalibrationBlob(const uint8_t *payload, size_t payload_len, CalibrationBlob &out)
 {
-    if ((offset + kCalibrationPayloadSize) > payload_len) {
+    if (payload_len != kCalibrationBlobSize || payload[0] > 1U) {
         return false;
     }
 
+    size_t offset = 0;
     out.has_sic = payload[offset++] != 0U;
 
     bool ok = true;
@@ -217,7 +250,7 @@ uint8_t randomU8(uint8_t min_value, uint8_t max_value)
 
 void populateMockSample(uint16_t field_mask, ImuStreamSample &sample)
 {
-    sample.timestamp_us = static_cast<uint64_t>(esp_timer_get_time());
+    sample.timestamp_us = detail::wallClockUs();
 
     if ((field_mask & static_cast<uint16_t>(StreamField::Euler)) != 0U) {
         sample.euler.h = randomS16(0, 5760);
@@ -266,6 +299,24 @@ void populateMockSample(uint16_t field_mask, ImuStreamSample &sample)
     }
 }
 
+/// Telemetry divider N: publish every N samples. The requested telemetry
+/// period (0 = same as the sample period) is clamped to
+/// [sample_period_us, max_period_us] and rounded up to a whole multiple.
+uint32_t telemetryDivider(uint32_t requested_telemetry_us, uint32_t sample_period_us, uint32_t max_period_us)
+{
+    const uint32_t tp = std::clamp(requested_telemetry_us, sample_period_us, std::max(sample_period_us, max_period_us));
+    return std::max<uint32_t>(1U, (tp + sample_period_us - 1U) / sample_period_us);
+}
+
+ResultCode deviceErrToResult(esp_err_t err)
+{
+    if (err == ESP_OK) {
+        return ResultCode::Ok;
+    }
+    // ESP_ERR_TIMEOUT: the device lock is held by another operation.
+    return (err == ESP_ERR_TIMEOUT) ? ResultCode::Busy : ResultCode::InternalError;
+}
+
 } // namespace
 
 ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfig &config)
@@ -274,10 +325,20 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
       m_mutex(xSemaphoreCreateMutex()),
       m_config_queue(nullptr),
       m_valid(false),
-      m_stream_state(),
+      m_stream_enabled(false),
+      m_field_mask(kStreamFieldAll),
+      m_sample_period_us(0),
+      m_telemetry_divider(1),
+      m_stream_restarted(true),
+      m_requested_telemetry_period_us(0),
+      m_operation_mode(0),
+      m_late_count(0),
+      m_busy_count(0),
+      m_read_error_count(0),
+      m_encode_error_count(0),
       m_cached_calibration(),
       m_has_cached_calibration(false),
-            m_use_mock_data(false),
+      m_use_mock_data(false),
       m_device(nullptr)
 {
     if (m_mutex == nullptr) {
@@ -290,16 +351,39 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         return;
     }
 
-    m_stream_state.enabled = m_config.stream_task.enable;
-    m_stream_state.period_ms = std::clamp<uint16_t>(
-        m_config.stream_task.period_ms,
-        m_config.min_stream_period_ms,
-        m_config.max_stream_period_ms);
-    m_stream_state.field_mask = m_config.default_stream_field_mask;
-    m_stream_state.operation_mode = m_config.default_operation_mode;
+    // Validate the period bounds before clamping with them (std::clamp is
+    // undefined when lo > hi).
+    if (m_config.min_sample_period_us == 0U || m_config.min_sample_period_us > m_config.max_sample_period_us) {
+        ESP_LOGE(TAG, "Invalid sample period bounds: min=%" PRIu32 " max=%" PRIu32 " us",
+                 m_config.min_sample_period_us, m_config.max_sample_period_us);
+        return;
+    }
 
-    if (!isValidOperationMode(m_stream_state.operation_mode)) {
-        ESP_LOGE(TAG, "Invalid default operation mode: 0x%02X", m_stream_state.operation_mode);
+    const uint32_t sample_period_us = std::clamp(m_config.stream_task.sample_period_us,
+                                                 m_config.min_sample_period_us,
+                                                 m_config.max_sample_period_us);
+    if (sample_period_us != m_config.stream_task.sample_period_us) {
+        ESP_LOGW(TAG, "sample_period_us %" PRIu32 " clamped to %" PRIu32,
+                 m_config.stream_task.sample_period_us, sample_period_us);
+    }
+    m_sample_period_us.store(sample_period_us, std::memory_order_relaxed);
+    m_requested_telemetry_period_us = m_config.stream_task.telemetry_period_us;
+    m_telemetry_divider.store(
+        telemetryDivider(m_requested_telemetry_period_us, sample_period_us, m_config.max_sample_period_us),
+        std::memory_order_relaxed);
+
+    uint16_t field_mask = m_config.default_stream_field_mask;
+    if ((field_mask & static_cast<uint16_t>(~kStreamFieldAll)) != 0U) {
+        ESP_LOGW(TAG, "Default field mask 0x%04X has unknown bits; using 0x%04X",
+                 field_mask, static_cast<unsigned>(field_mask & kStreamFieldAll));
+        field_mask &= kStreamFieldAll;
+    }
+    m_field_mask.store(field_mask, std::memory_order_relaxed);
+    m_stream_enabled.store(m_config.stream_task.enable, std::memory_order_relaxed);
+    m_operation_mode = m_config.default_operation_mode;
+
+    if (!isValidOperationMode(m_operation_mode)) {
+        ESP_LOGE(TAG, "Invalid default operation mode: 0x%02X", m_operation_mode);
         return;
     }
 
@@ -319,8 +403,10 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     }
 
     if (!m_use_mock_data) {
-        if (m_device->setOperationMode(m_stream_state.operation_mode) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to set default operation mode: 0x%02X", m_stream_state.operation_mode);
+        const esp_err_t mode_ret = m_device->setOperationMode(m_operation_mode);
+        if (mode_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set default operation mode 0x%02X: %s",
+                     m_operation_mode, esp_err_to_name(mode_ret));
             return;
         }
     } else {
@@ -369,15 +455,32 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
             ESP_LOGE(TAG, "Failed to create stream task: %s", esp_err_to_name(stream_task_ret));
             return;
         }
+
+        // Start the timer only once the task it wakes exists.
+        esp_err_t tmr_ret = m_stream_timer.create(m_stream_task, "imu_sample");
+        if (tmr_ret == ESP_OK) {
+            tmr_ret = m_stream_timer.setPeriod(sample_period_us);
+        }
+        if (tmr_ret == ESP_OK && m_stream_enabled.load(std::memory_order_relaxed)) {
+            tmr_ret = m_stream_timer.start(sample_period_us);
+        }
+        if (tmr_ret != ESP_OK) {
+            m_configure_cb.reset();
+            stopTasks();
+            ESP_LOGE(TAG, "Failed to start sampling timer: %s", esp_err_to_name(tmr_ret));
+            return;
+        }
     }
 
     m_valid.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "IMU manager ready (cmd=0x%02X rsp=0x%02X stream=0x%02X period=%u mask=0x%04X source=%s)",
+    ESP_LOGI(TAG, "IMU manager ready (cmd=0x%02X rsp=0x%02X stream=0x%02X sample=%" PRIu32
+                  " us telemetry every %" PRIu32 " samples mask=0x%04X source=%s)",
              m_config.configure_msg_type,
              m_config.configure_response_msg_type,
              m_config.telemetry_stream_channel,
-             m_stream_state.period_ms,
-             m_stream_state.field_mask,
+             sample_period_us,
+             m_telemetry_divider.load(std::memory_order_relaxed),
+             field_mask,
              m_use_mock_data ? "mock" : "bno055");
 }
 
@@ -404,6 +507,30 @@ bool ImuBno055Manager::isValid() const
     return m_valid.load(std::memory_order_acquire);
 }
 
+ResultCode ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
+{
+    const bool was_enabled = m_stream_enabled.load(std::memory_order_relaxed);
+    if (enabled == was_enabled) {
+        return ResultCode::Ok;
+    }
+
+    if (!enabled) {
+        m_stream_enabled.store(false, std::memory_order_release);
+        // A callback already in flight only wakes the task, which then sees
+        // the stream disabled and does nothing.
+        return (m_stream_timer.stop() == ESP_OK) ? ResultCode::Ok : ResultCode::InternalError;
+    }
+
+    m_stream_restarted.store(true, std::memory_order_release);
+    m_stream_enabled.store(true, std::memory_order_release);
+    if (m_stream_timer.isCreated() &&
+        m_stream_timer.start(m_sample_period_us.load(std::memory_order_relaxed)) != ESP_OK) {
+        m_stream_enabled.store(false, std::memory_order_release);
+        return ResultCode::InternalError;
+    }
+    return ResultCode::Ok;
+}
+
 ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
 {
     if (!isValid()) {
@@ -413,13 +540,15 @@ ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
         return ResultCode::Busy;
     }
-
-    m_stream_state.enabled = enabled;
+    const ResultCode rc = applyStreamEnabledLocked(enabled);
     xSemaphoreGive(m_mutex);
-    return ResultCode::Ok;
+    return rc;
 }
 
-ResultCode ImuBno055Manager::setStreamPeriodMs(uint16_t period_ms)
+ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
+                                             uint32_t telemetry_period_us,
+                                             uint32_t &applied_sample_period_us,
+                                             uint32_t &applied_telemetry_period_us)
 {
     if (!isValid()) {
         return ResultCode::InvalidState;
@@ -429,12 +558,36 @@ ResultCode ImuBno055Manager::setStreamPeriodMs(uint16_t period_ms)
         return ResultCode::Busy;
     }
 
-    m_stream_state.period_ms = std::clamp<uint16_t>(
-        period_ms,
-        m_config.min_stream_period_ms,
-        m_config.max_stream_period_ms);
+    const uint32_t old_period = m_sample_period_us.load(std::memory_order_relaxed);
+    const uint32_t new_period = (sample_period_us != 0U)
+                                    ? std::clamp(sample_period_us, m_config.min_sample_period_us,
+                                                 m_config.max_sample_period_us)
+                                    : old_period;
+    if (telemetry_period_us != 0U) {
+        m_requested_telemetry_period_us = telemetry_period_us;
+    }
+
+    ResultCode rc = ResultCode::Ok;
+    if (new_period != old_period && m_stream_timer.isCreated()) {
+        const esp_err_t err = m_stream_timer.setPeriod(new_period);
+        if (err != ESP_OK) {
+            rc = ResultCode::InternalError;
+        }
+    }
+    if (rc == ResultCode::Ok) {
+        m_sample_period_us.store(new_period, std::memory_order_relaxed);
+    }
+    const uint32_t period_now = m_sample_period_us.load(std::memory_order_relaxed);
+    const uint32_t divider = telemetryDivider(m_requested_telemetry_period_us, period_now,
+                                              m_config.max_sample_period_us);
+    m_telemetry_divider.store(divider, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
-    return ResultCode::Ok;
+
+    applied_sample_period_us = period_now;
+    applied_telemetry_period_us = divider * period_now;
+    ESP_LOGI(TAG, "Stream timing: sample=%" PRIu32 " us telemetry=%" PRIu32 " us (every %" PRIu32 " samples)",
+             applied_sample_period_us, applied_telemetry_period_us, divider);
+    return rc;
 }
 
 ResultCode ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
@@ -442,12 +595,14 @@ ResultCode ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
     if (!isValid()) {
         return ResultCode::InvalidState;
     }
+    if ((field_mask & static_cast<uint16_t>(~kStreamFieldAll)) != 0U) {
+        return ResultCode::InvalidArgument;
+    }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
         return ResultCode::Busy;
     }
-
-    m_stream_state.field_mask = field_mask;
+    m_field_mask.store(field_mask, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
 }
@@ -465,18 +620,18 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
         if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
             return ResultCode::Busy;
         }
-        m_stream_state.operation_mode = operation_mode;
+        m_operation_mode = operation_mode;
         xSemaphoreGive(m_mutex);
         return ResultCode::Ok;
     }
 
-    bool resume_stream = false;
+    // Pause the stream (and its timer) around the mode switch, which holds
+    // the device for 20-600 ms.
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
         return ResultCode::Busy;
     }
-
-    resume_stream = m_stream_state.enabled;
-    m_stream_state.enabled = false;
+    const bool resume_stream = m_stream_enabled.load(std::memory_order_relaxed);
+    (void)applyStreamEnabledLocked(false);
     xSemaphoreGive(m_mutex);
 
     const esp_err_t ret = m_device->setOperationMode(operation_mode);
@@ -484,20 +639,25 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
         ESP_LOGE(TAG, "Failed to set operation mode 0x%02X: %s",
                  operation_mode,
                  esp_err_to_name(ret));
-        if (xSemaphoreTake(m_mutex, kMutexTimeout) == pdTRUE) {
-            m_stream_state.enabled = resume_stream;
-            xSemaphoreGive(m_mutex);
-        }
-        return ResultCode::InternalError;
     }
 
+    ResultCode rc = deviceErrToResult(ret);
     if (xSemaphoreTake(m_mutex, kMutexTimeout) == pdTRUE) {
-        m_stream_state.operation_mode = operation_mode;
-        m_stream_state.enabled = resume_stream;
+        if (ret == ESP_OK) {
+            m_operation_mode = operation_mode;
+        }
+        if (resume_stream && applyStreamEnabledLocked(true) != ResultCode::Ok && rc == ResultCode::Ok) {
+            rc = ResultCode::InternalError;
+        }
         xSemaphoreGive(m_mutex);
+    } else if (resume_stream) {
+        ESP_LOGE(TAG, "Could not re-enable the stream after the mode switch (mutex busy)");
+        if (rc == ResultCode::Ok) {
+            rc = ResultCode::Busy;
+        }
     }
 
-    return ResultCode::Ok;
+    return rc;
 }
 
 ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
@@ -522,7 +682,7 @@ ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
     const esp_err_t ret = m_device->readCalibration(out);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read calibration: %s", esp_err_to_name(ret));
-        return ResultCode::InternalError;
+        return deviceErrToResult(ret);
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
@@ -576,9 +736,19 @@ ResultCode ImuBno055Manager::applyCalibration()
     const esp_err_t ret = m_device->writeCalibration(blob);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to apply calibration: %s", esp_err_to_name(ret));
-        return ResultCode::InternalError;
+        return deviceErrToResult(ret);
     }
     return ResultCode::Ok;
+}
+
+StreamCounters ImuBno055Manager::getStreamCounters() const
+{
+    StreamCounters c{};
+    c.late = m_late_count.load(std::memory_order_relaxed);
+    c.busy = m_busy_count.load(std::memory_order_relaxed);
+    c.read_errors = m_read_error_count.load(std::memory_order_relaxed);
+    c.encode_errors = m_encode_error_count.load(std::memory_order_relaxed);
+    return c;
 }
 
 void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
@@ -599,30 +769,44 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
                                                        uint8_t *response_payload,
                                                        size_t response_capacity)
 {
-    // body is the payload after the configure request header; len is its length.
+    // body is the payload after the configure request header; len is its
+    // length. Every body must have its exact size (protocol v3).
     response_len = 0;
 
     switch (subcommand) {
         case ConfigureSubcommand::SetStreamEnabled: {
-            if (len < 1U) {
+            if (len != kSetStreamEnabledBodySize || body[0] > 1U) {
                 return ResultCode::InvalidArgument;
             }
             return setStreamEnabled(body[0] != 0U);
         }
-        case ConfigureSubcommand::SetStreamPeriodMs: {
-            if (len < 2U) {
+        case ConfigureSubcommand::SetStreamTiming: {
+            if (len != kSetStreamTimingBodySize) {
                 return ResultCode::InvalidArgument;
             }
             size_t offset = 0U;
             bool ok = true;
-            const uint16_t period_ms = readU16Le(body, len, offset, ok);
+            const uint32_t sample_us = readU32Le(body, len, offset, ok);
+            const uint32_t telemetry_us = readU32Le(body, len, offset, ok);
             if (!ok) {
                 return ResultCode::InvalidArgument;
             }
-            return setStreamPeriodMs(period_ms);
+            uint32_t applied_sample_us = 0;
+            uint32_t applied_telemetry_us = 0;
+            const ResultCode rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
+            if (rc == ResultCode::Ok) {
+                if (response_capacity < kSetStreamTimingResponseBodySize) {
+                    return ResultCode::InternalError;
+                }
+                size_t out = 0U;
+                appendU32Le(response_payload, response_capacity, out, applied_sample_us);
+                appendU32Le(response_payload, response_capacity, out, applied_telemetry_us);
+                response_len = static_cast<uint8_t>(out);
+            }
+            return rc;
         }
         case ConfigureSubcommand::SetStreamFieldMask: {
-            if (len < 2U) {
+            if (len != kSetStreamFieldMaskBodySize) {
                 return ResultCode::InvalidArgument;
             }
             size_t offset = 0U;
@@ -634,32 +818,37 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
             return setStreamFieldMask(mask);
         }
         case ConfigureSubcommand::SetOperationMode: {
-            if (len < 1U) {
+            if (len != kSetOperationModeBodySize) {
                 return ResultCode::InvalidArgument;
             }
             return setOperationMode(body[0]);
         }
         case ConfigureSubcommand::ReadCalibration: {
+            if (len != 0U) {
+                return ResultCode::InvalidArgument;
+            }
             CalibrationBlob blob{};
             const ResultCode rc = readCalibration(blob);
             if (rc != ResultCode::Ok) {
                 return rc;
             }
-            if (response_capacity < kCalibrationPayloadSize) {
+            if (response_capacity < kCalibrationBlobSize) {
                 return ResultCode::InternalError;
             }
             encodeCalibrationBlob(blob, response_payload, response_capacity, response_len);
             return ResultCode::Ok;
         }
         case ConfigureSubcommand::WriteCalibration: {
-            size_t offset = 0U;
             CalibrationBlob blob{};
-            if (!decodeCalibrationBlob(body, len, offset, blob)) {
+            if (!decodeCalibrationBlob(body, len, blob)) {
                 return ResultCode::InvalidArgument;
             }
             return writeCalibration(blob);
         }
         case ConfigureSubcommand::ApplyCalibration:
+            if (len != 0U) {
+                return ResultCode::InvalidArgument;
+            }
             return applyCalibration();
         default:
             return ResultCode::NotSupported;
@@ -701,51 +890,120 @@ void ImuBno055Manager::stopTasks()
         (void)xQueueSend(m_config_queue, &wake, 0);
     }
 
-    // Join: wait until both task bodies have returned. Neither is ever
-    // deleted while it holds m_mutex or is inside an I2C transaction.
-    m_stream_task.stop();
+    // Join the config task first: it is the only other user of the timer
+    // (enable/disable/retime), and TaskTimer calls are not thread-safe.
     m_config_task.stop();
+    // Then the timer, waiting out an in-flight callback, so nothing notifies
+    // the stream task while it is being stopped and deleted.
+    m_stream_timer.destroy();
+    // Neither task is ever deleted while it holds m_mutex or is inside an
+    // I2C transaction.
+    m_stream_task.stop();
 
     m_valid.store(false, std::memory_order_release);
 }
 
+void ImuBno055Manager::logStreamCountersIfChanged(StreamCounters &last_logged, int64_t &last_log_us)
+{
+    const int64_t now_us = esp_timer_get_time();
+    if ((now_us - last_log_us) < kStreamLogIntervalUs) {
+        return;
+    }
+    const StreamCounters now = getStreamCounters();
+    if (now.late == last_logged.late && now.busy == last_logged.busy &&
+        now.read_errors == last_logged.read_errors && now.encode_errors == last_logged.encode_errors) {
+        return;
+    }
+    ESP_LOGW(TAG, "IMU stream: late +%" PRIu32 " busy +%" PRIu32 " read_err +%" PRIu32 " encode_err +%" PRIu32
+                  " (totals %" PRIu32 "/%" PRIu32 "/%" PRIu32 "/%" PRIu32 ") sample=%" PRIu32 " us",
+             now.late - last_logged.late, now.busy - last_logged.busy,
+             now.read_errors - last_logged.read_errors, now.encode_errors - last_logged.encode_errors,
+             now.late, now.busy, now.read_errors, now.encode_errors,
+             m_sample_period_us.load(std::memory_order_relaxed));
+    last_logged = now;
+    last_log_us = now_us;
+}
+
 void ImuBno055Manager::streamTaskLoop()
 {
-    ImuBno055Manager *const self = this;
-    TickType_t last_wake = xTaskGetTickCount();
+    uint8_t tx_payload[kMaxStreamPayload] = {0};
+    // Samples until the next publish; <= 0 means publish this sample.
+    int32_t countdown = 0;
+    StreamCounters last_logged{};
+    int64_t last_counter_log_us = 0;
+    int64_t last_timeout_log_us = 0;
 
     while (!m_stream_task.stopRequested()) {
-        StreamState state{};
-        if (xSemaphoreTake(self->m_mutex, kMutexTimeout) == pdTRUE) {
-            state = self->m_stream_state;
-            xSemaphoreGive(self->m_mutex);
+        // Woken by the sampling timer (and by stop()). The count is the
+        // number of timer periods since we last took the notification.
+        const uint32_t period_us = m_sample_period_us.load(std::memory_order_relaxed);
+        const TickType_t wait = rtos_util::msToTicksCeil((2U * (period_us / 1000U)) + kWakeTimeoutMarginMs);
+        const uint32_t fired = ulTaskNotifyTake(pdTRUE, wait);
+        if (m_stream_task.stopRequested()) {
+            break;
         }
 
-        if (state.enabled) {
-            ImuStreamSample sample{};
-            esp_err_t read_ret = ESP_ERR_INVALID_STATE;
-            if (self->m_use_mock_data) {
-                populateMockSample(state.field_mask, sample);
-                read_ret = ESP_OK;
-            } else if (self->m_device != nullptr && self->m_device->isValid()) {
-                read_ret = self->m_device->readSample(state.field_mask, sample);
+        const bool enabled = m_stream_enabled.load(std::memory_order_acquire);
+        if (fired == 0U) {
+            // While disabled the timer is stopped, so a timeout is normal.
+            const int64_t now_us = esp_timer_get_time();
+            if (enabled && (now_us - last_timeout_log_us) >= kStreamLogIntervalUs) {
+                last_timeout_log_us = now_us;
+                ESP_LOGW(TAG, "Sampling timer has not fired for %" PRIu32 " ms",
+                         static_cast<uint32_t>(pdTICKS_TO_MS(wait)));
             }
+            continue;
+        }
+        if (!enabled) {
+            continue; // a late callback after disable
+        }
 
-            if (read_ret == ESP_OK) {
-                uint8_t tx_payload[kMaxStreamPayload] = {0};
-                uint8_t tx_len = 0;
-                if (encodeStreamSample(sample, state.field_mask, tx_payload, sizeof(tx_payload), tx_len)) {
-                    self->m_uart.sendData(self->m_config.telemetry_stream_channel, tx_payload, tx_len);
-                } else {
-                    ESP_LOGW(TAG, "Stream encode overflow mask=0x%04X", state.field_mask);
-                }
+        uint32_t elapsed = fired;
+        if (m_stream_restarted.exchange(false, std::memory_order_acq_rel)) {
+            // First tick after (re-)enable: publish it, and don't count the
+            // idle time as late ticks.
+            countdown = 0;
+            elapsed = 1U;
+        }
+        if (elapsed > 1U) {
+            m_late_count.fetch_add(elapsed - 1U, std::memory_order_relaxed);
+        }
+        // Late ticks still count toward the telemetry countdown, so the
+        // telemetry rate holds when samples are missed.
+        countdown -= static_cast<int32_t>(std::min<uint32_t>(elapsed, static_cast<uint32_t>(INT32_MAX)));
+
+        const uint16_t field_mask = m_field_mask.load(std::memory_order_relaxed);
+        ImuStreamSample sample{};
+        esp_err_t read_ret = ESP_ERR_INVALID_STATE;
+        if (m_use_mock_data) {
+            populateMockSample(field_mask, sample);
+            read_ret = ESP_OK;
+        } else if (m_device != nullptr) {
+            read_ret = m_device->tryReadSample(field_mask, sample);
+        }
+
+        if (read_ret == ESP_ERR_TIMEOUT) {
+            m_busy_count.fetch_add(1U, std::memory_order_relaxed);
+        } else if (read_ret != ESP_OK) {
+            m_read_error_count.fetch_add(1U, std::memory_order_relaxed);
+        } else if (countdown <= 0) {
+            // A publish slot whose read failed stays pending (countdown
+            // stays <= 0), so the next good sample is published.
+            const int32_t divider = static_cast<int32_t>(m_telemetry_divider.load(std::memory_order_relaxed));
+            countdown = std::max<int32_t>(countdown + divider, 1);
+
+            uint8_t tx_len = 0;
+            if (encodeStreamSample(sample, field_mask, tx_payload, sizeof(tx_payload), tx_len)) {
+                m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, tx_len);
             } else {
-                ESP_LOGW(TAG, "Sensor read failed: %s", esp_err_to_name(read_ret));
+                m_encode_error_count.fetch_add(1U, std::memory_order_relaxed);
             }
         }
+        // Samples read on non-publish ticks are dropped for now. This is
+        // where an on-board consumer (latest-sample accessor, filter) would
+        // take every sample when sampling faster than the telemetry rate.
 
-        const TickType_t period = std::max<TickType_t>(1, pdMS_TO_TICKS(state.period_ms));
-        m_stream_task.sleepUntil(last_wake, period);
+        logStreamCountersIfChanged(last_logged, last_counter_log_us);
     }
 }
 

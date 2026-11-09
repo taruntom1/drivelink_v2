@@ -114,6 +114,11 @@ bool StoppableTask::sleepFor(TickType_t ticks)
 
 bool StoppableTask::sleepUntil(TickType_t& last_wake, TickType_t period)
 {
+    // A period that rounded down to 0 ticks (pdMS_TO_TICKS of a value below
+    // one tick) would return immediately every time and spin the caller.
+    if (period == 0) {
+        period = 1;
+    }
     while (!stopRequested()) {
         // Unsigned arithmetic handles tick-count wrap-around.
         const TickType_t elapsed = xTaskGetTickCount() - last_wake;

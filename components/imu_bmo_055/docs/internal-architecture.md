@@ -39,8 +39,9 @@ Owns:
 - Internal mutex for shared state
 - Config queue for command frames
 - Config task handle
-- Stream task handle
-- Stream state (`enabled`, `period_ms`, `field_mask`, `operation_mode`)
+- Stream task handle and its sampling timer (`rtos_util::TaskTimer`)
+- Stream state, written under the mutex and read lock-free by the stream task: `enabled`, `field_mask`, `sample_period_us`, `telemetry_divider` (atomics); `operation_mode` and the requested telemetry period (mutex only)
+- Stream counters (`late`, `busy`, `read_errors`, `encode_errors`; atomics)
 - Cached calibration blob
 - Internal `Bno055Device` instance
 
@@ -53,7 +54,8 @@ Wraps Bosch C driver (`bno055.c`) and provides:
 - I2C bus configuration and driver lifecycle
 - BNO055 init and chip-id check
 - Operation mode set/get
-- Masked sample read (`readSample`)
+- Masked sample read for the stream tick (`tryReadSample`): try-locks the device, stamps the wall-clock midpoint of the I2C burst
+- Bounded (100 ms) device lock for config operations; rate-limited bus error logs
 - Calibration read/write operations
 
 It is currently singleton-like via static `s_active_device` to satisfy Bosch callback signatures.
@@ -62,13 +64,13 @@ Only one active instance is supported.
 ## 4. Lifecycle And Initialization Flow
 
 1. `ImuBno055Manager` constructor validates UART and allocates mutex.
-2. Runtime defaults are initialized from `ManagerConfig` and clamped.
+2. Runtime defaults are initialized from `ManagerConfig`: the period bounds are validated (min > 0, min ≤ max), then the sample period is clamped and unknown field-mask bits are dropped.
 3. `Bno055Device` is created and validated.
 4. Default operation mode is applied.
 5. Config queue is created.
 6. UART callback for configure message type is registered.
 7. Config task is created.
-8. Stream task is created if enabled.
+8. Stream task is created if enabled, then its sampling timer is created and started.
 9. Manager sets `m_valid = true`.
 
 If any step fails, constructor exits early and object remains invalid.
@@ -83,10 +85,9 @@ If any step fails, constructor exits early and object remains invalid.
   - Sends command responses
 
 - Stream task (`imu_stream`)
-  - Runs periodic loop using `vTaskDelayUntil`
-  - Reads sensor sample via `Bno055Device`
-  - Encodes payload based on current field mask
-  - Sends stream packet via `uart_comm::sendData`
+  - Woken by the sampling timer (`ulTaskNotifyTake`, bounded at 2 periods + 100 ms)
+  - Reads one sample per wake via `Bno055Device::tryReadSample` (never waits for the device)
+  - Every Nth sample: encodes the payload for the current field mask and sends it via `uart_comm::sendData`
 
 ### 5.2 RX callback behavior
 
@@ -95,7 +96,8 @@ No heavy decode or sensor operations are done in RX task context.
 
 ### 5.3 Shared-state synchronization
 
-State protected by manager mutex includes stream settings and calibration cache.
+The manager mutex serializes writers (config task, public API) of the stream settings, the timer (start/stop/retime) and the calibration cache.
+The stream task never takes it: it reads the stream settings from atomics.
 Atomic flags are used for stop signals and validity state.
 
 ## 6. Command Processing Pipeline
@@ -113,18 +115,20 @@ Atomic flags are used for stop signals and validity state.
 - Unknown subcommand returns `NotSupported`.
 - Invalid lengths/version return `InvalidArgument`. When the header itself is rejected, the response echoes subcommand `0xFF`.
 - Every response echoes the command's `seq`.
-- Stream period is clamped to configured min/max.
-- Mode set pauses stream during mode switch and restores prior stream enabled state.
+- Every body must have its exact length (protocol v3).
+- `SetStreamTiming` clamps the periods and echoes the applied values; 0 keeps a value.
+- Mode set stops the stream and its timer during the mode switch and restores the prior enabled state.
 
 ## 7. Stream Processing Pipeline
 
-1. Stream task snapshots current `StreamState` under mutex.
-2. If stream enabled, it calls `Bno055Device::readSample(field_mask, sample)`.
-3. `encodeStreamSample()` builds payload with fixed header and mask-ordered fields.
-4. Encoded data is sent on configured stream channel.
+1. The timer notifies the stream task. The notification count is the number of periods since the last wake; extra periods count as `late`.
+2. If the stream is enabled, the task reads the field mask and calls `Bno055Device::tryReadSample(field_mask, sample)`. A busy device counts `busy`, an I2C failure `read_errors`.
+3. The telemetry countdown decides whether this sample is published (every N samples; a publish slot whose read failed stays pending).
+4. `encodeStreamSample()` builds the payload with the fixed header and mask-ordered fields, and it is sent on the configured stream channel.
+5. At most once per second, if any counter changed, a summary is logged.
 
 Encoding is bounded by `CONFIG_UART_COMM_MAX_PAYLOAD`.
-If overflow is detected, packet is dropped and a warning is logged.
+If overflow is detected, the packet is dropped and `encode_errors` is incremented.
 
 ## 8. Calibration Data Path
 
@@ -155,7 +159,7 @@ This split allows host to stage and apply calibration deterministically.
 
 - Mutexes/queues/tasks are owned by manager and cleaned in destructor.
 - Bno055Device owns and deletes I2C driver if it installed it.
-- Stop sequence sets atomic flags, wakes queue, delays briefly, then deletes tasks.
+- Stop sequence: request stop on both tasks, wake the config queue, join the config task (the only other timer user), destroy the timer (waiting out an in-flight callback), then join the stream task.
 
 ## 11. Extension Guidance
 
@@ -171,7 +175,7 @@ This split allows host to stage and apply calibration deterministically.
 
 1. Add bit in `StreamField` enum.
 2. Extend `ImuStreamSample` struct.
-3. Read sensor value in `Bno055Device::readSample()` gated by bit.
+3. Read sensor value in `Bno055Device::tryReadSample()` gated by bit.
 4. Append encoded bytes in `encodeStreamSample()` in deterministic order.
 5. Update protocol docs with new mask bit, order, and size.
 

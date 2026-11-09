@@ -11,6 +11,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "stoppable_task.hpp"
+#include "tick_util.hpp"
 
 static const char* TAG = "time_sync";
 
@@ -298,13 +299,13 @@ void TimeSync::periodicTask()
     TickType_t last_wake = xTaskGetTickCount();
 
     while (!m_impl->periodic_task.stopRequested()) {
-        TickType_t timeout = pdMS_TO_TICKS(m_impl->config.response_timeout_ms);
+        TickType_t timeout = rtos_util::msToTicksCeil(m_impl->config.response_timeout_ms);
         esp_err_t ret = performSync(timeout);
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "Periodic sync failed: %s", esp_err_to_name(ret));
         }
 
-        m_impl->periodic_task.sleepUntil(last_wake, pdMS_TO_TICKS(m_impl->config.sync_interval_ms));
+        m_impl->periodic_task.sleepUntil(last_wake, rtos_util::msToTicksCeil(m_impl->config.sync_interval_ms));
     }
 }
 

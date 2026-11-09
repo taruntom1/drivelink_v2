@@ -71,7 +71,8 @@ public:
     bool sleepFor(TickType_t ticks);
 
     /// Fixed-rate sleep with vTaskDelayUntil() semantics, returning early if
-    /// a stop is requested. Call only from the body.
+    /// a stop is requested. A `period` of 0 is treated as 1 tick, so it can't
+    /// spin. Call only from the body.
     /// @return false if a stop was requested.
     bool sleepUntil(TickType_t& last_wake, TickType_t period);
 

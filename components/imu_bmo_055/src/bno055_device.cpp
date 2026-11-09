@@ -5,7 +5,10 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#include "tick_util.hpp"
+#include "wall_clock.hpp"
 
+#include <cinttypes>
 #include <cstring>
 
 namespace imu_bmo_055 {
@@ -14,6 +17,10 @@ namespace {
 
 static const char *TAG = "bno055_dev";
 constexpr uint8_t kExpectedChipId = 0xA0;
+// Config operations (mode switch, calibration) wait this long for the device
+// lock. The stream tick holds it for a few ms at most and never waits.
+constexpr TickType_t kConfigLockTimeout = pdMS_TO_TICKS(100);
+constexpr int64_t kBusLogIntervalUs = 1000000;
 
 esp_err_t boschToEspErr(s8 result)
 {
@@ -29,7 +36,9 @@ Bno055Device::Bno055Device(const I2cConfig &config)
       m_config(config),
       m_mutex(xSemaphoreCreateMutex()),
       m_valid(false),
-      m_driver_installed(false)
+      m_driver_installed(false),
+      m_last_bus_log_us(0),
+      m_suppressed_bus_logs(0)
 {
     if (m_mutex == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate mutex");
@@ -133,7 +142,7 @@ esp_err_t Bno055Device::setOperationMode(uint8_t operation_mode)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t lock_ret = lock(portMAX_DELAY);
+    const esp_err_t lock_ret = lock(kConfigLockTimeout);
     if (lock_ret != ESP_OK) {
         return lock_ret;
     }
@@ -149,7 +158,7 @@ esp_err_t Bno055Device::getOperationMode(uint8_t &operation_mode) const
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t lock_ret = lock(portMAX_DELAY);
+    const esp_err_t lock_ret = lock(kConfigLockTimeout);
     if (lock_ret != ESP_OK) {
         return lock_ret;
     }
@@ -161,107 +170,73 @@ esp_err_t Bno055Device::getOperationMode(uint8_t &operation_mode) const
     return boschToEspErr(ret);
 }
 
-esp_err_t Bno055Device::readSample(uint16_t field_mask, ImuStreamSample &sample) const
+esp_err_t Bno055Device::tryReadSample(uint16_t field_mask, ImuStreamSample &sample) const
 {
     if (!m_valid) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t lock_ret = lock(pdMS_TO_TICKS(50));
-    if (lock_ret != ESP_OK) {
-        return lock_ret;
+    if (lock(0) != ESP_OK) {
+        return ESP_ERR_TIMEOUT;
     }
 
-    sample.timestamp_us = static_cast<uint64_t>(esp_timer_get_time());
+    // Stamp the midpoint of the reads. Wall time is read once; the burst
+    // duration comes from the monotonic timer, so a clock step by time_sync
+    // during the burst cannot skew it.
+    const uint64_t wall_start_us = detail::wallClockUs();
+    const int64_t mono_start_us = esp_timer_get_time();
 
-    s8 ret = BNO055_SUCCESS;
+    const auto has = [field_mask](StreamField field) {
+        return (field_mask & static_cast<uint16_t>(field)) != 0U;
+    };
 
-    if ((field_mask & static_cast<uint16_t>(StreamField::Euler)) != 0U) {
-        ret = bno055_read_euler_hrp(&sample.euler);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    bool ok = true;
+    if (ok && has(StreamField::Euler)) {
+        ok = bno055_read_euler_hrp(&sample.euler) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::Quaternion)) != 0U) {
-        ret = bno055_read_quaternion_wxyz(&sample.quaternion);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::Quaternion)) {
+        ok = bno055_read_quaternion_wxyz(&sample.quaternion) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::LinearAccel)) != 0U) {
-        ret = bno055_read_linear_accel_xyz(&sample.linear_accel);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::LinearAccel)) {
+        ok = bno055_read_linear_accel_xyz(&sample.linear_accel) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::Gravity)) != 0U) {
-        ret = bno055_read_gravity_xyz(&sample.gravity);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::Gravity)) {
+        ok = bno055_read_gravity_xyz(&sample.gravity) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawAccel)) != 0U) {
-        ret = bno055_read_accel_xyz(&sample.raw_accel);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::RawAccel)) {
+        ok = bno055_read_accel_xyz(&sample.raw_accel) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawGyro)) != 0U) {
-        ret = bno055_read_gyro_xyz(&sample.raw_gyro);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::RawGyro)) {
+        ok = bno055_read_gyro_xyz(&sample.raw_gyro) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawMag)) != 0U) {
-        ret = bno055_read_mag_xyz(&sample.raw_mag);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+    if (ok && has(StreamField::RawMag)) {
+        ok = bno055_read_mag_xyz(&sample.raw_mag) == BNO055_SUCCESS;
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::Temperature)) != 0U) {
+    if (ok && has(StreamField::Temperature)) {
         s8 temp = 0;
-        ret = bno055_read_temp_data(&temp);
-        if (ret != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+        ok = bno055_read_temp_data(&temp) == BNO055_SUCCESS;
         sample.temperature = static_cast<int8_t>(temp);
     }
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::CalibrationStatus)) != 0U) {
+    if (ok && has(StreamField::CalibrationStatus)) {
         u8 sys = 0;
         u8 gyro = 0;
         u8 accel = 0;
         u8 mag = 0;
-        if (bno055_get_sys_calib_stat(&sys) != BNO055_SUCCESS ||
-            bno055_get_gyro_calib_stat(&gyro) != BNO055_SUCCESS ||
-            bno055_get_accel_calib_stat(&accel) != BNO055_SUCCESS ||
-            bno055_get_mag_calib_stat(&mag) != BNO055_SUCCESS) {
-            unlock();
-            return ESP_FAIL;
-        }
+        ok = bno055_get_sys_calib_stat(&sys) == BNO055_SUCCESS &&
+             bno055_get_gyro_calib_stat(&gyro) == BNO055_SUCCESS &&
+             bno055_get_accel_calib_stat(&accel) == BNO055_SUCCESS &&
+             bno055_get_mag_calib_stat(&mag) == BNO055_SUCCESS;
         sample.calibration_status.sys = sys;
         sample.calibration_status.gyro = gyro;
         sample.calibration_status.accel = accel;
         sample.calibration_status.mag = mag;
     }
 
+    const int64_t mono_end_us = esp_timer_get_time();
     unlock();
-    return ESP_OK;
+
+    sample.timestamp_us = wall_start_us + static_cast<uint64_t>((mono_end_us - mono_start_us) / 2);
+    return ok ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t Bno055Device::readCalibration(CalibrationBlob &out) const
@@ -270,7 +245,7 @@ esp_err_t Bno055Device::readCalibration(CalibrationBlob &out) const
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t lock_ret = lock(pdMS_TO_TICKS(50));
+    const esp_err_t lock_ret = lock(kConfigLockTimeout);
     if (lock_ret != ESP_OK) {
         return lock_ret;
     }
@@ -326,7 +301,7 @@ esp_err_t Bno055Device::writeCalibration(const CalibrationBlob &blob)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t lock_ret = lock(pdMS_TO_TICKS(50));
+    const esp_err_t lock_ret = lock(kConfigLockTimeout);
     if (lock_ret != ESP_OK) {
         return lock_ret;
     }
@@ -420,11 +395,16 @@ s8 Bno055Device::busReadThunk(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 
 void Bno055Device::delayThunk(u32 delay_ms)
 {
+    if (delay_ms == 0U) {
+        return;
+    }
     if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
         esp_rom_delay_us(static_cast<uint32_t>(delay_ms) * 1000U);
         return;
     }
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    // Bosch delays are minimums (mode-switch settling). Round up to whole
+    // ticks, plus one because vTaskDelay(n) can return up to a tick early.
+    vTaskDelay(rtos_util::msToTicksCeil(delay_ms) + 1U);
 }
 
 s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
@@ -449,7 +429,7 @@ s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
             m_config.device_address,
             tx_buf,
             static_cast<size_t>(cnt) + 1U,
-            pdMS_TO_TICKS(timeout_ms));
+            rtos_util::msToTicksCeil(timeout_ms));
         used_attempts = a;
         if (ret == ESP_OK) {
             break;
@@ -467,14 +447,19 @@ s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
         return BNO055_SUCCESS;
     }
 
-    ESP_LOGW(TAG,
-             "BNO055 bus write failed (port=%d addr=0x%02X reg=0x%02X data=0x%02X cnt=%u): %s",
-             m_config.port_num,
-             m_config.device_address,
-             reg_addr,
-             (cnt > 0U) ? tx_buf[1] : 0U,
-             static_cast<unsigned>(cnt),
-             esp_err_to_name(ret));
+    if (shouldLogBusError()) {
+        ESP_LOGW(TAG,
+                 "BNO055 bus write failed (port=%d addr=0x%02X reg=0x%02X data=0x%02X cnt=%u): %s "
+                 "(%" PRIu32 " similar suppressed)",
+                 m_config.port_num,
+                 m_config.device_address,
+                 reg_addr,
+                 (cnt > 0U) ? tx_buf[1] : 0U,
+                 static_cast<unsigned>(cnt),
+                 esp_err_to_name(ret),
+                 m_suppressed_bus_logs);
+        m_suppressed_bus_logs = 0;
+    }
 
     return BNO055_ERROR;
 }
@@ -493,19 +478,33 @@ s8 Bno055Device::busRead(u8 reg_addr, u8 *reg_data, u8 cnt) const
         1,
         reg_data,
         cnt,
-        pdMS_TO_TICKS(m_config.timeout_ms));
+        rtos_util::msToTicksCeil(m_config.timeout_ms));
 
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK && shouldLogBusError()) {
         ESP_LOGW(TAG,
-                 "BNO055 bus read failed (port=%d addr=0x%02X reg=0x%02X cnt=%u): %s",
+                 "BNO055 bus read failed (port=%d addr=0x%02X reg=0x%02X cnt=%u): %s "
+                 "(%" PRIu32 " similar suppressed)",
                  m_config.port_num,
                  m_config.device_address,
                  reg_addr,
                  static_cast<unsigned>(cnt),
-                 esp_err_to_name(ret));
+                 esp_err_to_name(ret),
+                 m_suppressed_bus_logs);
+        m_suppressed_bus_logs = 0;
     }
 
     return (ret == ESP_OK) ? BNO055_SUCCESS : BNO055_ERROR;
+}
+
+bool Bno055Device::shouldLogBusError() const
+{
+    const int64_t now_us = esp_timer_get_time();
+    if (m_last_bus_log_us == 0 || (now_us - m_last_bus_log_us) >= kBusLogIntervalUs) {
+        m_last_bus_log_us = now_us;
+        return true;
+    }
+    ++m_suppressed_bus_logs;
+    return false;
 }
 
 esp_err_t Bno055Device::lock(TickType_t timeout) const

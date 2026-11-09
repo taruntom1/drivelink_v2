@@ -11,6 +11,10 @@ DriveLink v2 is ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It driv
 ESP-IDF must be exported in the shell first:
 - PowerShell: `. $HOME\esp\v5.5.2\esp-idf\export.ps1`
 - On this machine, the IDF Python env is built for Python 3.11. If `export.ps1` reports a missing `py3.14` env, put `C:\Espressif\tools\idf-python\3.11.2` first on `PATH` and run export again.
+- The shell's `IDF_TOOLS_PATH` points at `~\.espressif\Espressif`, which has no `python_env`. `export.ps1` then fails ("ESP-IDF Python virtual environment ... not found"), and `idf.py` is not found. The env is under `~\.espressif`. Shell state does not persist between agent tool calls, so run everything in one PowerShell call:
+  ```powershell
+  $env:IDF_TOOLS_PATH = "$HOME\.espressif"; $env:PATH = "C:\Espressif\tools\idf-python\3.11.2;" + $env:PATH; . $HOME\esp\v5.5.2\esp-idf\export.ps1 *> $null; idf.py build
+  ```
 
 ```bash
 idf.py build                 # firmware (target esp32s3, from sdkconfig.defaults)
@@ -53,14 +57,19 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - IMU: `0x22` / `0x42`, stream `0x82`
   - Nothing checks for collisions between these IDs.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
-  - motor_manager is at v3 and IMU at v2. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id).
-  - motor_manager v3 configure bodies must have their exact size. `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 5-byte header.
+  - motor_manager and IMU are both at v3. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
+  - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 5-byte header.
+  - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 4-byte header.
+  - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
   - time_sync is at v1. Its ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.
   - Task bodies loop on `stopRequested()` and sleep with `sleepFor` / `sleepUntil`.
   - Every other blocking wait needs a bounded timeout.
+- **Tick rate:** `CONFIG_FREERTOS_HZ` is 100 (10 ms ticks). Nothing real-time depends on it; fixed-rate loops use `esp_timer` (see "Periodic timers").
+  - `pdMS_TO_TICKS` rounds down, so any value below 10 ms becomes 0 ticks. Convert small or configurable ms values with `rtos_util::msToTicksCeil` (`tick_util.hpp`).
+  - `vTaskDelay(n)` can return up to one tick early. Where a delay is a minimum (sensor settling), use `msToTicksCeil(ms) + 1`.
   - Owners call `stop()` in their destructor, which waits for the body to return, before freeing anything the task uses.
 - **UART callbacks:** `registerCallback(type, cb, registration)` fills in a `uart_comm::CallbackRegistration`, which unregisters on destruction. Unregistering waits for a callback that is already running.
   - Destructors reset their registrations **first**.
@@ -72,6 +81,11 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - Each tick passes `dt = elapsed ticks × period` to `MotorController::update(dt)` and on to the PIDs. Nothing stores a sample time.
   - The tick only try-locks the manager mutex: a busy mutex skips the tick (counted as an overrun) rather than blocking it. Keep work done under `m_mutex` short.
   - Shutdown stops the timer and waits out an in-flight callback before stopping the task.
+- **Periodic timers:** fixed-rate loops (the motor control loop, the IMU sampler) use `rtos_util::TaskTimer`: a periodic `esp_timer` whose callback only notifies a `StoppableTask`. The task takes the count with `ulTaskNotifyTake` (bounded timeout) and counts extra periods as overruns. Owners serialize timer calls under their mutex and call `destroy()` (fenced) before stopping the task.
+- **IMU sampling loop:**
+  - The `TaskTimer` wakes the IMU stream task every sample period. A packet is sent every N samples, with N derived from the telemetry period. The loop does not depend on `CONFIG_FREERTOS_HZ`.
+  - The tick reads stream settings from atomics and only try-locks the `Bno055Device` mutex. A busy device skips the tick and counts it. Late, busy, read-error and encode-error counts are logged at most once per second.
+  - The timer is stopped while the stream is disabled and during an operation-mode switch.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
 
 ## Conventions
