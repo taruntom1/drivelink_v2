@@ -26,6 +26,12 @@ If the host sends `sample_time_ms = 20` while the loop runs at 10 ms, the integr
 
 **Fix**: either (a) pass the measured `dt` from `esp_timer_get_time()` into `compute()`, or (b) make the update task period *the* sample time: drop the per-motor field or reject a mismatch, and use `vTaskDelayUntil`.
 
+**Status: fixed.**
+- `PidController::compute()` now takes `dt_s`, and `sample_time_ms` is gone from the PID, the controller and the protocol (motor_manager v3).
+- The motor_manager update task is woken by a periodic `esp_timer` rather than the FreeRTOS tick. It passes `dt = elapsed timer ticks × control period`: the tick count comes from the notification count, so late or skipped ticks give a longer, correct `dt`. At most 10 ticks are folded into one `dt`.
+- The host sets the period at runtime with `SET_TIMING`.
+- The D-term filter is now a cutoff in Hz, so its behaviour does not change with the loop rate.
+
 ---
 
 ## M3. Medium: the encoder rate refreshes at 20 Hz but the velocity loop runs at 100 Hz
@@ -37,6 +43,11 @@ If the host sends `sample_time_ms = 20` while the loop runs at 10 ms, the integr
 - The P/I terms react to data up to 50 ms old, which adds phase lag and limits the gain you can use.
 
 **Fix**: compute the rate inside `MotorController::update()` from the count delta since the previous update (the update period is known), with an optional IIR filter. Or set the sample-period Kconfig ≤ the update period and validate that at manager construction.
+
+**Status: fixed.**
+- `MotorController::update(dt)` reads the encoder count once per tick and computes velocity as `Δcount / dt`. A first-order low-pass follows (`velocity_filter_cutoff_hz`, Kconfig default 50 Hz, settable per motor over the protocol).
+- Angle, velocity and output are cached every tick in every mode, and the getters return the cache.
+- The throttled `Encoder::getRate()` is no longer used by the controller.
 
 ---
 

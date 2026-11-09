@@ -138,6 +138,7 @@ Typical setup flow:
 
 - Rate/direction are updated on `getRate()`/`getDirection()` calls.
 - Sampling is throttled by `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS` to keep a stable window.
+- `motor_controller` does not use `getRate()`: it estimates velocity itself from `getCount()` deltas on every control tick.
 - Internal state for rate/direction uses a spinlock for safe concurrent reads.
 - `getCount()` reads the PCNT accumulator-backed count directly.
 - Use one `Encoder` instance per physical quadrature sensor.
