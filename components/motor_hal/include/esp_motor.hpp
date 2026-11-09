@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "driver/gpio.h"
 
-namespace esp_motor {
+namespace motor_hal {
 
 namespace detail {
 struct McpwmChannel;
@@ -16,7 +16,7 @@ struct McpwmChannel;
 /// shared across motors.
 ///
 /// Usage:
-///   esp_motor::Motor left(GPIO_NUM_1, GPIO_NUM_2);
+///   motor_hal::Motor left(GPIO_NUM_1, GPIO_NUM_2);
 ///   left.setSpeed(0.7f);   // forward at 70%
 ///   left.setSpeed(-0.5f);  // reverse at 50%
 ///   left.stop();
@@ -59,4 +59,4 @@ private:
     Impl *m_impl;
 };
 
-} // namespace esp_motor
+} // namespace motor_hal

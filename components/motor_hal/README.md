@@ -40,8 +40,8 @@ Include the header:
 
 extern "C" void app_main(void)
 {
-    esp_motor::Motor left(GPIO_NUM_1, GPIO_NUM_2);   // pwm_gpio, dir_gpio
-    esp_motor::Motor right(GPIO_NUM_3, GPIO_NUM_4);
+    motor_hal::Motor left(GPIO_NUM_1, GPIO_NUM_2);   // pwm_gpio, dir_gpio
+    motor_hal::Motor right(GPIO_NUM_3, GPIO_NUM_4);
 
     left.setSpeed(0.7f);    // 70% forward
     right.setSpeed(-0.5f);  // 50% reverse
@@ -55,7 +55,7 @@ extern "C" void app_main(void)
 
 ## API Reference
 
-### `esp_motor::Motor`
+### `motor_hal::Motor`
 
 #### Constructor
 
@@ -132,7 +132,7 @@ Returns `true` if MCPWM hardware was allocated successfully. Returns `false` if:
 Always check before using a motor object:
 
 ```cpp
-esp_motor::Motor m(GPIO_NUM_5, GPIO_NUM_6);
+motor_hal::Motor m(GPIO_NUM_5, GPIO_NUM_6);
 if (!m.isValid()) {
     ESP_LOGE(TAG, "Motor init failed");
     return;
@@ -164,7 +164,7 @@ Motor &operator=(Motor &&) noexcept;
 Motors own hardware resources and cannot be copied. They can be moved into containers:
 
 ```cpp
-std::vector<esp_motor::Motor> motors;
+std::vector<motor_hal::Motor> motors;
 motors.emplace_back(GPIO_NUM_1, GPIO_NUM_2);
 ```
 

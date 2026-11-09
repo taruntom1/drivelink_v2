@@ -77,7 +77,7 @@ Call immediately after construction and before reads.
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-using namespace esp_rotary_encoder;
+using namespace rotary_encoder_hal;
 
 extern "C" void app_main(void)
 {

@@ -8,7 +8,7 @@
 
 static const char *const TAG = "encoder";
 
-namespace esp_rotary_encoder {
+namespace rotary_encoder_hal {
 namespace detail {
 
 struct EncoderImpl {
@@ -174,4 +174,4 @@ bool Encoder::isValid() const
     return m_impl && m_impl->valid;
 }
 
-} // namespace esp_rotary_encoder
+} // namespace rotary_encoder_hal

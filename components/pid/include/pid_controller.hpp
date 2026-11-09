@@ -3,7 +3,7 @@
 #include "sdkconfig.h"
 #include <cstdint>
 
-namespace esp_pid {
+namespace pid {
 
 /// PID operating mode.
 enum class Mode {
@@ -52,12 +52,12 @@ struct PidImpl;
 ///
 /// Usage:
 /// @code
-///   esp_pid::PidConfig cfg;
+///   pid::PidConfig cfg;
 ///   cfg.kp = 1.0f;
 ///   cfg.ki = 0.5f;
 ///   cfg.kd = 0.1f;
-///   esp_pid::PidController pid(cfg);
-///   pid.setMode(esp_pid::Mode::Automatic);
+///   pid::PidController pid(cfg);
+///   pid.setMode(pid::Mode::Automatic);
 ///
 ///   // In the control loop, with dt_s = seconds since the previous call:
 ///   float output = pid.compute(measured_value, target_value, dt_s);
@@ -146,4 +146,4 @@ private:
     detail::PidImpl *m_impl;
 };
 
-} // namespace esp_pid
+} // namespace pid

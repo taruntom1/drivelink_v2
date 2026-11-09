@@ -39,7 +39,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 **Startup** (`main/main.cpp`): `UartComm` comes first. `MotorManager`, `TimeSync` and `ImuBno055Manager` then each take a reference to it. Each one is checked with `isValid()`. An early `return` destroys the objects in reverse order, so destructors must be safe at any point.
 
 **Layering** (each one is an ESP-IDF component under `components/`):
-- `motor_hal` (`esp_motor::Motor`) and `rotary_encoder_hal` (`esp_rotary_encoder::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
+- `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
 - `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes.
 - `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks.

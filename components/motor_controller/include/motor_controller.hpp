@@ -41,11 +41,11 @@ struct MotorControllerConfig {
 
     /// Velocity PID parameters. output_min/output_max are overridden by the
     /// MotorController constructor to match the above limits.
-    esp_pid::PidConfig velocity_pid;
+    pid::PidConfig velocity_pid;
 
     /// Position PID parameters. output_min/output_max are overridden by the
     /// MotorController constructor to match the above limits.
-    esp_pid::PidConfig position_pid;
+    pid::PidConfig position_pid;
 
     /// Constant feedforward term added to velocity PID output.
     float velocity_feedforward = 0.0f;
@@ -258,12 +258,12 @@ private:
     float estimateVelocity(int32_t count, float dt_s, float counts_per_rev, float gear_ratio);
 
     // Hardware handles
-    esp_motor::Motor            m_motor;
-    esp_rotary_encoder::Encoder m_encoder;
+    motor_hal::Motor            m_motor;
+    rotary_encoder_hal::Encoder m_encoder;
 
     // Controllers (velocity and position)
-    esp_pid::PidController m_vel_pid;
-    esp_pid::PidController m_pos_pid;
+    pid::PidController m_vel_pid;
+    pid::PidController m_pos_pid;
 
     // Active control mode (protected by m_mux)
     ControlMode m_mode;

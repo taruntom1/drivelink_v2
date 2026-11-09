@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-namespace esp_rotary_encoder {
+namespace rotary_encoder_hal {
 namespace detail {
 
 /// Identifies an allocated PCNT unit configured for quadrature decoding.
@@ -50,4 +50,4 @@ private:
 };
 
 } // namespace detail
-} // namespace esp_rotary_encoder
+} // namespace rotary_encoder_hal

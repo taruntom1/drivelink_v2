@@ -6,7 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-namespace esp_motor {
+namespace motor_hal {
 namespace detail {
 
 /// Identifies a motor's allocated MCPWM channel
@@ -64,4 +64,4 @@ private:
 };
 
 } // namespace detail
-} // namespace esp_motor
+} // namespace motor_hal

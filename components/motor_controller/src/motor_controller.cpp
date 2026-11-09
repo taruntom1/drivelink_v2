@@ -37,13 +37,13 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
     : m_motor(pwm_gpio, dir_gpio),
       m_encoder(enc_a, enc_b),
       m_vel_pid([&]() {
-          esp_pid::PidConfig vc = config.velocity_pid;
+          pid::PidConfig vc = config.velocity_pid;
           vc.output_min = config.output_min;
           vc.output_max = config.output_max;
           return vc;
       }()),
       m_pos_pid([&]() {
-          esp_pid::PidConfig pc = config.position_pid;
+          pid::PidConfig pc = config.position_pid;
           pc.output_min = config.output_min;
           pc.output_max = config.output_max;
           return pc;
@@ -207,17 +207,17 @@ void MotorController::setMode(ControlMode mode)
     // integral windup accumulated while in a different mode.
     if (mode == ControlMode::VelocityControl) {
         m_vel_pid.reset();
-        m_vel_pid.setMode(esp_pid::Mode::Automatic);
-        m_pos_pid.setMode(esp_pid::Mode::Manual);
+        m_vel_pid.setMode(pid::Mode::Automatic);
+        m_pos_pid.setMode(pid::Mode::Manual);
     } else if (mode == ControlMode::PositionControl) {
         m_pos_pid.reset();
-        m_pos_pid.setMode(esp_pid::Mode::Automatic);
-        m_vel_pid.setMode(esp_pid::Mode::Manual);
+        m_pos_pid.setMode(pid::Mode::Automatic);
+        m_vel_pid.setMode(pid::Mode::Manual);
         m_pos_setpoint.store(current_angle);
     } else {
         // OpenLoop
-        m_vel_pid.setMode(esp_pid::Mode::Manual);
-        m_pos_pid.setMode(esp_pid::Mode::Manual);
+        m_vel_pid.setMode(pid::Mode::Manual);
+        m_pos_pid.setMode(pid::Mode::Manual);
     }
 
     taskENTER_CRITICAL(&m_mux);

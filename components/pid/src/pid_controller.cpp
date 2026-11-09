@@ -6,7 +6,7 @@
 
 static const char *const TAG = "pid_controller";
 
-namespace esp_pid {
+namespace pid {
 namespace detail {
 
 struct PidImpl {
@@ -382,4 +382,4 @@ bool PidController::isValid() const
     return m_impl != nullptr;
 }
 
-} // namespace esp_pid
+} // namespace pid

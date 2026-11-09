@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "driver/gpio.h"
 
-namespace esp_rotary_encoder {
+namespace rotary_encoder_hal {
 
 /// Direction of encoder rotation, determined from the most recent rate sample.
 enum class Direction {
@@ -28,7 +28,7 @@ struct EncoderImpl;
 /// menuconfig (ENCODER_HAL_RATE_SAMPLE_PERIOD_MS).
 ///
 /// Usage:
-///   esp_rotary_encoder::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5);
+///   rotary_encoder_hal::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5);
 ///   if (wheel.isValid()) {
 ///       int32_t pos = wheel.getCount();
 ///       float speed = wheel.getRate();
@@ -84,4 +84,4 @@ private:
     detail::EncoderImpl *m_impl;
 };
 
-} // namespace esp_rotary_encoder
+} // namespace rotary_encoder_hal

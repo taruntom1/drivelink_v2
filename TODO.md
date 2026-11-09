@@ -12,12 +12,6 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
   - the protocol codecs: motor_manager configure and telemetry, IMU configure and stream, `time_sync::protocol`
 - Wire them into CI together with `idf.py build` for `/` and `test/uart_comm` (review G3, G4, G7).
 
-**Namespaces**
-- Rename each namespace to match its component, and update all callers and READMEs:
-  - `esp_motor` → `motor_hal`
-  - `esp_pid` → `pid`
-  - `esp_rotary_encoder` → `rotary_encoder_hal`
-
 **Layout**
 - `time_sync`:
   - Move `time_sync.cpp` and `time_sync_protocol.cpp` to `src/`, and `time_sync_protocol.hpp` to `priv_include/`.

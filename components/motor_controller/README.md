@@ -102,8 +102,8 @@ enum class ControlMode {
 | `gear_ratio`    | `float`               | 1.0      | Motor shaft revs per output shaft rev (1.0 = direct drive)      |
 | `output_min`    | `float`               | -1.0     | Motor output lower clamp                                        |
 | `output_max`    | `float`               | 1.0      | Motor output upper clamp                                        |
-| `velocity_pid`  | `esp_pid::PidConfig`  | defaults | Velocity PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
-| `position_pid`  | `esp_pid::PidConfig`  | defaults | Position PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
+| `velocity_pid`  | `pid::PidConfig`  | defaults | Velocity PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
+| `position_pid`  | `pid::PidConfig`  | defaults | Position PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
 | `velocity_feedforward` | `float`         | 0.0      | Constant feedforward term added to velocity PID output          |
 | `position_feedforward` | `float`         | 0.0      | Constant feedforward term added to position PID output          |
 | `velocity_filter_cutoff_hz` | `float`    | 50       | Low-pass cutoff (Hz) of the velocity estimate; 0 = unfiltered   |

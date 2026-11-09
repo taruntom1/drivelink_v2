@@ -9,7 +9,7 @@
 
 static const char *const TAG = "esp_motor";
 
-namespace esp_motor {
+namespace motor_hal {
 
 struct Motor::Impl {
     detail::McpwmChannel channel;
@@ -131,4 +131,4 @@ float Motor::getSpeed() const
     return m_impl->current_speed;
 }
 
-} // namespace esp_motor
+} // namespace motor_hal
