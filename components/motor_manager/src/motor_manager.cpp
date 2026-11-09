@@ -253,11 +253,14 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         motor_cfg.velocity_pid.kp = cfg.vel_kp;
         motor_cfg.velocity_pid.ki = cfg.vel_ki;
         motor_cfg.velocity_pid.kd = cfg.vel_kd;
+        motor_cfg.velocity_pid.derivative_cutoff_hz = cfg.vel_d_cutoff_hz;
         motor_cfg.position_pid.kp = cfg.pos_kp;
         motor_cfg.position_pid.ki = cfg.pos_ki;
         motor_cfg.position_pid.kd = cfg.pos_kd;
+        motor_cfg.position_pid.derivative_cutoff_hz = cfg.pos_d_cutoff_hz;
         motor_cfg.velocity_feedforward = cfg.velocity_feedforward;
         motor_cfg.position_feedforward = cfg.position_feedforward;
+        motor_cfg.velocity_filter_cutoff_hz = cfg.vel_filter_cutoff_hz;
 
         auto motor = std::make_unique<motor_controller::MotorController>(
             cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b, motor_cfg);
@@ -347,9 +350,12 @@ ResultCode MotorManager::configureMotor(uint8_t motor_id, const MotorConfigPaylo
     motor->setGearRatio(cfg.gear_ratio);
     motor->setOutputLimits(cfg.output_min, cfg.output_max);
     motor->setVelocityPidTunings(cfg.vel_kp, cfg.vel_ki, cfg.vel_kd);
+    motor->setVelocityDerivativeCutoff(cfg.vel_d_cutoff_hz);
     motor->setPositionPidTunings(cfg.pos_kp, cfg.pos_ki, cfg.pos_kd);
+    motor->setPositionDerivativeCutoff(cfg.pos_d_cutoff_hz);
     motor->setVelocityFeedforward(cfg.velocity_feedforward);
     motor->setPositionFeedforward(cfg.position_feedforward);
+    motor->setVelocityFilterCutoff(cfg.vel_filter_cutoff_hz);
     xSemaphoreGive(m_mutex);
 
     ESP_LOGI(TAG, "Configured motor id=%u", motor_id);
@@ -377,7 +383,7 @@ ResultCode MotorManager::setMode(uint8_t motor_id, motor_controller::ControlMode
     return ResultCode::Ok;
 }
 
-ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, unsigned int sample_time_ms)
+ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz)
 {
     if (!isValid()) {
         return ResultCode::InvalidState;
@@ -400,14 +406,14 @@ ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, 
 
     if (kind == PidKind::Velocity) {
         motor->setVelocityPidTunings(kp, ki, kd);
+        motor->setVelocityDerivativeCutoff(d_cutoff_hz);
     } else if (kind == PidKind::Position) {
         motor->setPositionPidTunings(kp, ki, kd);
+        motor->setPositionDerivativeCutoff(d_cutoff_hz);
     } else {
         xSemaphoreGive(m_mutex);
         return ResultCode::InvalidArgument;
     }
-    // The PID dt now comes from the update loop; sample_time_ms is ignored.
-    (void)sample_time_ms;
 
     xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
@@ -915,6 +921,9 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         if ((field_mask & kTelemetryFieldVelocity) != 0U) {
             required += sizeof(float);
         }
+        if ((field_mask & kTelemetryFieldOutput) != 0U) {
+            required += sizeof(float);
+        }
 
         if ((write_idx + required) > cap) {
             break;
@@ -935,6 +944,14 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
                                        ? slot.mock_velocity_rad_s
                                        : slot.motor->getAngularVelocity();
             std::memcpy(&out[write_idx], &velocity, sizeof(float));
+            write_idx += sizeof(float);
+        }
+        if ((field_mask & kTelemetryFieldOutput) != 0U) {
+            // Mock mode has no motor output to report.
+            const float output = (m_use_mock_feedback || slot.motor == nullptr)
+                                     ? 0.0f
+                                     : slot.motor->getOutput();
+            std::memcpy(&out[write_idx], &output, sizeof(float));
             write_idx += sizeof(float);
         }
 

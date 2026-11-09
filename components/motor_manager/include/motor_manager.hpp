@@ -31,7 +31,7 @@ public:
     ResultCode deleteMotor(uint8_t motor_id);
     ResultCode configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
     ResultCode setMode(uint8_t motor_id, motor_controller::ControlMode mode);
-    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, unsigned int sample_time_ms);
+    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
     ResultCode setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode stopMotor(uint8_t motor_id);
     ResultCode resetMotor(uint8_t motor_id);
@@ -94,7 +94,8 @@ private:
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
     ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
-    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code);
+    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
+                                     const uint8_t *body = nullptr, size_t body_len = 0);
     void stopTasks();
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);

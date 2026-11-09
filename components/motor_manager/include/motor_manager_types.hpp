@@ -38,7 +38,8 @@ enum class ConfigureSubcommand : uint8_t {
     StopMotor = 0x07,
     ResetMotor = 0x08,
     SetTelemetryGlobal = 0x09,
-    SetTelemetryMotor = 0x0A
+    SetTelemetryMotor = 0x0A,
+    SetTiming = 0x0B
 };
 
 enum class PidKind : uint8_t {
@@ -53,8 +54,10 @@ enum class SetpointKind : uint8_t {
 };
 
 // v2 added a seq byte after the version in configure requests and responses.
-// It covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x02;
+// v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
+// the SetTiming subcommand, response bodies and the telemetry output field.
+// The version covers every motor_manager payload, including both streams.
+constexpr uint8_t kProtocolVersion = 0x03;
 // Sent as subcommand and motor_id in a configure response when the request
 // header could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
@@ -68,7 +71,8 @@ constexpr size_t kSetpointEntrySize = 6;  // motor_id(1) + kind(1) + float(4)
 enum TelemetryFieldMask : uint8_t {
     kTelemetryFieldAngle = 1U << 0,
     kTelemetryFieldVelocity = 1U << 1,
-    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity
+    kTelemetryFieldOutput = 1U << 2, ///< applied motor duty in [-1, 1]
+    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity | kTelemetryFieldOutput
 };
 
 constexpr size_t kTelemetryPacketHeaderSize = 10; // version(1) + entry_count(1) + timestamp_us(8)
@@ -86,12 +90,14 @@ struct MotorConfigPayload {
     float vel_kp;
     float vel_ki;
     float vel_kd;
+    float vel_d_cutoff_hz;      ///< velocity PID derivative filter cutoff (0 = off)
     float pos_kp;
     float pos_ki;
     float pos_kd;
-    unsigned int sample_time_ms;
+    float pos_d_cutoff_hz;      ///< position PID derivative filter cutoff (0 = off)
     float velocity_feedforward;
     float position_feedforward;
+    float vel_filter_cutoff_hz; ///< velocity estimate low-pass cutoff (0 = off)
 };
 
 // Limits applied to the control and telemetry periods (constructor config and SetTiming).

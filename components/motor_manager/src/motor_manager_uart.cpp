@@ -11,14 +11,20 @@ namespace motor_manager {
 namespace {
 
 constexpr size_t kConfigureHeaderBytes = 4U; // version + seq + subcommand + motor_id
+constexpr size_t kConfigureResponseHeaderBytes = 5U; // version + seq + subcommand + motor_id + result
+
+// Exact v3 body sizes (bytes after the configure header).
 constexpr size_t kCreateConfigureGpioBytes = 4U;
-constexpr size_t kCreateConfigureFloatCount = 14U;
-constexpr size_t kPidSetFloatCount = 3U;
-constexpr size_t kPidKindBytes = 1U;
-constexpr size_t kSetpointKindBytes = 1U;
-constexpr size_t kTelemetryEnabledBytes = 1U;
-constexpr size_t kTelemetryFieldMaskBytes = 1U;
-constexpr size_t kTelemetryFieldApplyBytes = 1U;
+constexpr size_t kCreateConfigureFloatCount = 15U;
+constexpr size_t kCreateConfigureBodyBytes =
+    kCreateConfigureGpioBytes + kCreateConfigureFloatCount * sizeof(float);     // 64
+constexpr size_t kSetModeBodyBytes = 1U;                                        // mode
+constexpr size_t kSetPidParamsBodyBytes = 1U + 4U * sizeof(float);              // kind + kp ki kd d_cutoff
+constexpr size_t kSetSetpointBodyBytes = 1U + sizeof(float);                    // kind + value
+constexpr size_t kSetTelemetryGlobalBodyBytes = 2U;                             // enabled + field_mask
+constexpr size_t kSetTelemetryMotorBodyBytes = 3U;                              // enabled + field_mask + apply
+constexpr size_t kSetTimingBodyBytes = 2U * sizeof(uint32_t);                   // control_us + telemetry_us
+constexpr size_t kSetTimingResponseBodyBytes = 2U * sizeof(uint32_t);
 
 bool readFloatLe(const uint8_t *src, size_t src_len, size_t &offset, float &out)
 {
@@ -139,20 +145,21 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
     const uint8_t subcommand_raw = payload[2];
     const auto subcommand = static_cast<ConfigureSubcommand>(subcommand_raw);
     const uint8_t motor_id = payload[3];
+    // Every body has a fixed size in v3 and must match it exactly: a
+    // different length means host and firmware disagree on the layout.
+    const size_t body_len = len - kConfigureHeaderBytes;
+    size_t offset = kConfigureHeaderBytes;
 
     ResultCode rc = ResultCode::InvalidArgument;
+    uint8_t resp_body[kSetTimingResponseBodyBytes] = {};
+    size_t resp_body_len = 0;
 
     switch (subcommand) {
         case ConfigureSubcommand::CreateMotor:
         case ConfigureSubcommand::ConfigureMotor: {
-            constexpr size_t kRequiredLen =
-                kConfigureHeaderBytes + kCreateConfigureGpioBytes +
-                kCreateConfigureFloatCount * sizeof(float) + sizeof(uint32_t);
-            if (len < kRequiredLen) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kCreateConfigureBodyBytes) {
                 break;
             }
-            size_t offset = kConfigureHeaderBytes;
             MotorConfigPayload cfg{};
             cfg.pwm_gpio = static_cast<gpio_num_t>(payload[offset++]);
             cfg.dir_gpio = static_cast<gpio_num_t>(payload[offset++]);
@@ -166,30 +173,16 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
                 !readFloatLe(payload, len, offset, cfg.vel_kp) ||
                 !readFloatLe(payload, len, offset, cfg.vel_ki) ||
                 !readFloatLe(payload, len, offset, cfg.vel_kd) ||
+                !readFloatLe(payload, len, offset, cfg.vel_d_cutoff_hz) ||
                 !readFloatLe(payload, len, offset, cfg.pos_kp) ||
                 !readFloatLe(payload, len, offset, cfg.pos_ki) ||
                 !readFloatLe(payload, len, offset, cfg.pos_kd) ||
+                !readFloatLe(payload, len, offset, cfg.pos_d_cutoff_hz) ||
                 !readFloatLe(payload, len, offset, cfg.velocity_feedforward) ||
-                !readFloatLe(payload, len, offset, cfg.position_feedforward)) {
-                rc = ResultCode::InvalidArgument;
+                !readFloatLe(payload, len, offset, cfg.position_feedforward) ||
+                !readFloatLe(payload, len, offset, cfg.vel_filter_cutoff_hz)) {
                 break;
             }
-
-            // Reserved extension slots for forward-compatible protocol evolution.
-            float protocol_extension_slot_0 = 0.0f;
-            float protocol_extension_slot_1 = 0.0f;
-            if (!readFloatLe(payload, len, offset, protocol_extension_slot_0) ||
-                !readFloatLe(payload, len, offset, protocol_extension_slot_1)) {
-                rc = ResultCode::InvalidArgument;
-                break;
-            }
-
-            uint32_t sample_time = 0;
-            if (!readU32Le(payload, len, offset, sample_time)) {
-                rc = ResultCode::InvalidArgument;
-                break;
-            }
-            cfg.sample_time_ms = sample_time;
 
             if (subcommand == ConfigureSubcommand::CreateMotor) {
                 rc = createMotor(motor_id, cfg);
@@ -200,17 +193,17 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::DeleteMotor:
-            rc = deleteMotor(motor_id);
+            if (body_len == 0U) {
+                rc = deleteMotor(motor_id);
+            }
             break;
 
         case ConfigureSubcommand::SetMode: {
-            if (len < kConfigureHeaderBytes + 1U) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kSetModeBodyBytes) {
                 break;
             }
             motor_controller::ControlMode mode{};
-            if (!parseControlMode(payload[kConfigureHeaderBytes], mode)) {
-                rc = ResultCode::InvalidArgument;
+            if (!parseControlMode(payload[offset], mode)) {
                 break;
             }
             rc = setMode(motor_id, mode);
@@ -218,38 +211,31 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::SetPidParams: {
-            if (len < kConfigureHeaderBytes + kPidKindBytes +
-                          kPidSetFloatCount * sizeof(float) + sizeof(uint32_t)) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kSetPidParamsBodyBytes) {
                 break;
             }
-            size_t offset = kConfigureHeaderBytes;
             const auto pid_kind = static_cast<PidKind>(payload[offset++]);
             float kp = 0.0f;
             float ki = 0.0f;
             float kd = 0.0f;
-            uint32_t sample_time = 0;
+            float d_cutoff_hz = 0.0f;
             if (!readFloatLe(payload, len, offset, kp) ||
                 !readFloatLe(payload, len, offset, ki) ||
                 !readFloatLe(payload, len, offset, kd) ||
-                !readU32Le(payload, len, offset, sample_time)) {
-                rc = ResultCode::InvalidArgument;
+                !readFloatLe(payload, len, offset, d_cutoff_hz)) {
                 break;
             }
-            rc = setPidParams(motor_id, pid_kind, kp, ki, kd, sample_time);
+            rc = setPidParams(motor_id, pid_kind, kp, ki, kd, d_cutoff_hz);
             break;
         }
 
         case ConfigureSubcommand::SetSetpoint: {
-            if (len < kConfigureHeaderBytes + kSetpointKindBytes + sizeof(float)) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kSetSetpointBodyBytes) {
                 break;
             }
-            size_t offset = kConfigureHeaderBytes;
             const auto kind = static_cast<SetpointKind>(payload[offset++]);
             float value = 0.0f;
             if (!readFloatLe(payload, len, offset, value)) {
-                rc = ResultCode::InvalidArgument;
                 break;
             }
             rc = setSetpoint(motor_id, kind, value);
@@ -257,19 +243,21 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::StopMotor:
-            rc = stopMotor(motor_id);
+            if (body_len == 0U) {
+                rc = stopMotor(motor_id);
+            }
             break;
 
         case ConfigureSubcommand::ResetMotor:
-            rc = resetMotor(motor_id);
+            if (body_len == 0U) {
+                rc = resetMotor(motor_id);
+            }
             break;
 
         case ConfigureSubcommand::SetTelemetryGlobal: {
-            if (len < kConfigureHeaderBytes + kTelemetryEnabledBytes + kTelemetryFieldMaskBytes) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kSetTelemetryGlobalBodyBytes) {
                 break;
             }
-            size_t offset = kConfigureHeaderBytes;
             const bool enabled = (payload[offset++] != 0U);
             const uint8_t field_mask = payload[offset++];
             rc = setTelemetryGlobal(enabled, field_mask);
@@ -277,16 +265,35 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
         }
 
         case ConfigureSubcommand::SetTelemetryMotor: {
-            if (len < kConfigureHeaderBytes + kTelemetryEnabledBytes +
-                          kTelemetryFieldMaskBytes + kTelemetryFieldApplyBytes) {
-                rc = ResultCode::InvalidArgument;
+            if (body_len != kSetTelemetryMotorBodyBytes) {
                 break;
             }
-            size_t offset = kConfigureHeaderBytes;
             const bool enabled = (payload[offset++] != 0U);
             const uint8_t field_mask = payload[offset++];
             const bool update_field_mask = (payload[offset++] != 0U);
             rc = setTelemetryForMotor(motor_id, enabled, field_mask, update_field_mask);
+            break;
+        }
+
+        case ConfigureSubcommand::SetTiming: {
+            // Global: motor_id is ignored (and echoed back unchanged).
+            if (body_len != kSetTimingBodyBytes) {
+                break;
+            }
+            uint32_t control_us = 0;
+            uint32_t telemetry_us = 0;
+            if (!readU32Le(payload, len, offset, control_us) ||
+                !readU32Le(payload, len, offset, telemetry_us)) {
+                break;
+            }
+            uint32_t applied_control_us = 0;
+            uint32_t applied_telemetry_us = 0;
+            rc = setTiming(control_us, telemetry_us, applied_control_us, applied_telemetry_us);
+            if (rc == ResultCode::Ok) {
+                std::memcpy(&resp_body[0], &applied_control_us, sizeof(uint32_t));
+                std::memcpy(&resp_body[sizeof(uint32_t)], &applied_telemetry_us, sizeof(uint32_t));
+                resp_body_len = kSetTimingResponseBodyBytes;
+            }
             break;
         }
 
@@ -295,20 +302,33 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
             break;
     }
 
-    return sendConfigureResponse(seq, subcommand_raw, motor_id, rc);
+    if (rc == ResultCode::InvalidArgument) {
+        ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (body_len=%u)",
+                 subcommand_raw, static_cast<unsigned>(body_len));
+    }
+    return sendConfigureResponse(seq, subcommand_raw, motor_id, rc, resp_body, resp_body_len);
 }
 
-ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code)
+ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
+                                               const uint8_t *body, size_t body_len)
 {
-    uint8_t payload[5] = {
+    uint8_t payload[kConfigureResponseHeaderBytes + kSetTimingResponseBodyBytes] = {
         kProtocolVersion,
         seq,
         subcommand,
         motor_id,
         static_cast<uint8_t>(code)
     };
+    if (body_len > (sizeof(payload) - kConfigureResponseHeaderBytes) || (body_len > 0U && body == nullptr)) {
+        ESP_LOGE(TAG, "Configure response body too large (%u bytes)", static_cast<unsigned>(body_len));
+        return ResultCode::InternalError;
+    }
+    if (body_len > 0U) {
+        std::memcpy(&payload[kConfigureResponseHeaderBytes], body, body_len);
+    }
+    const auto payload_len = static_cast<uint8_t>(kConfigureResponseHeaderBytes + body_len);
 
-    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload, sizeof(payload));
+    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload, payload_len);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send configure response (msg=0x%02X): %s",
                  m_config.configure_response_msg_type, esp_err_to_name(ret));
