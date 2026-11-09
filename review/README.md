@@ -17,7 +17,7 @@
 | [07-code-quality-and-simplification.md](07-code-quality-and-simplification.md) | Duplication, dead code, simpler forms |
 | [08-performance-and-efficiency.md](08-performance-and-efficiency.md) | Hot paths, wasted work, memory |
 | [09-testing.md](09-testing.md) | Current test harness and coverage gaps |
-| [10-docs-and-conventions.md](10-docs-and-conventions.md) | Drift between code and docs, and deviations from `.github` guidelines |
+| [10-docs-and-conventions.md](10-docs-and-conventions.md) | Drift between code and docs, and deviations from the `CLAUDE.md` conventions |
 
 ## Severity legend
 

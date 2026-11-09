@@ -74,19 +74,66 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - Shutdown stops the timer and waits out an in-flight callback before stopping the task.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
 
-## Conventions (from `.github/copilot-instructions.md` and `.github/instructions/hal-component-patterns.instructions.md`)
+## Conventions
 
-- **Component layout:**
-  - `include/` holds public headers, `priv_include/` internal ones, `src/` the implementation.
-  - `Kconfig` holds tunable defaults and their ranges.
-  - `CMakeLists.txt` uses `idf_component_register` with explicit `SRCS` / `INCLUDE_DIRS` / `PRIV_INCLUDE_DIRS` / `REQUIRES`.
-- **Hardware-owning types:** non-copyable, movable only when transferring ownership is safe, low-level state hidden in an Impl or pool, and an `isValid()` check whenever construction can fail.
-- **Errors and logging:** check every ESP-IDF return value, log failures with `esp_err_to_name`, use one module-level `TAG` per file, and include pins, channels and slots in log messages. Fail early and leave the object in a consistent state.
-- **Numeric inputs:** clamp user-facing numbers at the API boundary. Convenience setters go through one canonical path. Stop and reset are explicit and idempotent.
+This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [components/CLAUDE.md](components/CLAUDE.md). Code that breaks a rule today is listed in `review/10-docs-and-conventions.md`, and its fix is in `TODO.md`.
+
+### Real-time paths
+
+These paths are real-time:
+- the motor control tick (`MotorManager::updateTaskLoop` work, `MotorController::update`, `PidController::compute`)
+- `esp_timer` callbacks
+- ISRs and PCNT/MCPWM driver callbacks
+- code inside `portENTER_CRITICAL` or a spinlock
+- UART RX callbacks
+
+Rules for them:
+- **No logging** in ISRs, critical sections or spinlocks, or while holding `m_mutex`. Anywhere else on these paths, logging must be rate-limited. Report counts instead: an overrun counter, a rejected-entry counter.
+- **No heap allocation.** That includes copying a `std::function` whose capture might not fit its small buffer.
+- **No blocking.** Only zero-timeout try-locks and non-blocking queue operations are allowed. Waiting belongs in the task's own wake-up point.
+- **Bounded work.** Keep everything done under `m_mutex` short and of fixed size. There must be no loop whose length depends on host input.
+
+### Protocol conventions
+
+Each protocol-facing manager defines its own messages on top of the `uart_comm` frame. All of them follow these rules:
+- **Version byte first.** Every payload starts with `kProtocolVersion`. Any change to the wire format bumps it. No backward compatibility is kept: the host and the firmware are updated together.
+- **Request correlation.** Configure commands carry a host-chosen `seq` byte right after the version, and the response echoes it. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for the subcommand and for the id fields. ESP-initiated requests carry their own id, like time_sync's `u16 request_id`.
+- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with bounds-checked little-endian helpers (`readU16Le`, `appendU16Le`, ...). Never `memcpy` a whole struct to or from the wire.
+- **Exact lengths.** A fixed-size body must be exactly its size, or it is rejected. A variable-size body carries an explicit count, and `count × entry size` must equal the remaining length.
+- **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
+- **IDs from Kconfig.** MSG_TYPE values and stream channels come only from Kconfig, within the `uart_comm` ranges above.
+- **The README is the spec.** The component README, or `docs/protocol-api-guide.md` for the IMU, defines the wire format. It is updated in the same commit as any wire change.
+
+### Errors, failures and memory
+
+- Check every ESP-IDF return value, and log failures with `esp_err_to_name`.
+- **Never abort on runtime errors** that the host or the hardware can cause. Return `esp_err_t` or `bool`, expose `isValid()`, and log the failure.
+  - No `ESP_ERROR_CHECK` anywhere.
+  - `assert` / `configASSERT` / `abort` are only for invariants that indicate a programmer error. One example: `UartComm` being destroyed while registrations are still active.
+- **Exceptions and RTTI are disabled** (sdkconfig).
+- **Allocate only at setup or configure time:** constructors, `start()`, and create/configure commands. Never allocate on steady-state paths. Size containers up front (`reserve` / `resize`).
+  - Running out of memory is treated as fatal. Plain `new` / `std::make_unique`, which abort on failure, are acceptable.
+
+### Definition of done
+
+A change is done when all of the following are true:
+- **Builds:** `idf.py build` and `idf.py -C test/uart_comm build` both succeed with zero warnings.
+- **Docs in the same commit:**
+  - Any public API, protocol or Kconfig change updates the component README in that commit.
+  - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.
+- **Review status:** a change that fixes or affects a `review/` item marks its status in the same change: **Fixed**, **Partly fixed** or **No longer applicable**, with a one-line note.
+- **Host tests for pure logic:** new pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host-side unit tests. The harness does not exist yet (see `TODO.md`), so it has to be set up first.
+
+### Files not to edit
+
 - **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand.
-- **Vendor code:** `components/imu_bmo_055/bno055.c` / `bno055.h` are the Bosch driver. `bno055_support.c` is Bosch's example template. It is compiled in, but none of our code calls it.
+- **Vendor code:**
+  - `components/imu_bmo_055/bno055.c` / `include/bno055.h` are the Bosch driver.
+  - `bno055_support.c` is Bosch's example template. It is compiled in, but none of our code calls it.
+  - These files are due to move to `components/imu_bmo_055/vendor/` (see `TODO.md`).
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
 
-## Review notes
+## Review notes and TODO
 
-`review/` holds a full-repo code review, with one markdown file per aspect and a ranked index in `review/README.md`. Check it before changing an area: many known issues are listed there with fixes, and each item's status is marked.
+- `review/` holds a full-repo code review, with one markdown file per aspect and a ranked index in `review/README.md`. Check it before changing an area: many known issues are listed there with fixes, and each item's status is marked.
+- `TODO.md` lists planned work that is not started yet, including the fixes for current convention violations.
