@@ -6,6 +6,8 @@ The host on the UART link is trusted in practice, but it is still an external in
 
 ## E1. Medium: GPIO numbers from the host go to peripherals unvalidated
 
+**Fixed.** `createMotor()` checks the four pins with `gpio_policy::areMotorPinsAllowed()` (they must exist, be distinct, and not be USB, flash/PSRAM or the uart_comm TX/RX pins) and against the pins other motors own. `Motor` and `Encoder` also reject invalid or equal pins before touching hardware, so `1ULL << dir_gpio` can no longer see a value ≥ 64. Strapping pins (0, 3, 45, 46) stay allowed.
+
 - [motor_manager_uart.cpp:145-148](../components/motor_manager/src/motor_manager_uart.cpp): `cfg.pwm_gpio = static_cast<gpio_num_t>(payload[offset++]);` and the same for dir/enc_a/enc_b
 - [esp_motor.cpp:30](../components/motor_hal/src/esp_motor.cpp): `io_conf.pin_bit_mask = 1ULL << dir_gpio;`
 
@@ -20,6 +22,8 @@ Problems:
 ---
 
 ## E2. Medium: numeric config from the host is not range-checked
+
+**Fixed.** The motor_manager decoder rejects any non-finite float and any unknown enum value or telemetry field bit with `INVALID_ARGUMENT` (configure) or drops and counts the entry (setpoint stream, checked in `queueSetpoint()` on the RX task, together with unknown motor ids). The C++ boundaries reject them too: `MotorManager::setSetpoint` / `setPidParams` / `createMotor` / `configureMotor`, `PidController::setTunings` / `setOutputLimits` (and its constructor, which falls back to 0 gains or [-1, 1] limits), and the `MotorController` setters, which ignore non-finite values.
 
 | Field | Where it is used | Risk |
 |-------|------------------|------|

@@ -96,13 +96,13 @@ public:
     /// @param mode Mode::Manual or Mode::Automatic.
     void setMode(Mode mode);
 
-    /// Set PID gains. Negative values are rejected (no change applied).
+    /// Set PID gains. Negative or non-finite values are rejected (no change applied).
     /// @param kp Proportional gain (>= 0).
     /// @param ki Integral gain (>= 0).
     /// @param kd Derivative gain (>= 0).
     void setTunings(float kp, float ki, float kd);
 
-    /// Set output limits. min must be less than max; otherwise no change.
+    /// Set output limits. Both must be finite and min < max; otherwise no change.
     /// @param min Lower output clamp.
     /// @param max Upper output clamp.
     void setOutputLimits(float min, float max);

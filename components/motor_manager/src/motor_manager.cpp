@@ -4,10 +4,12 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "tick_util.hpp"
+#include "gpio_policy.hpp"
 #include "motor_protocol.hpp"
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <sys/time.h>
@@ -30,6 +32,12 @@ constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
 constexpr uint32_t kMaxCatchUpTicks = 10;
 constexpr int64_t kOverrunLogIntervalUs = 1000000;
 constexpr int64_t kRejectLogIntervalUs = 1000000;
+
+static_assert(gpio_policy::kGpioCount == GPIO_NUM_MAX, "gpio_policy is written for the ESP32-S3");
+
+// The uart_comm link pins: a motor must never take over the host link.
+constexpr uint64_t kHostLinkGpioMask =
+    gpio_policy::gpioBit(CONFIG_UART_COMM_TX_PIN) | gpio_policy::gpioBit(CONFIG_UART_COMM_RX_PIN);
 
 uint64_t wallClockUs()
 {
@@ -224,26 +232,34 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
     if (!isValid()) {
         return ResultCode::InvalidState;
     }
+    if (!protocol::isMotorConfigFinite(cfg)) {
+        ESP_LOGW(TAG, "Create motor id=%u rejected: non-finite config value", motor_id);
+        return ResultCode::InvalidArgument;
+    }
+    // Mock mode allocates no hardware, so its pins are not checked or owned.
+    const uint64_t pin_mask = m_use_mock_feedback ? 0U : gpio_policy::motorPinMask(cfg);
+    if (!m_use_mock_feedback && !gpio_policy::areMotorPinsAllowed(cfg, kHostLinkGpioMask)) {
+        ESP_LOGW(TAG, "Create motor id=%u rejected: pins pwm=%u dir=%u encA=%u encB=%u must be "
+                      "distinct, existing and not reserved (flash, PSRAM, USB, UART link)",
+                 motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
+        return ResultCode::InvalidArgument;
+    }
 
-    // Check id and capacity first, then build the controller (hardware
+    // Check id, capacity and pins first, then build the controller (hardware
     // allocation, logging) without holding m_mutex, so the control loop does
     // not skip ticks while a motor is being created.
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return ResultCode::InternalError;
     }
-    size_t existing_index = 0;
-    if (findSlotIndexById(motor_id, existing_index) == ResultCode::Ok) {
-        xSemaphoreGive(m_mutex);
-        return ResultCode::AlreadyExists;
-    }
-    if (m_motors.size() >= m_config.max_motors) {
-        xSemaphoreGive(m_mutex);
-        return ResultCode::CapacityReached;
-    }
+    const ResultCode pre_rc = checkNewMotorLocked(motor_id, pin_mask);
     xSemaphoreGive(m_mutex);
+    if (pre_rc != ResultCode::Ok) {
+        return pre_rc;
+    }
 
     MotorSlot slot{};
     slot.id = motor_id;
+    slot.pin_mask = pin_mask;
     slot.telemetry_enabled = true;
     slot.telemetry_field_mask = kTelemetryFieldAll;
     slot.mock_angle_rad = 0.0f;
@@ -282,13 +298,10 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         return ResultCode::InternalError; // slot (and its hardware) is released on return
     }
     // Re-check: another caller may have created the same id meanwhile.
-    ResultCode rc = ResultCode::Ok;
-    if (findSlotIndexById(motor_id, existing_index) == ResultCode::Ok) {
-        rc = ResultCode::AlreadyExists;
-    } else if (m_motors.size() >= m_config.max_motors) {
-        rc = ResultCode::CapacityReached;
-    } else {
+    const ResultCode rc = checkNewMotorLocked(motor_id, pin_mask);
+    if (rc == ResultCode::Ok) {
         m_motors.push_back(std::move(slot)); // capacity reserved: no reallocation
+        setMotorKnown(motor_id, true);
     }
     xSemaphoreGive(m_mutex);
 
@@ -322,6 +335,7 @@ ResultCode MotorManager::deleteMotor(uint8_t motor_id)
         removed->stop();
     }
     m_motors.erase(m_motors.begin() + static_cast<std::ptrdiff_t>(index));
+    setMotorKnown(motor_id, false);
     xSemaphoreGive(m_mutex);
 
     removed.reset();
@@ -333,6 +347,9 @@ ResultCode MotorManager::configureMotor(uint8_t motor_id, const MotorConfigPaylo
 {
     if (!isValid()) {
         return ResultCode::InvalidState;
+    }
+    if (!protocol::isMotorConfigFinite(cfg)) {
+        return ResultCode::InvalidArgument;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
@@ -394,6 +411,10 @@ ResultCode MotorManager::setPidParams(uint8_t motor_id, PidKind kind, float kp, 
     if (!isValid()) {
         return ResultCode::InvalidState;
     }
+    if (!isValidPidKind(kind) || !std::isfinite(kp) || !std::isfinite(ki) || !std::isfinite(kd) ||
+        !std::isfinite(d_cutoff_hz)) {
+        return ResultCode::InvalidArgument;
+    }
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return ResultCode::InternalError;
     }
@@ -429,6 +450,9 @@ ResultCode MotorManager::setSetpoint(uint8_t motor_id, SetpointKind kind, float 
 {
     if (!isValid()) {
         return ResultCode::InvalidState;
+    }
+    if (!isValidSetpointKind(kind) || !std::isfinite(value)) {
+        return ResultCode::InvalidArgument;
     }
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return ResultCode::InternalError;
@@ -893,6 +917,40 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
     return ResultCode::Ok;
 }
 
+ResultCode MotorManager::checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const
+{
+    size_t existing_index = 0;
+    if (findSlotIndexById(motor_id, existing_index) == ResultCode::Ok) {
+        return ResultCode::AlreadyExists;
+    }
+    if (m_motors.size() >= m_config.max_motors) {
+        return ResultCode::CapacityReached;
+    }
+    for (const auto &slot : m_motors) {
+        if ((slot.pin_mask & pin_mask) != 0U) {
+            return ResultCode::InvalidArgument; // a pin another motor already owns
+        }
+    }
+    return ResultCode::Ok;
+}
+
+void MotorManager::setMotorKnown(uint8_t motor_id, bool known)
+{
+    const uint32_t bit = 1U << (motor_id % 32U);
+    auto &word = m_known_motor_ids[motor_id / 32U];
+    if (known) {
+        word.fetch_or(bit, std::memory_order_release);
+    } else {
+        word.fetch_and(~bit, std::memory_order_release);
+    }
+}
+
+bool MotorManager::isMotorKnown(uint8_t motor_id) const
+{
+    const uint32_t bit = 1U << (motor_id % 32U);
+    return (m_known_motor_ids[motor_id / 32U].load(std::memory_order_acquire) & bit) != 0U;
+}
+
 ResultCode MotorManager::findSlotIndexById(uint8_t motor_id, size_t &index) const
 {
     for (size_t i = 0; i < m_motors.size(); ++i) {
@@ -906,9 +964,14 @@ ResultCode MotorManager::findSlotIndexById(uint8_t motor_id, size_t &index) cons
 
 ResultCode MotorManager::queueSetpoint(uint8_t motor_id, SetpointKind kind, float value)
 {
+    // Runs on the RX task: reject everything the control tick would reject,
+    // so only applicable setpoints reach the mailbox.
     const auto kind_index = static_cast<size_t>(kind);
-    if (kind_index >= kSetpointKindCount) {
+    if (kind_index >= kSetpointKindCount || !std::isfinite(value)) {
         return ResultCode::InvalidArgument;
+    }
+    if (!isMotorKnown(motor_id)) {
+        return ResultCode::NotFound;
     }
 
     ResultCode rc = ResultCode::CapacityReached;

@@ -165,6 +165,31 @@ TEST_CASE("PID setters reject invalid values and keep the previous ones")
     CHECK(pid.compute(0.0f, 10.0f, 0.01f) == doctest::Approx(1.0f));
 }
 
+TEST_CASE("PID rejects non-finite gains and limits")
+{
+    auto pid = makePid(1.0f, 2.0f, 3.0f);
+    pid.setTunings(std::nanf(""), 0.0f, 0.0f);
+    pid.setTunings(0.0f, INFINITY, 0.0f);
+    CHECK(pid.getKp() == 1.0f);
+    CHECK(pid.getKi() == 2.0f);
+
+    pid.setOutputLimits(std::nanf(""), 1.0f);
+    pid.setOutputLimits(-1.0f, INFINITY);
+    CHECK(pid.compute(0.0f, 10.0f, 0.01f) == doctest::Approx(1.0f)); // still [-1, 1]
+
+    PidConfig cfg{};
+    cfg.kp = std::nanf("");
+    cfg.ki = 0.5f;
+    cfg.output_min = -INFINITY;
+    PidController from_bad_config(cfg);
+    CHECK(from_bad_config.getKp() == 0.0f); // replaced by 0
+    CHECK(from_bad_config.getKi() == 0.5f); // valid gains are kept
+    from_bad_config.setMode(pid::Mode::Automatic);
+    const float out = from_bad_config.compute(0.0f, 100.0f, 1.0f);
+    CHECK(std::isfinite(out));
+    CHECK(out == doctest::Approx(1.0f)); // limits fell back to [-1, 1]
+}
+
 TEST_CASE("PID reset clears the integral and derivative history")
 {
     auto pid = makePid(0.0f, 1.0f, 1.0f);

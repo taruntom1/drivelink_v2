@@ -1,11 +1,24 @@
 #include "motor_protocol.hpp"
 
+#include <cmath>
+#include <initializer_list>
+
 namespace motor_manager::protocol {
 
 namespace {
 
 using uart_comm::wire::Reader;
 using uart_comm::wire::Writer;
+
+bool allFinite(std::initializer_list<float> values)
+{
+    for (const float v : values) {
+        if (!std::isfinite(v)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool decodeControlMode(uint8_t raw, ControlModeCode &out)
 {
@@ -41,7 +54,9 @@ void readMotorConfig(Reader &r, MotorConfigPayload &cfg)
 
 // Decode the body of a known subcommand. Every body has a fixed size and must
 // match it exactly: a different length means host and firmware disagree on
-// the layout.
+// the layout. Untrusted values that cannot be clamped (non-finite floats,
+// unknown enum values, unknown telemetry field bits) are rejected here, so
+// nothing is applied.
 DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
 {
     switch (out.subcommand) {
@@ -51,6 +66,9 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
                 return DecodeStatus::BadBody;
             }
             readMotorConfig(body, out.motor);
+            if (!isMotorConfigFinite(out.motor)) {
+                return DecodeStatus::BadBody;
+            }
             break;
 
         case ConfigureSubcommand::DeleteMotor:
@@ -73,6 +91,9 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
             out.ki = body.readF32Le();
             out.kd = body.readF32Le();
             out.d_cutoff_hz = body.readF32Le();
+            if (!isValidPidKind(out.pid_kind) || !allFinite({out.kp, out.ki, out.kd, out.d_cutoff_hz})) {
+                return DecodeStatus::BadBody;
+            }
             break;
 
         case ConfigureSubcommand::SetSetpoint:
@@ -81,6 +102,9 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
             }
             out.setpoint_kind = static_cast<SetpointKind>(body.readU8());
             out.setpoint_value = body.readF32Le();
+            if (!isValidSetpointKind(out.setpoint_kind) || !std::isfinite(out.setpoint_value)) {
+                return DecodeStatus::BadBody;
+            }
             break;
 
         case ConfigureSubcommand::SetTelemetryGlobal:
@@ -89,6 +113,9 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
             }
             out.telemetry_enabled = (body.readU8() != 0U);
             out.telemetry_field_mask = body.readU8();
+            if ((out.telemetry_field_mask & ~kTelemetryFieldAll) != 0U) {
+                return DecodeStatus::BadBody;
+            }
             break;
 
         case ConfigureSubcommand::SetTelemetryMotor:
@@ -98,6 +125,9 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
             out.telemetry_enabled = (body.readU8() != 0U);
             out.telemetry_field_mask = body.readU8();
             out.telemetry_apply_mask = (body.readU8() != 0U);
+            if ((out.telemetry_field_mask & ~kTelemetryFieldAll) != 0U) {
+                return DecodeStatus::BadBody;
+            }
             break;
 
         case ConfigureSubcommand::SetTiming:
@@ -115,6 +145,14 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
 }
 
 } // namespace
+
+bool isMotorConfigFinite(const MotorConfigPayload &c)
+{
+    return allFinite({c.counts_per_rev, c.gear_ratio, c.output_min, c.output_max,
+                      c.vel_kp, c.vel_ki, c.vel_kd, c.vel_d_cutoff_hz,
+                      c.pos_kp, c.pos_ki, c.pos_kd, c.pos_d_cutoff_hz,
+                      c.velocity_feedforward, c.position_feedforward, c.vel_filter_cutoff_hz});
+}
 
 DecodeStatus decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out)
 {

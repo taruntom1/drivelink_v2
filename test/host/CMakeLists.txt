@@ -33,6 +33,7 @@ set(TEST_SOURCES
     tests/test_pid.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp
+    tests/test_motor_validation.cpp
     tests/test_imu_protocol.cpp
     tests/test_time_sync_protocol.cpp
 )

@@ -46,13 +46,16 @@ struct ConfigureRequest {
 enum class DecodeStatus : uint8_t {
     Ok,
     BadHeader,         ///< too short or wrong version; header holds the echo bytes
-    BadBody,           ///< wrong body length or an invalid field value
+    BadBody,           ///< wrong length, non-finite float, unknown enum value or field bit
     UnknownSubcommand, ///< header parsed, subcommand not known
 };
 
 /// Decode a configure request payload. out.header is always filled in, so a
 /// response can be sent for every status.
 DecodeStatus decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out);
+
+/// True if every float in a CreateMotor / ConfigureMotor body is finite.
+bool isMotorConfigFinite(const MotorConfigPayload &cfg);
 
 /// The result code to answer a request that failed to decode with.
 ResultCode resultForDecodeStatus(DecodeStatus status);

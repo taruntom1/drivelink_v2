@@ -70,7 +70,7 @@ Allocates one MCPWM generator from the hardware pool and configures the directio
 | `pwm_gpio` | GPIO for the PWM speed signal |
 | `dir_gpio` | GPIO for the direction signal |
 
-If no MCPWM hardware is available (all 12 slots in use), construction succeeds but the motor is marked invalid. Always check `isValid()` before use.
+If no MCPWM hardware is available (all 12 slots in use), or the pins are not two distinct output-capable GPIOs (`GPIO_IS_VALID_OUTPUT_GPIO`), construction succeeds but the motor is marked invalid. Always check `isValid()` before use. `setSpeed()` treats a non-finite speed as 0.
 
 ---
 

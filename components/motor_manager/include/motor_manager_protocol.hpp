@@ -53,6 +53,16 @@ enum class SetpointKind : uint8_t {
     PositionRad = 0x02
 };
 
+constexpr bool isValidPidKind(PidKind kind)
+{
+    return kind == PidKind::Velocity || kind == PidKind::Position;
+}
+
+constexpr bool isValidSetpointKind(SetpointKind kind)
+{
+    return static_cast<uint8_t>(kind) <= static_cast<uint8_t>(SetpointKind::PositionRad);
+}
+
 // v2 added a seq byte after the version in configure requests and responses.
 // v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
 // the SetTiming subcommand, response bodies and the telemetry output field.

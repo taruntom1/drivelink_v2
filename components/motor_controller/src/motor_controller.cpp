@@ -14,6 +14,16 @@ bool isValidCutoff(float hz)
     return std::isfinite(hz) && hz >= 0.0f;
 }
 
+bool isPositiveFinite(float v)
+{
+    return std::isfinite(v) && v > 0.0f;
+}
+
+float finiteOr(float v, float fallback)
+{
+    return std::isfinite(v) ? v : fallback;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -41,12 +51,12 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
       m_open_loop_duty(0.0f),
       m_vel_setpoint(0.0f),
       m_pos_setpoint(0.0f),
-      m_vel_feedforward(config.velocity_feedforward),
-      m_pos_feedforward(config.position_feedforward),
-      m_counts_per_rev(config.counts_per_rev > 0.0f ? config.counts_per_rev : 1.0f),
-      m_gear_ratio(config.gear_ratio > 0.0f ? config.gear_ratio : 1.0f),
-      m_output_min(std::clamp(config.output_min, -1.0f, 1.0f)),
-      m_output_max(std::clamp(config.output_max, -1.0f, 1.0f)),
+      m_vel_feedforward(finiteOr(config.velocity_feedforward, 0.0f)),
+      m_pos_feedforward(finiteOr(config.position_feedforward, 0.0f)),
+      m_counts_per_rev(isPositiveFinite(config.counts_per_rev) ? config.counts_per_rev : 1.0f),
+      m_gear_ratio(isPositiveFinite(config.gear_ratio) ? config.gear_ratio : 1.0f),
+      m_output_min(std::clamp(finiteOr(config.output_min, -1.0f), -1.0f, 1.0f)),
+      m_output_max(std::clamp(finiteOr(config.output_max, 1.0f), -1.0f, 1.0f)),
       m_vel_filter_cutoff_hz(isValidCutoff(config.velocity_filter_cutoff_hz)
                                  ? config.velocity_filter_cutoff_hz
                                  : 0.0f),
@@ -208,30 +218,42 @@ ControlMode MotorController::getMode() const
 // Setpoint setters
 // ---------------------------------------------------------------------------
 
+// Non-finite values are ignored: NaN would pass every clamp and reach the PWM.
 void MotorController::setOpenLoopDuty(float duty)
 {
+    if (!std::isfinite(duty)) {
+        return;
+    }
     duty = std::clamp(duty, -1.0f, 1.0f);
     m_open_loop_duty.store(duty);
 }
 
 void MotorController::setVelocitySetpoint(float rad_per_sec)
 {
-    m_vel_setpoint.store(rad_per_sec);
+    if (std::isfinite(rad_per_sec)) {
+        m_vel_setpoint.store(rad_per_sec);
+    }
 }
 
 void MotorController::setPositionSetpoint(float radians)
 {
-    m_pos_setpoint.store(radians);
+    if (std::isfinite(radians)) {
+        m_pos_setpoint.store(radians);
+    }
 }
 
 void MotorController::setVelocityFeedforward(float feedforward)
 {
-    m_vel_feedforward.store(feedforward);
+    if (std::isfinite(feedforward)) {
+        m_vel_feedforward.store(feedforward);
+    }
 }
 
 void MotorController::setPositionFeedforward(float feedforward)
 {
-    m_pos_feedforward.store(feedforward);
+    if (std::isfinite(feedforward)) {
+        m_pos_feedforward.store(feedforward);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -298,8 +320,8 @@ void MotorController::setVelocityFilterCutoff(float hz)
 
 void MotorController::setCountsPerRev(float counts)
 {
-    if (counts <= 0.0f) {
-        ESP_LOGW(TAG, "setCountsPerRev: value must be > 0 (got %.2f); ignoring", counts);
+    if (!isPositiveFinite(counts)) {
+        ESP_LOGW(TAG, "setCountsPerRev: value must be finite and > 0 (got %.2f); ignoring", counts);
         return;
     }
     m_counts_per_rev.store(counts);
@@ -308,8 +330,8 @@ void MotorController::setCountsPerRev(float counts)
 
 void MotorController::setGearRatio(float ratio)
 {
-    if (ratio <= 0.0f) {
-        ESP_LOGW(TAG, "setGearRatio: value must be > 0 (got %.4f); ignoring", ratio);
+    if (!isPositiveFinite(ratio)) {
+        ESP_LOGW(TAG, "setGearRatio: value must be finite and > 0 (got %.4f); ignoring", ratio);
         return;
     }
     m_gear_ratio.store(ratio);
@@ -318,8 +340,8 @@ void MotorController::setGearRatio(float ratio)
 
 void MotorController::setOutputLimits(float min, float max)
 {
-    if (min >= max) {
-        ESP_LOGW(TAG, "setOutputLimits: min (%.3f) must be < max (%.3f); ignoring", min, max);
+    if (!std::isfinite(min) || !std::isfinite(max) || min >= max) {
+        ESP_LOGW(TAG, "setOutputLimits: limits must be finite and min (%.3f) < max (%.3f); ignoring", min, max);
         return;
     }
     min = std::clamp(min, -1.0f, 1.0f);

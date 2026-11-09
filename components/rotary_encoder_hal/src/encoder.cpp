@@ -73,6 +73,11 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     m_impl->last_delta = 0;
     m_impl->valid = false;
 
+    if (!GPIO_IS_VALID_GPIO(pin_a) || !GPIO_IS_VALID_GPIO(pin_b) || pin_a == pin_b) {
+        ESP_LOGE(TAG, "Invalid encoder pins: pin_a=%d pin_b=%d (must be distinct valid GPIOs)", pin_a, pin_b);
+        return;
+    }
+
     // Allocate PCNT unit with quadrature decoding
     esp_err_t ret = detail::PcntPool::allocate(pin_a, pin_b, m_impl->pcnt);
     if (ret != ESP_OK) {
