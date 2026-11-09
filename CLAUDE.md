@@ -67,6 +67,9 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.
   - Task bodies loop on `stopRequested()` and sleep with `sleepFor` / `sleepUntil`.
   - Every other blocking wait needs a bounded timeout.
+- **Tick rate:** `CONFIG_FREERTOS_HZ` is 100 (10 ms ticks). Nothing real-time depends on it; fixed-rate loops use `esp_timer` (see "Periodic timers").
+  - `pdMS_TO_TICKS` rounds down, so any value below 10 ms becomes 0 ticks. Convert small or configurable ms values with `rtos_util::msToTicksCeil` (`tick_util.hpp`).
+  - `vTaskDelay(n)` can return up to one tick early. Where a delay is a minimum (sensor settling), use `msToTicksCeil(ms) + 1`.
   - Owners call `stop()` in their destructor, which waits for the body to return, before freeing anything the task uses.
 - **UART callbacks:** `registerCallback(type, cb, registration)` fills in a `uart_comm::CallbackRegistration`, which unregisters on destruction. Unregistering waits for a callback that is already running.
   - Destructors reset their registrations **first**.

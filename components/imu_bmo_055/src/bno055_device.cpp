@@ -5,6 +5,7 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#include "tick_util.hpp"
 #include "wall_clock.hpp"
 
 #include <cinttypes>
@@ -394,11 +395,16 @@ s8 Bno055Device::busReadThunk(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 
 void Bno055Device::delayThunk(u32 delay_ms)
 {
+    if (delay_ms == 0U) {
+        return;
+    }
     if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED) {
         esp_rom_delay_us(static_cast<uint32_t>(delay_ms) * 1000U);
         return;
     }
-    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    // Bosch delays are minimums (mode-switch settling). Round up to whole
+    // ticks, plus one because vTaskDelay(n) can return up to a tick early.
+    vTaskDelay(rtos_util::msToTicksCeil(delay_ms) + 1U);
 }
 
 s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
@@ -423,7 +429,7 @@ s8 Bno055Device::busWrite(u8 reg_addr, const u8 *reg_data, u8 cnt) const
             m_config.device_address,
             tx_buf,
             static_cast<size_t>(cnt) + 1U,
-            pdMS_TO_TICKS(timeout_ms));
+            rtos_util::msToTicksCeil(timeout_ms));
         used_attempts = a;
         if (ret == ESP_OK) {
             break;
@@ -472,7 +478,7 @@ s8 Bno055Device::busRead(u8 reg_addr, u8 *reg_data, u8 cnt) const
         1,
         reg_data,
         cnt,
-        pdMS_TO_TICKS(m_config.timeout_ms));
+        rtos_util::msToTicksCeil(m_config.timeout_ms));
 
     if (ret != ESP_OK && shouldLogBusError()) {
         ESP_LOGW(TAG,

@@ -183,3 +183,14 @@ On ticks that don't publish, the sample is read and then dropped. That is the ho
 - the legacy I²C driver migration
 - the shared little-endian helpers
 - a Kconfig option for the device lock timeout
+
+## Implementation notes (where the code differs from the plan above)
+- `TaskTimer`'s API is `create(task, name)` / `start(period_us)` / `setPeriod` / `stop` / `destroy`, not a single `start(task, name, period)`. The IMU creates the timer at startup and starts or stops it on enable and disable.
+- `msToTicksCeil` (`tick_util.hpp`) landed in commit 1, because `TaskTimer`'s fence fallback uses it.
+- Docs, `CLAUDE.md`, `review/` and `TODO.md` were updated in the commit that made each change, as the definition of done requires, rather than in a separate docs commit.
+- `StreamCounters` also has `encode_errors`. The I²C failure counter is `read_errors`.
+- `ImuBno055Manager::stopTasks()` joins the config task (the only other user of the timer) before `m_stream_timer.destroy()`, and only then joins the stream task. `TaskTimer` calls are not thread-safe.
+- If a publish tick fails (busy or read error), the next good sample is published, so the telemetry rate holds.
+- The `DEFAULT_STREAM_FIELD_MASK` Kconfig range is now `0x000..0x1FF`. The constructor also masks off unknown bits, with a warning.
+- **Existing build trees:** `sdkconfig.defaults` only applies when `sdkconfig` is generated. A checkout that already has an `sdkconfig` keeps `CONFIG_FREERTOS_HZ=1000` until that file is deleted (it is regenerated on the next build) or the value is changed in `menuconfig`.
+- No host unit tests were added for the new codec and divider logic: the host test harness does not exist yet (`TODO.md`, "Test harness").
