@@ -52,7 +52,7 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 [encoder.cpp:36-41](../components/rotary_encoder_hal/src/encoder.cpp): `update_rate_sample_locked()` runs under `taskENTER_CRITICAL` and calls `ESP_LOGE` on failure. Logging from a critical section is not allowed in ESP-IDF: it can block on the console lock, which trips an assert or deadlocks. Record the error code and log after `taskEXIT_CRITICAL`.
 
-**Status: still open, but no longer on the control path.** `MotorController` no longer calls `Encoder::getRate()` / `getDirection()`; it computes velocity from `getCount()` deltas. The bug remains in the encoder HAL for anyone else who calls those methods.
+**Fixed.** `update_rate_sample_locked()` returns the error, and `getRate()` / `getDirection()` log it after `taskEXIT_CRITICAL`. Previous status: **still open, but no longer on the control path.** `MotorController` no longer calls `Encoder::getRate()` / `getDirection()`; it computes velocity from `getCount()` deltas. The bug remains in the encoder HAL for anyone else who calls those methods.
 
 ---
 

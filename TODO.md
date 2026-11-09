@@ -17,7 +17,3 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
 - Reject non-finite gains, limits and setpoints with an error result code.
 - Reject setpoints for unknown motor ids in `queueSetpoint()`, on the RX task, so the control tick never sees them.
 
-**Real-time paths**
-- Remove the per-entry `ESP_LOGW` in `applyPendingSetpointsLocked()`. Replace it with a rejected-setpoint counter, and log only a rate-limited summary outside `m_mutex` (review F4).
-- Move the encoder HAL's `ESP_LOGE` out of `taskENTER_CRITICAL`: record the error and log it after exiting (review E4).
-

@@ -23,21 +23,22 @@ struct EncoderImpl {
 
 } // namespace detail
 
-static void update_rate_sample_locked(detail::EncoderImpl *impl)
+// PRECONDITION: Caller must hold impl->spinlock. Must not log: the caller
+// is inside a critical section. It returns the error instead, and the caller
+// logs it after taskEXIT_CRITICAL.
+static esp_err_t update_rate_sample_locked(detail::EncoderImpl *impl)
 {
-    // PRECONDITION: Caller must hold impl->spinlock.
     const int64_t now_us = esp_timer_get_time();
     const int64_t sample_period_us =
         static_cast<int64_t>(CONFIG_ENCODER_HAL_RATE_SAMPLE_PERIOD_MS) * 1000;
     if ((now_us - impl->prev_time_us) < sample_period_us) {
-        return;
+        return ESP_OK;
     }
 
     int count = 0;
-    esp_err_t ret = pcnt_unit_get_count(impl->pcnt.unit, &count);
+    const esp_err_t ret = pcnt_unit_get_count(impl->pcnt.unit, &count);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read PCNT count: %s", esp_err_to_name(ret));
-        return;
+        return ret;
     }
 
     int32_t delta = static_cast<int32_t>(count) - impl->prev_count;
@@ -52,6 +53,14 @@ static void update_rate_sample_locked(detail::EncoderImpl *impl)
     impl->last_delta = delta;
     impl->prev_count = static_cast<int32_t>(count);
     impl->prev_time_us = now_us;
+    return ESP_OK;
+}
+
+static void log_rate_sample_error(esp_err_t ret)
+{
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read PCNT count: %s", esp_err_to_name(ret));
+    }
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
@@ -133,9 +142,10 @@ Direction Encoder::getDirection() const
     }
     int32_t delta;
     taskENTER_CRITICAL(&m_impl->spinlock);
-    update_rate_sample_locked(m_impl);
+    const esp_err_t ret = update_rate_sample_locked(m_impl);
     delta = m_impl->last_delta;
     taskEXIT_CRITICAL(&m_impl->spinlock);
+    log_rate_sample_error(ret);
 
     if (delta > 0) return Direction::Forward;
     if (delta < 0) return Direction::Reverse;
@@ -149,9 +159,10 @@ float Encoder::getRate() const
     }
     float rate;
     taskENTER_CRITICAL(&m_impl->spinlock);
-    update_rate_sample_locked(m_impl);
+    const esp_err_t ret = update_rate_sample_locked(m_impl);
     rate = m_impl->current_rate;
     taskEXIT_CRITICAL(&m_impl->spinlock);
+    log_rate_sample_error(ret);
     return rate;
 }
 

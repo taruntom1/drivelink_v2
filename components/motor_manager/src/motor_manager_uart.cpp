@@ -49,22 +49,19 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     if (!isValid()) {
         return;
     }
+    // This runs on the UART RX task (a real-time path): problems are counted,
+    // not logged. The config task logs a rate-limited summary.
     if (frame.len < 2U) {
-        ESP_LOGW(TAG, "Setpoint stream too short: len=%u", frame.len);
+        m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
         return;
     }
 
     const uint8_t version = frame.payload[0];
     const uint8_t count = frame.payload[1];
-    if (version != kProtocolVersion) {
-        ESP_LOGW(TAG, "Setpoint stream version mismatch: got=%u expected=%u", version, kProtocolVersion);
-        return;
-    }
-
     // Exact match: trailing bytes mean the host and firmware disagree on the layout.
     const size_t expected_len = 2U + static_cast<size_t>(count) * kSetpointEntrySize;
-    if (frame.len != expected_len) {
-        ESP_LOGW(TAG, "Setpoint stream length mismatch: len=%u expected=%u", frame.len, static_cast<unsigned>(expected_len));
+    if (version != kProtocolVersion || frame.len != expected_len) {
+        m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
         return;
     }
 
@@ -79,15 +76,14 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
         const uint8_t kind_raw = reader.readU8();
         const float value = reader.readF32Le();
         if (!reader.ok()) {
-            ESP_LOGW(TAG, "Failed parsing setpoint entry index=%u", i);
+            m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed); // unreachable: length checked above
             return;
         }
         const auto kind = static_cast<SetpointKind>(kind_raw);
         const ResultCode rc = use_mailbox ? queueSetpoint(motor_id, kind, value)
                                           : setSetpoint(motor_id, kind, value);
         if (rc != ResultCode::Ok) {
-            ESP_LOGW(TAG, "Setpoint rejected motor=%u kind=%u rc=%s",
-                     motor_id, kind_raw, resultCodeToString(rc));
+            m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
         }
     }
 }

@@ -246,6 +246,8 @@ No per-packet dynamic allocation is used while parsing.
 
 When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next control tick (within one control period). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
 
+Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged one by one: neither the RX task nor the control tick logs. `getSetpointStreamCounters()` returns the totals, and the config task logs a summary of new counts at most once per second.
+
 ### Telemetry stream (ESP → PC)
 
 - Channel: `CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL` (default `0x81`)

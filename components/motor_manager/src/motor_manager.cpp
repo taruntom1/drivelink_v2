@@ -29,6 +29,7 @@ constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
 // dump a huge step into the PID integrators.
 constexpr uint32_t kMaxCatchUpTicks = 10;
 constexpr int64_t kOverrunLogIntervalUs = 1000000;
+constexpr int64_t kRejectLogIntervalUs = 1000000;
 
 uint64_t wallClockUs()
 {
@@ -631,6 +632,32 @@ uint32_t MotorManager::getControlOverrunCount() const
     return m_overrun_count.load(std::memory_order_relaxed);
 }
 
+SetpointStreamCounters MotorManager::getSetpointStreamCounters() const
+{
+    SetpointStreamCounters c{};
+    c.bad_frames = m_bad_setpoint_frames.load(std::memory_order_relaxed);
+    c.rejected_entries = m_rejected_setpoints.load(std::memory_order_relaxed);
+    return c;
+}
+
+void MotorManager::logSetpointCountersIfChanged(SetpointStreamCounters &last_logged, int64_t &last_log_us) const
+{
+    const int64_t now_us = esp_timer_get_time();
+    if ((now_us - last_log_us) < kRejectLogIntervalUs) {
+        return;
+    }
+    const SetpointStreamCounters now = getSetpointStreamCounters();
+    if (now.bad_frames == last_logged.bad_frames && now.rejected_entries == last_logged.rejected_entries) {
+        return;
+    }
+    ESP_LOGW(TAG, "Setpoint stream: bad frames +%" PRIu32 ", rejected entries +%" PRIu32
+                  " (totals %" PRIu32 "/%" PRIu32 ")",
+             now.bad_frames - last_logged.bad_frames, now.rejected_entries - last_logged.rejected_entries,
+             now.bad_frames, now.rejected_entries);
+    last_logged = now;
+    last_log_us = now_us;
+}
+
 void MotorManager::updateAll(float dt_s)
 {
     if (!isValid()) {
@@ -794,7 +821,13 @@ void MotorManager::updateTaskLoop()
 void MotorManager::configTaskLoop()
 {
     uart_comm::RxFrame frame{};
+    SetpointStreamCounters last_logged{};
+    int64_t last_log_us = 0;
     while (!m_config_task.stopRequested()) {
+        // This task wakes at least every kConfigQueueRxTimeoutTicks, so it
+        // also logs the setpoint counters that the RX task and the control
+        // tick only count.
+        logSetpointCountersIfChanged(last_logged, last_log_us);
         if (xQueueReceive(m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
             continue;
         }
@@ -952,10 +985,10 @@ void MotorManager::applyPendingSetpointsLocked()
             if (!e.pending[k]) {
                 continue;
             }
+            // No logging here: this runs on the control tick under m_mutex.
             const ResultCode rc = setSetpointLocked(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
             if (rc != ResultCode::Ok) {
-                ESP_LOGW(TAG, "Setpoint rejected motor=%u kind=%u rc=%s",
-                         e.motor_id, static_cast<unsigned>(k), resultCodeToString(rc));
+                m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
             }
         }
     }
