@@ -41,19 +41,55 @@ menu "Motor Manager Configuration"
             creating real motor_controller instances.
 
     config MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK
-        int "Default motor manager update task stack size"
+        int "Default motor manager control task stack size"
         default 4096
         range 2048 16384
         help
-            Stack size in bytes for the optional internal update task that
-            periodically calls MotorManager::updateAll().
+            Stack size in bytes for the optional internal control (update)
+            task that runs the motor control loop and publishes telemetry.
 
     config MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO
-        int "Default motor manager update task priority"
-        default 6
+        int "Default motor manager control task priority"
+        default 20
         range 1 24
         help
-            FreeRTOS priority for the optional internal update task.
+            FreeRTOS priority for the optional internal control task. It is
+            woken by an esp_timer callback, so keep it high (but below the
+            esp_timer task, priority 22) to keep wake-up jitter low.
+
+    config MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE
+        int "Default motor manager control task core (-1 = no affinity)"
+        default 1
+        range -1 1
+        help
+            Core the control task is pinned to. Core 1 keeps it away from the
+            UART RX and config work, which typically runs on core 0.
+
+    config MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US
+        int "Default control loop period (us)"
+        default 1000
+        range 250 100000
+        help
+            Period of the esp_timer that drives the motor control loop. The
+            host can change it at runtime with the SetTiming subcommand.
+            The loop does not depend on CONFIG_FREERTOS_HZ.
+
+    config MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US
+        int "Default telemetry period (us)"
+        default 10000
+        range 250 1000000
+        help
+            Telemetry is published every N control ticks, where N is this
+            period divided by the control period, rounded up. The host can
+            change it at runtime with the SetTiming subcommand.
+
+    config MOTOR_MANAGER_LOG_LOOP_STATS
+        bool "Log control loop timing statistics"
+        default n
+        help
+            Every 5 s, log the min/mean/max interval between control loop
+            runs and the min/mean/max time spent in one run. Useful for
+            checking jitter on hardware.
 
     config MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK
         int "Default motor manager config task stack size"

@@ -5,8 +5,10 @@
 #include "freertos/task.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <sys/time.h>
 
 static const char *TAG = "motor_manager";
@@ -18,6 +20,34 @@ namespace {
 constexpr TickType_t kMutexTimeoutTicks = pdMS_TO_TICKS(50);
 constexpr UBaseType_t kConfigQueueDepth = 8;
 constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
+
+// The update task waits for the timer at most this long (longer than the
+// largest control period) before logging that the timer is not firing.
+constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
+// Cap on the ticks folded into one dt after a stall, so a long hiccup cannot
+// dump a huge step into the PID integrators.
+constexpr uint32_t kMaxCatchUpTicks = 10;
+constexpr int64_t kOverrunLogIntervalUs = 1000000;
+constexpr TickType_t kTimerFenceWarnTicks = pdMS_TO_TICKS(1000);
+
+uint64_t wallClockUs()
+{
+    timeval now{};
+    gettimeofday(&now, nullptr);
+    return (static_cast<uint64_t>(now.tv_sec) * 1000000ULL) + static_cast<uint64_t>(now.tv_usec);
+}
+
+uint32_t clampControlPeriod(uint32_t period_us)
+{
+    return std::clamp(period_us, kControlPeriodMinUs, kControlPeriodMaxUs);
+}
+
+// Control ticks per telemetry packet for a requested telemetry period.
+uint32_t telemetryDivider(uint32_t telemetry_period_us, uint32_t control_period_us)
+{
+    const uint32_t tp = std::clamp(telemetry_period_us, control_period_us, kTelemetryPeriodMaxUs);
+    return std::max<uint32_t>(1U, (tp + control_period_us - 1U) / control_period_us);
+}
 
 } // namespace
 
@@ -58,6 +88,20 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
 
     m_use_mock_feedback = m_config.use_mock_feedback;
 
+    // Timing: clamp at the API boundary and remember the requested telemetry
+    // period so it can be re-derived when the control period changes.
+    const uint32_t control_period_us = clampControlPeriod(m_config.update_task.control_period_us);
+    if (control_period_us != m_config.update_task.control_period_us) {
+        ESP_LOGW(TAG, "control_period_us %" PRIu32 " clamped to %" PRIu32,
+                 m_config.update_task.control_period_us, control_period_us);
+    }
+    m_requested_telemetry_period_us = (m_config.update_task.telemetry_period_us != 0U)
+                                          ? m_config.update_task.telemetry_period_us
+                                          : control_period_us;
+    m_control_period_us.store(control_period_us, std::memory_order_relaxed);
+    m_telemetry_divider.store(telemetryDivider(m_requested_telemetry_period_us, control_period_us),
+                              std::memory_order_relaxed);
+
     const esp_err_t cfg_cb_ret = m_uart.registerCallback(
         m_config.configure_msg_type,
         [this](const uart_comm::RxFrame &frame) {
@@ -84,20 +128,26 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     }
 
     if (m_config.update_task.enable) {
-        if (m_config.update_task.period_ms == 0U) {
-            ESP_LOGE(TAG, "update task period must be > 0");
-            return;
-        }
-
         const esp_err_t upd_ret = m_update_task.start(
             "motor_mgr_upd",
             m_config.update_task.stack_size,
             m_config.update_task.priority,
-            [this] { updateTaskLoop(); });
+            [this] { updateTaskLoop(); },
+            m_config.update_task.core_id);
         if (upd_ret != ESP_OK) {
             m_setpoint_cb.reset();
             m_configure_cb.reset();
-            ESP_LOGE(TAG, "Failed to create update task: %s", esp_err_to_name(upd_ret));
+            ESP_LOGE(TAG, "Failed to create update task (core=%d): %s",
+                     static_cast<int>(m_config.update_task.core_id), esp_err_to_name(upd_ret));
+            return;
+        }
+
+        // Start the timer only once the task it wakes exists.
+        const esp_err_t tmr_ret = startControlTimer();
+        if (tmr_ret != ESP_OK) {
+            m_setpoint_cb.reset();
+            m_configure_cb.reset();
+            m_update_task.stop();
             return;
         }
     }
@@ -110,18 +160,24 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     if (cfg_ret != ESP_OK) {
         m_setpoint_cb.reset();
         m_configure_cb.reset();
+        stopControlTimer();
         m_update_task.stop();
         ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_ret));
         return;
     }
 
     m_valid.store(true, std::memory_order_release);
-    ESP_LOGI(TAG, "MotorManager ready (max_motors=%u cfg_msg=0x%02X sp_ch=0x%02X tm_ch=0x%02X source=%s)",
+    ESP_LOGI(TAG, "MotorManager ready (max_motors=%u cfg_msg=0x%02X sp_ch=0x%02X tm_ch=0x%02X source=%s "
+                  "control=%s period=%" PRIu32 " us telemetry_every=%" PRIu32 " ticks core=%d)",
              m_config.max_motors,
              m_config.configure_msg_type,
              m_config.setpoint_stream_channel,
              m_config.telemetry_stream_channel,
-             m_use_mock_feedback ? "mock_setpoint" : "motor_controller");
+             m_use_mock_feedback ? "mock_setpoint" : "motor_controller",
+             m_config.update_task.enable ? "timer" : "manual",
+             control_period_us,
+             m_telemetry_divider.load(std::memory_order_relaxed),
+             static_cast<int>(m_config.update_task.core_id));
 }
 
 MotorManager::~MotorManager()
@@ -164,21 +220,22 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         return ResultCode::InvalidState;
     }
 
+    // Check id and capacity first, then build the controller (hardware
+    // allocation, logging) without holding m_mutex, so the control loop does
+    // not skip ticks while a motor is being created.
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return ResultCode::InternalError;
     }
-
     size_t existing_index = 0;
-    const ResultCode find_code = findSlotIndexById(motor_id, existing_index);
-    if (find_code == ResultCode::Ok) {
+    if (findSlotIndexById(motor_id, existing_index) == ResultCode::Ok) {
         xSemaphoreGive(m_mutex);
         return ResultCode::AlreadyExists;
     }
-
     if (m_motors.size() >= m_config.max_motors) {
         xSemaphoreGive(m_mutex);
         return ResultCode::CapacityReached;
     }
+    xSemaphoreGive(m_mutex);
 
     MotorSlot slot{};
     slot.id = motor_id;
@@ -205,7 +262,6 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         auto motor = std::make_unique<motor_controller::MotorController>(
             cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b, motor_cfg);
         if (!motor->isValid()) {
-            xSemaphoreGive(m_mutex);
             ESP_LOGE(TAG, "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d)",
                      motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
             return ResultCode::InternalError;
@@ -213,12 +269,25 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         slot.motor = std::move(motor);
     }
 
-    m_motors.push_back(std::move(slot));
+    if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
+        return ResultCode::InternalError; // slot (and its hardware) is released on return
+    }
+    // Re-check: another caller may have created the same id meanwhile.
+    ResultCode rc = ResultCode::Ok;
+    if (findSlotIndexById(motor_id, existing_index) == ResultCode::Ok) {
+        rc = ResultCode::AlreadyExists;
+    } else if (m_motors.size() >= m_config.max_motors) {
+        rc = ResultCode::CapacityReached;
+    } else {
+        m_motors.push_back(std::move(slot)); // capacity reserved: no reallocation
+    }
     xSemaphoreGive(m_mutex);
 
-    ESP_LOGI(TAG, "Created motor id=%u pwm=%d dir=%d encA=%d encB=%d",
-             motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
-    return ResultCode::Ok;
+    if (rc == ResultCode::Ok) {
+        ESP_LOGI(TAG, "Created motor id=%u pwm=%d dir=%d encA=%d encB=%d",
+                 motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
+    }
+    return rc;
 }
 
 ResultCode MotorManager::deleteMotor(uint8_t motor_id)
@@ -237,12 +306,16 @@ ResultCode MotorManager::deleteMotor(uint8_t motor_id)
         return ResultCode::NotFound;
     }
 
-    if (m_motors[index].motor != nullptr) {
-        m_motors[index].motor->stop();
+    // Take ownership out of the slot and destroy it after releasing the
+    // mutex: freeing the hardware and logging should not stall the loop.
+    std::unique_ptr<motor_controller::MotorController> removed = std::move(m_motors[index].motor);
+    if (removed != nullptr) {
+        removed->stop();
     }
     m_motors.erase(m_motors.begin() + static_cast<std::ptrdiff_t>(index));
     xSemaphoreGive(m_mutex);
 
+    removed.reset();
     ESP_LOGI(TAG, "Deleted motor id=%u", motor_id);
     return ResultCode::Ok;
 }
@@ -348,10 +421,15 @@ ResultCode MotorManager::setSetpoint(uint8_t motor_id, SetpointKind kind, float 
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return ResultCode::InternalError;
     }
+    const ResultCode rc = setSetpointLocked(motor_id, kind, value);
+    xSemaphoreGive(m_mutex);
+    return rc;
+}
 
+ResultCode MotorManager::setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value)
+{
     size_t index = 0;
     if (findSlotIndexById(motor_id, index) != ResultCode::Ok) {
-        xSemaphoreGive(m_mutex);
         return ResultCode::NotFound;
     }
 
@@ -380,11 +458,8 @@ ResultCode MotorManager::setSetpoint(uint8_t motor_id, SetpointKind kind, float 
             }
             break;
         default:
-            xSemaphoreGive(m_mutex);
             return ResultCode::InvalidArgument;
     }
-
-    xSemaphoreGive(m_mutex);
     return ResultCode::Ok;
 }
 
@@ -494,23 +569,80 @@ ResultCode MotorManager::setTelemetryForMotor(uint8_t motor_id, bool enabled, ui
     return ResultCode::Ok;
 }
 
+ResultCode MotorManager::setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
+                                   uint32_t &applied_control_period_us,
+                                   uint32_t &applied_telemetry_period_us)
+{
+    if (!isValid()) {
+        return ResultCode::InvalidState;
+    }
+    if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
+        return ResultCode::InternalError;
+    }
+
+    const uint32_t old_period = m_control_period_us.load(std::memory_order_relaxed);
+    const uint32_t new_period = (control_period_us != 0U) ? clampControlPeriod(control_period_us) : old_period;
+    if (telemetry_period_us != 0U) {
+        m_requested_telemetry_period_us = telemetry_period_us;
+    }
+    const uint32_t divider = telemetryDivider(m_requested_telemetry_period_us, new_period);
+
+    ResultCode rc = ResultCode::Ok;
+    if (new_period != old_period && m_control_timer != nullptr) {
+        // The update task reads the period on every wake, so PID dt and the
+        // filter coefficients follow from the next tick on.
+        const esp_err_t err = esp_timer_restart(m_control_timer, new_period);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restart control timer at %" PRIu32 " us: %s",
+                     new_period, esp_err_to_name(err));
+            rc = ResultCode::InternalError;
+        }
+    }
+    if (rc == ResultCode::Ok) {
+        m_control_period_us.store(new_period, std::memory_order_relaxed);
+    }
+    const uint32_t period_now = m_control_period_us.load(std::memory_order_relaxed);
+    const uint32_t divider_now = (rc == ResultCode::Ok)
+                                     ? divider
+                                     : telemetryDivider(m_requested_telemetry_period_us, period_now);
+    m_telemetry_divider.store(divider_now, std::memory_order_relaxed);
+    xSemaphoreGive(m_mutex);
+
+    applied_control_period_us = period_now;
+    applied_telemetry_period_us = divider_now * period_now;
+
+    ESP_LOGI(TAG, "Timing: control=%" PRIu32 " us telemetry=%" PRIu32 " us (every %" PRIu32 " ticks)",
+             applied_control_period_us, applied_telemetry_period_us, divider_now);
+    return rc;
+}
+
+uint32_t MotorManager::getControlOverrunCount() const
+{
+    return m_overrun_count.load(std::memory_order_relaxed);
+}
+
 void MotorManager::updateAll(float dt_s)
 {
     if (!isValid()) {
         return;
     }
-
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return;
     }
+    updateAllLocked(dt_s);
+    xSemaphoreGive(m_mutex);
+}
 
+void MotorManager::updateAllLocked(float dt_s)
+{
+    if (m_use_mock_feedback) {
+        return;
+    }
     for (auto &slot : m_motors) {
-        if (!m_use_mock_feedback && slot.motor != nullptr) {
+        if (slot.motor != nullptr) {
             slot.motor->update(dt_s);
         }
     }
-
-    xSemaphoreGive(m_mutex);
 }
 
 void MotorManager::publishTelemetry()
@@ -526,7 +658,7 @@ void MotorManager::publishTelemetry()
         return;
     }
 
-    const ResultCode rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len);
+    const ResultCode rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len, wallClockUs());
     xSemaphoreGive(m_mutex);
 
     if (rc == ResultCode::Ok && payload_len > kTelemetryPacketHeaderSize) {
@@ -534,15 +666,200 @@ void MotorManager::publishTelemetry()
     }
 }
 
+void MotorManager::controlTimerCallback(void *arg)
+{
+    // Runs on the esp_timer task: only wake the update task.
+    static_cast<MotorManager *>(arg)->m_update_task.notify();
+}
+
+esp_err_t MotorManager::startControlTimer()
+{
+    esp_timer_create_args_t args{};
+    args.callback = &MotorManager::controlTimerCallback;
+    args.arg = this;
+    args.dispatch_method = ESP_TIMER_TASK;
+    args.name = "motor_ctrl";
+    args.skip_unhandled_events = true;
+
+    esp_err_t err = esp_timer_create(&args, &m_control_timer);
+    if (err != ESP_OK) {
+        m_control_timer = nullptr;
+        ESP_LOGE(TAG, "Failed to create control timer: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const uint32_t period_us = m_control_period_us.load(std::memory_order_relaxed);
+    err = esp_timer_start_periodic(m_control_timer, period_us);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start control timer at %" PRIu32 " us: %s",
+                 period_us, esp_err_to_name(err));
+        esp_timer_delete(m_control_timer);
+        m_control_timer = nullptr;
+        return err;
+    }
+    return ESP_OK;
+}
+
+void MotorManager::stopControlTimer()
+{
+    if (m_control_timer == nullptr) {
+        return;
+    }
+
+    // ESP_ERR_INVALID_STATE just means it was not running.
+    const esp_err_t stop_err = esp_timer_stop(m_control_timer);
+    if (stop_err != ESP_OK && stop_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "esp_timer_stop(control): %s", esp_err_to_name(stop_err));
+    }
+
+    // esp_timer_stop() does not wait for a callback the esp_timer task has
+    // already started. Callbacks run one at a time on that task, so once a
+    // one-shot "fence" timer has fired, any in-flight control callback has
+    // returned and none can touch this object again.
+    StaticSemaphore_t fence_storage;
+    SemaphoreHandle_t fence_done = xSemaphoreCreateBinaryStatic(&fence_storage);
+    esp_timer_create_args_t fence_args{};
+    fence_args.callback = [](void *arg) { xSemaphoreGive(static_cast<SemaphoreHandle_t>(arg)); };
+    fence_args.arg = fence_done;
+    fence_args.dispatch_method = ESP_TIMER_TASK;
+    fence_args.name = "motor_ctrl_fence";
+    esp_timer_handle_t fence = nullptr;
+    esp_err_t err = esp_timer_create(&fence_args, &fence);
+    if (err == ESP_OK) {
+        err = esp_timer_start_once(fence, 1);
+        if (err == ESP_OK) {
+            while (xSemaphoreTake(fence_done, kTimerFenceWarnTicks) != pdTRUE) {
+                ESP_LOGW(TAG, "Still waiting for the esp_timer task to drain the control timer");
+            }
+        }
+        esp_timer_delete(fence);
+    }
+    if (err != ESP_OK) {
+        // Fall back to waiting well over one callback's duration.
+        ESP_LOGW(TAG, "Control timer fence failed (%s); delaying instead", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    vSemaphoreDelete(fence_done);
+
+    const esp_err_t del_err = esp_timer_delete(m_control_timer);
+    if (del_err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_timer_delete(control): %s", esp_err_to_name(del_err));
+    }
+    m_control_timer = nullptr;
+}
+
 void MotorManager::updateTaskLoop()
 {
-    const TickType_t delay_ticks = pdMS_TO_TICKS(m_config.update_task.period_ms);
-    const float dt_s = static_cast<float>(m_config.update_task.period_ms) / 1000.0f;
+    uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD] = {};
+    uint32_t pending_ticks = 0;
+    int32_t telemetry_countdown = 0; // publish on the first run
+    uint32_t last_logged_overruns = 0;
+    int64_t last_overrun_log_us = 0;
+    int64_t last_timeout_log_us = 0;
+
+#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
+    constexpr int64_t kStatsIntervalUs = 5000000;
+    int64_t stats_window_start_us = esp_timer_get_time();
+    int64_t stats_last_run_us = 0;
+    int64_t int_min = std::numeric_limits<int64_t>::max(), int_max = 0, int_sum = 0;
+    int64_t dur_min = std::numeric_limits<int64_t>::max(), dur_max = 0, dur_sum = 0;
+    uint32_t int_n = 0, dur_n = 0;
+#endif
+
     while (!m_update_task.stopRequested()) {
-        applyPendingSetpoints();
-        updateAll(dt_s);
-        publishTelemetry();
-        m_update_task.sleepFor(delay_ticks);
+        // Woken by the control timer (and by stop()); the count says how many
+        // timer periods elapsed since we last took the notification.
+        const uint32_t fired = ulTaskNotifyTake(pdTRUE, kControlWakeTimeoutTicks);
+        if (m_update_task.stopRequested()) {
+            break;
+        }
+        if (fired == 0U) {
+            const int64_t now_us = esp_timer_get_time();
+            if ((now_us - last_timeout_log_us) >= kOverrunLogIntervalUs) {
+                last_timeout_log_us = now_us;
+                ESP_LOGW(TAG, "Control timer has not fired for %u ms",
+                         static_cast<unsigned>(pdTICKS_TO_MS(kControlWakeTimeoutTicks)));
+            }
+            continue;
+        }
+        pending_ticks += fired;
+
+        // Never wait for the mutex: a busy mutex (a config command in
+        // progress) skips this tick, and the next run gets the longer dt.
+        if (xSemaphoreTake(m_mutex, 0) != pdTRUE) {
+            continue;
+        }
+
+#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
+        const int64_t run_start_us = esp_timer_get_time();
+        if (stats_last_run_us != 0) {
+            const int64_t interval = run_start_us - stats_last_run_us;
+            int_min = std::min(int_min, interval);
+            int_max = std::max(int_max, interval);
+            int_sum += interval;
+            ++int_n;
+        }
+        stats_last_run_us = run_start_us;
+#endif
+
+        if (pending_ticks > 1U) {
+            m_overrun_count.fetch_add(pending_ticks - 1U, std::memory_order_relaxed);
+        }
+        const uint32_t ticks = std::min(pending_ticks, kMaxCatchUpTicks);
+        pending_ticks = 0;
+        const uint32_t period_us = m_control_period_us.load(std::memory_order_relaxed);
+        const float dt_s = static_cast<float>(ticks) * static_cast<float>(period_us) * 1e-6f;
+
+        // Telemetry every N elapsed ticks (counting skipped ones too).
+        telemetry_countdown -= static_cast<int32_t>(ticks);
+        const bool publish = (telemetry_countdown <= 0);
+        if (publish) {
+            const auto divider = static_cast<int32_t>(m_telemetry_divider.load(std::memory_order_relaxed));
+            telemetry_countdown = std::max<int32_t>(telemetry_countdown + divider, 1);
+        }
+
+        applyPendingSetpointsLocked();
+        // Latch the timestamp at the sampling instant, not at encode time.
+        const uint64_t sample_time_us = publish ? wallClockUs() : 0U;
+        updateAllLocked(dt_s);
+
+        uint8_t payload_len = 0;
+        ResultCode enc_rc = ResultCode::InvalidState;
+        if (publish) {
+            enc_rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len, sample_time_us);
+        }
+        xSemaphoreGive(m_mutex);
+
+        if (enc_rc == ResultCode::Ok && payload_len > kTelemetryPacketHeaderSize) {
+            m_uart.sendData(m_config.telemetry_stream_channel, payload, payload_len);
+        }
+
+        const int64_t now_us = esp_timer_get_time();
+        const uint32_t overruns = m_overrun_count.load(std::memory_order_relaxed);
+        if (overruns != last_logged_overruns && (now_us - last_overrun_log_us) >= kOverrunLogIntervalUs) {
+            ESP_LOGW(TAG, "Control loop overruns: +%" PRIu32 " (total %" PRIu32 ") period=%" PRIu32 " us core=%d",
+                     overruns - last_logged_overruns, overruns, period_us, xPortGetCoreID());
+            last_logged_overruns = overruns;
+            last_overrun_log_us = now_us;
+        }
+
+#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
+        const int64_t dur = now_us - run_start_us;
+        dur_min = std::min(dur_min, dur);
+        dur_max = std::max(dur_max, dur);
+        dur_sum += dur;
+        ++dur_n;
+        if ((now_us - stats_window_start_us) >= kStatsIntervalUs && int_n > 0U) {
+            ESP_LOGI(TAG, "Loop stats (period %" PRIu32 " us): interval min/mean/max = %" PRId64 "/%" PRId64 "/%" PRId64
+                          " us, run min/mean/max = %" PRId64 "/%" PRId64 "/%" PRId64 " us, overruns total %" PRIu32,
+                     period_us, int_min, int_sum / int_n, int_max,
+                     dur_min, dur_sum / dur_n, dur_max, overruns);
+            stats_window_start_us = now_us;
+            int_min = dur_min = std::numeric_limits<int64_t>::max();
+            int_max = dur_max = int_sum = dur_sum = 0;
+            int_n = dur_n = 0;
+        }
+#endif
     }
 }
 
@@ -563,7 +880,8 @@ void MotorManager::configTaskLoop()
     }
 }
 
-ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const
+ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len,
+                                               uint64_t timestamp_us) const
 {
     if (cap < kTelemetryPacketHeaderSize) {
         return ResultCode::InvalidArgument;
@@ -573,11 +891,6 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         out_len = 0;
         return ResultCode::Ok;
     }
-
-    timeval now{};
-    gettimeofday(&now, nullptr);
-    const uint64_t timestamp_us = (static_cast<uint64_t>(now.tv_sec) * 1000000ULL) +
-                                  static_cast<uint64_t>(now.tv_usec);
 
     out[0] = kProtocolVersion;
     out[1] = 0;
@@ -679,10 +992,10 @@ ResultCode MotorManager::queueSetpoint(uint8_t motor_id, SetpointKind kind, floa
     return rc;
 }
 
-void MotorManager::applyPendingSetpoints()
+void MotorManager::applyPendingSetpointsLocked()
 {
-    // Move everything pending out of the mailbox under the spinlock, then
-    // apply it without the spinlock held (setSetpoint takes m_mutex).
+    // Caller holds m_mutex. Move everything pending out of the mailbox under
+    // the spinlock, then apply it without the spinlock held.
     size_t count = 0;
     taskENTER_CRITICAL(&m_pending_lock);
     for (auto &e : m_pending_setpoints) {
@@ -699,7 +1012,7 @@ void MotorManager::applyPendingSetpoints()
             if (!e.pending[k]) {
                 continue;
             }
-            const ResultCode rc = setSetpoint(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
+            const ResultCode rc = setSetpointLocked(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
             if (rc != ResultCode::Ok) {
                 ESP_LOGW(TAG, "Setpoint rejected motor=%u kind=%u rc=%s",
                          e.motor_id, static_cast<unsigned>(k), resultCodeToString(rc));
@@ -710,6 +1023,10 @@ void MotorManager::applyPendingSetpoints()
 
 void MotorManager::stopTasks()
 {
+    // Stop the timer first (and wait out an in-flight callback) so nothing
+    // notifies the update task while it is being stopped and deleted.
+    stopControlTimer();
+
     m_update_task.requestStop();
     m_config_task.requestStop();
     if (m_config_queue != nullptr && m_config_task.isRunning()) {

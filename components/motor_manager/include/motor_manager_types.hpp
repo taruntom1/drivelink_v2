@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "motor_controller.hpp"
 #include "sdkconfig.h"
 #include <cstddef>
@@ -93,11 +94,33 @@ struct MotorConfigPayload {
     float position_feedforward;
 };
 
+// Limits applied to the control and telemetry periods (constructor config and SetTiming).
+constexpr uint32_t kControlPeriodMinUs = 250;
+constexpr uint32_t kControlPeriodMaxUs = 100000;
+constexpr uint32_t kTelemetryPeriodMaxUs = 1000000;
+
+#if CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE < 0
+constexpr BaseType_t kDefaultControlTaskCore = tskNO_AFFINITY;
+#else
+constexpr BaseType_t kDefaultControlTaskCore = CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE;
+#endif
+
+/// Internal control ("update") task. When enabled, a periodic esp_timer wakes
+/// the task every control_period_us; each wake applies queued setpoints,
+/// updates every motor with dt = elapsed ticks x period, and publishes
+/// telemetry every ceil(telemetry_period_us / control_period_us) ticks.
+/// Both periods can be changed at runtime with MotorManager::setTiming().
 struct UpdateTaskConfig {
     bool enable = true;
-    unsigned int period_ms = 10;
+    /// Control loop period, clamped to [kControlPeriodMinUs, kControlPeriodMaxUs].
+    uint32_t control_period_us = CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US;
+    /// Telemetry period, clamped to [control period, kTelemetryPeriodMaxUs] and
+    /// rounded up to a whole number of control periods.
+    uint32_t telemetry_period_us = CONFIG_MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US;
     uint32_t stack_size = CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK;
     UBaseType_t priority = CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO;
+    /// Core the control task is pinned to, or tskNO_AFFINITY.
+    BaseType_t core_id = kDefaultControlTaskCore;
 };
 
 struct ManagerConfig {
