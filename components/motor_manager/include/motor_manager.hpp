@@ -3,7 +3,7 @@
 #include "motor_manager_types.hpp"
 #include "uart_comm.hpp"
 #include "stoppable_task.hpp"
-#include "esp_timer.h"
+#include "task_timer.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -85,11 +85,8 @@ private:
         std::array<float, kSetpointKindCount> value{};
     };
 
-    static void controlTimerCallback(void *arg);
     void updateTaskLoop();
     void configTaskLoop();
-    esp_err_t startControlTimer();
-    void stopControlTimer();
     void updateAllLocked(float dt_s);
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
     ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
@@ -117,7 +114,7 @@ private:
 
     // Control timing. The periods are written by setTiming() under m_mutex
     // and read lock-free by the update task.
-    esp_timer_handle_t m_control_timer = nullptr;
+    rtos_util::TaskTimer m_control_timer;
     std::atomic<uint32_t> m_control_period_us{0};
     std::atomic<uint32_t> m_telemetry_divider{1};
     uint32_t m_requested_telemetry_period_us = 0; // guarded by m_mutex

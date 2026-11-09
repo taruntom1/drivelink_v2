@@ -28,7 +28,6 @@ constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
 // dump a huge step into the PID integrators.
 constexpr uint32_t kMaxCatchUpTicks = 10;
 constexpr int64_t kOverrunLogIntervalUs = 1000000;
-constexpr TickType_t kTimerFenceWarnTicks = pdMS_TO_TICKS(1000);
 
 uint64_t wallClockUs()
 {
@@ -143,8 +142,12 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
         }
 
         // Start the timer only once the task it wakes exists.
-        const esp_err_t tmr_ret = startControlTimer();
+        esp_err_t tmr_ret = m_control_timer.create(m_update_task, "motor_ctrl");
+        if (tmr_ret == ESP_OK) {
+            tmr_ret = m_control_timer.start(m_control_period_us.load(std::memory_order_relaxed));
+        }
         if (tmr_ret != ESP_OK) {
+            m_control_timer.destroy();
             m_setpoint_cb.reset();
             m_configure_cb.reset();
             m_update_task.stop();
@@ -160,7 +163,7 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     if (cfg_ret != ESP_OK) {
         m_setpoint_cb.reset();
         m_configure_cb.reset();
-        stopControlTimer();
+        m_control_timer.destroy();
         m_update_task.stop();
         ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_ret));
         return;
@@ -594,10 +597,10 @@ ResultCode MotorManager::setTiming(uint32_t control_period_us, uint32_t telemetr
     const uint32_t divider = telemetryDivider(m_requested_telemetry_period_us, new_period);
 
     ResultCode rc = ResultCode::Ok;
-    if (new_period != old_period && m_control_timer != nullptr) {
+    if (new_period != old_period && m_control_timer.isCreated()) {
         // The update task reads the period on every wake, so PID dt and the
         // filter coefficients follow from the next tick on.
-        const esp_err_t err = esp_timer_restart(m_control_timer, new_period);
+        const esp_err_t err = m_control_timer.setPeriod(new_period);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to restart control timer at %" PRIu32 " us: %s",
                      new_period, esp_err_to_name(err));
@@ -670,88 +673,6 @@ void MotorManager::publishTelemetry()
     if (rc == ResultCode::Ok && payload_len > kTelemetryPacketHeaderSize) {
         m_uart.sendData(m_config.telemetry_stream_channel, payload, payload_len);
     }
-}
-
-void MotorManager::controlTimerCallback(void *arg)
-{
-    // Runs on the esp_timer task: only wake the update task.
-    static_cast<MotorManager *>(arg)->m_update_task.notify();
-}
-
-esp_err_t MotorManager::startControlTimer()
-{
-    esp_timer_create_args_t args{};
-    args.callback = &MotorManager::controlTimerCallback;
-    args.arg = this;
-    args.dispatch_method = ESP_TIMER_TASK;
-    args.name = "motor_ctrl";
-    args.skip_unhandled_events = true;
-
-    esp_err_t err = esp_timer_create(&args, &m_control_timer);
-    if (err != ESP_OK) {
-        m_control_timer = nullptr;
-        ESP_LOGE(TAG, "Failed to create control timer: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    const uint32_t period_us = m_control_period_us.load(std::memory_order_relaxed);
-    err = esp_timer_start_periodic(m_control_timer, period_us);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start control timer at %" PRIu32 " us: %s",
-                 period_us, esp_err_to_name(err));
-        esp_timer_delete(m_control_timer);
-        m_control_timer = nullptr;
-        return err;
-    }
-    return ESP_OK;
-}
-
-void MotorManager::stopControlTimer()
-{
-    if (m_control_timer == nullptr) {
-        return;
-    }
-
-    // ESP_ERR_INVALID_STATE just means it was not running.
-    const esp_err_t stop_err = esp_timer_stop(m_control_timer);
-    if (stop_err != ESP_OK && stop_err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(TAG, "esp_timer_stop(control): %s", esp_err_to_name(stop_err));
-    }
-
-    // esp_timer_stop() does not wait for a callback the esp_timer task has
-    // already started. Callbacks run one at a time on that task, so once a
-    // one-shot "fence" timer has fired, any in-flight control callback has
-    // returned and none can touch this object again.
-    StaticSemaphore_t fence_storage;
-    SemaphoreHandle_t fence_done = xSemaphoreCreateBinaryStatic(&fence_storage);
-    esp_timer_create_args_t fence_args{};
-    fence_args.callback = [](void *arg) { xSemaphoreGive(static_cast<SemaphoreHandle_t>(arg)); };
-    fence_args.arg = fence_done;
-    fence_args.dispatch_method = ESP_TIMER_TASK;
-    fence_args.name = "motor_ctrl_fence";
-    esp_timer_handle_t fence = nullptr;
-    esp_err_t err = esp_timer_create(&fence_args, &fence);
-    if (err == ESP_OK) {
-        err = esp_timer_start_once(fence, 1);
-        if (err == ESP_OK) {
-            while (xSemaphoreTake(fence_done, kTimerFenceWarnTicks) != pdTRUE) {
-                ESP_LOGW(TAG, "Still waiting for the esp_timer task to drain the control timer");
-            }
-        }
-        esp_timer_delete(fence);
-    }
-    if (err != ESP_OK) {
-        // Fall back to waiting well over one callback's duration.
-        ESP_LOGW(TAG, "Control timer fence failed (%s); delaying instead", esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    vSemaphoreDelete(fence_done);
-
-    const esp_err_t del_err = esp_timer_delete(m_control_timer);
-    if (del_err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_timer_delete(control): %s", esp_err_to_name(del_err));
-    }
-    m_control_timer = nullptr;
 }
 
 void MotorManager::updateTaskLoop()
@@ -1042,7 +963,7 @@ void MotorManager::stopTasks()
 {
     // Stop the timer first (and wait out an in-flight callback) so nothing
     // notifies the update task while it is being stopped and deleted.
-    stopControlTimer();
+    m_control_timer.destroy();
 
     m_update_task.requestStop();
     m_config_task.requestStop();
