@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-static const char *TAG = "motor_mgr_uart";
+static const char *const TAG = "motor_mgr_uart";
 
 namespace motor_manager {
 

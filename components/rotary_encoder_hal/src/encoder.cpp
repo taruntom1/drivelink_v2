@@ -6,7 +6,7 @@
 #include "driver/pulse_cnt.h"
 #include <utility>
 
-static const char *TAG = "encoder";
+static const char *const TAG = "encoder";
 
 namespace esp_rotary_encoder {
 namespace detail {

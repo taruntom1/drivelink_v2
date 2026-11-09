@@ -42,7 +42,3 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
 - `time_sync`: task stack size and priority (T3).
 - `motor_manager`: config queue depth and mutex timeout.
 - `imu_bmo_055`: manager mutex timeout and device lock timeout.
-
-**Style**
-- `motor_controller.cpp`: rename `TWO_PI` to `kTwoPi`.
-- Declare every `TAG` as `static const char *const TAG` (11 files).

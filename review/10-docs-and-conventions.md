@@ -27,8 +27,8 @@ The old `.github/copilot-instructions.md` and `.github/instructions/hal-componen
 | Layout: "`src/`: implementation files … A public header must never include a private one." | `time_sync` keeps `time_sync.cpp`, `time_sync_protocol.cpp` and the private `time_sync_protocol.hpp` at the component root, with no `src/` or `priv_include/`. Its public `time_sync.hpp` includes `time_sync_protocol.hpp`. |
 | Layout: "Third-party code lives untouched in a `vendor/` subfolder." | `imu_bmo_055` keeps `bno055.c` and `bno055_support.c` at the component root, and `bno055.h` in its public `include/`. |
 | "The namespace equals the component name." | `motor_hal` uses `esp_motor`, `pid` uses `esp_pid`, and `rotary_encoder_hal` uses `esp_rotary_encoder`. |
-| "Constants: `constexpr` with a `k` prefix." | `TWO_PI` in [motor_controller.cpp:7](../components/motor_controller/src/motor_controller.cpp). |
-| "Declare exactly one module-level tag per source file: `static const char *const TAG`." | One tag per file everywhere 👍. But 11 files declare `static const char *TAG`, a non-const pointer. Only `stoppable_task.cpp`, `parser.cpp` and `uart_comm.cpp` use `*const`. |
+| "Constants: `constexpr` with a `k` prefix." | **Fixed.** `TWO_PI` in motor_controller.cpp was renamed to `kTwoPi`. |
+| "Declare exactly one module-level tag per source file: `static const char *const TAG`." | **Fixed.** Every source file now declares `static const char *const TAG` (the 11 component files and the `test/uart_comm` main). |
 | "Host tests for pure logic." | There is no host test harness, and no PID or codec tests exist (G3, G4 in [09](09-testing.md)). |
 | "Provide an `isValid()` readiness check whenever construction can fail." | Done everywhere. 👍 |
 

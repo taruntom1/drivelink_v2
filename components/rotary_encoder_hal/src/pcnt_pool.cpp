@@ -3,7 +3,7 @@
 #include "esp_log.h"
 #include "driver/pulse_cnt.h"
 
-static const char *TAG = "pcnt_pool";
+static const char *const TAG = "pcnt_pool";
 
 namespace esp_rotary_encoder {
 namespace detail {

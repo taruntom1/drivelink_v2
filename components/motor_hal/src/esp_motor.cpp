@@ -7,7 +7,7 @@
 #include <cmath>
 #include <utility>
 
-static const char *TAG = "esp_motor";
+static const char *const TAG = "esp_motor";
 
 namespace esp_motor {
 

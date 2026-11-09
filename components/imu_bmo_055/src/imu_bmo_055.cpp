@@ -20,7 +20,7 @@ namespace imu_bmo_055 {
 
 namespace {
 
-static const char *TAG = "imu_bno055";
+static const char *const TAG = "imu_bno055";
 constexpr TickType_t kMutexTimeout = pdMS_TO_TICKS(50);
 constexpr size_t kMaxResponseExtraPayload = 64U;
 constexpr size_t kMaxStreamPayload = CONFIG_UART_COMM_MAX_PAYLOAD;

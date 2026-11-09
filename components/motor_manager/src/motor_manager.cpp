@@ -11,7 +11,7 @@
 #include <limits>
 #include <sys/time.h>
 
-static const char *TAG = "motor_manager";
+static const char *const TAG = "motor_manager";
 
 namespace motor_manager {
 

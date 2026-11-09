@@ -3,7 +3,7 @@
 #include "esp_log.h"
 #include "driver/mcpwm_prelude.h"
 
-static const char *TAG = "mcpwm_pool";
+static const char *const TAG = "mcpwm_pool";
 
 namespace esp_motor {
 namespace detail {

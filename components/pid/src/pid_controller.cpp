@@ -4,7 +4,7 @@
 #include <cmath>
 #include <utility>
 
-static const char *TAG = "pid_controller";
+static const char *const TAG = "pid_controller";
 
 namespace esp_pid {
 namespace detail {

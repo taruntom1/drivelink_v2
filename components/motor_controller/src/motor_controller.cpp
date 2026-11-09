@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
-static const char *TAG = "motor_controller";
-static constexpr float TWO_PI = 2.0f * static_cast<float>(M_PI);
+static const char *const TAG = "motor_controller";
+static constexpr float kTwoPi = 2.0f * static_cast<float>(M_PI);
 
 namespace motor_controller {
 
@@ -22,7 +22,7 @@ float lowPassAlpha(float hz, float dt_s)
     if (hz <= 0.0f) {
         return 1.0f;
     }
-    return 1.0f - std::exp(-TWO_PI * hz * dt_s);
+    return 1.0f - std::exp(-kTwoPi * hz * dt_s);
 }
 
 } // namespace
@@ -410,13 +410,13 @@ void MotorController::reset()
 
 float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const
 {
-    return static_cast<float>(counts) * TWO_PI
+    return static_cast<float>(counts) * kTwoPi
            / (counts_per_rev * gear_ratio);
 }
 
 float MotorController::rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const
 {
-    return counts_per_sec * TWO_PI
+    return counts_per_sec * kTwoPi
            / (counts_per_rev * gear_ratio);
 }
 

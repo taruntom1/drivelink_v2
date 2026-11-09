@@ -13,7 +13,7 @@
 #include "stoppable_task.hpp"
 #include "tick_util.hpp"
 
-static const char* TAG = "time_sync";
+static const char *const TAG = "time_sync";
 
 namespace time_sync {
 
