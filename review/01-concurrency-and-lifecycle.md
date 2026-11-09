@@ -76,6 +76,8 @@ Configure commands are already handed off to a queue. The setpoint stream should
 
 **Status: fixed.** `handleSetpointStream` now writes each entry into a per-motor mailbox (`m_pending_setpoints`, one latest value per setpoint kind, sized to `max_motors`) under a `portMUX` spinlock, and never takes `m_mutex`. The update task drains the mailbox at the start of each tick (`applyPendingSetpoints`). Setpoints take effect within one update period. If the update task is disabled, the callback applies setpoints directly, as before.
 
+*Update (timer-driven control loop):* the drain is now `applyPendingSetpointsLocked()`. It runs inside the control tick's single try-lock of `m_mutex`, so the tick never waits on the mutex. If the mutex is busy, the setpoints stay in the mailbox until the next tick.
+
 ---
 
 ## C5. Low: unsynchronised shared fields
