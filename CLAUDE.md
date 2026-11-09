@@ -57,8 +57,10 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - IMU: `0x22` / `0x42`, stream `0x82`
   - Nothing checks for collisions between these IDs.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
-  - motor_manager is at v3 and IMU at v2. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id).
-  - motor_manager v3 configure bodies must have their exact size. `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 5-byte header.
+  - motor_manager and IMU are both at v3. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
+  - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 5-byte header.
+  - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 4-byte header.
+  - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
   - time_sync is at v1. Its ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
@@ -76,6 +78,11 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - Each tick passes `dt = elapsed ticks × period` to `MotorController::update(dt)` and on to the PIDs. Nothing stores a sample time.
   - The tick only try-locks the manager mutex: a busy mutex skips the tick (counted as an overrun) rather than blocking it. Keep work done under `m_mutex` short.
   - Shutdown stops the timer and waits out an in-flight callback before stopping the task.
+- **Periodic timers:** fixed-rate loops (the motor control loop, the IMU sampler) use `rtos_util::TaskTimer`: a periodic `esp_timer` whose callback only notifies a `StoppableTask`. The task takes the count with `ulTaskNotifyTake` (bounded timeout) and counts extra periods as overruns. Owners serialize timer calls under their mutex and call `destroy()` (fenced) before stopping the task.
+- **IMU sampling loop:**
+  - The `TaskTimer` wakes the IMU stream task every sample period. A packet is sent every N samples, with N derived from the telemetry period. The loop does not depend on `CONFIG_FREERTOS_HZ`.
+  - The tick reads stream settings from atomics and only try-locks the `Bno055Device` mutex. A busy device skips the tick and counts it. Late, busy, read-error and encode-error counts are logged at most once per second.
+  - The timer is stopped while the stream is disabled and during an operation-mode switch.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
 
 ## Conventions

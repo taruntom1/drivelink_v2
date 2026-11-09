@@ -4,7 +4,8 @@ ESP-IDF IMU component for Bosch BNO055 with:
 
 - I2C sensor bring-up and sampling
 - Runtime configuration over `uart_comm` commands
-- Periodic telemetry streaming over a dedicated stream channel
+- Timer-driven sampling (esp_timer, independent of `CONFIG_FREERTOS_HZ`), with sample and telemetry rates the host can change at runtime
+- Telemetry streaming over a dedicated stream channel, stamped with the time_sync-corrected wall clock
 - Calibration read/write/apply command support
 
 This component is designed to run on-device (ESP32-S3 in this project) and expose a stable wire protocol to a host application.
@@ -16,7 +17,7 @@ At runtime, the component creates an `ImuBno055Manager` that:
 1. Initializes the BNO055 on I2C.
 2. Registers a command callback on a configurable UART message type.
 3. Runs a config task for command processing.
-4. Runs a stream task for periodic IMU telemetry.
+4. Runs a stream task, woken by a periodic `esp_timer`, that samples the sensor and publishes telemetry (see section 4.1).
 
 The manager is non-copyable and exposes `isValid()` so startup can fail early and safely.
 
@@ -34,13 +35,16 @@ Primary config struct:
 
 Important runtime methods:
 
-- `setStreamEnabled(bool)`
-- `setStreamPeriodMs(uint16_t)`
-- `setStreamFieldMask(uint16_t)`
+- `setStreamEnabled(bool)`: also starts or stops the sampling timer
+- `setStreamTiming(sample_period_us, telemetry_period_us, applied_sample_us&, applied_telemetry_us&)`: 0 keeps a value; returns the applied (clamped, rounded) values
+- `setStreamFieldMask(uint16_t)`: rejects bits outside `kStreamFieldAll` (`0x01FF`)
 - `setOperationMode(uint8_t)`
 - `readCalibration(CalibrationBlob&)`
 - `writeCalibration(const CalibrationBlob&)`
 - `applyCalibration()`
+- `getStreamCounters()`: stream health totals (`late`, `busy`, `read_errors`, `encode_errors`)
+
+Device-level failures map to `Busy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` otherwise.
 
 ## 3. Quick Integration In ESP App
 
@@ -99,7 +103,7 @@ The stream task publishes packets with this fixed prefix:
 
 - `version` (1 byte)
 - `field_mask` (uint16, little-endian)
-- `timestamp_us` (uint64, little-endian, from `esp_timer_get_time()`)
+- `timestamp_us` (uint64, little-endian): wall-clock µs (`gettimeofday`, the clock time_sync corrects, the same one motor telemetry uses), taken at the midpoint of that sample's I2C reads. It can jump when time_sync steps the clock.
 
 Then field data is appended in fixed order based on mask bits:
 
@@ -118,6 +122,24 @@ All vector/scalar numeric values above are encoded as signed 16-bit little-endia
 For complete host payload details, see:
 
 - `docs/protocol-api-guide.md`
+
+## 4.1 Sampling And Telemetry Timing
+
+- A periodic `esp_timer` (`rtos_util::TaskTimer`, task dispatch) wakes the stream task every `sample_period_us`. The loop does not use the FreeRTOS tick, so its rate does not depend on `CONFIG_FREERTOS_HZ`.
+- Every wake reads one sample. A stream packet goes out every N samples, where N is the requested `telemetry_period_us` clamped to `[sample period, max]` and rounded up to a whole multiple of the sample period. N = 1 by default.
+- Samples read between packets are dropped today. That is the hook for a future on-board consumer when sampling faster than the telemetry rate.
+- In the fusion modes the BNO055 updates its outputs at 100 Hz, so sampling faster than every 10 ms only gives fresh data in the raw (non-fusion) modes.
+- The tick never waits:
+  - It reads the stream settings from atomics, without the manager mutex.
+  - It try-locks the device. If a config operation (mode switch, calibration) holds it, the tick is skipped and counted as `busy`.
+- Counters (`getStreamCounters()`):
+  - `late`: timer periods that passed without a sample, because the task woke late or an I2C read ran long
+  - `busy`: ticks skipped because the device was in use
+  - `read_errors`: I2C failures
+  - `encode_errors`: payload overflows
+  - A summary is logged at most once per second, only when something changed.
+- When a publish tick fails (busy or read error), the next good sample is published, so the telemetry rate holds.
+- Disabling the stream stops the timer. `SetOperationMode` stops it for the duration of the mode switch and restarts it if the stream was enabled. The first sample after re-enabling is always published.
 
 ## 5. Kconfig Configuration
 
@@ -145,9 +167,12 @@ Menu path:
 
 - `IMU_BMO_055_DEFAULT_OPERATION_MODE` (default `0x0C`, NDOF)
 - `IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK` (default `0x1FF`, all fields)
-- `IMU_BMO_055_DEFAULT_STREAM_PERIOD_MS` (default `10` ms)
-- `IMU_BMO_055_MIN_STREAM_PERIOD_MS`
-- `IMU_BMO_055_MAX_STREAM_PERIOD_MS`
+- `IMU_BMO_055_DEFAULT_SAMPLE_PERIOD_US` (default `10000`)
+- `IMU_BMO_055_DEFAULT_TELEMETRY_PERIOD_US` (default `0` = same as the sample period)
+- `IMU_BMO_055_MIN_SAMPLE_PERIOD_US` (default `5000`)
+- `IMU_BMO_055_MAX_SAMPLE_PERIOD_US` (default `1000000`; also the telemetry period bound)
+
+The constructor fails (`isValid() == false`) if min is 0 or greater than max.
 
 ### 5.4 Tasking And Queue
 
@@ -198,11 +223,12 @@ idf.py build
   - Check UART component validity before constructing IMU manager.
 - No stream packets on host:
   - Verify stream channel ID matches host expectation.
-  - Verify stream is enabled and period is not too large.
+  - Verify stream is enabled and the periods are not too large (`SetStreamTiming(0, 0)` reads them back).
+  - Watch the log for the rate-limited `IMU stream:` counter line (busy, read errors).
   - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
 - Command rejected:
-  - Verify protocol version byte is `0x02` and is followed by a `seq` byte.
-  - Verify payload length and little-endian encoding for numeric fields.
+  - Verify protocol version byte is `0x03` and is followed by a `seq` byte.
+  - Verify the body has its exact length (v3 rejects trailing bytes) and little-endian encoding for numeric fields.
 
 ## 9. Additional Docs
 

@@ -18,7 +18,8 @@ Consequences:
 **Status: partly fixed.**
 - The README drift is fixed. The motor_manager README now says `timestamp_us` comes from `gettimeofday()` (host-synced once TimeSync has run).
 - The motor timestamp is now latched in the control tick that sampled the motors (`wallClockUs()` in `motor_manager.cpp`).
-- Still open: the two streams use different time bases, and the clock is still stepped (T2).
+- **Fixed** (IMU protocol v3): the IMU stream now also uses `gettimeofday()` wall-clock time, taken at the midpoint of the sample's I²C reads, so both streams share one time base.
+- Still open: the clock is still stepped (T2).
 
 **Recommendation**: pick one base for all streams. The usual choice is the synced Unix time, because that is what time_sync exists for. Build it as `esp_timer_get_time() + offset` that is *slewed*, not stepped (see T2). Expose one `time_sync::nowUs()` helper and use it from both managers. Update both READMEs.
 

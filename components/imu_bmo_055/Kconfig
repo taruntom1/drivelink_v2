@@ -96,30 +96,44 @@ menu "IMU BNO055 Configuration"
     config IMU_BMO_055_DEFAULT_STREAM_FIELD_MASK
         hex "Default stream field mask"
         default 0x1FF
-        range 0x0000 0xFFFF
+        range 0x0000 0x1FF
         help
             Bitmask selecting fields included in telemetry stream.
 
-    config IMU_BMO_055_DEFAULT_STREAM_PERIOD_MS
-        int "Default stream period (ms)"
-        default 10
-        range 5 1000
+    config IMU_BMO_055_DEFAULT_SAMPLE_PERIOD_US
+        int "Default sample period (us)"
+        default 10000
+        range 1000 5000000
         help
-            Default telemetry stream period.
+            Default period of the sampling timer: how often the BNO055 is
+            read. Clamped to [MIN, MAX] below. In the fusion modes the
+            BNO055 updates its outputs at 100 Hz, so periods below 10000 us
+            only give fresh data in the raw (non-fusion) modes.
 
-    config IMU_BMO_055_MIN_STREAM_PERIOD_MS
-        int "Minimum stream period (ms)"
-        default 5
-        range 1 1000
+    config IMU_BMO_055_DEFAULT_TELEMETRY_PERIOD_US
+        int "Default telemetry period (us)"
+        default 0
+        range 0 5000000
         help
-            Lower clamp bound for runtime stream period command.
+            Default period of the IMU stream packets. 0 means "same as the
+            sample period". Rounded up to a whole multiple of the sample
+            period (a sample is published every N samples).
 
-    config IMU_BMO_055_MAX_STREAM_PERIOD_MS
-        int "Maximum stream period (ms)"
-        default 1000
-        range 5 5000
+    config IMU_BMO_055_MIN_SAMPLE_PERIOD_US
+        int "Minimum sample period (us)"
+        default 5000
+        range 1000 5000000
         help
-            Upper clamp bound for runtime stream period command.
+            Lower clamp bound for the sample period (startup default and
+            SetStreamTiming). Must not exceed the maximum.
+
+    config IMU_BMO_055_MAX_SAMPLE_PERIOD_US
+        int "Maximum sample / telemetry period (us)"
+        default 1000000
+        range 1000 5000000
+        help
+            Upper clamp bound for both the sample period and the telemetry
+            period. Must not be below the minimum.
 
     config IMU_BMO_055_STREAM_TASK_STACK
         int "Stream task stack size"

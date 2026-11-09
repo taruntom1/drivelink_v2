@@ -56,7 +56,6 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
 - Move the encoder HAL's `ESP_LOGE` out of `taskENTER_CRITICAL`: record the error and log it after exiting (review E4).
 
 **Protocol**
-- IMU: require exact configure body lengths. This is a wire change, so bump the IMU `kProtocolVersion` to 3 and update `docs/protocol-api-guide.md`.
 - Add one shared set of bounds-checked little-endian read/append helpers, for example in `uart_comm`. Use them in all managers instead of local copies and native-endian `memcpy`.
 
 **Kconfig**
