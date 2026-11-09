@@ -4,7 +4,6 @@
 #include <cmath>
 
 static const char *const TAG = "motor_controller";
-static constexpr float kTwoPi = 2.0f * static_cast<float>(M_PI);
 
 namespace motor_controller {
 
@@ -13,16 +12,6 @@ namespace {
 bool isValidCutoff(float hz)
 {
     return std::isfinite(hz) && hz >= 0.0f;
-}
-
-// Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
-// `dt_s` seconds. 1 means "no filtering".
-float lowPassAlpha(float hz, float dt_s)
-{
-    if (hz <= 0.0f) {
-        return 1.0f;
-    }
-    return 1.0f - std::exp(-kTwoPi * hz * dt_s);
 }
 
 } // namespace
@@ -62,9 +51,7 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
                                  ? config.velocity_filter_cutoff_hz
                                  : 0.0f),
       m_estimator_reset_requested(false),
-      m_estimator_primed(false),
-      m_prev_count(0),
-      m_vel_estimate(0.0f),
+      m_vel_estimator(),
       m_cached_angle_rad(0.0f),
       m_cached_velocity_rad_s(0.0f),
       m_cached_output(0.0f),
@@ -109,32 +96,10 @@ float MotorController::estimateVelocity(int32_t count, float dt_s,
                                         float counts_per_rev, float gear_ratio)
 {
     if (m_estimator_reset_requested.exchange(false, std::memory_order_acq_rel)) {
-        m_estimator_primed = false;
+        m_vel_estimator.reset();
     }
-
-    if (!m_estimator_primed) {
-        // First sample: there is no previous count to difference against.
-        m_prev_count = count;
-        m_vel_estimate = 0.0f;
-        m_estimator_primed = true;
-        return m_vel_estimate;
-    }
-
-    if (!(dt_s > 0.0f) || !std::isfinite(dt_s)) {
-        return m_vel_estimate;
-    }
-
-    // The PCNT accumulator makes the count effectively unbounded; difference
-    // in unsigned arithmetic so a wrap of the int32 value stays well-defined.
-    const int32_t delta = static_cast<int32_t>(
-        static_cast<uint32_t>(count) - static_cast<uint32_t>(m_prev_count));
-    m_prev_count = count;
-
-    const float raw = rateToAngularVelocity(static_cast<float>(delta) / dt_s,
-                                            counts_per_rev, gear_ratio);
-    const float alpha = lowPassAlpha(m_vel_filter_cutoff_hz.load(std::memory_order_relaxed), dt_s);
-    m_vel_estimate += alpha * (raw - m_vel_estimate);
-    return m_vel_estimate;
+    return m_vel_estimator.update(count, dt_s, counts_per_rev, gear_ratio,
+                                  m_vel_filter_cutoff_hz.load(std::memory_order_relaxed));
 }
 
 void MotorController::update(float dt_s)
@@ -406,18 +371,6 @@ void MotorController::reset()
     m_cached_angle_rad.store(0.0f, std::memory_order_relaxed);
     m_cached_velocity_rad_s.store(0.0f, std::memory_order_relaxed);
     m_cached_output.store(0.0f, std::memory_order_relaxed);
-}
-
-float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const
-{
-    return static_cast<float>(counts) * kTwoPi
-           / (counts_per_rev * gear_ratio);
-}
-
-float MotorController::rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const
-{
-    return counts_per_sec * kTwoPi
-           / (counts_per_rev * gear_ratio);
 }
 
 } // namespace motor_controller

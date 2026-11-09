@@ -123,6 +123,8 @@ Changes from version 2:
 
 The PID `dt` now always comes from the control loop timing (see [Control loop and timing](#control-loop-and-timing)), so the host no longer sends a sample time.
 
+Code layout: the wire-level enums, field values and sizes, and `MotorConfigPayload` (the CreateMotor / ConfigureMotor body, with `uint8_t` GPIO numbers) are in the pure public header `include/motor_manager_protocol.hpp`. The codec that turns payloads into requests and back (`priv_include/motor_protocol.hpp`, `src/motor_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`. The MSG_TYPEs and stream channels come from Kconfig and are in `motor_manager_types.hpp`.
+
 ### Configure command (single callback)
 
 - UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE` (default `0x21`)

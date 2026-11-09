@@ -29,7 +29,7 @@ The old `.github/copilot-instructions.md` and `.github/instructions/hal-componen
 | "The namespace equals the component name." | **Fixed.** The namespaces were renamed `esp_motor` → `motor_hal`, `esp_pid` → `pid` and `esp_rotary_encoder` → `rotary_encoder_hal`. The header file names (`esp_motor.hpp`, `encoder.hpp`, `pid_controller.hpp`) are unchanged. |
 | "Constants: `constexpr` with a `k` prefix." | **Fixed.** `TWO_PI` in motor_controller.cpp was renamed to `kTwoPi`. |
 | "Declare exactly one module-level tag per source file: `static const char *const TAG`." | **Fixed.** Every source file now declares `static const char *const TAG` (the 11 component files and the `test/uart_comm` main). |
-| "Host tests for pure logic." | There is no host test harness, and no PID or codec tests exist (G3, G4 in [09](09-testing.md)). |
+| "Host tests for pure logic." | **Fixed.** `test/host/` (CMake + doctest) runs host unit tests for the wire codec, the three protocol codecs, the PID and the velocity estimator (G3, G4 in [09](09-testing.md)). |
 | "Provide an `isValid()` readiness check whenever construction can fail." | Done everywhere. 👍 |
 
 ---

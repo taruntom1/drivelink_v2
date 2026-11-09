@@ -33,6 +33,8 @@ Primary config struct:
 
 - `imu_bmo_055::ManagerConfig` (in `include/imu_bmo_055_types.hpp`)
 
+Wire-level types (`ResultCode`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
+
 Important runtime methods:
 
 - `setStreamEnabled(bool)`: also starts or stops the sampling timer

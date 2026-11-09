@@ -23,7 +23,20 @@ idf.py menuconfig            # all component tunables live under their Kconfig m
 idf.py fullclean             # when target/config changes leave the build inconsistent
 ```
 
-The only automated tests are hardware-in-the-loop tests for `uart_comm`. They live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components`.
+There are two kinds of automated tests.
+
+**Host unit tests** (`test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync protocol codecs, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`third_party/doctest`). It compiles those firmware sources directly with the host compiler. `shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+
+```bash
+cmake -S test/host -B test/host/build -G Ninja
+cmake --build test/host/build
+ctest --test-dir test/host/build --output-on-failure   # or run test/host/build/host_tests directly
+test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
+```
+
+A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `shim/sdkconfig.h`.
+
+**Hardware-in-the-loop tests** for `uart_comm` live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
 
 ```bash
 idf.py -C test/uart_comm build flash           # flash the test firmware
@@ -41,8 +54,8 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 **Layering** (each one is an ESP-IDF component under `components/`):
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
-- `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes.
-- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks.
+- `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
+- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `uart_comm::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
 - `rtos_util` provides `StoppableTask`.
 
 **UART protocol** (`uart_comm`):
@@ -136,7 +149,7 @@ A change is done when all of the following are true:
   - Any public API, protocol or Kconfig change updates the component README in that commit.
   - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.
 - **Review status:** a change that fixes or affects a `review/` item marks its status in the same change: **Fixed**, **Partly fixed** or **No longer applicable**, with a one-line note.
-- **Host tests for pure logic:** new pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host-side unit tests. The harness does not exist yet (see `TODO.md`), so it has to be set up first.
+- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `test/host/`, and they pass.
 
 ### Files not to edit
 

@@ -145,6 +145,11 @@ Executes one control cycle:
 after construction or `reset()` only primes the estimator. Call from a single
 task. Not re-entrant.
 
+The estimator is `motor_controller::VelocityEstimator`
+(`include/velocity_estimator.hpp`), pure math with no hardware or RTOS
+dependency, together with `countsToRadians()`, `countsPerSecToRadPerSec()`
+and `lowPassAlpha()`. The host unit tests in `test/host/` cover it.
+
 ---
 
 #### Mode switching

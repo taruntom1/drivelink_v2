@@ -1,10 +1,10 @@
 #pragma once
 
-#include "driver/gpio.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motor_controller.hpp"
+#include "motor_manager_protocol.hpp"
 #include "sdkconfig.h"
 #include <cstddef>
 #include <cstdint>
@@ -17,88 +17,10 @@ constexpr bool kDefaultUseMockFeedback = true;
 constexpr bool kDefaultUseMockFeedback = false;
 #endif
 
-enum class ResultCode : uint8_t {
-    Ok = 0x00,
-    InvalidArgument = 0x01,
-    NotFound = 0x02,
-    AlreadyExists = 0x03,
-    CapacityReached = 0x04,
-    InvalidState = 0x05,
-    NotSupported = 0x06,
-    InternalError = 0x07
-};
-
-enum class ConfigureSubcommand : uint8_t {
-    CreateMotor = 0x01,
-    DeleteMotor = 0x02,
-    ConfigureMotor = 0x03,
-    SetMode = 0x04,
-    SetPidParams = 0x05,
-    SetSetpoint = 0x06,
-    StopMotor = 0x07,
-    ResetMotor = 0x08,
-    SetTelemetryGlobal = 0x09,
-    SetTelemetryMotor = 0x0A,
-    SetTiming = 0x0B
-};
-
-enum class PidKind : uint8_t {
-    Velocity = 0x00,
-    Position = 0x01
-};
-
-enum class SetpointKind : uint8_t {
-    OpenLoopDuty = 0x00,
-    VelocityRadPerSec = 0x01,
-    PositionRad = 0x02
-};
-
-// v2 added a seq byte after the version in configure requests and responses.
-// v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
-// the SetTiming subcommand, response bodies and the telemetry output field.
-// The version covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x03;
-// Sent as subcommand and motor_id in a configure response when the request
-// header could not be parsed (too short or wrong version).
-constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 constexpr uint8_t kManagerMsgConfigure = CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE;
 constexpr uint8_t kManagerMsgConfigureResp = CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE;
 constexpr uint8_t kManagerSetpointStreamChannel = CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL;
 constexpr uint8_t kManagerTelemetryStreamChannel = CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL;
-
-constexpr size_t kSetpointEntrySize = 6;  // motor_id(1) + kind(1) + float(4)
-
-enum TelemetryFieldMask : uint8_t {
-    kTelemetryFieldAngle = 1U << 0,
-    kTelemetryFieldVelocity = 1U << 1,
-    kTelemetryFieldOutput = 1U << 2, ///< applied motor duty in [-1, 1]
-    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity | kTelemetryFieldOutput
-};
-
-constexpr size_t kTelemetryPacketHeaderSize = 10; // version(1) + entry_count(1) + timestamp_us(8)
-constexpr size_t kTelemetryEntryBaseSize = 2;    // motor_id(1) + field_mask(1)
-
-struct MotorConfigPayload {
-    gpio_num_t pwm_gpio;
-    gpio_num_t dir_gpio;
-    gpio_num_t enc_a;
-    gpio_num_t enc_b;
-    float counts_per_rev;
-    float gear_ratio;
-    float output_min;
-    float output_max;
-    float vel_kp;
-    float vel_ki;
-    float vel_kd;
-    float vel_d_cutoff_hz;      ///< velocity PID derivative filter cutoff (0 = off)
-    float pos_kp;
-    float pos_ki;
-    float pos_kd;
-    float pos_d_cutoff_hz;      ///< position PID derivative filter cutoff (0 = off)
-    float velocity_feedforward;
-    float position_feedforward;
-    float vel_filter_cutoff_hz; ///< velocity estimate low-pass cutoff (0 = off)
-};
 
 // Limits applied to the control and telemetry periods (constructor config and SetTiming).
 constexpr uint32_t kControlPeriodMinUs = 250;

@@ -4,13 +4,8 @@
 
 These are fixes for code that breaks the conventions in `CLAUDE.md` / `components/CLAUDE.md`. Each one is tracked in `review/10-docs-and-conventions.md`, and its status there gets updated in the same change.
 
-**Test harness (needed before the "host tests for pure logic" rule can be followed)**
-- Set up host-side unit tests. Options are the IDF `linux` target or plain GoogleTest against the headers.
-- First targets:
-  - PID (`dt` scaling, derivative cutoff, anti-windup)
-  - the motor_controller velocity estimator
-  - the protocol codecs: motor_manager configure and telemetry, IMU configure and stream, `time_sync::protocol`
-- Wire them into CI together with `idf.py build` for `/` and `test/uart_comm` (review G3, G4, G7).
+**CI**
+- Run the host tests (`test/host/`) in CI together with `idf.py build` for `/` and `test/uart_comm` (review G7).
 
 **Host input validation** (review E1, E2)
 - Check host GPIOs against an allowed set: no flash/PSRAM/UART0/USB pins, and nothing ≥ `GPIO_NUM_MAX`.

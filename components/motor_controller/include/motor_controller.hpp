@@ -3,6 +3,7 @@
 #include "esp_motor.hpp"
 #include "encoder.hpp"
 #include "pid_controller.hpp"
+#include "velocity_estimator.hpp"
 #include "sdkconfig.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -253,8 +254,6 @@ public:
     void reset();
 
 private:
-    float countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const;
-    float rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const;
     float estimateVelocity(int32_t count, float dt_s, float counts_per_rev, float gear_ratio);
 
     // Hardware handles
@@ -281,13 +280,11 @@ private:
     float        m_output_min;
     float        m_output_max;
 
-    // Velocity estimator. m_prev_count / m_vel_estimate / m_estimator_primed
-    // are owned by update(); other tasks only request a re-prime.
+    // Velocity estimator. m_vel_estimator is owned by update(); other tasks
+    // only request a re-prime through m_estimator_reset_requested.
     std::atomic<float> m_vel_filter_cutoff_hz;
     std::atomic<bool>  m_estimator_reset_requested;
-    bool    m_estimator_primed;
-    int32_t m_prev_count;
-    float   m_vel_estimate;
+    VelocityEstimator  m_vel_estimator;
 
     // Feedback cached by update() for the getters
     std::atomic<float> m_cached_angle_rad;

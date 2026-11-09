@@ -4,7 +4,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "tick_util.hpp"
-#include "wire_codec.hpp"
+#include "motor_protocol.hpp"
 
 #include <algorithm>
 #include <cinttypes>
@@ -268,7 +268,8 @@ ResultCode MotorManager::createMotor(uint8_t motor_id, const MotorConfigPayload 
         motor_cfg.velocity_filter_cutoff_hz = cfg.vel_filter_cutoff_hz;
 
         auto motor = std::make_unique<motor_controller::MotorController>(
-            cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b, motor_cfg);
+            static_cast<gpio_num_t>(cfg.pwm_gpio), static_cast<gpio_num_t>(cfg.dir_gpio),
+            static_cast<gpio_num_t>(cfg.enc_a), static_cast<gpio_num_t>(cfg.enc_b), motor_cfg);
         if (!motor->isValid()) {
             ESP_LOGE(TAG, "Motor create failed (id=%u pwm=%d dir=%d encA=%d encB=%d)",
                      motor_id, cfg.pwm_gpio, cfg.dir_gpio, cfg.enc_a, cfg.enc_b);
@@ -853,11 +854,7 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         return ResultCode::Ok;
     }
 
-    uart_comm::wire::Writer w(out, cap);
-    w.appendU8(kProtocolVersion);
-    w.appendU8(0); // entry count, patched below
-    w.appendU64Le(timestamp_us);
-    uint8_t entry_count = 0;
+    protocol::TelemetryEncoder encoder(out, cap, timestamp_us);
 
     for (const auto &slot : m_motors) {
         if (!slot.telemetry_enabled) {
@@ -867,55 +864,32 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
             continue;
         }
 
-        const uint8_t field_mask = static_cast<uint8_t>(slot.telemetry_field_mask & m_telemetry_field_mask);
-
-        size_t required = kTelemetryEntryBaseSize;
-        if ((field_mask & kTelemetryFieldAngle) != 0U) {
-            required += sizeof(float);
+        const bool mock = m_use_mock_feedback || slot.motor == nullptr;
+        protocol::TelemetryEntry entry{};
+        entry.motor_id = slot.id;
+        entry.field_mask = static_cast<uint8_t>(slot.telemetry_field_mask & m_telemetry_field_mask);
+        if ((entry.field_mask & kTelemetryFieldAngle) != 0U) {
+            entry.angle_rad = mock ? slot.mock_angle_rad : slot.motor->getAngle();
         }
-        if ((field_mask & kTelemetryFieldVelocity) != 0U) {
-            required += sizeof(float);
+        if ((entry.field_mask & kTelemetryFieldVelocity) != 0U) {
+            entry.velocity_rad_s = mock ? slot.mock_velocity_rad_s : slot.motor->getAngularVelocity();
         }
-        if ((field_mask & kTelemetryFieldOutput) != 0U) {
-            required += sizeof(float);
-        }
-
-        if (required > w.remaining()) {
-            break;
-        }
-
-        w.appendU8(slot.id);
-        w.appendU8(field_mask);
-
-        if ((field_mask & kTelemetryFieldAngle) != 0U) {
-            const float angle = (m_use_mock_feedback || slot.motor == nullptr)
-                                    ? slot.mock_angle_rad
-                                    : slot.motor->getAngle();
-            w.appendF32Le(angle);
-        }
-        if ((field_mask & kTelemetryFieldVelocity) != 0U) {
-            const float velocity = (m_use_mock_feedback || slot.motor == nullptr)
-                                       ? slot.mock_velocity_rad_s
-                                       : slot.motor->getAngularVelocity();
-            w.appendF32Le(velocity);
-        }
-        if ((field_mask & kTelemetryFieldOutput) != 0U) {
+        if ((entry.field_mask & kTelemetryFieldOutput) != 0U) {
             // Mock mode has no motor output to report.
-            const float output = (m_use_mock_feedback || slot.motor == nullptr)
-                                     ? 0.0f
-                                     : slot.motor->getOutput();
-            w.appendF32Le(output);
+            entry.output = mock ? 0.0f : slot.motor->getOutput();
         }
 
-        ++entry_count;
+        if (!encoder.append(entry)) {
+            break; // packet full
+        }
     }
 
-    w.patchU8(1, entry_count);
-    if (!w.ok() || w.size() > UINT8_MAX) {
+    const size_t len = encoder.finish();
+    if (len == 0U) {
         out_len = 0;
         return ResultCode::InternalError;
     }
-    out_len = static_cast<uint8_t>(w.size());
+    out_len = static_cast<uint8_t>(len);
     return ResultCode::Ok;
 }
 

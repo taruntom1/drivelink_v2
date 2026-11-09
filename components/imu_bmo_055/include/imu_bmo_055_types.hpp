@@ -18,41 +18,6 @@ constexpr bool kDefaultFallbackToMockOnInitFail = true;
 constexpr bool kDefaultFallbackToMockOnInitFail = false;
 #endif
 
-enum class ResultCode : uint8_t {
-    Ok = 0x00,
-    InvalidArgument = 0x01,
-    InvalidState = 0x02,
-    NotSupported = 0x03,
-    Busy = 0x04,
-    InternalError = 0x05
-};
-
-struct CalibrationStatus {
-    uint8_t sys = 0;
-    uint8_t gyro = 0;
-    uint8_t accel = 0;
-    uint8_t mag = 0;
-};
-
-struct CalibrationBlob {
-    int16_t accel_offset_x = 0;
-    int16_t accel_offset_y = 0;
-    int16_t accel_offset_z = 0;
-    int16_t accel_radius = 0;
-
-    int16_t gyro_offset_x = 0;
-    int16_t gyro_offset_y = 0;
-    int16_t gyro_offset_z = 0;
-
-    int16_t mag_offset_x = 0;
-    int16_t mag_offset_y = 0;
-    int16_t mag_offset_z = 0;
-    int16_t mag_radius = 0;
-
-    int16_t sic[9] = {0};
-    bool has_sic = false;
-};
-
 struct StreamTaskConfig {
     bool enable = true;
     /// Sampling timer period. Clamped to [min, max]_sample_period_us.

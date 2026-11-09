@@ -1,9 +1,9 @@
 #include "imu_bmo_055.hpp"
 
 #include "bno055_device.hpp"
+#include "imu_protocol.hpp"
 #include "tick_util.hpp"
 #include "wall_clock.hpp"
-#include "wire_codec.hpp"
 
 extern "C" {
 #include "bno055.h"
@@ -32,135 +32,6 @@ constexpr int64_t kStreamLogIntervalUs = 1000000;
 bool isValidOperationMode(uint8_t mode)
 {
     return mode <= BNO055_OPERATION_MODE_NDOF;
-}
-
-void encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap, uint8_t &out_len)
-{
-    out_len = 0;
-    uart_comm::wire::Writer w(out, cap);
-    w.appendU8(blob.has_sic ? 1U : 0U);
-    w.appendI16Le(blob.accel_offset_x);
-    w.appendI16Le(blob.accel_offset_y);
-    w.appendI16Le(blob.accel_offset_z);
-    w.appendI16Le(blob.accel_radius);
-
-    w.appendI16Le(blob.gyro_offset_x);
-    w.appendI16Le(blob.gyro_offset_y);
-    w.appendI16Le(blob.gyro_offset_z);
-
-    w.appendI16Le(blob.mag_offset_x);
-    w.appendI16Le(blob.mag_offset_y);
-    w.appendI16Le(blob.mag_offset_z);
-    w.appendI16Le(blob.mag_radius);
-
-    for (size_t i = 0; i < 9U; ++i) {
-        w.appendI16Le(blob.sic[i]);
-    }
-
-    if (w.ok()) {
-        out_len = static_cast<uint8_t>(w.size());
-    }
-}
-
-/// Decode an exactly kCalibrationBlobSize-byte blob. Rejects a has_sic byte
-/// other than 0 or 1.
-bool decodeCalibrationBlob(const uint8_t *payload, size_t payload_len, CalibrationBlob &out)
-{
-    if (payload_len != kCalibrationBlobSize) {
-        return false;
-    }
-
-    uart_comm::wire::Reader r(payload, payload_len);
-    const uint8_t has_sic = r.readU8();
-    if (has_sic > 1U) {
-        return false;
-    }
-
-    CalibrationBlob blob{};
-    blob.has_sic = (has_sic != 0U);
-    blob.accel_offset_x = r.readI16Le();
-    blob.accel_offset_y = r.readI16Le();
-    blob.accel_offset_z = r.readI16Le();
-    blob.accel_radius = r.readI16Le();
-
-    blob.gyro_offset_x = r.readI16Le();
-    blob.gyro_offset_y = r.readI16Le();
-    blob.gyro_offset_z = r.readI16Le();
-
-    blob.mag_offset_x = r.readI16Le();
-    blob.mag_offset_y = r.readI16Le();
-    blob.mag_offset_z = r.readI16Le();
-    blob.mag_radius = r.readI16Le();
-
-    for (size_t i = 0; i < 9U; ++i) {
-        blob.sic[i] = r.readI16Le();
-    }
-
-    if (!r.done()) {
-        return false;
-    }
-    out = blob;
-    return true;
-}
-
-bool encodeStreamSample(const ImuStreamSample &sample,
-                        uint16_t field_mask,
-                        uint8_t *out,
-                        size_t cap,
-                        uint8_t &out_len)
-{
-    out_len = 0;
-    uart_comm::wire::Writer w(out, cap);
-    w.appendU8(kProtocolVersion);
-    w.appendU16Le(field_mask);
-    w.appendU64Le(sample.timestamp_us);
-
-    const auto append_xyz = [&w](int16_t x, int16_t y, int16_t z) {
-        w.appendI16Le(x);
-        w.appendI16Le(y);
-        w.appendI16Le(z);
-    };
-
-    if ((field_mask & static_cast<uint16_t>(StreamField::Euler)) != 0U) {
-        append_xyz(sample.euler.h, sample.euler.r, sample.euler.p);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::Quaternion)) != 0U) {
-        w.appendI16Le(sample.quaternion.w);
-        w.appendI16Le(sample.quaternion.x);
-        w.appendI16Le(sample.quaternion.y);
-        w.appendI16Le(sample.quaternion.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::LinearAccel)) != 0U) {
-        append_xyz(sample.linear_accel.x, sample.linear_accel.y, sample.linear_accel.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::Gravity)) != 0U) {
-        append_xyz(sample.gravity.x, sample.gravity.y, sample.gravity.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawAccel)) != 0U) {
-        append_xyz(sample.raw_accel.x, sample.raw_accel.y, sample.raw_accel.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawGyro)) != 0U) {
-        append_xyz(sample.raw_gyro.x, sample.raw_gyro.y, sample.raw_gyro.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::RawMag)) != 0U) {
-        append_xyz(sample.raw_mag.x, sample.raw_mag.y, sample.raw_mag.z);
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::Temperature)) != 0U) {
-        w.appendU8(static_cast<uint8_t>(sample.temperature));
-    }
-    if ((field_mask & static_cast<uint16_t>(StreamField::CalibrationStatus)) != 0U) {
-        w.appendU8(sample.calibration_status.sys);
-        w.appendU8(sample.calibration_status.gyro);
-        w.appendU8(sample.calibration_status.accel);
-        w.appendU8(sample.calibration_status.mag);
-    }
-
-    if (!w.ok() || w.size() > static_cast<size_t>(UINT8_MAX)) {
-        return false;
-    }
-
-    out_len = static_cast<uint8_t>(w.size());
-    return true;
 }
 
 int16_t randomS16(int16_t min_value, int16_t max_value)
@@ -711,51 +582,44 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
 
     switch (subcommand) {
         case ConfigureSubcommand::SetStreamEnabled: {
-            if (len != kSetStreamEnabledBodySize || body[0] > 1U) {
+            bool enabled = false;
+            if (!protocol::decodeSetStreamEnabled(body, len, enabled)) {
                 return ResultCode::InvalidArgument;
             }
-            return setStreamEnabled(body[0] != 0U);
+            return setStreamEnabled(enabled);
         }
         case ConfigureSubcommand::SetStreamTiming: {
-            if (len != kSetStreamTimingBodySize) {
-                return ResultCode::InvalidArgument;
-            }
-            uart_comm::wire::Reader r(body, len);
-            const uint32_t sample_us = r.readU32Le();
-            const uint32_t telemetry_us = r.readU32Le();
-            if (!r.done()) {
+            uint32_t sample_us = 0;
+            uint32_t telemetry_us = 0;
+            if (!protocol::decodeSetStreamTiming(body, len, sample_us, telemetry_us)) {
                 return ResultCode::InvalidArgument;
             }
             uint32_t applied_sample_us = 0;
             uint32_t applied_telemetry_us = 0;
             const ResultCode rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
             if (rc == ResultCode::Ok) {
-                uart_comm::wire::Writer w(response_payload, response_capacity);
-                w.appendU32Le(applied_sample_us);
-                w.appendU32Le(applied_telemetry_us);
-                if (!w.ok()) {
+                const size_t n = protocol::encodeSetStreamTimingResponseBody(
+                    applied_sample_us, applied_telemetry_us, response_payload, response_capacity);
+                if (n == 0U) {
                     return ResultCode::InternalError;
                 }
-                response_len = static_cast<uint8_t>(w.size());
+                response_len = static_cast<uint8_t>(n);
             }
             return rc;
         }
         case ConfigureSubcommand::SetStreamFieldMask: {
-            if (len != kSetStreamFieldMaskBodySize) {
-                return ResultCode::InvalidArgument;
-            }
-            uart_comm::wire::Reader r(body, len);
-            const uint16_t mask = r.readU16Le();
-            if (!r.done()) {
+            uint16_t mask = 0;
+            if (!protocol::decodeSetStreamFieldMask(body, len, mask)) {
                 return ResultCode::InvalidArgument;
             }
             return setStreamFieldMask(mask);
         }
         case ConfigureSubcommand::SetOperationMode: {
-            if (len != kSetOperationModeBodySize) {
+            uint8_t mode = 0;
+            if (!protocol::decodeSetOperationMode(body, len, mode)) {
                 return ResultCode::InvalidArgument;
             }
-            return setOperationMode(body[0]);
+            return setOperationMode(mode);
         }
         case ConfigureSubcommand::ReadCalibration: {
             if (len != 0U) {
@@ -766,15 +630,16 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
             if (rc != ResultCode::Ok) {
                 return rc;
             }
-            if (response_capacity < kCalibrationBlobSize) {
+            const size_t n = protocol::encodeCalibrationBlob(blob, response_payload, response_capacity);
+            if (n == 0U) {
                 return ResultCode::InternalError;
             }
-            encodeCalibrationBlob(blob, response_payload, response_capacity, response_len);
+            response_len = static_cast<uint8_t>(n);
             return ResultCode::Ok;
         }
         case ConfigureSubcommand::WriteCalibration: {
             CalibrationBlob blob{};
-            if (!decodeCalibrationBlob(body, len, blob)) {
+            if (!protocol::decodeCalibrationBlob(body, len, blob)) {
                 return ResultCode::InvalidArgument;
             }
             return writeCalibration(blob);
@@ -796,18 +661,16 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
                                                   uint8_t extra_len)
 {
     uint8_t payload[kConfigureResponseHeaderSize + kMaxResponseExtraPayload] = {0};
-    uart_comm::wire::Writer w(payload, sizeof(payload));
-    w.appendU8(kProtocolVersion);
-    w.appendU8(seq);
-    w.appendU8(subcommand);
-    w.appendU8(static_cast<uint8_t>(code));
-    w.appendBytes(extra_payload, extra_len);
-    if (!w.ok()) {
+    protocol::ConfigureHeader header{};
+    header.seq = seq;
+    header.subcommand = subcommand;
+    const size_t len = protocol::encodeConfigureResponse(header, code, extra_payload, extra_len,
+                                                         payload, sizeof(payload));
+    if (len == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    return m_uart.sendCommand(m_config.configure_response_msg_type, payload,
-                              static_cast<uint8_t>(w.size()));
+    return m_uart.sendCommand(m_config.configure_response_msg_type, payload, static_cast<uint8_t>(len));
 }
 
 void ImuBno055Manager::stopTasks()
@@ -924,9 +787,9 @@ void ImuBno055Manager::streamTaskLoop()
             const int32_t divider = static_cast<int32_t>(m_telemetry_divider.load(std::memory_order_relaxed));
             countdown = std::max<int32_t>(countdown + divider, 1);
 
-            uint8_t tx_len = 0;
-            if (encodeStreamSample(sample, field_mask, tx_payload, sizeof(tx_payload), tx_len)) {
-                m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, tx_len);
+            const size_t tx_len = protocol::encodeStreamSample(sample, field_mask, tx_payload, sizeof(tx_payload));
+            if (tx_len > 0U) {
+                m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, static_cast<uint8_t>(tx_len));
             } else {
                 m_encode_error_count.fetch_add(1U, std::memory_order_relaxed);
             }
@@ -956,32 +819,26 @@ void ImuBno055Manager::configTaskLoop()
 
         uint8_t response_extra[kMaxResponseExtraPayload] = {0};
         uint8_t response_extra_len = 0;
-        uint8_t seq = 0;
-        uint8_t subcommand_raw = kUnparsedHeaderByte;
         ResultCode rc = ResultCode::InvalidArgument;
 
-        const bool version_ok = (frame.len >= 1U) && (frame.payload[0] == kProtocolVersion);
-        if (version_ok && frame.len >= kConfigureRequestHeaderSize) {
-            seq = frame.payload[1];
-            subcommand_raw = frame.payload[2];
+        protocol::ConfigureHeader header{};
+        const uint8_t *body = nullptr;
+        size_t body_len = 0;
+        if (protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len)) {
             rc = self->parseAndDispatchConfigure(
-                static_cast<ConfigureSubcommand>(subcommand_raw),
-                &frame.payload[kConfigureRequestHeaderSize],
-                static_cast<uint8_t>(frame.len - kConfigureRequestHeaderSize),
+                static_cast<ConfigureSubcommand>(header.subcommand),
+                body,
+                static_cast<uint8_t>(body_len),
                 response_extra_len,
                 response_extra,
                 sizeof(response_extra));
         } else {
-            // The header layout is unknown, so the subcommand cannot be
-            // echoed. seq is echoed when the version matches and it is present.
-            if (version_ok && frame.len >= 2U) {
-                seq = frame.payload[1];
-            }
             ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
                      frame.len, (frame.len >= 1U) ? frame.payload[0] : 0U, kProtocolVersion);
         }
 
-        const esp_err_t send_ret = self->sendConfigureResponse(seq, subcommand_raw, rc, response_extra, response_extra_len);
+        const esp_err_t send_ret = self->sendConfigureResponse(header.seq, header.subcommand, rc,
+                                                               response_extra, response_extra_len);
         if (send_ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to send IMU configure response: %s", esp_err_to_name(send_ret));
         }

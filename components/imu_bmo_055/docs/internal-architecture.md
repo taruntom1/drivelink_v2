@@ -15,15 +15,17 @@ This document describes the internal architecture of the `imu_bmo_055` ESP-IDF c
 - `include/imu_bmo_055.hpp`
   - Public manager API (`ImuBno055Manager`)
 - `include/imu_bmo_055_types.hpp`
-  - Public config structs, result codes, calibration data structs
+  - Public config structs (Kconfig defaults)
 - `include/imu_bmo_055_protocol.hpp`
-  - Protocol constants, subcommand IDs, stream field IDs
+  - Protocol constants, subcommand IDs, stream field IDs, result codes, calibration data structs (pure, no FreeRTOS)
+- `priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`
+  - Payload codec: configure header and body decoders, response, calibration blob and stream sample encoders, `ImuStreamSample`. Pure, so `test/host/` tests it
 - `priv_include/bno055_device.hpp`
   - Internal BNO055 device wrapper interface
 - `src/bno055_device.cpp`
   - I2C + Bosch driver integration and raw sensor/calibration access
 - `src/imu_bmo_055.cpp`
-  - Manager lifecycle, command decode/dispatch, stream encode/send, tasks
+  - Manager lifecycle, command dispatch, stream send, tasks
 - `vendor/bno055.c`, `vendor/bno055.h`
   - Bosch BNO055 driver, unmodified (private include dir)
 - `Kconfig`

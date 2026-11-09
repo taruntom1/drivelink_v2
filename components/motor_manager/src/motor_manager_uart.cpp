@@ -1,7 +1,7 @@
 #include "motor_manager.hpp"
 
 #include "esp_log.h"
-#include "wire_codec.hpp"
+#include "motor_protocol.hpp"
 
 static const char *const TAG = "motor_mgr_uart";
 
@@ -9,36 +9,16 @@ namespace motor_manager {
 
 namespace {
 
-constexpr size_t kConfigureHeaderBytes = 4U; // version + seq + subcommand + motor_id
-constexpr size_t kConfigureResponseHeaderBytes = 5U; // version + seq + subcommand + motor_id + result
-
-// Exact v3 body sizes (bytes after the configure header).
-constexpr size_t kCreateConfigureGpioBytes = 4U;
-constexpr size_t kCreateConfigureFloatCount = 15U;
-constexpr size_t kCreateConfigureBodyBytes =
-    kCreateConfigureGpioBytes + kCreateConfigureFloatCount * sizeof(float);     // 64
-constexpr size_t kSetModeBodyBytes = 1U;                                        // mode
-constexpr size_t kSetPidParamsBodyBytes = 1U + 4U * sizeof(float);              // kind + kp ki kd d_cutoff
-constexpr size_t kSetSetpointBodyBytes = 1U + sizeof(float);                    // kind + value
-constexpr size_t kSetTelemetryGlobalBodyBytes = 2U;                             // enabled + field_mask
-constexpr size_t kSetTelemetryMotorBodyBytes = 3U;                              // enabled + field_mask + apply
-constexpr size_t kSetTimingBodyBytes = 2U * sizeof(uint32_t);                   // control_us + telemetry_us
-constexpr size_t kSetTimingResponseBodyBytes = 2U * sizeof(uint32_t);
-
-bool parseControlMode(uint8_t raw, motor_controller::ControlMode &out)
+motor_controller::ControlMode toControlMode(ControlModeCode code)
 {
-    switch (raw) {
-        case 0:
-            out = motor_controller::ControlMode::OpenLoop;
-            return true;
-        case 1:
-            out = motor_controller::ControlMode::VelocityControl;
-            return true;
-        case 2:
-            out = motor_controller::ControlMode::PositionControl;
-            return true;
+    switch (code) {
+        case ControlModeCode::VelocityControl:
+            return motor_controller::ControlMode::VelocityControl;
+        case ControlModeCode::PositionControl:
+            return motor_controller::ControlMode::PositionControl;
+        case ControlModeCode::OpenLoop:
         default:
-            return false;
+            return motor_controller::ControlMode::OpenLoop;
     }
 }
 
@@ -49,18 +29,11 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     if (!isValid()) {
         return;
     }
+
     // This runs on the UART RX task (a real-time path): problems are counted,
     // not logged. The config task logs a rate-limited summary.
-    if (frame.len < 2U) {
-        m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
-        return;
-    }
-
-    const uint8_t version = frame.payload[0];
-    const uint8_t count = frame.payload[1];
-    // Exact match: trailing bytes mean the host and firmware disagree on the layout.
-    const size_t expected_len = 2U + static_cast<size_t>(count) * kSetpointEntrySize;
-    if (version != kProtocolVersion || frame.len != expected_len) {
+    uint8_t count = 0;
+    if (!protocol::decodeSetpointStreamHeader(frame.payload, frame.len, count)) {
         m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
         return;
     }
@@ -70,18 +43,11 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     // m_mutex. Without it, apply them directly as before.
     const bool use_mailbox = m_update_task.isRunning();
 
-    uart_comm::wire::Reader reader(&frame.payload[2], frame.len - 2U);
     for (uint8_t i = 0; i < count; ++i) {
-        const uint8_t motor_id = reader.readU8();
-        const uint8_t kind_raw = reader.readU8();
-        const float value = reader.readF32Le();
-        if (!reader.ok()) {
-            m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed); // unreachable: length checked above
-            return;
-        }
-        const auto kind = static_cast<SetpointKind>(kind_raw);
-        const ResultCode rc = use_mailbox ? queueSetpoint(motor_id, kind, value)
-                                          : setSetpoint(motor_id, kind, value);
+        const protocol::SetpointEntry entry = protocol::decodeSetpointEntry(frame.payload, frame.len, i);
+        const auto kind = static_cast<SetpointKind>(entry.kind);
+        const ResultCode rc = use_mailbox ? queueSetpoint(entry.motor_id, kind, entry.value)
+                                          : setSetpoint(entry.motor_id, kind, entry.value);
         if (rc != ResultCode::Ok) {
             m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
         }
@@ -105,200 +71,97 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
 
 ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t len)
 {
-    if (len < kConfigureHeaderBytes || payload[0] != kProtocolVersion) {
-        // The header layout is unknown, so subcommand and motor_id cannot be
-        // echoed. seq is echoed when the version matches and it is present.
-        const bool version_ok = (len >= 1U) && (payload[0] == kProtocolVersion);
-        const uint8_t seq = (version_ok && len >= 2U) ? payload[1] : 0U;
-        ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
-                 len, (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
-        return sendConfigureResponse(seq, kUnparsedHeaderByte, kUnparsedHeaderByte,
-                                     ResultCode::InvalidArgument);
+    protocol::ConfigureRequest req{};
+    const protocol::DecodeStatus status = protocol::decodeConfigure(payload, len, req);
+    const protocol::ConfigureHeader &hdr = req.header;
+
+    if (status != protocol::DecodeStatus::Ok) {
+        if (status == protocol::DecodeStatus::BadHeader) {
+            ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
+                     len, (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
+        } else {
+            ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (len=%u)", hdr.subcommand, len);
+        }
+        return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id,
+                                     protocol::resultForDecodeStatus(status));
     }
 
-    const uint8_t seq = payload[1];
-    const uint8_t subcommand_raw = payload[2];
-    const auto subcommand = static_cast<ConfigureSubcommand>(subcommand_raw);
-    const uint8_t motor_id = payload[3];
-    // Every body has a fixed size in v3 and must match it exactly: a
-    // different length means host and firmware disagree on the layout.
-    const size_t body_len = len - kConfigureHeaderBytes;
-    uart_comm::wire::Reader body(&payload[kConfigureHeaderBytes], body_len);
-
     ResultCode rc = ResultCode::InvalidArgument;
-    uint8_t resp_body[kSetTimingResponseBodyBytes] = {};
+    uint8_t resp_body[kSetTimingResponseBodySize] = {};
     size_t resp_body_len = 0;
 
-    switch (subcommand) {
+    switch (req.subcommand) {
         case ConfigureSubcommand::CreateMotor:
-        case ConfigureSubcommand::ConfigureMotor: {
-            if (body_len != kCreateConfigureBodyBytes) {
-                break;
-            }
-            MotorConfigPayload cfg{};
-            cfg.pwm_gpio = static_cast<gpio_num_t>(body.readU8());
-            cfg.dir_gpio = static_cast<gpio_num_t>(body.readU8());
-            cfg.enc_a = static_cast<gpio_num_t>(body.readU8());
-            cfg.enc_b = static_cast<gpio_num_t>(body.readU8());
-            cfg.counts_per_rev = body.readF32Le();
-            cfg.gear_ratio = body.readF32Le();
-            cfg.output_min = body.readF32Le();
-            cfg.output_max = body.readF32Le();
-            cfg.vel_kp = body.readF32Le();
-            cfg.vel_ki = body.readF32Le();
-            cfg.vel_kd = body.readF32Le();
-            cfg.vel_d_cutoff_hz = body.readF32Le();
-            cfg.pos_kp = body.readF32Le();
-            cfg.pos_ki = body.readF32Le();
-            cfg.pos_kd = body.readF32Le();
-            cfg.pos_d_cutoff_hz = body.readF32Le();
-            cfg.velocity_feedforward = body.readF32Le();
-            cfg.position_feedforward = body.readF32Le();
-            cfg.vel_filter_cutoff_hz = body.readF32Le();
-            if (!body.done()) {
-                break;
-            }
-
-            if (subcommand == ConfigureSubcommand::CreateMotor) {
-                rc = createMotor(motor_id, cfg);
-            } else {
-                rc = configureMotor(motor_id, cfg);
-            }
+            rc = createMotor(hdr.motor_id, req.motor);
             break;
-        }
-
+        case ConfigureSubcommand::ConfigureMotor:
+            rc = configureMotor(hdr.motor_id, req.motor);
+            break;
         case ConfigureSubcommand::DeleteMotor:
-            if (body_len == 0U) {
-                rc = deleteMotor(motor_id);
-            }
+            rc = deleteMotor(hdr.motor_id);
             break;
-
-        case ConfigureSubcommand::SetMode: {
-            if (body_len != kSetModeBodyBytes) {
-                break;
-            }
-            motor_controller::ControlMode mode{};
-            if (!parseControlMode(body.readU8(), mode)) {
-                break;
-            }
-            rc = setMode(motor_id, mode);
+        case ConfigureSubcommand::SetMode:
+            rc = setMode(hdr.motor_id, toControlMode(req.mode));
             break;
-        }
-
-        case ConfigureSubcommand::SetPidParams: {
-            if (body_len != kSetPidParamsBodyBytes) {
-                break;
-            }
-            const auto pid_kind = static_cast<PidKind>(body.readU8());
-            const float kp = body.readF32Le();
-            const float ki = body.readF32Le();
-            const float kd = body.readF32Le();
-            const float d_cutoff_hz = body.readF32Le();
-            if (!body.done()) {
-                break;
-            }
-            rc = setPidParams(motor_id, pid_kind, kp, ki, kd, d_cutoff_hz);
+        case ConfigureSubcommand::SetPidParams:
+            rc = setPidParams(hdr.motor_id, req.pid_kind, req.kp, req.ki, req.kd, req.d_cutoff_hz);
             break;
-        }
-
-        case ConfigureSubcommand::SetSetpoint: {
-            if (body_len != kSetSetpointBodyBytes) {
-                break;
-            }
-            const auto kind = static_cast<SetpointKind>(body.readU8());
-            const float value = body.readF32Le();
-            if (!body.done()) {
-                break;
-            }
-            rc = setSetpoint(motor_id, kind, value);
+        case ConfigureSubcommand::SetSetpoint:
+            rc = setSetpoint(hdr.motor_id, req.setpoint_kind, req.setpoint_value);
             break;
-        }
-
         case ConfigureSubcommand::StopMotor:
-            if (body_len == 0U) {
-                rc = stopMotor(motor_id);
-            }
+            rc = stopMotor(hdr.motor_id);
             break;
-
         case ConfigureSubcommand::ResetMotor:
-            if (body_len == 0U) {
-                rc = resetMotor(motor_id);
-            }
+            rc = resetMotor(hdr.motor_id);
             break;
-
-        case ConfigureSubcommand::SetTelemetryGlobal: {
-            if (body_len != kSetTelemetryGlobalBodyBytes) {
-                break;
-            }
-            const bool enabled = (body.readU8() != 0U);
-            const uint8_t field_mask = body.readU8();
-            rc = setTelemetryGlobal(enabled, field_mask);
+        case ConfigureSubcommand::SetTelemetryGlobal:
+            rc = setTelemetryGlobal(req.telemetry_enabled, req.telemetry_field_mask);
             break;
-        }
-
-        case ConfigureSubcommand::SetTelemetryMotor: {
-            if (body_len != kSetTelemetryMotorBodyBytes) {
-                break;
-            }
-            const bool enabled = (body.readU8() != 0U);
-            const uint8_t field_mask = body.readU8();
-            const bool update_field_mask = (body.readU8() != 0U);
-            rc = setTelemetryForMotor(motor_id, enabled, field_mask, update_field_mask);
+        case ConfigureSubcommand::SetTelemetryMotor:
+            rc = setTelemetryForMotor(hdr.motor_id, req.telemetry_enabled, req.telemetry_field_mask,
+                                      req.telemetry_apply_mask);
             break;
-        }
-
         case ConfigureSubcommand::SetTiming: {
             // Global: motor_id is ignored (and echoed back unchanged).
-            if (body_len != kSetTimingBodyBytes) {
-                break;
-            }
-            const uint32_t control_us = body.readU32Le();
-            const uint32_t telemetry_us = body.readU32Le();
-            if (!body.done()) {
-                break;
-            }
             uint32_t applied_control_us = 0;
             uint32_t applied_telemetry_us = 0;
-            rc = setTiming(control_us, telemetry_us, applied_control_us, applied_telemetry_us);
+            rc = setTiming(req.control_period_us, req.telemetry_period_us,
+                           applied_control_us, applied_telemetry_us);
             if (rc == ResultCode::Ok) {
-                uart_comm::wire::Writer resp(resp_body, sizeof(resp_body));
-                resp.appendU32Le(applied_control_us);
-                resp.appendU32Le(applied_telemetry_us);
-                resp_body_len = resp.size();
+                resp_body_len = protocol::encodeSetTimingResponseBody(applied_control_us, applied_telemetry_us,
+                                                                      resp_body, sizeof(resp_body));
             }
             break;
         }
-
         default:
-            rc = ResultCode::NotSupported;
+            rc = ResultCode::NotSupported; // unreachable: the decoder rejects unknown subcommands
             break;
     }
 
     if (rc == ResultCode::InvalidArgument) {
-        ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (body_len=%u)",
-                 subcommand_raw, static_cast<unsigned>(body_len));
+        ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected by the manager", hdr.subcommand);
     }
-    return sendConfigureResponse(seq, subcommand_raw, motor_id, rc, resp_body, resp_body_len);
+    return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id, rc, resp_body, resp_body_len);
 }
 
 ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
                                                const uint8_t *body, size_t body_len)
 {
-    uint8_t payload[kConfigureResponseHeaderBytes + kSetTimingResponseBodyBytes] = {};
-    uart_comm::wire::Writer w(payload, sizeof(payload));
-    w.appendU8(kProtocolVersion);
-    w.appendU8(seq);
-    w.appendU8(subcommand);
-    w.appendU8(motor_id);
-    w.appendU8(static_cast<uint8_t>(code));
-    w.appendBytes(body, body_len);
-    if (!w.ok()) {
+    uint8_t payload[kConfigureResponseHeaderSize + kSetTimingResponseBodySize] = {};
+    protocol::ConfigureHeader hdr{};
+    hdr.seq = seq;
+    hdr.subcommand = subcommand;
+    hdr.motor_id = motor_id;
+    const size_t payload_len =
+        protocol::encodeConfigureResponse(hdr, code, body, body_len, payload, sizeof(payload));
+    if (payload_len == 0U) {
         ESP_LOGE(TAG, "Configure response body too large (%u bytes)", static_cast<unsigned>(body_len));
         return ResultCode::InternalError;
     }
-    const auto payload_len = static_cast<uint8_t>(w.size());
 
-    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload, payload_len);
+    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload,
+                                             static_cast<uint8_t>(payload_len));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send configure response (msg=0x%02X): %s",
                  m_config.configure_response_msg_type, esp_err_to_name(ret));
