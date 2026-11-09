@@ -15,6 +15,11 @@ Consequences:
 - Before the first sync, motor timestamps are ~0 (1970). After the first sync they jump to ~1.7e15. A host decoder that follows the README breaks.
 - Every periodic sync calls `settimeofday()` and **steps** the clock, so motor timestamps can go backwards or jump forwards by the drift accumulated over 5 s.
 
+**Status: partly fixed.**
+- The README drift is fixed. The motor_manager README now says `timestamp_us` comes from `gettimeofday()` (host-synced once TimeSync has run).
+- The motor timestamp is now latched in the control tick that sampled the motors (`wallClockUs()` in `motor_manager.cpp`).
+- Still open: the two streams use different time bases, and the clock is still stepped (T2).
+
 **Recommendation**: pick one base for all streams. The usual choice is the synced Unix time, because that is what time_sync exists for. Build it as `esp_timer_get_time() + offset` that is *slewed*, not stepped (see T2). Expose one `time_sync::nowUs()` helper and use it from both managers. Update both READMEs.
 
 ---
@@ -37,4 +42,4 @@ Each successful sync overwrites the system time. Besides the telemetry jumps in 
 - `corrected_now_us = t3 + offset` is applied a few µs to ms after `t3`: logging, mutex, and other tasks preempting at priority 6. Recompute "now" right before `settimeofday`: `nowUnixUs() + offset`.
 - `TimeSync` starts the periodic task inside its constructor when `sync_interval_ms > 0` ([time_sync.cpp:134-139](../components/time_sync/time_sync.cpp)), and `main.cpp` calls `startPeriodicSync()` again ([main.cpp:58](../main/main.cpp)). The second call is a no-op. Remove one of them; the explicit call in `main` is clearer.
 - Task stack (4096) and priority (6) are hard-coded ([time_sync.cpp:219-225](../components/time_sync/time_sync.cpp)), unlike every other component, which uses Kconfig.
-- Shutdown: see C2 in [01](01-concurrency-and-lifecycle.md). The periodic task sleeps 5 s, so `stopPeriodicSync()` always force-deletes it.
+- Shutdown: see C2 in [01](01-concurrency-and-lifecycle.md). The periodic task sleeps 5 s, so `stopPeriodicSync()` always force-deletes it. **Fixed** by C1/C2: the task is a `StoppableTask`, and `sleepUntil` wakes as soon as a stop is requested.

@@ -26,7 +26,7 @@ Problems:
 | `counts_per_rev`, `gear_ratio` | [motor_controller.cpp:38-39](../components/motor_controller/src/motor_controller.cpp) | NaN or Inf pass the `> 0` checks (`NaN > 0` is false, so it falls back to 1.0f, OK). `+Inf` is accepted, and every angle becomes 0. |
 | PID gains | [pid_controller.cpp](../components/pid/src/pid_controller.cpp) `setTunings` | NaN passes `< 0` checks. One NaN gain makes the output NaN. `std::clamp(NaN, …)` returns NaN, and `setSpeed(NaN)` ends up computing a compare value from `fabsf(NaN)`, which is undefined behaviour in the cast to `uint32_t`. |
 | Setpoints | [motor_manager.cpp:357-403](../components/motor_manager/src/motor_manager.cpp) | NaN/Inf velocity or position setpoints go straight into the PID. |
-| `sample_time_ms` | uint32 → `unsigned` | Values in the millions are accepted. See M2. |
+| `sample_time_ms` | uint32 → `unsigned` | Values in the millions are accepted. See M2. **No longer applicable:** the field was removed in protocol v3. The new filter cutoffs are checked (finite and ≥ 0), and the control and telemetry periods are clamped in `setTiming()`. |
 
 **Fix**: one `isFiniteAndInRange()` gate in `parseAndDispatchConfigure` / `handleSetpointStream`. The project guideline asks for exactly this: "Clamp user-facing numeric inputs at API boundaries".
 
@@ -44,13 +44,15 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 | [encoder.cpp:125](../components/rotary_encoder_hal/src/encoder.cpp) | `pcnt_unit_get_count` in `getCount()`: on failure it returns 0, which looks like a valid position |
 | [encoder.cpp:164](../components/rotary_encoder_hal/src/encoder.cpp) | `pcnt_unit_clear_count` |
 | [mcpwm_pool.cpp:213-250](../components/motor_hal/src/mcpwm_pool.cpp), [pcnt_pool.cpp:207-226](../components/rotary_encoder_hal/src/pcnt_pool.cpp) | All teardown calls in `deallocate()` |
-| [time_sync.cpp:157](../components/time_sync/time_sync.cpp), [motor_manager.cpp:135-136](../components/motor_manager/src/motor_manager.cpp) | `registerCallback` on unregister |
+| [time_sync.cpp:157](../components/time_sync/time_sync.cpp), [motor_manager.cpp:135-136](../components/motor_manager/src/motor_manager.cpp) | `registerCallback` on unregister. **No longer applicable:** unregistering is now `CallbackRegistration::reset()`, which has no return code to check (see C3). |
 
 ---
 
 ## E4. Low: logging inside a critical section
 
 [encoder.cpp:36-41](../components/rotary_encoder_hal/src/encoder.cpp): `update_rate_sample_locked()` runs under `taskENTER_CRITICAL` and calls `ESP_LOGE` on failure. Logging from a critical section is not allowed in ESP-IDF: it can block on the console lock, which trips an assert or deadlocks. Record the error code and log after `taskEXIT_CRITICAL`.
+
+**Status: still open, but no longer on the control path.** `MotorController` no longer calls `Encoder::getRate()` / `getDirection()`; it computes velocity from `getCount()` deltas. The bug remains in the encoder HAL for anyone else who calls those methods.
 
 ---
 
@@ -64,4 +66,4 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 - `createMotor` returns `InternalError` for every HAL failure, including running out of PCNT units, which is really `CapacityReached`.
 - `sendConfigureResponse` returns `InternalError` when TX fails, which overwrites the real result `code` that the caller then logs. The motor operation may have succeeded.
-- `Parser` counts an oversized `LEN` as a `crc_error`.
+- `Parser` counts an oversized `LEN` as a `crc_error`. **Fixed** by the parser rewrite (P1): it has its own `length_errors` counter.

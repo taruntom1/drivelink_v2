@@ -39,6 +39,8 @@ If the sensor is unplugged or the I²C bus fails at boot, the manager logs a war
 
 Nothing in `Bno055Device` needs this file. All bus callbacks are provided by the thunks in `bno055_device.cpp`.
 
+*Update:* the change is no longer uncommitted. Commit `6f850fb` added `bno055_support.c` to the build on purpose, and `CLAUDE.md` notes that it is compiled in but never called. The risks above still apply.
+
 **Recommendation**: revert the CMake change. Better still, move `bno055_support.c` into `docs/` or delete it, so it is not mistaken for part of the build. If the change was made to fix a link error, the missing symbol should be reported. It is not one this component defines or references.
 
 ---

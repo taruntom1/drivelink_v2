@@ -2,6 +2,8 @@
 
 Nothing here is a crisis at the current load (≤ 4 motors, 100 Hz loop, a few kB/s of UART). These items matter as rates go up.
 
+*Update:* the motor control loop now defaults to 1 kHz, driven by an esp_timer. Telemetry is still sent at 100 Hz by default, because it is decimated separately from the control rate.
+
 ---
 
 ## F1. Medium: the TX task scans all 64 stream slots and takes/gives a mutex per slot on every wake-up
@@ -34,8 +36,12 @@ Every `sendCommand` and `sendData` wakes the TX task, which then does 64 `xSemap
 
 ## F4. Low: logging in hot paths
 
-- [motor_controller.cpp:117,126](../components/motor_controller/src/motor_controller.cpp): `ESP_LOGD` with 3 floats per motor per 10 ms tick. It is compiled in at the default log level and evaluated whenever `LOG_LOCAL_LEVEL ≥ DEBUG`. Fine as debug, but don't enable it in production builds.
-- [motor_manager_uart.cpp:96-99](../components/motor_manager/src/motor_manager_uart.cpp): `ESP_LOGW` per rejected setpoint entry, on the RX task. A host streaming setpoints for a deleted motor at 100 Hz floods the log and slows RX. Rate-limit it.
+- [motor_controller.cpp:117,126](../components/motor_controller/src/motor_controller.cpp): `ESP_LOGD` with 3 floats per motor per 10 ms tick. It is compiled in at the default log level and evaluated whenever `LOG_LOCAL_LEVEL ≥ DEBUG`. Fine as debug, but don't enable it in production builds. **Fixed:** `update()` no longer logs.
+- [motor_manager_uart.cpp:96-99](../components/motor_manager/src/motor_manager_uart.cpp): `ESP_LOGW` per rejected setpoint entry, on the RX task. A host streaming setpoints for a deleted motor at 100 Hz floods the log and slows RX. Rate-limit it. **Still open, and it now matters more:**
+  - With the update task running, the RX task only fills the mailbox and rejects only on capacity.
+  - An unknown motor id is rejected later, in `applyPendingSetpointsLocked()`. That runs on the control task while it holds `m_mutex`, and it logs one `ESP_LOGW` per entry.
+  - If the console blocks, the control tick stalls and config commands time out.
+  - Fix: rate-limit the warning, or reject unknown ids in `queueSetpoint()`.
 - `PidController::setMode`/`reset` log at INFO, and `setMode` on the controller resets twice, so each mode change prints 3–4 lines.
 
 ---
@@ -43,6 +49,8 @@ Every `sendCommand` and `sendData` wakes the TX task, which then does 64 `xSemap
 ## F5. Low: `getAngle()` / `getAngularVelocity()` re-read hardware in telemetry
 
 [motor_controller.cpp:226-256](../components/motor_controller/src/motor_controller.cpp): in VelocityControl mode, `getAngle()` reads PCNT directly. In PositionControl mode, `getAngularVelocity()` calls `getRate()`, which may trigger a fresh PCNT read under a spinlock. `update()` has just read both values one line earlier in the same task tick. Cache both every update regardless of mode, and have the getters return the cache.
+
+**Status: fixed.** `update(dt)` reads the encoder once per tick in every mode and caches angle, velocity and output. `getAngle()`, `getAngularVelocity()` and `getOutput()` return the cache, so telemetry never touches PCNT.
 
 ---
 
