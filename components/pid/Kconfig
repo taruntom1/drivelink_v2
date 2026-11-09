@@ -1,14 +1,5 @@
 menu "PID Controller Configuration"
 
-    config PID_DEFAULT_SAMPLE_TIME_MS
-        int "Default sample time in milliseconds"
-        default 10
-        range 1 1000
-        help
-            Default PID computation interval. 10 ms (100 Hz) is typical
-            for motor speed control. Can be overridden per-instance via
-            PidConfig::sample_time_ms.
-
     config PID_DEFAULT_OUTPUT_MIN
         int "Default output minimum (x1000)"
         default -1000
@@ -27,14 +18,15 @@ menu "PID Controller Configuration"
             1000 represents 1.0 (full forward).
             Can be overridden per-instance via PidConfig::output_max.
 
-    config PID_DEFAULT_DERIVATIVE_FILTER_ALPHA
-        int "Default derivative filter coefficient (x1000)"
-        default 1000
-        range 1 1000
+    config PID_DEFAULT_DERIVATIVE_CUTOFF_HZ
+        int "Default derivative filter cutoff (Hz)"
+        default 0
+        range 0 10000
         help
-            Low-pass filter coefficient for the derivative term, scaled by 1000.
-            1000 (=1.0) means no filtering (raw derivative).
-            Lower values provide more smoothing.
-            200 (=0.2) is a reasonable starting point for noisy measurements.
+            Cutoff frequency of the first-order low-pass filter on the
+            derivative term. 0 disables the filter (raw derivative).
+            Because it is a frequency rather than a per-sample coefficient,
+            the filter behaves the same at any loop rate.
+            Can be overridden per-instance via PidConfig::derivative_cutoff_hz.
 
 endmenu

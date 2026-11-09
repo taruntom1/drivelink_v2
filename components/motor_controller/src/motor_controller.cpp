@@ -8,6 +8,25 @@ static constexpr float TWO_PI = 2.0f * static_cast<float>(M_PI);
 
 namespace motor_controller {
 
+namespace {
+
+bool isValidCutoff(float hz)
+{
+    return std::isfinite(hz) && hz >= 0.0f;
+}
+
+// Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
+// `dt_s` seconds. 1 means "no filtering".
+float lowPassAlpha(float hz, float dt_s)
+{
+    if (hz <= 0.0f) {
+        return 1.0f;
+    }
+    return 1.0f - std::exp(-TWO_PI * hz * dt_s);
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -39,10 +58,17 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
       m_gear_ratio(config.gear_ratio > 0.0f ? config.gear_ratio : 1.0f),
       m_output_min(std::clamp(config.output_min, -1.0f, 1.0f)),
       m_output_max(std::clamp(config.output_max, -1.0f, 1.0f)),
+      m_vel_filter_cutoff_hz(isValidCutoff(config.velocity_filter_cutoff_hz)
+                                 ? config.velocity_filter_cutoff_hz
+                                 : 0.0f),
+      m_estimator_reset_requested(false),
+      m_estimator_primed(false),
+      m_prev_count(0),
+      m_vel_estimate(0.0f),
       m_cached_angle_rad(0.0f),
       m_cached_velocity_rad_s(0.0f),
-      m_cached_angle_valid(false),
-      m_cached_velocity_valid(false)
+      m_cached_output(0.0f),
+      m_cached_valid(false)
 {
     m_mux = portMUX_INITIALIZER_UNLOCKED;
     if (m_output_min >= m_output_max) {
@@ -50,6 +76,10 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
                  m_output_min, m_output_max);
         m_output_min = -1.0f;
         m_output_max =  1.0f;
+    }
+    if (!isValidCutoff(config.velocity_filter_cutoff_hz)) {
+        ESP_LOGW(TAG, "Invalid velocity filter cutoff (%.3f Hz); disabling the filter",
+                 config.velocity_filter_cutoff_hz);
     }
 
     if (!m_motor.isValid()) {
@@ -64,10 +94,10 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
     if (isValid()) {
         ESP_LOGI(TAG,
                  "MotorController ready: pwm=%d dir=%d encA=%d encB=%d "
-                 "cpr=%.1f gear=%.3f out=[%.2f,%.2f]",
+                 "cpr=%.1f gear=%.3f out=[%.2f,%.2f] vel_cutoff=%.1f Hz",
                  pwm_gpio, dir_gpio, enc_a, enc_b,
                  m_counts_per_rev.load(), m_gear_ratio.load(),
-                 m_output_min, m_output_max);
+                 m_output_min, m_output_max, m_vel_filter_cutoff_hz.load());
     }
 }
 
@@ -75,7 +105,39 @@ MotorController::MotorController(gpio_num_t pwm_gpio, gpio_num_t dir_gpio,
 // Main update loop
 // ---------------------------------------------------------------------------
 
-void MotorController::update()
+float MotorController::estimateVelocity(int32_t count, float dt_s,
+                                        float counts_per_rev, float gear_ratio)
+{
+    if (m_estimator_reset_requested.exchange(false, std::memory_order_acq_rel)) {
+        m_estimator_primed = false;
+    }
+
+    if (!m_estimator_primed) {
+        // First sample: there is no previous count to difference against.
+        m_prev_count = count;
+        m_vel_estimate = 0.0f;
+        m_estimator_primed = true;
+        return m_vel_estimate;
+    }
+
+    if (!(dt_s > 0.0f) || !std::isfinite(dt_s)) {
+        return m_vel_estimate;
+    }
+
+    // The PCNT accumulator makes the count effectively unbounded; difference
+    // in unsigned arithmetic so a wrap of the int32 value stays well-defined.
+    const int32_t delta = static_cast<int32_t>(
+        static_cast<uint32_t>(count) - static_cast<uint32_t>(m_prev_count));
+    m_prev_count = count;
+
+    const float raw = rateToAngularVelocity(static_cast<float>(delta) / dt_s,
+                                            counts_per_rev, gear_ratio);
+    const float alpha = lowPassAlpha(m_vel_filter_cutoff_hz.load(std::memory_order_relaxed), dt_s);
+    m_vel_estimate += alpha * (raw - m_vel_estimate);
+    return m_vel_estimate;
+}
+
+void MotorController::update(float dt_s)
 {
     if (!isValid()) {
         return;
@@ -84,60 +146,47 @@ void MotorController::update()
     // Snapshot mode/limits and single-value state so concurrent setters from
     // other tasks see valid values without lengthy critical sections.
     ControlMode mode;
-    float open_duty, vel_sp, pos_sp;
-    float vel_ff, pos_ff;
-    float counts_per_rev, gear_ratio;
     float out_min, out_max;
 
     taskENTER_CRITICAL(&m_mux);
-    mode          = m_mode;
-    out_min       = m_output_min;
-    out_max       = m_output_max;
+    mode    = m_mode;
+    out_min = m_output_min;
+    out_max = m_output_max;
     taskEXIT_CRITICAL(&m_mux);
-    open_duty     = m_open_loop_duty.load();
-    vel_sp        = m_vel_setpoint.load();
-    pos_sp        = m_pos_setpoint.load();
-    vel_ff        = m_vel_feedforward.load();
-    pos_ff        = m_pos_feedforward.load();
-    counts_per_rev = m_counts_per_rev.load();
-    gear_ratio    = m_gear_ratio.load();
+    const float open_duty      = m_open_loop_duty.load();
+    const float vel_sp         = m_vel_setpoint.load();
+    const float pos_sp         = m_pos_setpoint.load();
+    const float vel_ff         = m_vel_feedforward.load();
+    const float pos_ff         = m_pos_feedforward.load();
+    const float counts_per_rev = m_counts_per_rev.load();
+    const float gear_ratio     = m_gear_ratio.load();
+
+    // Read the encoder once per cycle; angle and velocity come from the same sample.
+    const int32_t count = m_encoder.getCount();
+    const float angle = countsToRadians(count, counts_per_rev, gear_ratio);
+    const float omega = estimateVelocity(count, dt_s, counts_per_rev, gear_ratio);
 
     float output = 0.0f;
-
     switch (mode) {
         case ControlMode::OpenLoop:
             output = std::clamp(open_duty, out_min, out_max);
             break;
 
-        case ControlMode::VelocityControl: {
-            float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
-            output = m_vel_pid.compute(omega, vel_sp, vel_ff);
-            m_cached_velocity_rad_s.store(omega, std::memory_order_release);
-            m_cached_velocity_valid.store(true, std::memory_order_release);
-            ESP_LOGD(TAG, "VelCtrl: sp=%.3f meas=%.3f out=%.3f", vel_sp, omega, output);
+        case ControlMode::VelocityControl:
+            output = m_vel_pid.compute(omega, vel_sp, dt_s, vel_ff);
             break;
-        }
 
-        case ControlMode::PositionControl: {
-            float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
-            output = m_pos_pid.compute(angle, pos_sp, pos_ff);
-            m_cached_angle_rad.store(angle, std::memory_order_release);
-            m_cached_angle_valid.store(true, std::memory_order_release);
-            ESP_LOGD(TAG, "PosCtrl: sp=%.3f meas=%.3f out=%.3f", pos_sp, angle, output);
+        case ControlMode::PositionControl:
+            output = m_pos_pid.compute(angle, pos_sp, dt_s, pos_ff);
             break;
-        }
-    }
-
-    if (mode == ControlMode::OpenLoop) {
-        float angle = countsToRadians(m_encoder.getCount(), counts_per_rev, gear_ratio);
-        float omega = rateToAngularVelocity(m_encoder.getRate(), counts_per_rev, gear_ratio);
-        m_cached_angle_rad.store(angle, std::memory_order_release);
-        m_cached_velocity_rad_s.store(omega, std::memory_order_release);
-        m_cached_angle_valid.store(true, std::memory_order_release);
-        m_cached_velocity_valid.store(true, std::memory_order_release);
     }
 
     m_motor.setSpeed(output);
+
+    m_cached_angle_rad.store(angle, std::memory_order_relaxed);
+    m_cached_velocity_rad_s.store(omega, std::memory_order_relaxed);
+    m_cached_output.store(output, std::memory_order_relaxed);
+    m_cached_valid.store(true, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +197,7 @@ void MotorController::setMode(ControlMode mode)
 {
     // Stop motor first for safety, then switch mode.
     m_motor.stop();
+    m_cached_output.store(0.0f, std::memory_order_relaxed);
 
     const float cpr = m_counts_per_rev.load();
     const float gr = m_gear_ratio.load();
@@ -228,31 +278,23 @@ float MotorController::getAngle() const
     if (!m_encoder.isValid()) {
         return 0.0f;
     }
-    const ControlMode mode = getMode();
-    const bool cached_valid = m_cached_angle_valid.load(std::memory_order_acquire);
-    const float cached_angle = m_cached_angle_rad.load(std::memory_order_acquire);
-    const float cpr = m_counts_per_rev.load();
-    const float gr  = m_gear_ratio.load();
-    if (!cached_valid || mode == ControlMode::VelocityControl) {
-        return countsToRadians(m_encoder.getCount(), cpr, gr);
+    if (m_cached_valid.load(std::memory_order_acquire)) {
+        return m_cached_angle_rad.load(std::memory_order_relaxed);
     }
-    return cached_angle;
+    return countsToRadians(m_encoder.getCount(), m_counts_per_rev.load(), m_gear_ratio.load());
 }
 
 float MotorController::getAngularVelocity() const
 {
-    if (!m_encoder.isValid()) {
+    if (!m_encoder.isValid() || !m_cached_valid.load(std::memory_order_acquire)) {
         return 0.0f;
     }
-    const ControlMode mode = getMode();
-    const bool cached_valid = m_cached_velocity_valid.load(std::memory_order_acquire);
-    const float cached_velocity = m_cached_velocity_rad_s.load(std::memory_order_acquire);
-    const float cpr = m_counts_per_rev.load();
-    const float gr  = m_gear_ratio.load();
-    if (!cached_valid || mode == ControlMode::PositionControl) {
-        return rateToAngularVelocity(m_encoder.getRate(), cpr, gr);
-    }
-    return cached_velocity;
+    return m_cached_velocity_rad_s.load(std::memory_order_relaxed);
+}
+
+float MotorController::getOutput() const
+{
+    return m_cached_output.load(std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,10 +311,24 @@ void MotorController::setPositionPidTunings(float kp, float ki, float kd)
     m_pos_pid.setTunings(kp, ki, kd);
 }
 
-void MotorController::setSampleTime(unsigned int ms)
+void MotorController::setVelocityDerivativeCutoff(float hz)
 {
-    m_vel_pid.setSampleTime(ms);
-    m_pos_pid.setSampleTime(ms);
+    m_vel_pid.setDerivativeCutoff(hz);
+}
+
+void MotorController::setPositionDerivativeCutoff(float hz)
+{
+    m_pos_pid.setDerivativeCutoff(hz);
+}
+
+void MotorController::setVelocityFilterCutoff(float hz)
+{
+    if (!isValidCutoff(hz)) {
+        ESP_LOGW(TAG, "setVelocityFilterCutoff: cutoff must be finite and >= 0 (got %.3f); ignoring", hz);
+        return;
+    }
+    m_vel_filter_cutoff_hz.store(hz);
+    ESP_LOGI(TAG, "velocity filter cutoff updated to %.1f Hz", hz);
 }
 
 void MotorController::setCountsPerRev(float counts)
@@ -329,6 +385,7 @@ void MotorController::stop()
 {
     m_motor.stop();
     m_open_loop_duty.store(0.0f);
+    m_cached_output.store(0.0f, std::memory_order_relaxed);
 }
 
 void MotorController::reset()
@@ -341,10 +398,14 @@ void MotorController::reset()
     m_open_loop_duty.store(0.0f);
     m_vel_setpoint.store(0.0f);
     m_pos_setpoint.store(0.0f);
-    m_cached_angle_rad.store(0.0f, std::memory_order_release);
-    m_cached_velocity_rad_s.store(0.0f, std::memory_order_release);
-    m_cached_angle_valid.store(false, std::memory_order_release);
-    m_cached_velocity_valid.store(false, std::memory_order_release);
+
+    // The encoder count jumped to 0: the next update() must not difference
+    // against the old count.
+    m_estimator_reset_requested.store(true, std::memory_order_release);
+    m_cached_valid.store(false, std::memory_order_release);
+    m_cached_angle_rad.store(0.0f, std::memory_order_relaxed);
+    m_cached_velocity_rad_s.store(0.0f, std::memory_order_relaxed);
+    m_cached_output.store(0.0f, std::memory_order_relaxed);
 }
 
 float MotorController::countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const

@@ -3,6 +3,7 @@
 #include "motor_manager_types.hpp"
 #include "uart_comm.hpp"
 #include "stoppable_task.hpp"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -30,14 +31,35 @@ public:
     ResultCode deleteMotor(uint8_t motor_id);
     ResultCode configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
     ResultCode setMode(uint8_t motor_id, motor_controller::ControlMode mode);
-    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, unsigned int sample_time_ms);
+    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
     ResultCode setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
     ResultCode stopMotor(uint8_t motor_id);
     ResultCode resetMotor(uint8_t motor_id);
     ResultCode setTelemetryGlobal(bool enabled, uint8_t field_mask);
     ResultCode setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
 
-    void updateAll();
+    /// Change the control loop and telemetry periods at runtime.
+    /// A value of 0 keeps the current setting, so setTiming(0, 0, ...) just
+    /// reads them. The control period is clamped to
+    /// [kControlPeriodMinUs, kControlPeriodMaxUs]. The telemetry period is
+    /// clamped to [control period, kTelemetryPeriodMaxUs] and rounded up to a
+    /// whole number of control periods; the requested value is remembered so
+    /// the telemetry rate is re-derived when only the control period changes.
+    /// @param applied_control_period_us    Control period now in effect.
+    /// @param applied_telemetry_period_us  Telemetry period now in effect.
+    ResultCode setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
+                         uint32_t &applied_control_period_us,
+                         uint32_t &applied_telemetry_period_us);
+
+    /// Number of control ticks that were late or skipped (because the loop
+    /// overran or the manager mutex was busy) since construction.
+    uint32_t getControlOverrunCount() const;
+
+    /// Run one control cycle for every motor with the given dt. Only needed
+    /// when the internal update task is disabled.
+    void updateAll(float dt_s);
+    /// Encode and send one telemetry packet now. Only needed when the
+    /// internal update task is disabled.
     void publishTelemetry();
     void handleSetpointStream(const uart_comm::RxFrame &frame);
     void handleConfigureCommand(const uart_comm::RxFrame &frame);
@@ -63,15 +85,21 @@ private:
         std::array<float, kSetpointKindCount> value{};
     };
 
+    static void controlTimerCallback(void *arg);
     void updateTaskLoop();
     void configTaskLoop();
-    ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len) const;
+    esp_err_t startControlTimer();
+    void stopControlTimer();
+    void updateAllLocked(float dt_s);
+    ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
     ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
-    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code);
+    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
+                                     const uint8_t *body = nullptr, size_t body_len = 0);
     void stopTasks();
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
-    void applyPendingSetpoints();
+    ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
+    void applyPendingSetpointsLocked();
 
     uart_comm::UartComm &m_uart;
     ManagerConfig m_config;
@@ -86,6 +114,14 @@ private:
     rtos_util::StoppableTask m_config_task;
     uart_comm::CallbackRegistration m_configure_cb;
     uart_comm::CallbackRegistration m_setpoint_cb;
+
+    // Control timing. The periods are written by setTiming() under m_mutex
+    // and read lock-free by the update task.
+    esp_timer_handle_t m_control_timer = nullptr;
+    std::atomic<uint32_t> m_control_period_us{0};
+    std::atomic<uint32_t> m_telemetry_divider{1};
+    uint32_t m_requested_telemetry_period_us = 0; // guarded by m_mutex
+    std::atomic<uint32_t> m_overrun_count{0};
 
     // Setpoint mailbox (C4): written by the UART RX task under a spinlock so
     // it never waits on m_mutex; drained by the update task each tick.

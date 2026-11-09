@@ -53,7 +53,8 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - IMU: `0x22` / `0x42`, stream `0x82`
   - Nothing checks for collisions between these IDs.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
-  - motor_manager and IMU are at v2: their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id).
+  - motor_manager is at v3 and IMU at v2. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id).
+  - motor_manager v3 configure bodies must have their exact size. `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 5-byte header.
   - time_sync is at v1. Its ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
@@ -66,6 +67,11 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - Registrations must not outlive the `UartComm` (its destructor aborts if one is still active).
   - Callbacks run on the RX task, so they must not block. Hand work off through a queue instead: managers forward configure commands to their own config task queue.
   - Setpoint streams go into a mailbox that the motor update task applies on its next tick.
+- **Motor control loop:**
+  - A periodic `esp_timer` (task dispatch) wakes the motor_manager update task, which is pinned to core 1 at priority 20. The loop does not depend on `CONFIG_FREERTOS_HZ`.
+  - Each tick passes `dt = elapsed ticks × period` to `MotorController::update(dt)` and on to the PIDs. Nothing stores a sample time.
+  - The tick only try-locks the manager mutex: a busy mutex skips the tick (counted as an overrun) rather than blocking it. Keep work done under `m_mutex` short.
+  - Shutdown stops the timer and waits out an in-flight callback before stopping the task.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
 
 ## Conventions (from `.github/copilot-instructions.md` and `.github/instructions/hal-component-patterns.instructions.md`)

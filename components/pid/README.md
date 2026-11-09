@@ -5,9 +5,9 @@ A lightweight, hardware-independent **PID controller implementation** designed f
 This module supports:
 
 * Closed-loop PID control
-* Configurable sampling time
+* Caller-supplied `dt` on every call (works with variable or changing loop rates)
 * Output clamping
-* Derivative filtering
+* Derivative filtering (cutoff in Hz)
 * Feedforward input
 * Runtime mode switching (Manual ↔ Automatic)
 
@@ -22,7 +22,7 @@ This module supports:
   * On measurement (default, avoids setpoint kick)
   * On error
 * ✔ Built-in **anti-windup via output clamping**
-* ✔ Configurable **sample time**
+* ✔ Explicit **`dt`** per call, so I and D stay correctly scaled if the loop is late or its period changes
 * ✔ Optional **feedforward term**
 * ✔ Safe transitions between modes
 
@@ -63,12 +63,11 @@ cfg.kd = 0.1f;
 Optional parameters:
 
 ```cpp
-cfg.sample_time_ms = 10;
 cfg.output_min = -1.0f;
 cfg.output_max = 1.0f;
 cfg.direction = esp_pid::Direction::Direct;
 cfg.derivative_mode = esp_pid::DerivativeMode::OnMeasurement;
-cfg.derivative_filter_alpha = 0.1f;
+cfg.derivative_cutoff_hz = 50.0f; // 0 = unfiltered (Kconfig default)
 ```
 
 ---
@@ -91,17 +90,19 @@ pid.setMode(esp_pid::Mode::Automatic);
 
 ### 5. Run in control loop
 
-Call this **at a fixed interval equal to `sample_time_ms`**:
+Pass the time since the previous call, in seconds:
 
 ```cpp
-float output = pid.compute(input, setpoint);
+float output = pid.compute(input, setpoint, dt_s);
 ```
 
 With feedforward:
 
 ```cpp
-float output = pid.compute(input, setpoint, feedforward);
+float output = pid.compute(input, setpoint, dt_s, feedforward);
 ```
+
+If `dt_s` is not positive (or not finite), the state is left untouched and the previous output is returned.
 
 ---
 
@@ -116,15 +117,20 @@ cfg.kd = 0.2f;
 esp_pid::PidController pid(cfg);
 pid.setMode(esp_pid::Mode::Automatic);
 
+int64_t last_us = esp_timer_get_time();
 while (true) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    const int64_t now_us = esp_timer_get_time();
+    const float dt_s = (now_us - last_us) * 1e-6f;
+    last_us = now_us;
+
     float measured = read_sensor();
     float target = 100.0f;
 
-    float control = pid.compute(measured, target);
+    float control = pid.compute(measured, target, dt_s);
 
     apply_output(control);
-
-    vTaskDelay(pdMS_TO_TICKS(cfg.sample_time_ms));
 }
 ```
 
@@ -192,14 +198,16 @@ Use **Reverse** when:
 
 ---
 
-## Sample Time
+## Timing and Derivative Filter
+
+There is no stored sample time: `compute()` scales the integral and derivative terms by the `dt_s` you pass. For a fixed-rate loop, pass the period. If you skip cycles, pass the real elapsed time.
 
 ```cpp
-pid.setSampleTime(20); // ms
+pid.setDerivativeCutoff(30.0f); // Hz, 0 = unfiltered
 ```
 
-* Must match your control loop timing
-* Internally rescales integral and derivative terms
+* First-order low-pass on the derivative rate. The coefficient is computed from `dt_s` on each call, so the filter behaves the same at any loop rate.
+* Negative or non-finite values are rejected.
 
 ---
 
@@ -236,14 +244,14 @@ You can improve performance by adding a feedforward term:
 
 ```cpp
 float ff = model_based_estimate(setpoint);
-float output = pid.compute(input, setpoint, ff);
+float output = pid.compute(input, setpoint, dt_s, ff);
 ```
 
 ---
 
 ## Best Practices
 
-* Call `compute()` at a **fixed, consistent interval**
+* Call `compute()` at a **fixed, consistent interval** and pass the matching `dt_s`
 * Start with **Ki = 0, Kd = 0**, tune Kp first
 * Add Ki to remove steady-state error
 * Add Kd to reduce overshoot

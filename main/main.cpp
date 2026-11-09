@@ -24,8 +24,7 @@ extern "C" void app_main(void)
     mgr_cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel;   // 0x80
     mgr_cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0x81
     mgr_cfg.use_mock_feedback = true;
-    mgr_cfg.update_task.enable = true;
-    mgr_cfg.update_task.period_ms = 10;
+    mgr_cfg.update_task.enable = true; // timer-driven; periods from Kconfig, changeable via SetTiming
 
     motor_manager::MotorManager manager(uart, mgr_cfg);
     if (!manager.isValid())

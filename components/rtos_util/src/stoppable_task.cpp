@@ -28,12 +28,17 @@ StoppableTask::~StoppableTask()
     vSemaphoreDelete(m_done);
 }
 
-esp_err_t StoppableTask::start(const char* name, uint32_t stack_size, UBaseType_t priority, Body body)
+esp_err_t StoppableTask::start(const char* name, uint32_t stack_size, UBaseType_t priority, Body body,
+                                BaseType_t core_id)
 {
     if (isRunning()) {
         return ESP_ERR_INVALID_STATE;
     }
     if (!body) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (core_id != tskNO_AFFINITY && (core_id < 0 || core_id >= portNUM_PROCESSORS)) {
+        ESP_LOGE(TAG, "%s: invalid core_id %d", (name != nullptr) ? name : "", static_cast<int>(core_id));
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -42,7 +47,8 @@ esp_err_t StoppableTask::start(const char* name, uint32_t stack_size, UBaseType_
     m_stop_requested.store(false, std::memory_order_release);
 
     TaskHandle_t handle = nullptr;
-    if (xTaskCreate(&StoppableTask::entry, m_name, stack_size, this, priority, &handle) != pdPASS) {
+    if (xTaskCreatePinnedToCore(&StoppableTask::entry, m_name, stack_size, this, priority, &handle,
+                                core_id) != pdPASS) {
         m_body = nullptr;
         return ESP_ERR_NO_MEM;
     }

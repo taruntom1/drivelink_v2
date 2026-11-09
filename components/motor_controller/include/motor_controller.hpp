@@ -19,9 +19,8 @@ enum class ControlMode {
 
 /// Full configuration for a MotorController instance.
 ///
-/// Both @p velocity_pid and @p position_pid embed an esp_pid::PidConfig which
-/// carries its own sample_time_ms. The convenience setter
-/// MotorController::setSampleTime() updates both simultaneously.
+/// There is no sample time here: the caller passes the elapsed time to every
+/// update() call, and the PIDs and velocity filter scale from that.
 struct MotorControllerConfig {
     /// Total encoder counts per one full revolution of the measured shaft.
     /// For a 4x-decoded quadrature encoder with N pulses/rev use N * 4.
@@ -53,6 +52,12 @@ struct MotorControllerConfig {
 
     /// Constant feedforward term added to position PID output.
     float position_feedforward = 0.0f;
+
+    /// Cutoff (Hz) of the first-order low-pass filter applied to the velocity
+    /// estimate (encoder count delta / dt, computed every update()).
+    /// 0 disables the filter.
+    float velocity_filter_cutoff_hz =
+        static_cast<float>(CONFIG_MOTOR_CTRL_DEFAULT_VEL_FILTER_CUTOFF_HZ);
 };
 
 /// Single-motor closed-loop and open-loop controller.
@@ -68,7 +73,6 @@ struct MotorControllerConfig {
 ///   cfg.velocity_pid.kp = 0.5f;
 ///   cfg.velocity_pid.ki = 0.1f;
 ///   cfg.velocity_pid.kd = 0.01f;
-///   cfg.velocity_pid.sample_time_ms = 10;
 ///
 ///   motor_controller::MotorController mc(
 ///       GPIO_NUM_1, GPIO_NUM_2,   // motor: pwm_gpio, dir_gpio
@@ -80,8 +84,8 @@ struct MotorControllerConfig {
 ///   mc.setMode(motor_controller::ControlMode::VelocityControl);
 ///   mc.setVelocitySetpoint(10.0f);  // 10 rad/s
 ///
-///   // Called periodically from a FreeRTOS task at cfg.velocity_pid.sample_time_ms:
-///   mc.update();
+///   // Called periodically from the control task, with the elapsed time:
+///   mc.update(dt_s);
 /// @endcode
 ///
 /// Thread safety:
@@ -89,12 +93,14 @@ struct MotorControllerConfig {
 ///     through an internal spinlock.
 ///   - setOpenLoopDuty(), setVelocitySetpoint(), setPositionSetpoint(),
 ///     setVelocityFeedforward(), setPositionFeedforward(), setCountsPerRev(),
-///     setGearRatio(), getAngle(), and getAngularVelocity() use lock-free atomic
-///     loads/stores for single-value state shared with update().
+///     setGearRatio(), setVelocityFilterCutoff(), getAngle(),
+///     getAngularVelocity() and getOutput() use lock-free atomic loads/stores
+///     for single-value state shared with update().
 ///   - PID tuning/reset setters (setVelocityPidTunings, setPositionPidTunings,
-///     setSampleTime, reset) mutate PID controller internals which are not
-///     individually thread-safe; call them from the same task as update(), or
-///     while the update loop is suspended.
+///     setVelocityDerivativeCutoff, setPositionDerivativeCutoff, reset) mutate
+///     PID controller internals which are not individually thread-safe; call
+///     them from the same task as update(), or while the update loop is
+///     suspended (MotorManager serializes both with its mutex).
 ///   - stop() is idempotent but should still be coordinated with the update task
 ///     for deterministic command sequencing.
 ///   - update() is not re-entrant; call it from a single task only.
@@ -124,10 +130,14 @@ public:
 
     /// Execute one control cycle.
     ///
-    /// Reads encoder feedback, runs the active PID controller (if applicable),
-    /// and drives the motor. Must be called at the configured sample_time_ms
-    /// interval. Not re-entrant; call from a single FreeRTOS task.
-    void update();
+    /// Reads the encoder once, updates the velocity estimate (count delta /
+    /// dt, low-pass filtered), runs the active PID controller (if applicable)
+    /// with the same dt, drives the motor, and caches angle, velocity and
+    /// output for the getters. Not re-entrant; call from a single task.
+    /// @param dt_s  Seconds elapsed since the previous update(). Ignored on
+    ///              the first call after construction or reset(), which
+    ///              only primes the velocity estimator.
+    void update(float dt_s);
 
     // -------------------------------------------------------------------------
     // Mode control
@@ -173,13 +183,17 @@ public:
     // Feedback (thread-safe; reads are atomic or spinlock-protected)
     // -------------------------------------------------------------------------
 
-    /// @return Current angular position of the output shaft in radians.
-    ///         Derived from the accumulated encoder count.
+    /// @return Angular position of the output shaft in radians, as sampled by
+    ///         the last update(). Before the first update(), it is read
+    ///         directly from the encoder count.
     float getAngle() const;
 
-    /// @return Current angular velocity of the output shaft in radians/second.
-    ///         Derived from the encoder rate (counts/s) sampled by the encoder HAL.
+    /// @return Filtered angular velocity of the output shaft in radians/second,
+    ///         as estimated by the last update(). 0 before the first estimate.
     float getAngularVelocity() const;
+
+    /// @return Motor output (duty in [-1, 1]) applied by the last update().
+    float getOutput() const;
 
     // -------------------------------------------------------------------------
     // Runtime configuration setters
@@ -197,9 +211,17 @@ public:
     /// @param kd  Derivative gain (>= 0).
     void setPositionPidTunings(float kp, float ki, float kd);
 
-    /// Set the PID sample time for both velocity and position controllers.
-    /// @param ms  Sample period in milliseconds (> 0).
-    void setSampleTime(unsigned int ms);
+    /// Set the velocity PID derivative filter cutoff.
+    /// @param hz  Cutoff in Hz (>= 0; 0 = unfiltered).
+    void setVelocityDerivativeCutoff(float hz);
+
+    /// Set the position PID derivative filter cutoff.
+    /// @param hz  Cutoff in Hz (>= 0; 0 = unfiltered).
+    void setPositionDerivativeCutoff(float hz);
+
+    /// Set the velocity estimate low-pass cutoff.
+    /// @param hz  Cutoff in Hz (>= 0; 0 = unfiltered). Invalid values are ignored.
+    void setVelocityFilterCutoff(float hz);
 
     /// Update total encoder counts per output shaft revolution.
     /// @param counts  Counts per revolution (> 0).
@@ -226,13 +248,14 @@ public:
     void stop();
 
     /// Reset controller and feedback state (idempotent).
-    /// Resets both PIDs, clears encoder count/rate baseline, zeros cached feedback,
-    /// and zeroes setpoints/open-loop duty.
+    /// Resets both PIDs, clears the encoder count, re-primes the velocity
+    /// estimator, zeros cached feedback, and zeroes setpoints/open-loop duty.
     void reset();
 
 private:
     float countsToRadians(int32_t counts, float counts_per_rev, float gear_ratio) const;
     float rateToAngularVelocity(float counts_per_sec, float counts_per_rev, float gear_ratio) const;
+    float estimateVelocity(int32_t count, float dt_s, float counts_per_rev, float gear_ratio);
 
     // Hardware handles
     esp_motor::Motor            m_motor;
@@ -258,11 +281,19 @@ private:
     float        m_output_min;
     float        m_output_max;
 
-    // Cached feedback state
+    // Velocity estimator. m_prev_count / m_vel_estimate / m_estimator_primed
+    // are owned by update(); other tasks only request a re-prime.
+    std::atomic<float> m_vel_filter_cutoff_hz;
+    std::atomic<bool>  m_estimator_reset_requested;
+    bool    m_estimator_primed;
+    int32_t m_prev_count;
+    float   m_vel_estimate;
+
+    // Feedback cached by update() for the getters
     std::atomic<float> m_cached_angle_rad;
     std::atomic<float> m_cached_velocity_rad_s;
-    std::atomic<bool>  m_cached_angle_valid;
-    std::atomic<bool>  m_cached_velocity_valid;
+    std::atomic<float> m_cached_output;
+    std::atomic<bool>  m_cached_valid;
 
     // Spinlock protecting mode and output limits during concurrent access.
     // Declared mutable so that const getters can acquire it without const_cast.

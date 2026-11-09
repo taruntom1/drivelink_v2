@@ -1,6 +1,7 @@
 #include "pid_controller.hpp"
 #include "esp_log.h"
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 static const char *TAG = "pid_controller";
@@ -16,11 +17,10 @@ struct PidImpl {
 
     // Configuration
     Direction direction;
-    unsigned int sample_time_ms;
     float out_min;
     float out_max;
     DerivativeMode derivative_mode;
-    float derivative_filter_alpha;
+    float derivative_cutoff_hz;
 
     // Runtime state
     Mode mode;
@@ -28,11 +28,32 @@ struct PidImpl {
     float last_input;
     float last_error;
     float last_output;
-    float d_filtered;
+    float d_filtered; // filtered derivative rate (units of input per second)
     bool first_compute;
 };
 
 } // namespace detail
+
+namespace {
+
+constexpr float kTwoPi = 6.28318530717958647692f;
+
+bool isValidCutoff(float hz)
+{
+    return std::isfinite(hz) && hz >= 0.0f;
+}
+
+// Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
+// `dt_s` seconds. 1 means "no filtering".
+float lowPassAlpha(float hz, float dt_s)
+{
+    if (hz <= 0.0f) {
+        return 1.0f;
+    }
+    return 1.0f - std::exp(-kTwoPi * hz * dt_s);
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -50,11 +71,10 @@ PidController::PidController(const PidConfig &config)
     m_impl->ki = config.ki;
     m_impl->kd = config.kd;
     m_impl->direction = config.direction;
-    m_impl->sample_time_ms = config.sample_time_ms;
     m_impl->out_min = config.output_min;
     m_impl->out_max = config.output_max;
     m_impl->derivative_mode = config.derivative_mode;
-    m_impl->derivative_filter_alpha = std::clamp(config.derivative_filter_alpha, 0.001f, 1.0f);
+    m_impl->derivative_cutoff_hz = config.derivative_cutoff_hz;
 
     m_impl->mode = Mode::Manual;
     m_impl->integral_sum = 0.0f;
@@ -72,10 +92,11 @@ PidController::PidController(const PidConfig &config)
         m_impl->out_max = 1.0f;
     }
 
-    // Validate sample time
-    if (m_impl->sample_time_ms == 0) {
-        ESP_LOGW(TAG, "Sample time cannot be 0, using 10 ms");
-        m_impl->sample_time_ms = 10;
+    // Validate derivative filter cutoff
+    if (!isValidCutoff(m_impl->derivative_cutoff_hz)) {
+        ESP_LOGW(TAG, "Invalid derivative cutoff (%.3f Hz), disabling the filter",
+                 m_impl->derivative_cutoff_hz);
+        m_impl->derivative_cutoff_hz = 0.0f;
     }
 
     // Warn on negative gains (but still store them clamped to 0)
@@ -87,8 +108,8 @@ PidController::PidController(const PidConfig &config)
         m_impl->kd = std::max(0.0f, m_impl->kd);
     }
 
-    ESP_LOGI(TAG, "PID created: kp=%.4f ki=%.4f kd=%.4f sample_time=%u ms dir=%s",
-             m_impl->kp, m_impl->ki, m_impl->kd, m_impl->sample_time_ms,
+    ESP_LOGI(TAG, "PID created: kp=%.4f ki=%.4f kd=%.4f d_cutoff=%.1f Hz dir=%s",
+             m_impl->kp, m_impl->ki, m_impl->kd, m_impl->derivative_cutoff_hz,
              m_impl->direction == Direction::Direct ? "direct" : "reverse");
 }
 
@@ -150,14 +171,17 @@ PidController &PidController::operator=(PidController &&other) noexcept
 // Core computation
 // ---------------------------------------------------------------------------
 
-float PidController::compute(float input, float setpoint, float feedforward)
+float PidController::compute(float input, float setpoint, float dt_s, float feedforward)
 {
     if (!m_impl || m_impl->mode == Mode::Manual) {
         return 0.0f;
     }
+    if (!(dt_s > 0.0f) || !std::isfinite(dt_s)) {
+        return m_impl->last_output;
+    }
 
+    const float dt = dt_s;
     float error = setpoint - input;
-    float dt = static_cast<float>(m_impl->sample_time_ms) / 1000.0f;
     float sign = (m_impl->direction == Direction::Reverse) ? -1.0f : 1.0f;
 
     // Proportional term
@@ -178,13 +202,13 @@ float PidController::compute(float input, float setpoint, float feedforward)
             d_raw = -(input - m_impl->last_input);
         }
 
-        // Apply low-pass filter
-        float alpha = m_impl->derivative_filter_alpha;
-        m_impl->d_filtered = alpha * d_raw + (1.0f - alpha) * m_impl->d_filtered;
+        // Filter the derivative rate (not the per-sample delta), so the
+        // filter state stays meaningful when dt changes between calls.
+        const float d_rate = d_raw / dt;
+        const float alpha = lowPassAlpha(m_impl->derivative_cutoff_hz, dt);
+        m_impl->d_filtered = alpha * d_rate + (1.0f - alpha) * m_impl->d_filtered;
 
-        if (dt > 0.0f) {
-            d_term = sign * m_impl->kd * m_impl->d_filtered / dt;
-        }
+        d_term = sign * m_impl->kd * m_impl->d_filtered;
     } else {
         m_impl->first_compute = false;
     }
@@ -273,19 +297,24 @@ void PidController::setDirection(Direction dir)
              dir == Direction::Direct ? "direct" : "reverse");
 }
 
-void PidController::setSampleTime(unsigned int ms)
+void PidController::setDerivativeCutoff(float hz)
 {
     if (!m_impl) {
         return;
     }
 
-    if (ms == 0) {
-        ESP_LOGW(TAG, "setSampleTime rejected: sample time must be > 0");
+    if (!isValidCutoff(hz)) {
+        ESP_LOGW(TAG, "setDerivativeCutoff rejected: cutoff must be finite and >= 0 (got %.3f)", hz);
         return;
     }
 
-    m_impl->sample_time_ms = ms;
-    ESP_LOGI(TAG, "PID sample time updated: %u ms", ms);
+    m_impl->derivative_cutoff_hz = hz;
+    ESP_LOGI(TAG, "PID derivative cutoff updated: %.1f Hz", hz);
+}
+
+float PidController::getDerivativeCutoff() const
+{
+    return m_impl ? m_impl->derivative_cutoff_hz : 0.0f;
 }
 
 void PidController::reset()

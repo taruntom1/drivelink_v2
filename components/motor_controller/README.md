@@ -53,7 +53,7 @@ extern "C" void app_main(void)
     cfg.velocity_pid.kp        = 0.5f;
     cfg.velocity_pid.ki        = 0.1f;
     cfg.velocity_pid.kd        = 0.01f;
-    cfg.velocity_pid.sample_time_ms = 10;
+    cfg.velocity_filter_cutoff_hz = 50.0f; // velocity estimate low-pass
 
     motor_controller::MotorController mc(
         GPIO_NUM_1, GPIO_NUM_2,   // motor: pwm_gpio, dir_gpio
@@ -68,12 +68,15 @@ extern "C" void app_main(void)
     mc.setMode(motor_controller::ControlMode::VelocityControl);
     mc.setVelocitySetpoint(10.0f);  // 10 rad/s
 
+    TickType_t last_wake = xTaskGetTickCount();
     while (true) {
-        mc.update();                // call at sample_time_ms interval
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+        mc.update(0.010f);          // dt in seconds since the previous update
     }
 }
 ```
+
+In DriveLink, `motor_manager` calls `update(dt)` from its timer-driven control task. See the motor_manager README.
 
 ---
 
@@ -99,10 +102,11 @@ enum class ControlMode {
 | `gear_ratio`    | `float`               | 1.0      | Motor shaft revs per output shaft rev (1.0 = direct drive)      |
 | `output_min`    | `float`               | -1.0     | Motor output lower clamp                                        |
 | `output_max`    | `float`               | 1.0      | Motor output upper clamp                                        |
-| `velocity_pid`  | `esp_pid::PidConfig`  | defaults | Velocity PID parameters (kp, ki, kd, sample_time_ms, …)        |
-| `position_pid`  | `esp_pid::PidConfig`  | defaults | Position PID parameters (kp, ki, kd, sample_time_ms, …)        |
+| `velocity_pid`  | `esp_pid::PidConfig`  | defaults | Velocity PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
+| `position_pid`  | `esp_pid::PidConfig`  | defaults | Position PID parameters (kp, ki, kd, derivative_cutoff_hz, …)  |
 | `velocity_feedforward` | `float`         | 0.0      | Constant feedforward term added to velocity PID output          |
 | `position_feedforward` | `float`         | 0.0      | Constant feedforward term added to position PID output          |
+| `velocity_filter_cutoff_hz` | `float`    | 50       | Low-pass cutoff (Hz) of the velocity estimate; 0 = unfiltered   |
 
 The `output_min` / `output_max` from the config are automatically propagated to
 both PID controller output limits on construction.
@@ -124,15 +128,22 @@ controllers. Always check `isValid()` before use.
 
 ---
 
-#### `update()`
+#### `update(dt_s)`
 
 ```cpp
-void update()
+void update(float dt_s)
 ```
 
-Executes one control cycle: reads encoder, runs PID (if applicable), and drives
-the motor. Must be called at the configured `sample_time_ms` interval from a
-single FreeRTOS task. Not re-entrant.
+Executes one control cycle:
+1. Reads the encoder count once.
+2. Updates the velocity estimate: the count delta divided by `dt_s`, then a
+   first-order low-pass with `velocity_filter_cutoff_hz`.
+3. Runs the active PID with the same `dt_s`.
+4. Drives the motor and caches angle, velocity and output for the getters.
+
+`dt_s` is the time since the previous `update()` in seconds. The first call
+after construction or `reset()` only primes the estimator. Call from a single
+task. Not re-entrant.
 
 ---
 
@@ -165,14 +176,15 @@ void setPositionFeedforward(float ff)
 #### Feedback
 
 ```cpp
-float getAngle() const          // current output shaft angle, radians
-float getAngularVelocity() const // current output shaft velocity, rad/s
+float getAngle() const           // output shaft angle, radians
+float getAngularVelocity() const // filtered output shaft velocity, rad/s
+float getOutput() const          // duty applied by the last update(), [-1, 1]
 ```
 
-Angle is derived from the accumulated encoder count; velocity from the
-encoder HAL's built-in rate sampler. Values are cached during `update()`.
-If the active mode does not update one of the two measurements in `update()`,
-the getter falls back to a fresh encoder read for that specific value.
+All three return the values cached by the last `update()`, which runs in every
+mode. Before the first `update()`, `getAngle()` reads the encoder count directly,
+and `getAngularVelocity()` returns 0. The encoder HAL's throttled `getRate()` is
+not used.
 
 ---
 
@@ -181,7 +193,9 @@ the getter falls back to a fresh encoder read for that specific value.
 ```cpp
 void setVelocityPidTunings(float kp, float ki, float kd)
 void setPositionPidTunings(float kp, float ki, float kd)
-void setSampleTime(unsigned int ms)   // updates both PID controllers
+void setVelocityDerivativeCutoff(float hz)  // 0 = unfiltered
+void setPositionDerivativeCutoff(float hz)  // 0 = unfiltered
+void setVelocityFilterCutoff(float hz)      // velocity estimate, 0 = unfiltered
 void setCountsPerRev(float counts)
 void setGearRatio(float ratio)
 void setOutputLimits(float min, float max)
@@ -218,8 +232,12 @@ Internal angle/velocity conversion:
 
 ```
 angle_rad  = count          / (counts_per_rev × gear_ratio) × 2π
-omega_rad_s = counts_per_sec / (counts_per_rev × gear_ratio) × 2π
+omega_rad_s = (Δcount / dt) / (counts_per_rev × gear_ratio) × 2π   (then low-pass filtered)
 ```
+
+At high loop rates, `Δcount` per tick is small, so the raw velocity is coarsely
+quantized: one count per tick is `2π / (counts_per_rev × gear_ratio × dt)` rad/s.
+Pick `velocity_filter_cutoff_hz` to trade noise against phase lag.
 
 ---
 
@@ -230,11 +248,11 @@ omega_rad_s = counts_per_sec / (counts_per_rev × gear_ratio) × 2π
 | `setOpenLoopDuty` / `setVelocitySetpoint` / `setPositionSetpoint` | Yes (lock-free atomics) |
 | `setVelocityFeedforward` / `setPositionFeedforward` | Yes (lock-free atomics) |
 | `setMode`                                          | Yes (spinlock for mode transition sequencing) |
-| `setCountsPerRev` / `setGearRatio`                 | Yes (lock-free atomics)      |
+| `setCountsPerRev` / `setGearRatio` / `setVelocityFilterCutoff` | Yes (lock-free atomics) |
 | `setOutputLimits`                                  | Yes (spinlock)               |
-| `getAngle` / `getAngularVelocity`                  | Yes (atomics + encoder HAL)  |
+| `getAngle` / `getAngularVelocity` / `getOutput`    | Yes (atomics)                |
 | `stop`                                             | Yes (idempotent; coordinate for deterministic sequencing) |
-| `reset` / `setVelocityPidTunings` / `setPositionPidTunings` / `setSampleTime` | No — suspend update loop |
+| `reset` / `setVelocityPidTunings` / `setPositionPidTunings` / `set*DerivativeCutoff` | No — suspend update loop |
 
 ---
 
@@ -247,6 +265,6 @@ idf.py menuconfig  →  Motor Controller Configuration
 | Option                              | Default | Description                                    |
 |-------------------------------------|---------|------------------------------------------------|
 | `MOTOR_CTRL_DEFAULT_COUNTS_PER_REV` | 1440    | Default encoder counts per output revolution   |
-| `MOTOR_CTRL_DEFAULT_SAMPLE_TIME_MS` | 10      | Default PID sample time in milliseconds        |
+| `MOTOR_CTRL_DEFAULT_VEL_FILTER_CUTOFF_HZ` | 50 | Default velocity estimate low-pass cutoff (Hz) |
 
 See also **PID Controller Configuration** for default PID gains and limits.

@@ -3,6 +3,7 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "motor_controller.hpp"
 #include "sdkconfig.h"
 #include <cstddef>
@@ -37,7 +38,8 @@ enum class ConfigureSubcommand : uint8_t {
     StopMotor = 0x07,
     ResetMotor = 0x08,
     SetTelemetryGlobal = 0x09,
-    SetTelemetryMotor = 0x0A
+    SetTelemetryMotor = 0x0A,
+    SetTiming = 0x0B
 };
 
 enum class PidKind : uint8_t {
@@ -52,8 +54,10 @@ enum class SetpointKind : uint8_t {
 };
 
 // v2 added a seq byte after the version in configure requests and responses.
-// It covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x02;
+// v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
+// the SetTiming subcommand, response bodies and the telemetry output field.
+// The version covers every motor_manager payload, including both streams.
+constexpr uint8_t kProtocolVersion = 0x03;
 // Sent as subcommand and motor_id in a configure response when the request
 // header could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
@@ -67,7 +71,8 @@ constexpr size_t kSetpointEntrySize = 6;  // motor_id(1) + kind(1) + float(4)
 enum TelemetryFieldMask : uint8_t {
     kTelemetryFieldAngle = 1U << 0,
     kTelemetryFieldVelocity = 1U << 1,
-    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity
+    kTelemetryFieldOutput = 1U << 2, ///< applied motor duty in [-1, 1]
+    kTelemetryFieldAll = kTelemetryFieldAngle | kTelemetryFieldVelocity | kTelemetryFieldOutput
 };
 
 constexpr size_t kTelemetryPacketHeaderSize = 10; // version(1) + entry_count(1) + timestamp_us(8)
@@ -85,19 +90,43 @@ struct MotorConfigPayload {
     float vel_kp;
     float vel_ki;
     float vel_kd;
+    float vel_d_cutoff_hz;      ///< velocity PID derivative filter cutoff (0 = off)
     float pos_kp;
     float pos_ki;
     float pos_kd;
-    unsigned int sample_time_ms;
+    float pos_d_cutoff_hz;      ///< position PID derivative filter cutoff (0 = off)
     float velocity_feedforward;
     float position_feedforward;
+    float vel_filter_cutoff_hz; ///< velocity estimate low-pass cutoff (0 = off)
 };
 
+// Limits applied to the control and telemetry periods (constructor config and SetTiming).
+constexpr uint32_t kControlPeriodMinUs = 250;
+constexpr uint32_t kControlPeriodMaxUs = 100000;
+constexpr uint32_t kTelemetryPeriodMaxUs = 1000000;
+
+#if CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE < 0
+constexpr BaseType_t kDefaultControlTaskCore = tskNO_AFFINITY;
+#else
+constexpr BaseType_t kDefaultControlTaskCore = CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE;
+#endif
+
+/// Internal control ("update") task. When enabled, a periodic esp_timer wakes
+/// the task every control_period_us; each wake applies queued setpoints,
+/// updates every motor with dt = elapsed ticks x period, and publishes
+/// telemetry every ceil(telemetry_period_us / control_period_us) ticks.
+/// Both periods can be changed at runtime with MotorManager::setTiming().
 struct UpdateTaskConfig {
     bool enable = true;
-    unsigned int period_ms = 10;
+    /// Control loop period, clamped to [kControlPeriodMinUs, kControlPeriodMaxUs].
+    uint32_t control_period_us = CONFIG_MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US;
+    /// Telemetry period, clamped to [control period, kTelemetryPeriodMaxUs] and
+    /// rounded up to a whole number of control periods.
+    uint32_t telemetry_period_us = CONFIG_MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US;
     uint32_t stack_size = CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK;
     UBaseType_t priority = CONFIG_MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO;
+    /// Core the control task is pinned to, or tskNO_AFFINITY.
+    BaseType_t core_id = kDefaultControlTaskCore;
 };
 
 struct ManagerConfig {

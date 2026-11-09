@@ -12,6 +12,7 @@ It is designed for ESP32-S3 and keeps UART callbacks short by queuing configurat
 - One command callback for all configuration sub-commands
 - One setpoint stream channel for all motors (PC → ESP)
 - One telemetry stream channel for all motors (ESP → PC)
+- Timer-driven control loop (esp_timer), independent of `CONFIG_FREERTOS_HZ`, with control and telemetry rates the host can change at runtime
 - Thread-safe motor map access using FreeRTOS mutex
 
 ## Add to project
@@ -50,21 +51,42 @@ extern "C" void app_main(void)
     cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0x81
     cfg.use_mock_feedback = true; // no motor hardware required
     cfg.update_task.enable = true;
-    cfg.update_task.period_ms = 10;
+    cfg.update_task.control_period_us = 1000;    // 1 kHz control loop
+    cfg.update_task.telemetry_period_us = 10000; // telemetry at 100 Hz
 
     motor_manager::MotorManager manager(uart, cfg);
     if (!manager.isValid()) {
         return;
     }
 
-    // Optional for manual scheduling:
+    // Only with cfg.update_task.enable = false (manual scheduling):
     // while (true) {
-    //     manager.updateAll();
+    //     manager.updateAll(0.01f);  // dt in seconds
     //     manager.publishTelemetry();
     //     vTaskDelay(pdMS_TO_TICKS(10));
     // }
 }
 ```
+
+## Control loop and timing
+
+With `update_task.enable = true` (the default), a periodic `esp_timer` wakes the update task every `control_period_us`. The loop does not use the FreeRTOS tick, so its rate does not depend on `CONFIG_FREERTOS_HZ`.
+
+On each wake the update task:
+1. Works out `dt = elapsed timer ticks × control period`. The tick count comes from the task notification count, so a late or skipped tick gives a longer `dt` instead of a wrong one. At most 10 ticks are folded into one `dt`.
+2. Try-locks the manager mutex. If a configure command holds it, the tick is skipped and its time is added to the next run's `dt`.
+3. Applies the setpoints queued from the stream, then calls `MotorController::update(dt)` for every motor. Each controller estimates velocity from the encoder count delta and passes the same `dt` to its PIDs.
+4. Every `N = ceil(telemetry_period_us / control_period_us)` ticks, encodes a telemetry packet. Its timestamp is taken when the motors are sampled, and the packet is sent after the mutex is released.
+
+Late and skipped ticks are counted (`getControlOverrunCount()`) and logged at most once per second. With `MOTOR_MANAGER_LOG_LOOP_STATS` enabled, the interval and run-time statistics are logged every 5 s.
+
+The task is pinned to `update_task.core_id` (default core 1) at `update_task.priority` (default 20, below the esp_timer task's 22).
+
+Both periods can be changed at runtime with `setTiming()` or the `SET_TIMING` subcommand:
+- The control period is clamped to 250–100000 µs (`kControlPeriodMinUs` / `kControlPeriodMaxUs`).
+- The telemetry period is clamped to [control period, 1 s] and rounded up to a whole number of control periods.
+- `0` keeps the current value. The requested telemetry period is remembered, so changing only the control period keeps the telemetry rate as close as possible to what was asked.
+- The new control period applies from the next tick. PID `dt` and all filter coefficients are derived from `dt`, so nothing else needs retuning.
 
 ## Mock feedback mode
 
@@ -83,13 +105,23 @@ Enable via either:
 - `ManagerConfig::use_mock_feedback = true`
 - Kconfig option `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
 
-## Binary protocol (version 2)
+## Binary protocol (version 3)
 
 All payloads begin with:
 
-- `version` (`uint8_t`) = `0x02`
+- `version` (`uint8_t`) = `0x03`
 
-Version 2 added a `seq` byte after `version` in configure requests and responses, and dropped the trailing `reserved` byte from the response. The stream layouts did not change, but stream payloads carry version `0x02` as well. Version 1 payloads are rejected.
+Payloads with any other version are rejected.
+
+Changes from version 2:
+- CREATE/CONFIGURE: `sample_time_ms` and the two reserved floats are removed. `vel_d_cutoff_hz`, `pos_d_cutoff_hz` and `vel_filter_cutoff_hz` are added. The body is now 64 bytes.
+- SET_PID_PARAMS: `sample_time_ms` is replaced by `d_cutoff_hz`.
+- New SET_TIMING subcommand (`0x0B`). Its response carries a body after the 5-byte header.
+- Configure bodies must have their exact size. Before, extra trailing bytes were ignored.
+- Telemetry has a new field: bit2, the applied output duty.
+- The setpoint stream layout is unchanged.
+
+The PID `dt` now always comes from the control loop timing (see [Control loop and timing](#control-loop-and-timing)), so the host no longer sends a sample time.
 
 ### Configure command (single callback)
 
@@ -104,7 +136,7 @@ Version 2 added a `seq` byte after `version` in configure requests and responses
 
 Commands are queued (up to 8, `kConfigQueueDepth`) and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
 
-Body length checks are minimums: extra trailing bytes after a known body are ignored.
+Every subcommand body has a fixed size, and the body must be exactly that size. A body with missing or extra bytes gets `INVALID_ARGUMENT`. DELETE_MOTOR, STOP_MOTOR and RESET_MOTOR have an empty body. All multi-byte values are little-endian.
 
 Subcommands:
 
@@ -118,8 +150,9 @@ Subcommands:
 - `0x08` RESET_MOTOR
 - `0x09` SET_TELEMETRY_GLOBAL
 - `0x0A` SET_TELEMETRY_MOTOR
+- `0x0B` SET_TIMING
 
-CREATE/CONFIGURE payload body (after the 4 header bytes, 67 bytes, so 71 bytes in total):
+CREATE/CONFIGURE payload body (after the 4 header bytes, 64 bytes, so 68 bytes in total):
 
 - `pwm_gpio` `uint8_t`
 - `dir_gpio` `uint8_t`
@@ -132,16 +165,16 @@ CREATE/CONFIGURE payload body (after the 4 header bytes, 67 bytes, so 71 bytes i
 - `vel_kp` `float32`
 - `vel_ki` `float32`
 - `vel_kd` `float32`
+- `vel_d_cutoff_hz` `float32`: velocity PID derivative filter cutoff, `0` = unfiltered
 - `pos_kp` `float32`
 - `pos_ki` `float32`
 - `pos_kd` `float32`
+- `pos_d_cutoff_hz` `float32`: position PID derivative filter cutoff, `0` = unfiltered
 - `velocity_feedforward` `float32`
 - `position_feedforward` `float32`
-- `reserved0` `float32` (for extensibility)
-- `reserved1` `float32` (for extensibility)
-- `sample_time_ms` `uint32_t`
+- `vel_filter_cutoff_hz` `float32`: low-pass cutoff of the velocity estimate, `0` = unfiltered
 
-`reserved0` and `reserved1` are ignored by the firmware but must be present, because the body has a fixed size and `sample_time_ms` follows them. Send `0.0`.
+The cutoffs are frequencies, not per-sample coefficients, so they behave the same at any control rate. A negative or non-finite cutoff disables that filter at creation and is ignored by CONFIGURE.
 
 SET_MODE body:
 
@@ -153,7 +186,7 @@ SET_PID_PARAMS body:
 - `kp` `float32`
 - `ki` `float32`
 - `kd` `float32`
-- `sample_time_ms` `uint32_t`
+- `d_cutoff_hz` `float32`: derivative filter cutoff, `0` = unfiltered
 
 SET_SETPOINT body:
 
@@ -166,6 +199,7 @@ SET_TELEMETRY_GLOBAL body:
 - `field_mask` `uint8_t`:
   - bit0 (`0x01`) angle (`angle_rad`)
   - bit1 (`0x02`) velocity (`angular_velocity_rad_s`)
+  - bit2 (`0x04`) output (`output_duty`)
 
 SET_TELEMETRY_MOTOR body:
 
@@ -173,15 +207,25 @@ SET_TELEMETRY_MOTOR body:
 - `field_mask` `uint8_t`: same bit mapping as global `field_mask`
 - `apply_field_mask` `uint8_t`: `0` keep previous per-motor field mask, non-zero update it from `field_mask`
 
+SET_TIMING body (global; `motor_id` is ignored and echoed back):
+
+- `control_period_us` `uint32_t`: control loop period, `0` = keep current
+- `telemetry_period_us` `uint32_t`: telemetry period, `0` = keep current
+
+The firmware clamps and rounds both values (see [Control loop and timing](#control-loop-and-timing)). Send `0, 0` to read the current values without changing them.
+
 Configure response:
 
 - UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x61`)
-- Payload (5 bytes):
+- Payload (5 bytes, plus a body for some subcommands):
   - `version` (`uint8_t`)
   - `seq` (`uint8_t`): echoed from the request
   - `subcommand` (`uint8_t`): echoed from the request
   - `motor_id` (`uint8_t`): echoed from the request
   - `result_code` (`uint8_t`)
+  - response body, only for SET_TIMING with `result_code = OK` (8 bytes):
+    - `applied_control_period_us` `uint32_t`
+    - `applied_telemetry_period_us` `uint32_t`
 
 If the request header could not be parsed (payload shorter than 4 bytes, or wrong `version`), the response has `subcommand = 0xFF`, `motor_id = 0xFF` and `result_code = INVALID_ARGUMENT`. `seq` is echoed when the request's version was right and it carried a `seq` byte; otherwise it is `0`.
 
@@ -200,7 +244,7 @@ The payload length must be exactly `2 + entry_count * 6`. A frame with missing o
 
 No per-packet dynamic allocation is used while parsing.
 
-When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next tick (within `update_task.period_ms`). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
+When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next control tick (within one control period). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
 
 ### Telemetry stream (ESP → PC)
 
@@ -208,13 +252,14 @@ When the update task is enabled, the UART RX task does not apply setpoints itsel
 - Payload:
   - `version` (`uint8_t`)
   - `entry_count` (`uint8_t`)
-  - `timestamp_us` (`uint64_t`, microseconds since boot, shared by all entries in the packet)
+  - `timestamp_us` (`uint64_t`, from `gettimeofday()`, so host-synced once `TimeSync` has run; shared by all entries in the packet). It is taken in the control tick that sampled the motors, so consecutive packets are spaced by whole control periods.
   - repeated entries:
     - `motor_id` (`uint8_t`)
     - `field_mask` (`uint8_t`)
     - optional fields in this order, present when the corresponding `field_mask` bit is set:
       - bit0: `angle_rad` (`float32`)
-      - bit1: `angular_velocity_rad_s` (`float32`)
+      - bit1: `angular_velocity_rad_s` (`float32`), filtered estimate
+      - bit2: `output_duty` (`float32`), duty applied to the motor in [-1, 1] (`0` in mock mode)
 
 Effective per-entry field selection is:
 
@@ -222,7 +267,7 @@ Effective per-entry field selection is:
 
 If telemetry is globally disabled, no telemetry packet is sent.
 
-Use `MotorManager::publishTelemetry()` periodically (or enable the internal update task).
+With the internal update task, telemetry is sent every N control ticks (see [Control loop and timing](#control-loop-and-timing)). Without it, call `MotorManager::publishTelemetry()` yourself.
 
 ## Kconfig
 
@@ -233,3 +278,7 @@ Under `Motor Manager Configuration` in `menuconfig`, these defaults can be chang
 - `MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL`
 - `MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL`
 - `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
+- `MOTOR_MANAGER_DEFAULT_UPDATE_TASK_STACK`, `MOTOR_MANAGER_DEFAULT_UPDATE_TASK_PRIO` (default 20), `MOTOR_MANAGER_DEFAULT_CONTROL_TASK_CORE` (default 1, `-1` = no affinity)
+- `MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US` (default 1000)
+- `MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US` (default 10000)
+- `MOTOR_MANAGER_LOG_LOOP_STATS` (default off)

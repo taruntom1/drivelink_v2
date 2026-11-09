@@ -21,6 +21,8 @@ m_task.start("worker", 4096, 5, [this] {
 m_task.stop();   // wakes the body, waits until it returns, deletes the task
 ```
 
+`start()` takes an optional last argument, `core_id`, to pin the task to a core (`xTaskCreatePinnedToCore`). The default is `tskNO_AFFINITY`.
+
 How it works:
 - When the body returns, the task gives a "done" semaphore and then suspends itself. It never deletes itself, so its handle stays valid until `stop()` deletes it.
 - `stop()` sets the stop flag and sends a task notification, which wakes `sleepFor`, `sleepUntil` and any `ulTaskNotifyTake`. It then waits for "done".
