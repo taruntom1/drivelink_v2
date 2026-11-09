@@ -14,6 +14,8 @@ struct TimeSyncConfig {
     bool enable_round_trip_compensation = true;
     uint8_t request_msg_type = kDefaultRequestMsgType;
     uint8_t response_msg_type = kDefaultResponseMsgType;
+    uint32_t task_stack_size = kDefaultTaskStackSize;
+    UBaseType_t task_priority = kDefaultTaskPriority;
 };
 
 class TimeSync {

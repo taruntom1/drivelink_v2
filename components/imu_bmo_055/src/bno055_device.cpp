@@ -19,7 +19,7 @@ static const char *const TAG = "bno055_dev";
 constexpr uint8_t kExpectedChipId = 0xA0;
 // Config operations (mode switch, calibration) wait this long for the device
 // lock. The stream tick holds it for a few ms at most and never waits.
-constexpr TickType_t kConfigLockTimeout = pdMS_TO_TICKS(100);
+constexpr TickType_t kConfigLockTimeout = rtos_util::msToTicksCeil(CONFIG_IMU_BMO_055_DEVICE_LOCK_TIMEOUT_MS);
 constexpr int64_t kBusLogIntervalUs = 1000000;
 
 esp_err_t boschToEspErr(s8 result)

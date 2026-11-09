@@ -282,3 +282,6 @@ Under `Motor Manager Configuration` in `menuconfig`, these defaults can be chang
 - `MOTOR_MANAGER_DEFAULT_CONTROL_PERIOD_US` (default 1000)
 - `MOTOR_MANAGER_DEFAULT_TELEMETRY_PERIOD_US` (default 10000)
 - `MOTOR_MANAGER_LOG_LOOP_STATS` (default off)
+- `MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK`, `MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO` (default 6)
+- `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH` (default 8): configure frames queued for the config task
+- `MOTOR_MANAGER_MUTEX_TIMEOUT_MS` (default 50): how long configure commands and the manual `updateAll()` / `publishTelemetry()` wait for the manager mutex. The control tick never waits.

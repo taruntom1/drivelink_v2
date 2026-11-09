@@ -170,4 +170,21 @@ menu "IMU BNO055 Configuration"
         help
             Queue depth for incoming runtime configure commands.
 
+    config IMU_BMO_055_MUTEX_TIMEOUT_MS
+        int "Manager mutex timeout (ms)"
+        default 50
+        range 1 1000
+        help
+            How long configure commands wait for the manager mutex before
+            failing with BUSY.
+
+    config IMU_BMO_055_DEVICE_LOCK_TIMEOUT_MS
+        int "Device lock timeout for config operations (ms)"
+        default 100
+        range 1 1000
+        help
+            How long config operations (operation-mode switch, calibration
+            read/write) wait for the BNO055 device lock. The stream tick
+            never waits for it: it only try-locks.
+
 endmenu

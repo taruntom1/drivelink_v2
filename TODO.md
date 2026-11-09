@@ -21,7 +21,3 @@ These are fixes for code that breaks the conventions in `CLAUDE.md` / `component
 - Remove the per-entry `ESP_LOGW` in `applyPendingSetpointsLocked()`. Replace it with a rejected-setpoint counter, and log only a rate-limited summary outside `m_mutex` (review F4).
 - Move the encoder HAL's `ESP_LOGE` out of `taskENTER_CRITICAL`: record the error and log it after exiting (review E4).
 
-**Kconfig**
-- `time_sync`: task stack size and priority (T3).
-- `motor_manager`: config queue depth and mutex timeout.
-- `imu_bmo_055`: manager mutex timeout and device lock timeout.

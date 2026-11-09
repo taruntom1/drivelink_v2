@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "tick_util.hpp"
 #include "wire_codec.hpp"
 
 #include <algorithm>
@@ -17,8 +18,8 @@ namespace motor_manager {
 
 namespace {
 
-constexpr TickType_t kMutexTimeoutTicks = pdMS_TO_TICKS(50);
-constexpr UBaseType_t kConfigQueueDepth = 8;
+constexpr TickType_t kMutexTimeoutTicks = rtos_util::msToTicksCeil(CONFIG_MOTOR_MANAGER_MUTEX_TIMEOUT_MS);
+constexpr UBaseType_t kConfigQueueDepth = CONFIG_MOTOR_MANAGER_CONFIG_QUEUE_DEPTH;
 constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
 
 // The update task waits for the timer at most this long (longer than the

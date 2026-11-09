@@ -181,6 +181,8 @@ The constructor fails (`isValid() == false`) if min is 0 or greater than max.
 - `IMU_BMO_055_CONFIG_TASK_STACK`
 - `IMU_BMO_055_CONFIG_TASK_PRIO`
 - `IMU_BMO_055_CONFIG_QUEUE_DEPTH`
+- `IMU_BMO_055_MUTEX_TIMEOUT_MS` (default `50`): configure commands wait this long for the manager mutex, then fail with `BUSY`
+- `IMU_BMO_055_DEVICE_LOCK_TIMEOUT_MS` (default `100`): mode switches and calibration read/write wait this long for the BNO055 device lock. The stream tick never waits.
 
 ## 6. Calibration Support
 

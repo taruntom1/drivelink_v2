@@ -106,4 +106,21 @@ menu "Motor Manager Configuration"
         help
             FreeRTOS priority for the internal configuration command task.
 
+    config MOTOR_MANAGER_CONFIG_QUEUE_DEPTH
+        int "Configure command queue depth"
+        default 8
+        range 1 32
+        help
+            Number of configure frames the UART RX callback can queue for the
+            config task. A full queue drops the command (logged).
+
+    config MOTOR_MANAGER_MUTEX_TIMEOUT_MS
+        int "Manager mutex timeout (ms)"
+        default 50
+        range 1 1000
+        help
+            How long configure commands and the manual update/telemetry API
+            wait for the manager mutex before failing with INTERNAL_ERROR.
+            The control tick never waits: it only try-locks.
+
 endmenu
