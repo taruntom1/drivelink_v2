@@ -11,7 +11,7 @@ One session runs one step and ends with one PR into `firmware_overhaul`. Follow 
 
 1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, named `claude/overhaul-<step id>` (for example `claude/overhaul-f1a`). If the session already sits on a branch with unrelated work, stop and tell the user.
 2. Read these:
-   - the "Firmware overhaul in progress" section of `CLAUDE.md`
+   - the "Firmware overhaul in progress" section of the root `CLAUDE.md`
    - all of `plans/overhaul-status.md`
    - the parts of `plans/firmware-architecture.md` and `plans/host-architecture.md` that the step touches
 3. Pick the step:
@@ -31,7 +31,7 @@ Enter plan mode and write a short step plan:
 - **Plan deviations:**
   - Internal choices you will make and log.
   - Anything that changes the wire protocol, a safety rule or a later phase. These need the user's decision now.
-- **Docs:** `docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, READMEs of new components, and the status file.
+- **Docs:** `docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, READMEs of new components, and the status file.
 
 Wait for the user's approval. Answer any deviation questions before you build.
 
@@ -39,16 +39,16 @@ After approval, if the step's build model or effort differs from planning (Opus,
 
 ## 3. Build
 
-- Follow `CLAUDE.md` and `components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
+- Follow the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
 - Don't improve legacy code that a later phase deletes, unless it blocks this step.
 - Before moving on, all of these must pass with zero warnings:
-  - `idf.py build`
-  - the nolog variant (`-D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog"` in a separate build dir)
-  - `idf.py -C test/uart_comm build`
+  - `idf.py -C firmware build`
+  - the nolog variant (from inside `firmware/`: `idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build`)
+  - `idf.py -C firmware/test/uart_comm build`
   - `python tools/gen_diag_codes.py --check`
-  - the host tests
+  - the host tests (`firmware/test/host`)
 
-  Use the paths that are current after S1. The PowerShell recipe for exporting IDF on this machine is in `CLAUDE.md`. Add any test suites the step introduces (native tests, vdev, host superbuild).
+  The PowerShell recipe for exporting IDF on this machine is in `firmware/CLAUDE.md`. Add any test suites the step introduces (native tests, vdev, host superbuild).
 - If something in the plans turns out wrong while building:
   - A small internal choice: decide, and log it in the decision log.
   - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user, then update the plan document in this PR.
@@ -57,7 +57,7 @@ After approval, if the step's build model or effort differs from planning (Opus,
 
 Spawn an independent review agent (`general-purpose`) on `git diff origin/firmware_overhaul...HEAD`. Always pass `model: "opus"`, and pass `effort` set to the step's **Review effort** from the status table (`high` or `xhigh`). This skill is the instruction that sets that effort. Give the agent:
 - the step plan and the relevant plan sections
-- the `CLAUDE.md` rules
+- the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
 - a brief to find correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans
 
 Verify each finding against the code. Fix the ones that hold up, rerun the checks, and note any you rejected, with the reason, for the PR description.

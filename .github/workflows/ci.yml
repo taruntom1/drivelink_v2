@@ -22,13 +22,13 @@ jobs:
       matrix:
         include:
           - name: firmware
-            app: "."
+            app: "firmware"
             defaults: ""
           - name: firmware, console logs off
-            app: "."
+            app: "firmware"
             defaults: "sdkconfig.defaults;sdkconfig.ci.nolog"
-          - name: test/uart_comm
-            app: "test/uart_comm"
+          - name: firmware/test/uart_comm
+            app: "firmware/test/uart_comm"
             defaults: ""
     steps:
       - uses: actions/checkout@v4
@@ -41,14 +41,17 @@ jobs:
           # IDF runs git to stamp the app version.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
+          # Build from inside the app, so every relative path (build dir,
+          # sdkconfig, defaults files) resolves against the app.
+          cd "${{ matrix.app }}"
           if [ -n "${{ matrix.defaults }}" ]; then
             # A separate build dir and sdkconfig, so the variant never
             # touches the default configuration.
-            idf.py -C "${{ matrix.app }}" -B build_variant \
+            idf.py -B build_variant \
               -D SDKCONFIG=build_variant/sdkconfig \
               -D SDKCONFIG_DEFAULTS="${{ matrix.defaults }}" build 2>&1 | tee build.log
           else
-            idf.py -C "${{ matrix.app }}" build 2>&1 | tee build.log
+            idf.py build 2>&1 | tee build.log
           fi
           if grep -E "warning:" build.log; then
             echo "::error::Compiler warnings found; the build must stay warning-free."
@@ -68,10 +71,10 @@ jobs:
         run: python3 tools/gen_diag_codes.py --check
 
       - name: Configure
-        run: cmake -S test/host -B test/host/build -G Ninja
+        run: cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
 
       - name: Build
-        run: cmake --build test/host/build
+        run: cmake --build firmware/test/host/build
 
       - name: Test
-        run: ctest --test-dir test/host/build --output-on-failure
+        run: ctest --test-dir firmware/test/host/build --output-on-failure

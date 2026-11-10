@@ -4,9 +4,9 @@
 #   python tools/gen_diag_codes.py
 #
 # and commit the regenerated files with this one (CI fails if they are stale):
-#   components/diag/include/diag_codes.hpp
-#   components/diag/host/diag_codes.py
-#   the code table in components/diag/README.md
+#   firmware/components/diag/include/diag_codes.hpp
+#   firmware/components/diag/host/diag_codes.py
+#   the code table in docs/protocol/diag-codes.md
 #
 # Rules:
 #   - Never renumber or reuse a code. Retire it with `retired: true`; it

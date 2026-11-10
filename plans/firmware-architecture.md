@@ -24,7 +24,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
    - faults disarm the outputs
    - a layout that crashes at boot cannot brick the board
 5. **Good tuning tools**: on-device capture at the full loop rate, and built-in test signals.
-6. **Keep the existing rules.** The real-time rules, the error rules and the "no allocation after configuration" rule in `CLAUDE.md` all still apply.
+6. **Keep the existing rules.** The real-time rules, the error rules and the "no allocation after configuration" rule in `firmware/CLAUDE.md` all still apply.
 
 ## Decisions
 
@@ -55,7 +55,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Testing | The core's logic is pure, behind thin OS adapters. The whole core also builds natively as a **virtual device** with mock modules, which serves as the host's simulator. |
 | Dev client | A minimal C++ `libdrivelink` slice and `drivelink-cli` start in F3 and grow with each phase. H1 completes them for the GUI and ROS. |
 | Migration | Clean break. Each manager is ported to the core, and its typed protocol is deleted in the same PR. |
-| Docs | Every phase updates `docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, the READMEs of the components it adds, and `plans/overhaul-status.md`, in the same PR as the change. The legacy component READMEs and `review/` were removed in `f4de709` and are not recreated. |
+| Docs | Every phase updates `docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of the components it adds, and `plans/overhaul-status.md`, in the same PR as the change. The legacy component READMEs and `review/` were removed in `f4de709` and are not recreated. |
 
 ## Concepts
 
@@ -486,12 +486,12 @@ CI adds three jobs: the native core and module tests, a vdev integration job, an
 
 ## Phases
 
-Each phase is one PR, or a short series of PRs. The steps are listed in [overhaul-status.md](overhaul-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
+Each phase is one PR, or a short series of PRs. The steps are listed in [overhaul-status.md](overhaul-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
 
 | Phase | Content | Done when |
 |---|---|---|
 | F1 Link and `protocol/` | Extract framing, CRCs, scanner and `wire_codec` into `protocol/`. New framing: u16 `LEN` + HCRC8, `MAX_PAYLOAD` 1024, default baud 921600, `CONFIG_UART_ISR_IN_IRAM`. `uart_comm` fixes for the bigger frames: buffers move from the stacks into `Impl`, task stacks are resized and checked, stream slots are allocated with their own size, and `sendData` gets a non-blocking slot write (double buffer plus try-lock, with a counter for skipped writes) so the control tick never waits. Bump every module protocol version. The codec tests move from `firmware/test/host` to `protocol/test`, and `conftest.py` defaults `--baud` to 921600. | HIL tests pass with the new framing, the managers still work over it, and stack high-water marks are logged |
-| F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. | Generated headers are used by diag and the managers, and the CI staleness check passes |
+| F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `firmware/CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. | Generated headers are used by diag and the managers, and the CI staleness check passes |
 | F3 Core skeleton and dev client | `core_os` (IDF and native), registry, loops (`control`, `sensor`), layout and NVS (A/B, validation, GPIO registry), safe mode, the system/layout/describe/param families, the action family, the status stream, `GET_INFO`, `mod_mock`, `drivelink-vdev` (in `host/vdev/`). diag v2. The first slice of `libdrivelink` (serial and TCP transport, session, the core families) and `drivelink-cli`, built by a first `host/superbuild`. `firmware/test/host` becomes `firmware/test/native`, which builds the core against `core_os`'s native backend. | With the CLI, on vdev and on hardware: mock instances can be added, described, set, saved, rebooted and reloaded |
 | F4 Groups and arming | Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
 | F5 Motor stack as modules | Split `motor_controller` into the actuator, feedback and controller types, with YAML, `emergencyStop()`, `onArmTransition()` and bumpless mode switching. Delete `motor_manager`. | Velocity and position control on hardware through groups; the monitor stops the motors in the loop-stall test; nothing remains of the old motor protocol |
@@ -499,7 +499,7 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F7 Capture and test signals | The capture and testgen families, PSRAM enabled (caps alloc only). Evaluate `SPIRAM_XIP_FROM_PSRAM`. | A step response and a chirp, captured at 1 kHz on hardware with their inputs |
 | F8 Time | The ping on `0x02`, with TX-time stamping in the TX task. Delete `time_sync`. | The host's offset and drift estimate is stable, with jitter below 100 µs over the Pi's GPIO UART (USB-UART adapters add up to 1 ms of USB frame jitter; their target is a stable estimate, not a jitter bound) |
 | F9 OTA | The partition table (NVS unchanged), the OTA family with sequential and idempotent writes, and rollback. | Updating with the CLI, a retried chunk is acknowledged, and rollback when `CONFIRM` isn't sent |
-| F10 Cleanup | Remove the leftover Kconfig and legacy registry entries. Rewrite `CLAUDE.md` for the new architecture and remove its temporary overhaul section. A full docs consistency pass. Merge `firmware_overhaul` into `main`. | Every rule in the docs matches the code, and `main` holds the new firmware |
+| F10 Cleanup | Remove the leftover Kconfig and legacy registry entries. Rewrite `firmware/CLAUDE.md` for the new architecture and remove the temporary overhaul section from the root `CLAUDE.md`. A full docs consistency pass. Merge `firmware_overhaul` into `main`. | Every rule in the docs matches the code, and `main` holds the new firmware |
 
 Arming lands (F4) before any real motor is driven through the core (F5), so the board is never driven by the new code without the watchdog and the monitor. From F3 to F5 the old `motor_manager` keeps working alongside the core. Each manager is deleted in the phase that ports it, so no module ever exists in both forms.
 

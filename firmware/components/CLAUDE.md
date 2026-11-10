@@ -1,6 +1,6 @@
 # Component conventions
 
-These rules apply to every component under `components/`. They add to the project-wide rules in the root `CLAUDE.md`: architecture, concurrency, real-time paths, protocol, failure handling and definition of done.
+These rules apply to every component under `firmware/components/`. They add to the firmware-wide rules in `firmware/CLAUDE.md`: architecture, concurrency, real-time paths, protocol, failure handling and definition of done.
 
 ## Layout
 
@@ -35,7 +35,7 @@ These rules apply to every component under `components/`. They add to the projec
   - non-finite floats
   - invalid enum values
   - GPIOs outside the allowed set
-- Untrusted host input has a stricter rule: it must be rejected, not clamped. See "Protocol conventions" in the root `CLAUDE.md`.
+- Untrusted host input has a stricter rule: it must be rejected, not clamped. See "Protocol conventions" in `firmware/CLAUDE.md`.
 
 ## Resource management
 
@@ -46,7 +46,7 @@ These rules apply to every component under `components/`. They add to the projec
 ## Errors and logging
 
 - Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`. The `DIAG_*` macros log with it.
-- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `components/diag/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
+- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `firmware/components/diag/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
 - Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports. A type whose construction can fail keeps the reason for its caller (`initError()`, `MotorController::hardwareFailure()`), so the report carries the real `esp_err` and stage.
 - Stage and cause numbers passed as diag args are part of the wire contract: define them as named constants next to the report, document them in `diag_codes.yaml`, and never renumber them.
 - Make logs actionable: include GPIOs, channels, operator or slot IDs, and the config values involved.

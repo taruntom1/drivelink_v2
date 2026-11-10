@@ -3,7 +3,7 @@ conftest.py - pytest fixtures for uart_comm hardware tests.
 
 Usage
 -----
-Run from the test/ directory:
+Run from the firmware/test/uart_comm/ directory:
 
     pytest pytest_uart_comm.py --port COM5
 
@@ -12,7 +12,7 @@ The --port option specifies the COM port connected to ESP32-S3 UART0
 Use --baud to override the default 921600 baud rate (rarely needed).
 
 The ESP32-S3 must already be flashed with the test firmware from
-test/uart_comm/main/test_uart_comm_main.cpp before running the tests.
+firmware/test/uart_comm/main/test_uart_comm_main.cpp before running the tests.
 """
 
 import pytest
