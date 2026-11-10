@@ -6,7 +6,7 @@ The project is written in C++ and organized into reusable ESP-IDF components, so
 
 ## What This Repository Is
 
-This repository is the embedded firmware side of DriveLink. It is responsible for:
+This directory is the embedded firmware side of DriveLink. It is responsible for:
 
 - Driving DC motors using PWM + direction control.
 - Reading wheel/shaft rotary encoders.

@@ -11,7 +11,7 @@ One session runs one step and ends with one PR into `firmware_overhaul`. Follow 
 
 1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, named `claude/overhaul-<step id>` (for example `claude/overhaul-f1a`). If the session already sits on a branch with unrelated work, stop and tell the user.
 2. Read these:
-   - the "Firmware overhaul in progress" section of `CLAUDE.md`
+   - the "Firmware overhaul in progress" section of the root `CLAUDE.md`
    - all of `plans/overhaul-status.md`
    - the parts of `plans/firmware-architecture.md` and `plans/host-architecture.md` that the step touches
 3. Pick the step:
@@ -57,7 +57,7 @@ After approval, if the step's build model or effort differs from planning (Opus,
 
 Spawn an independent review agent (`general-purpose`) on `git diff origin/firmware_overhaul...HEAD`. Always pass `model: "opus"`, and pass `effort` set to the step's **Review effort** from the status table (`high` or `xhigh`). This skill is the instruction that sets that effort. Give the agent:
 - the step plan and the relevant plan sections
-- the `CLAUDE.md` rules
+- the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
 - a brief to find correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans
 
 Verify each finding against the code. Fix the ones that hold up, rerun the checks, and note any you rejected, with the reason, for the PR description.

@@ -27,7 +27,7 @@ idf.py -C firmware fullclean             # when target/config changes leave the 
 
 There are two kinds of automated tests.
 
-**Host unit tests** (`firmware/test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`third_party/doctest`). It compiles those firmware sources directly with the host compiler. `shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+**Host unit tests** (`firmware/test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It compiles those firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
 
 ```bash
 cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
@@ -57,7 +57,7 @@ pytest pytest_uart_comm.py --port COM5                      # USB-UART adapter o
 pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 ```
 
-`conftest.py` defaults `--baud` to 115200, which matches the Kconfig default, even though some comments say 921600. Everything else is checked by a clean `idf.py build` (there are no warnings today, so keep it that way) and by watching runtime logs.
+`conftest.py` defaults `--baud` to 115200, which matches the Kconfig default, even though some comments say 921600. Everything else is checked by a clean `idf.py -C firmware build` (there are no warnings today, so keep it that way) and by watching runtime logs.
 
 ## Architecture
 
@@ -121,7 +121,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 ## Conventions
 
-This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [firmware/components/CLAUDE.md](components/CLAUDE.md).
+This file holds the firmware-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [firmware/components/CLAUDE.md](components/CLAUDE.md).
 
 ### Real-time paths
 
@@ -143,7 +143,7 @@ Rules for them:
 Each protocol-facing manager defines its own messages on top of the `uart_comm` frame. All of them follow these rules:
 - **Version byte first.** Every payload starts with `kProtocolVersion`. Any change to the wire format bumps it. No backward compatibility is kept: the host and the firmware are updated together.
 - **Request correlation.** Configure commands carry a host-chosen `seq` byte right after the version, and the response echoes it. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for the subcommand and for the id fields. ESP-initiated requests carry their own id, like time_sync's `u16 request_id`.
-- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with the bounds-checked little-endian `uart_comm::wire::Reader` / `Writer` (`uart_comm/include/wire_codec.hpp`). Never `memcpy` a whole struct to or from the wire, and never write a component-local byte-order helper.
+- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with the bounds-checked little-endian `uart_comm::wire::Reader` / `Writer` (`firmware/components/uart_comm/include/wire_codec.hpp`). Never `memcpy` a whole struct to or from the wire, and never write a component-local byte-order helper.
 - **Exact lengths.** A fixed-size body must be exactly its size, or it is rejected. A variable-size body carries an explicit count, and `count × entry size` must equal the remaining length.
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
@@ -173,13 +173,13 @@ A change is done when all of the following are true:
 - **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated diag files are current, and the host tests pass. CI checks all of them.
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
-  - A change to an architecture, concurrency or convention rule updates this file or `firmware/components/CLAUDE.md`.
+  - A change to an architecture, concurrency or convention rule updates this file, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
 - **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
 - **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `firmware/test/host/`, and they pass.
 
 ### Files not to edit
 
-- **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand. `firmware/components/diag/include/diag_codes.hpp`, `firmware/components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
+- **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. `firmware/components/diag/include/diag_codes.hpp`, `firmware/components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
 - **Vendor code:**
   - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.

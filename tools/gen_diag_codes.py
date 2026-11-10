@@ -4,7 +4,7 @@
 Writes:
   firmware/components/diag/include/diag_codes.hpp   firmware: Source, Code, slot table
   firmware/components/diag/host/diag_codes.py       host: lookup table
-  docs/protocol/diag-codes.md              the code table between marker comments
+  docs/protocol/diag-codes.md                       the code table between marker comments
 
 Usage:
   python tools/gen_diag_codes.py           regenerate
