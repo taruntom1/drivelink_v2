@@ -57,18 +57,6 @@ struct ManagerConfig {
     I2cConfig i2c;
 };
 
-/// Stream health counters since startup. Each one is a running total.
-struct StreamCounters {
-    /// Timer periods that elapsed without a sample (the task woke late).
-    uint32_t late = 0;
-    /// Ticks skipped because the device was busy (config command in progress).
-    uint32_t busy = 0;
-    /// Ticks whose I2C read failed.
-    uint32_t read_errors = 0;
-    /// Samples that could not be encoded (payload overflow).
-    uint32_t encode_errors = 0;
-};
-
 const char *resultCodeToString(ResultCode code);
 
 } // namespace imu_bmo_055

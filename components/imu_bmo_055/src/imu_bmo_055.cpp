@@ -158,10 +158,6 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
       m_stream_restarted(true),
       m_requested_telemetry_period_us(0),
       m_operation_mode(0),
-      m_late_count(0),
-      m_busy_count(0),
-      m_read_error_count(0),
-      m_encode_error_count(0),
       m_cached_calibration(),
       m_has_cached_calibration(false),
       m_use_mock_data(false),
@@ -344,28 +340,31 @@ bool ImuBno055Manager::isValid() const
     return m_valid.load(std::memory_order_acquire);
 }
 
-ResultCode ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
+esp_err_t ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
 {
     const bool was_enabled = m_stream_enabled.load(std::memory_order_relaxed);
     if (enabled == was_enabled) {
-        return ResultCode::Ok;
+        return ESP_OK;
     }
 
     if (!enabled) {
         m_stream_enabled.store(false, std::memory_order_release);
         // A callback already in flight only wakes the task, which then sees
         // the stream disabled and does nothing.
-        return (m_stream_timer.stop() == ESP_OK) ? ResultCode::Ok : ResultCode::InternalError;
+        return m_stream_timer.stop();
     }
 
     m_stream_restarted.store(true, std::memory_order_release);
+    m_timer_epoch.fetch_add(1U, std::memory_order_release);
     m_stream_enabled.store(true, std::memory_order_release);
-    if (m_stream_timer.isCreated() &&
-        m_stream_timer.start(m_sample_period_us.load(std::memory_order_relaxed)) != ESP_OK) {
-        m_stream_enabled.store(false, std::memory_order_release);
-        return ResultCode::InternalError;
+    if (m_stream_timer.isCreated()) {
+        const esp_err_t err = m_stream_timer.start(m_sample_period_us.load(std::memory_order_relaxed));
+        if (err != ESP_OK) {
+            m_stream_enabled.store(false, std::memory_order_release);
+            return err;
+        }
     }
-    return ResultCode::Ok;
+    return ESP_OK;
 }
 
 ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
@@ -377,9 +376,9 @@ ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
         return ResultCode::Busy;
     }
-    const ResultCode rc = applyStreamEnabledLocked(enabled);
+    const esp_err_t err = applyStreamEnabledLocked(enabled);
     xSemaphoreGive(m_mutex);
-    return rc;
+    return (err == ESP_OK) ? ResultCode::Ok : ResultCode::InternalError;
 }
 
 ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
@@ -408,6 +407,7 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
     esp_err_t timer_err = ESP_OK;
     if (new_period != old_period && m_stream_timer.isCreated()) {
         timer_err = m_stream_timer.setPeriod(new_period);
+        m_timer_epoch.fetch_add(1U, std::memory_order_release); // restarted: not a stall
         if (timer_err != ESP_OK) {
             rc = ResultCode::InternalError; // reported below, after m_mutex is released
         }
@@ -484,16 +484,16 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
     }
 
     ResultCode rc = deviceErrToResult(ret);
-    bool reenable_failed = false;
     if (xSemaphoreTake(m_mutex, kMutexTimeout) == pdTRUE) {
         if (ret == ESP_OK) {
             m_operation_mode = operation_mode;
         }
-        reenable_failed = resume_stream && applyStreamEnabledLocked(true) != ResultCode::Ok;
+        const esp_err_t reenable_err = resume_stream ? applyStreamEnabledLocked(true) : ESP_OK;
         xSemaphoreGive(m_mutex);
-        if (reenable_failed) {
-            DIAG_ERROR(codes::kStreamReenableFailed, ESP_FAIL, kReenableTimerFailed, 0,
-                       "Could not re-enable the stream after the mode switch (sampling timer)");
+        if (reenable_err != ESP_OK) {
+            DIAG_ERROR(codes::kStreamReenableFailed, reenable_err, kReenableTimerFailed, 0,
+                       "Could not re-enable the stream after the mode switch (sampling timer): %s",
+                       esp_err_to_name(reenable_err));
             if (rc == ResultCode::Ok) {
                 rc = ResultCode::InternalError;
             }
@@ -594,16 +594,6 @@ ResultCode ImuBno055Manager::applyCalibration()
         return deviceErrToResult(ret);
     }
     return ResultCode::Ok;
-}
-
-StreamCounters ImuBno055Manager::getStreamCounters() const
-{
-    StreamCounters c{};
-    c.late = m_late_count.load(std::memory_order_relaxed);
-    c.busy = m_busy_count.load(std::memory_order_relaxed);
-    c.read_errors = m_read_error_count.load(std::memory_order_relaxed);
-    c.encode_errors = m_encode_error_count.load(std::memory_order_relaxed);
-    return c;
 }
 
 void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
@@ -759,14 +749,17 @@ void ImuBno055Manager::streamTaskLoop()
         // number of timer periods since we last took the notification.
         const uint32_t period_us = m_sample_period_us.load(std::memory_order_relaxed);
         const TickType_t wait = rtos_util::msToTicksCeil((2U * (period_us / 1000U)) + kWakeTimeoutMarginMs);
+        const uint32_t epoch = m_timer_epoch.load(std::memory_order_acquire);
         const uint32_t fired = ulTaskNotifyTake(pdTRUE, wait);
         if (m_stream_task.stopRequested()) {
             break;
         }
 
         const bool enabled = m_stream_enabled.load(std::memory_order_acquire);
-        // While disabled the timer is stopped, so a timeout is normal.
-        const bool stalled_now = (fired == 0U) && enabled;
+        // While disabled the timer is stopped, so a timeout is normal. So is
+        // one across a timer restart: the wait was sized for the old period.
+        const bool restarted = m_timer_epoch.load(std::memory_order_acquire) != epoch;
+        const bool stalled_now = (fired == 0U) && enabled && !restarted;
         if (stalled_now && !sampler_stalled) {
             DIAG_WARN(codes::kSamplerStalled, ESP_ERR_TIMEOUT, pdTICKS_TO_MS(wait), 0,
                       "Sampling timer has not fired for %" PRIu32 " ms", static_cast<uint32_t>(pdTICKS_TO_MS(wait)));
@@ -786,7 +779,6 @@ void ImuBno055Manager::streamTaskLoop()
             elapsed = 1U;
         }
         if (elapsed > 1U) {
-            m_late_count.fetch_add(elapsed - 1U, std::memory_order_relaxed);
             DIAG_COUNT_N(codes::kSampleLate, elapsed - 1U);
         }
         // Late ticks still count toward the telemetry countdown, so the
@@ -804,10 +796,8 @@ void ImuBno055Manager::streamTaskLoop()
         }
 
         if (read_ret == ESP_ERR_TIMEOUT) {
-            m_busy_count.fetch_add(1U, std::memory_order_relaxed);
             DIAG_COUNT(codes::kDeviceBusy);
         } else if (read_ret != ESP_OK) {
-            m_read_error_count.fetch_add(1U, std::memory_order_relaxed);
             DIAG_COUNT(codes::kReadError);
         } else if (countdown <= 0) {
             // A publish slot whose read failed stays pending (countdown
@@ -819,13 +809,15 @@ void ImuBno055Manager::streamTaskLoop()
             if (tx_len > 0U) {
                 m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, static_cast<uint8_t>(tx_len));
             } else {
-                m_encode_error_count.fetch_add(1U, std::memory_order_relaxed);
                 DIAG_COUNT(codes::kEncodeError);
             }
         }
         // Samples read on non-publish ticks are dropped for now. This is
         // where an on-board consumer (latest-sample accessor, filter) would
         // take every sample when sampling faster than the telemetry rate.
+    }
+    if (sampler_stalled) {
+        DIAG_CLEAR(codes::kSamplerStalled); // nothing watches it any more
     }
 }
 

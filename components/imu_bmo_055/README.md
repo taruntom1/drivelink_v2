@@ -44,7 +44,7 @@ Important runtime methods:
 - `readCalibration(CalibrationBlob&)`
 - `writeCalibration(const CalibrationBlob&)`
 - `applyCalibration()`
-- `getStreamCounters()`: stream health totals (`late`, `busy`, `read_errors`, `encode_errors`)
+- Stream health is counted through diag (see 4.1); there is no on-device getter.
 
 Device-level failures map to `Busy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` otherwise.
 
@@ -134,13 +134,13 @@ For complete host payload details, see:
 - The tick never waits:
   - It reads the stream settings from atomics, without the manager mutex.
   - It try-locks the device. If a config operation (mode switch, calibration) holds it, the tick is skipped and counted as `busy`.
-- Counters (`getStreamCounters()`):
+- Counters:
   - `late`: timer periods that passed without a sample, because the task woke late or an I2C read ran long
   - `busy`: ticks skipped because the device was in use
   - `read_errors`: I2C failures
   - `encode_errors`: payload overflows
-  - The same counts go to the host as diag counters (`imu.SampleLate`, `imu.DeviceBusy`, `imu.ReadError`, `imu.EncodeError`), sent as 1 Hz deltas. Nothing is logged per tick.
-  - If the stream is enabled but the timer stops waking the task, `imu.SamplerStalled` is reported once and cleared when it fires again.
+  - They are diag counters (`imu.SampleLate`, `imu.DeviceBusy`, `imu.ReadError`, `imu.EncodeError`), sent to the host as 1 Hz deltas. Nothing is logged per tick.
+  - If the stream is enabled but the timer stops waking the task, `imu.SamplerStalled` is reported once and cleared when it fires again, the stream is disabled or the task stops. A wait that spans a timer restart (enable, `SetStreamTiming`) is not counted as a stall.
 - When a publish tick fails (busy or read error), the next good sample is published, so the telemetry rate holds.
 - Disabling the stream stops the timer. `SetOperationMode` stops it for the duration of the mode switch and restarts it if the stream was enabled. The first sample after re-enabling is always published.
 

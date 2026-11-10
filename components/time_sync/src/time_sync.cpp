@@ -53,7 +53,8 @@ constexpr uint32_t kResponseQueue = 3;
 constexpr uint32_t kResponseCallback = 4;
 } // namespace init_stage
 
-// time_sync.SyncFailed arg0.
+// time_sync.SyncFailed arg0. kNone with an error means another sync was in
+// progress, which is not a failure and is never reported.
 namespace sync_stage {
 constexpr uint8_t kNone = 0;
 constexpr uint8_t kSend = 1;
@@ -73,6 +74,8 @@ const char* syncStageName(uint8_t stage)
             return "host status";
         case sync_stage::kApply:
             return "apply";
+        case sync_stage::kNone:
+            return "another sync in progress";
         default:
             return "?";
     }
@@ -241,7 +244,13 @@ esp_err_t TimeSync::triggerManualSync(bool wait_for_response, TickType_t timeout
 
     uint8_t failed_stage = sync_stage::kNone;
     uint8_t host_status = 0;
-    return performSync(timeout, failed_stage, host_status);
+    const esp_err_t ret = performSync(timeout, failed_stage, host_status);
+    if (ret != ESP_OK) {
+        // Manual syncs are not reported through diag: the caller gets the error.
+        ESP_LOGW(TAG, "Manual sync failed (%s, host status %u): %s", syncStageName(failed_stage), host_status,
+                 esp_err_to_name(ret));
+    }
+    return ret;
 }
 
 esp_err_t TimeSync::startPeriodicSync()
@@ -349,7 +358,10 @@ void TimeSync::periodicTask()
         uint8_t failed_stage = sync_stage::kNone;
         uint8_t host_status = 0;
         esp_err_t ret = performSync(timeout, failed_stage, host_status);
-        if (ret != ESP_OK) {
+        if (ret != ESP_OK && failed_stage == sync_stage::kNone) {
+            // A manual sync held the lock: skip this round, report nothing.
+            ESP_LOGD(TAG, "Periodic sync skipped: another sync in progress");
+        } else if (ret != ESP_OK) {
             // Reported once per run of failures; the rest are debug lines.
             if (!failing) {
                 failing = true;
@@ -366,6 +378,9 @@ void TimeSync::periodicTask()
         }
 
         m_impl->periodic_task.sleepUntil(last_wake, rtos_util::msToTicksCeil(m_impl->config.sync_interval_ms));
+    }
+    if (failing) {
+        DIAG_CLEAR(codes::kSyncFailed); // periodic sync stopped: nothing watches it any more
     }
 }
 
@@ -389,8 +404,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout, uint8_t& failed_stage, uint8
     failed_stage = sync_stage::kNone;
     host_status = 0;
     if (xSemaphoreTake(m_impl->sync_mutex, timeout) != pdTRUE) {
-        failed_stage = sync_stage::kSend; // another sync held the lock for the whole timeout
-        return ESP_ERR_TIMEOUT;
+        return ESP_ERR_TIMEOUT; // another sync held the lock: failed_stage stays kNone
     }
 
     protocol::TimeSyncRequest req = {};

@@ -35,7 +35,6 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     // not logged. diag sends the counts to the host.
     uint8_t count = 0;
     if (!protocol::decodeSetpointStreamHeader(frame.payload, frame.len, count)) {
-        m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
         DIAG_COUNT(diag::codes::motor_manager::kSetpointBadFrame);
         return;
     }
@@ -51,7 +50,6 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
         const ResultCode rc = use_mailbox ? queueSetpoint(entry.motor_id, kind, entry.value)
                                           : setSetpoint(entry.motor_id, kind, entry.value);
         if (rc != ResultCode::Ok) {
-            m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
             DIAG_COUNT(diag::codes::motor_manager::kSetpointRejected);
         }
     }

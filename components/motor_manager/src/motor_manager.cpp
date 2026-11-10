@@ -25,9 +25,12 @@ constexpr TickType_t kMutexTimeoutTicks = rtos_util::msToTicksCeil(CONFIG_MOTOR_
 constexpr UBaseType_t kConfigQueueDepth = CONFIG_MOTOR_MANAGER_CONFIG_QUEUE_DEPTH;
 constexpr TickType_t kConfigQueueRxTimeoutTicks = pdMS_TO_TICKS(100);
 
-// The update task waits for the timer at most this long (longer than the
-// largest control period) before reporting that the timer is not firing.
+// Upper bound on the update task's wait for the timer, so it re-checks the
+// stop flag even when the timer is not firing.
 constexpr TickType_t kControlWakeTimeoutTicks = pdMS_TO_TICKS(250);
+// The config task reports ControlTimerStalled when the update task has not
+// been woken for this long (longer than the largest control period, 100 ms).
+constexpr int64_t kControlStallUs = 250000;
 // Cap on the ticks folded into one dt after a stall, so a long hiccup cannot
 // dump a huge step into the PID integrators.
 constexpr uint32_t kMaxCatchUpTicks = 10;
@@ -680,19 +683,6 @@ ResultCode MotorManager::setTiming(uint32_t control_period_us, uint32_t telemetr
     return rc;
 }
 
-uint32_t MotorManager::getControlOverrunCount() const
-{
-    return m_overrun_count.load(std::memory_order_relaxed);
-}
-
-SetpointStreamCounters MotorManager::getSetpointStreamCounters() const
-{
-    SetpointStreamCounters c{};
-    c.bad_frames = m_bad_setpoint_frames.load(std::memory_order_relaxed);
-    c.rejected_entries = m_rejected_setpoints.load(std::memory_order_relaxed);
-    return c;
-}
-
 void MotorManager::updateAll(float dt_s)
 {
     if (!isValid()) {
@@ -743,7 +733,6 @@ void MotorManager::updateTaskLoop()
     uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD] = {};
     uint32_t pending_ticks = 0;
     int32_t telemetry_countdown = 0; // publish on the first run
-    bool timer_stalled = false;      // motor_manager.ControlTimerStalled is active
 
 #if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
     constexpr int64_t kStatsIntervalUs = 5000000;
@@ -752,6 +741,7 @@ void MotorManager::updateTaskLoop()
     int64_t int_min = std::numeric_limits<int64_t>::max(), int_max = 0, int_sum = 0;
     int64_t dur_min = std::numeric_limits<int64_t>::max(), dur_max = 0, dur_sum = 0;
     uint32_t int_n = 0, dur_n = 0;
+    uint32_t overruns_total = 0;
 #endif
 
     while (!m_update_task.stopRequested()) {
@@ -762,19 +752,9 @@ void MotorManager::updateTaskLoop()
             break;
         }
         if (fired == 0U) {
-            // Reported once per stall (m_mutex is not held here), cleared below.
-            if (!timer_stalled) {
-                timer_stalled = true;
-                DIAG_WARN(codes::kControlTimerStalled, ESP_ERR_TIMEOUT, pdTICKS_TO_MS(kControlWakeTimeoutTicks), 0,
-                          "Control timer has not fired for %u ms",
-                          static_cast<unsigned>(pdTICKS_TO_MS(kControlWakeTimeoutTicks)));
-            }
-            continue;
+            continue; // the config task notices a stall (watchControlTimer)
         }
-        if (timer_stalled) {
-            timer_stalled = false;
-            DIAG_CLEAR(codes::kControlTimerStalled);
-        }
+        m_timer_wakes.fetch_add(1U, std::memory_order_relaxed);
         pending_ticks += fired;
 
         // Never wait for the mutex: a busy mutex (a config command in
@@ -796,8 +776,10 @@ void MotorManager::updateTaskLoop()
 #endif
 
         if (pending_ticks > 1U) {
-            m_overrun_count.fetch_add(pending_ticks - 1U, std::memory_order_relaxed);
             DIAG_COUNT_N(codes::kControlOverrun, pending_ticks - 1U);
+#if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
+            overruns_total += pending_ticks - 1U;
+#endif
         }
         const uint32_t ticks = std::min(pending_ticks, kMaxCatchUpTicks);
         pending_ticks = 0;
@@ -830,7 +812,7 @@ void MotorManager::updateTaskLoop()
 
 #if CONFIG_MOTOR_MANAGER_LOG_LOOP_STATS
         const int64_t now_us = esp_timer_get_time();
-        const uint32_t overruns = m_overrun_count.load(std::memory_order_relaxed);
+        const uint32_t overruns = overruns_total;
         const int64_t dur = now_us - run_start_us;
         dur_min = std::min(dur_min, dur);
         dur_max = std::max(dur_max, dur);
@@ -853,7 +835,13 @@ void MotorManager::updateTaskLoop()
 void MotorManager::configTaskLoop()
 {
     uart_comm::RxFrame frame{};
+    ControlTimerWatch watch{};
+    watch.last_wakes = m_timer_wakes.load(std::memory_order_relaxed);
+    watch.last_change_us = esp_timer_get_time();
     while (!m_config_task.stopRequested()) {
+        // This task wakes at least every kConfigQueueRxTimeoutTicks, so it
+        // watches the control timer and keeps diag calls off the control task.
+        watchControlTimer(watch);
         if (xQueueReceive(m_config_queue, &frame, kConfigQueueRxTimeoutTicks) != pdTRUE) {
             continue;
         }
@@ -864,6 +852,33 @@ void MotorManager::configTaskLoop()
         if (rc != ResultCode::Ok) {
             ESP_LOGW(TAG, "Configure command failed: %s", resultCodeToString(rc));
         }
+    }
+    if (watch.stalled) {
+        DIAG_CLEAR(codes::kControlTimerStalled); // nothing watches it any more
+    }
+}
+
+void MotorManager::watchControlTimer(ControlTimerWatch &watch)
+{
+    if (!m_config.update_task.enable) {
+        return;
+    }
+    const int64_t now_us = esp_timer_get_time();
+    const uint32_t wakes = m_timer_wakes.load(std::memory_order_relaxed);
+    if (wakes != watch.last_wakes) {
+        watch.last_wakes = wakes;
+        watch.last_change_us = now_us;
+        if (watch.stalled) {
+            watch.stalled = false;
+            DIAG_CLEAR(codes::kControlTimerStalled);
+        }
+        return;
+    }
+    const int64_t idle_us = now_us - watch.last_change_us;
+    if (!watch.stalled && idle_us >= kControlStallUs) {
+        watch.stalled = true;
+        DIAG_WARN(codes::kControlTimerStalled, ESP_ERR_TIMEOUT, idle_us / 1000, 0,
+                  "Control timer has not fired for %" PRId64 " ms", idle_us / 1000);
     }
 }
 
@@ -1026,7 +1041,6 @@ void MotorManager::applyPendingSetpointsLocked()
             // No logging here: this runs on the control tick under m_mutex.
             const ResultCode rc = setSetpointLocked(e.motor_id, static_cast<SetpointKind>(k), e.value[k]);
             if (rc != ResultCode::Ok) {
-                m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
                 DIAG_COUNT(codes::kSetpointRejected);
             }
         }

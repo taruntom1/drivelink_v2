@@ -51,13 +51,6 @@ public:
                          uint32_t &applied_control_period_us,
                          uint32_t &applied_telemetry_period_us);
 
-    /// Number of control ticks that were late or skipped (because the loop
-    /// overran or the manager mutex was busy) since construction.
-    uint32_t getControlOverrunCount() const;
-
-    /// Setpoint stream frames and entries rejected since construction.
-    SetpointStreamCounters getSetpointStreamCounters() const;
-
     /// Run one control cycle for every motor with the given dt. Only needed
     /// when the internal update task is disabled.
     void updateAll(float dt_s);
@@ -89,8 +82,17 @@ private:
         std::array<float, kSetpointKindCount> value{};
     };
 
+    // Config-task state for detecting a stalled control timer.
+    struct ControlTimerWatch {
+        uint32_t last_wakes = 0;
+        int64_t last_change_us = 0;
+        bool stalled = false; ///< motor_manager.ControlTimerStalled is active
+    };
+
     void updateTaskLoop();
     void configTaskLoop();
+    /// Report or clear ControlTimerStalled. Config task only.
+    void watchControlTimer(ControlTimerWatch &watch);
     void updateAllLocked(float dt_s);
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
     ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
@@ -125,9 +127,9 @@ private:
     std::atomic<uint32_t> m_control_period_us{0};
     std::atomic<uint32_t> m_telemetry_divider{1};
     uint32_t m_requested_telemetry_period_us = 0; // guarded by m_mutex
-    std::atomic<uint32_t> m_overrun_count{0};
-    std::atomic<uint32_t> m_bad_setpoint_frames{0};
-    std::atomic<uint32_t> m_rejected_setpoints{0};
+    // Bumped by the update task on every timer wake; the config task
+    // watches it to report a stalled control timer.
+    std::atomic<uint32_t> m_timer_wakes{0};
 
     // Motor ids that exist, one bit per id. Written under m_mutex when a
     // motor is created or deleted; read lock-free by queueSetpoint() on the

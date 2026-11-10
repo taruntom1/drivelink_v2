@@ -164,7 +164,7 @@ CODES = {
         "clears": True,
         "arg0": 'wait without a tick (ms)',
         "arg1": 'unused',
-        "description": 'The control timer stopped waking the update task, so the control loop is not running. Cleared when it fires again.',
+        "description": 'The control timer stopped waking the update task, so the control loop is not running. Detected by the config task. Cleared when the timer fires again or the manager stops.',
         "retired": False,
     },
     (0x10, 0x0005): {
@@ -234,7 +234,7 @@ CODES = {
         "clears": True,
         "arg0": 'stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock',
         "arg1": 'host status byte (stage 3), else 0',
-        "description": 'A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync.',
+        "description": 'A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.',
         "retired": False,
     },
     (0x11, 0x0003): {
@@ -324,7 +324,7 @@ CODES = {
         "clears": True,
         "arg0": 'wait without a tick (ms)',
         "arg1": 'unused',
-        "description": 'The stream is enabled, but the sampling timer stopped waking the stream task. Cleared when it fires again or the stream is disabled.',
+        "description": 'The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.',
         "retired": False,
     },
     (0x12, 0x0009): {

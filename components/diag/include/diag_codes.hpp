@@ -87,7 +87,7 @@ inline constexpr ::diag::Code kMotorCreateFailed{12, ::diag::Source::MotorManage
 /// SET_TIMING could not restart the control timer at the new period. The old period stays in effect.
 /// arg0: requested control period (us). arg1: unused.
 inline constexpr ::diag::Code kTimerRestartFailed{13, ::diag::Source::MotorManager, 0x0003, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
-/// The control timer stopped waking the update task, so the control loop is not running. Cleared when it fires again.
+/// The control timer stopped waking the update task, so the control loop is not running. Detected by the config task. Cleared when the timer fires again or the manager stops.
 /// arg0: wait without a tick (ms). arg1: unused.
 inline constexpr ::diag::Code kControlTimerStalled{14, ::diag::Source::MotorManager, 0x0004, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
 /// Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex).
@@ -106,7 +106,7 @@ namespace time_sync {
 /// TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 /// arg0: stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback. arg1: unused.
 inline constexpr ::diag::Code kInitFailed{20, ::diag::Source::TimeSync, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
-/// A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync.
+/// A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.
 /// arg0: stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock. arg1: host status byte (stage 3), else 0.
 inline constexpr ::diag::Code kSyncFailed{21, ::diag::Source::TimeSync, 0x0002, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
 /// A time sync response was dropped because it could not be decoded (bad length or version).
@@ -135,7 +135,7 @@ inline constexpr ::diag::Code kCalibrationApplyFailed{28, ::diag::Source::Imu, 0
 /// SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
 /// arg0: requested sample period (us). arg1: unused.
 inline constexpr ::diag::Code kTimerRestartFailed{29, ::diag::Source::Imu, 0x0007, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
-/// The stream is enabled, but the sampling timer stopped waking the stream task. Cleared when it fires again or the stream is disabled.
+/// The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.
 /// arg0: wait without a tick (ms). arg1: unused.
 inline constexpr ::diag::Code kSamplerStalled{30, ::diag::Source::Imu, 0x0008, ::diag::Severity::Warning, ::diag::CodeKind::Record, true};
 /// Sample periods that were missed because the stream task ran late.

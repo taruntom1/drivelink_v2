@@ -78,7 +78,7 @@ On each wake the update task:
 3. Applies the setpoints queued from the stream, then calls `MotorController::update(dt)` for every motor. Each controller estimates velocity from the encoder count delta and passes the same `dt` to its PIDs.
 4. Every `N = ceil(telemetry_period_us / control_period_us)` ticks, encodes a telemetry packet. Its timestamp is taken when the motors are sampled, and the packet is sent after the mutex is released.
 
-Late and skipped ticks are counted (`getControlOverrunCount()`, and the diag counter `motor_manager.ControlOverrun`). If the timer does not wake the task for 250 ms, `motor_manager.ControlTimerStalled` is reported once and cleared when the timer fires again. With `MOTOR_MANAGER_LOG_LOOP_STATS` enabled, the interval and run-time statistics are logged every 5 s.
+Late and skipped ticks are counted as the diag counter `motor_manager.ControlOverrun`. The update task itself makes no other diag call: it bumps a wake count, and the config task reports `motor_manager.ControlTimerStalled` once when the count has not moved for 250 ms, and clears it when the timer fires again (or the manager stops). With `MOTOR_MANAGER_LOG_LOOP_STATS` enabled, the interval and run-time statistics are logged every 5 s.
 
 The task is pinned to `update_task.core_id` (default core 1) at `update_task.priority` (default 20, below the esp_timer task's 22).
 
@@ -256,7 +256,7 @@ No per-packet dynamic allocation is used while parsing.
 
 When the update task is enabled, the UART RX task does not apply setpoints itself. It stores the latest value per motor and setpoint kind in a mailbox, and the update task applies them at the start of its next control tick (within one control period). If several frames arrive between ticks, only the newest value for each (motor, kind) is applied. When the update task is disabled, setpoints are applied straight away on the RX task.
 
-Each entry is checked on the RX task before it is queued: the motor id must exist, the kind must be 0–2 and the value finite. Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged: neither the RX task nor the control tick logs. `getSetpointStreamCounters()` returns the totals, and diag sends them to the host as `motor_manager.SetpointBadFrame` and `motor_manager.SetpointRejected`.
+Each entry is checked on the RX task before it is queued: the motor id must exist, the kind must be 0–2 and the value finite. Setpoints have no response. Dropped frames (wrong version or length) and rejected entries are counted, not logged: neither the RX task nor the control tick logs. diag sends the counts to the host as `motor_manager.SetpointBadFrame` and `motor_manager.SetpointRejected`.
 
 ### Telemetry stream (ESP → PC)
 

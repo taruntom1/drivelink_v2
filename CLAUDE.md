@@ -155,7 +155,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
   - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
   - Each new code goes in `diag_codes.yaml`, then regenerate.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
-  - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`. Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery, not on every occurrence.
+  - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`. Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery or when the task watching them stops, not on every occurrence. A real-time task only counts; a non-real-time task watches the count and reports (the motor config task does this for the control timer).
   - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (the root `CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `components/` and `main/`). Code must build warning-free that way too, which CI checks.
 - **Never abort on runtime errors** that the host or the hardware can cause. Return `esp_err_t` or `bool`, expose `isValid()`, and log the failure.
   - No `ESP_ERROR_CHECK` anywhere.

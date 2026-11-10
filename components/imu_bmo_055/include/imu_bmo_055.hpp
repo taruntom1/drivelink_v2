@@ -48,9 +48,6 @@ public:
 	ResultCode writeCalibration(const CalibrationBlob &blob);
 	ResultCode applyCalibration();
 
-	/// Stream health counters (running totals). Lock-free.
-	StreamCounters getStreamCounters() const;
-
 	void handleConfigureCommand(const uart_comm::RxFrame &frame);
 
 private:
@@ -58,7 +55,8 @@ private:
 	void configTaskLoop();
 
 	/// Set the enabled flag and start/stop the timer. Caller holds m_mutex.
-	ResultCode applyStreamEnabledLocked(bool enabled);
+	/// Returns the timer error, if any.
+	esp_err_t applyStreamEnabledLocked(bool enabled);
 
 	ResultCode parseAndDispatchConfigure(ConfigureSubcommand subcommand,
 										 const uint8_t *body, uint8_t len,
@@ -93,10 +91,9 @@ private:
 	uint32_t m_requested_telemetry_period_us; // guarded by m_mutex
 	uint8_t m_operation_mode;                 // guarded by m_mutex
 
-	std::atomic<uint32_t> m_late_count;
-	std::atomic<uint32_t> m_busy_count;
-	std::atomic<uint32_t> m_read_error_count;
-	std::atomic<uint32_t> m_encode_error_count;
+	/// Bumped whenever the sampling timer is (re)started or re-timed. A wait
+	/// that times out across a bump is not a stall.
+	std::atomic<uint32_t> m_timer_epoch{0};
 
 	CalibrationBlob m_cached_calibration;
 	bool m_has_cached_calibration;
