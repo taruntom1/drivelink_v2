@@ -17,7 +17,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | State | PR |
 |---|---|---|---|---|
-| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | in review | |
+| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | in review | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
 | S1 | Repo restructure: firmware into `firmware/` (host plan, "Phase 1: restructure in detail") | no | planned | |
 | F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack sizes, non-blocking `sendData`) | no | planned | |
 | F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | planned | |
