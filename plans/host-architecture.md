@@ -1,11 +1,11 @@
 # Plan: host software architecture and repo restructure
 
-Status: draft, 2026-11-09 (revised). Nothing here is built yet.
+Status: draft, 2026-11-10 (revised after review). Nothing here is built yet.
 
-**Baseline.** The host is written against the firmware described in [firmware-architecture.md](firmware-architecture.md), after all its phases are done. That firmware is:
-- self-describing: module instances with params, signals, inputs and actions
+**Baseline.** The host is written against the firmware described in [firmware-architecture.md](firmware-architecture.md), after all its phases are done. A minimal slice of `libdrivelink` and `drivelink-cli` is built earlier, alongside firmware phases F3–F9, to drive and test them. That firmware is:
+- self-describing: module instances with params, signals, inputs, actions and diag codes
 - streamed through subscription groups and command groups
-- protected by arming and a watchdog
+- protected by arming, a watchdog and a safety monitor
 - stamped with monotonic timestamps, which the host maps to its own clock through pings
 - updated over the link (OTA)
 
@@ -25,7 +25,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 | Robot host | Raspberry Pi 5, Ubuntu 26.04 arm64, ROS 2 Lyrical Luth (LTS, supported to May 2031). |
 | PC GUI | C++ with Qt 6 and QML. Built with MinGW on Windows (Qt's own MinGW kit). |
 | Host core | `libdrivelink`, plain C++20 with no Qt and no ROS. Used by the GUI, the agent, the ROS plugin and the CLI. |
-| Generic host | The host has no module-specific code. It reads the descriptors from the device, caches them by descriptor hash, and builds its models from them. It uses the generated headers from `protocol/` only for core and system ids. |
+| Generic host | The host has no module-specific code. It reads the descriptors (items and diag codes) from the device at every connect and builds its models from them. The descriptor hash in `GET_INFO` tells it when the definitions changed; a disk cache keyed by the hash is deferred until connecting gets slow. It uses the generated headers from `protocol/` only for core and system ids. |
 | Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the port. The ROS plugin and the remote GUI are its clients. |
 | Port ownership on the bench | The GUI opens the serial port itself through `libdrivelink`. No agent is needed on Windows. |
 | Agent API | The device protocol over TCP, plus a few agent-only messages. Clients use the same frames as over serial. gRPC is out because of MinGW, and Zenoh would add a Rust toolchain. |
@@ -61,7 +61,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - `SerialTransport` uses standalone Asio and works on Linux and MinGW.
   - `TcpTransport` connects to the agent or to `drivelink-vdev`.
   - `UsbTransport` comes later, if needed.
-- **Link.** Frame encoding and the frame scanner come from `protocol/`, with LEN as a `u16`.
+- **Link.** Frame encoding and the frame scanner come from `protocol/`: a `u16` LEN with a header CRC8, and the protocol constant `MAX_PAYLOAD` (1024) as the scanner's hard bound before `GET_INFO` is known.
 - **Session.**
   - Allocates `seq`, tracks pending requests with timeouts and retries for idempotent reads, and matches responses to them.
   - Sends streams to subscribers.
@@ -73,8 +73,8 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 - **Device model.**
   - At connect, or after a Boot event, it:
     1. reads `GET_INFO`
-    2. checks the protocol version
-    3. loads the descriptors from its cache by hash, or fetches them
+    2. checks the protocol version, and the `safe_mode` flag
+    3. reads the descriptors: types, items and diag codes
     4. lists the instances
     5. reads every param
   - This builds a tree of type → instance (label) → params, signals, inputs and actions, with typed values, units, ranges and enum names.
@@ -86,7 +86,10 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - test signals
   - actions
   - OTA (stream the image, confirm after reconnect)
-  - diag (decode events, query entries, map codes to names through the generated table)
+  - diag (decode events, query entries, name codes from the code descriptors the device serves)
+  - arming (arm with conditions reported, `DISARM` through the fast-path MSG_TYPE, `ACK_FAULT`)
+  - command groups that send a keepalive frame when the client has nothing to command, and map NaN to "hold"
+- **Growth.** The first slice (transport, session, the core families) and `drivelink-cli` are built in firmware phase F3 and grow with each firmware phase. H1 adds the time model, the device model and the remaining services.
 - **Threading.**
   - One I/O thread (Asio) does all the reading and writing.
   - Clients get events through thread-safe queues.
@@ -98,9 +101,11 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 - Owns the serial port, runs as a systemd service, and keeps working while ROS is down.
 - Clients speak the device protocol over TCP. The agent arbitrates between them:
   - **`seq`.** It rewrites each client's `seq` before forwarding a request. It maps the response back and routes it to the client that sent the request.
-  - **Groups.** Group ids are device resources. The agent gives each client its own groups out of the device's pool, rewrites the group ids and stream channels both ways, and sends each client only its own subscription streams. The status stream and diag events go to every client.
+  - **Groups.** Group ids are device resources. The agent gives each client its own groups out of the device's pool, rewrites the group ids and stream channels both ways, and sends each client only its own subscription streams. It tracks each group's epoch, so frames left over from a group's previous owner are dropped. The status stream and diag events go to every client.
   - **Time.** The agent alone answers to the ESP's clock. Clients never send pings; the agent sends them its clock model (offset, drift, reference) as an agent message whenever the model changes.
-  - **Control lease.** Only one client at a time may send `ARM`, configure command groups or send command frames. While ROS's controllers are active, ROS holds the lease. The GUI takes it explicitly to tune, and ROS gets it back with a clear notice. Losing the lease disarms the device.
+  - **Control lease.** Only one client at a time may send `ARM`, configure command groups or send command frames. While ROS's controllers are active, ROS holds the lease. The GUI takes it explicitly to tune.
+    - A lease change, or the lease holder disconnecting, makes the agent send `DISARM` on the fast-path MSG_TYPE. That leaves the device plain Disarmed, not in Fault.
+    - The previous holder gets a lease-revoked message. ROS recovers as described under `drivelink_hardware`.
   - **Exclusive operations.** Capture, test signals, `SAVE`, `REVERT`, `FACTORY_RESET`, layout ops and OTA need the lease, or need the device to be disarmed with nobody holding the lease.
   - **Param writes.** Any client may write live params at any time. Batches are atomic on the device. Whether to restrict this while ROS holds the lease is an open question.
 - **Agent-only messages** use their own MSG_TYPEs from the generated registry: hello and version, lease request/grant/revoke, clock model, client list.
@@ -119,7 +124,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 - **Plots:** a custom `QQuickItem` that draws line strips through the scene graph from a C++ ring buffer. Live plots use subscription groups the GUI sets up itself; captures are plotted from uploaded buffers.
 - **Screens:**
   - **Connect:** a serial port, or an agent address.
-  - **Device:** info, arm/disarm, faults (diag entries with names and descriptions), save/revert, reboot, OTA.
+  - **Device:** info, arm/disarm with the reasons `ARM` was refused, fault acknowledgement, faults (diag entries with the names and descriptions the device serves), save/revert, reboot, OTA, and a safe-mode banner with `EXIT_SAFE_MODE`.
   - **Layout:** add or remove instances, wiring (`Ref` params with pickers), labels, pending-reboot banner.
   - **Tune:**
     1. Pick a controller instance and edit its gains live.
@@ -137,38 +142,48 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - for each joint: the label of its controller instance, and which interfaces map to which signals and inputs (by item name, for example `position` → `position`, `velocity` → `velocity`, command `velocity` → `velocity_sp`)
   - for each sensor: the label of its instance and its signal names (for the IMU, the quaternion, gyro and linear acceleration signals)
 - **`on_configure`:**
-  1. Connect and load the device model.
+  1. Connect and load the device model. Safe mode or a pending reboot is a clear error.
   2. Resolve every label and item name to a `Ref`. Anything missing, wrongly typed or failed is a clear error.
-  3. Set the controller `mode` params to match the claimed command interfaces.
 - **`on_activate`:**
   1. Take the lease.
   2. Configure one subscription group per loop and one command group.
-  3. `ARM`.
+  3. Stay disarmed. The command group sends keepalive frames.
+- **`prepare_command_mode_switch` / `perform_command_mode_switch`:**
+  1. Set each controller's `mode` param to match the newly claimed command interfaces. The firmware switches modes bumplessly, so this works while armed.
+  2. Set the command values to hold: the current position, zero velocity, zero duty.
+  3. When the first command interface is claimed, `ARM`. When the last one is released, `DISARM`.
 - **`on_deactivate`:** `DISARM`, then release the lease.
 - **`read()`:** copies the latest group values out of the seqlock buffers, with timestamps mapped to ROS time.
 - **`write()`:** queues one command group frame and never blocks.
-- **Status and faults:** diag events and the status stream are published on `/diagnostics` through a small node in `drivelink_bringup`. A disarm while active returns `ERROR` from `read()`, so the controller manager reacts.
+  - A NaN command value (the ros2_control default before a controller writes) is sent as hold: the last measured position, or zero velocity or duty. The firmware rejects non-finite frames, and a rejected frame doesn't feed the watchdog.
+- **Status and faults:** diag events and the status stream are published on `/diagnostics` through a small node in `drivelink_bringup`.
+- **Losing the device while active.** A disarm (watchdog, fault, or the GUI taking the lease) makes `read()` return `ERROR`. ros2_control then deactivates the component. Recovery is documented and done by an operator or a supervisor node:
+  1. acknowledge any fault (from the GUI, or a service on the diagnostics node)
+  2. hand the lease back
+  3. reactivate the component with `ros2 control set_hardware_component_state`
+
+  ros2_control does not reactivate a component on its own.
 - **IMU:** exposed as sensor state interfaces, published with `imu_sensor_broadcaster`.
 - **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets.
 
 ## Link budget
 
-At 921600 baud 8N1 the link carries 92 160 B/s in each direction. Frame overhead is 8 bytes. A subscription group frame is `8 + 11 + 4·k` bytes, and a command group frame is `8 + 3 + 4·k`.
+At 921600 baud 8N1 the link carries 92 160 B/s in each direction. Frame overhead is 9 bytes (including the header CRC8). A subscription group frame is `9 + 12 + 4·k` bytes, and a command group frame is `9 + 4 + 4·k`.
 
 The table below is for ESP → host: motor signals (position, velocity, duty), plus an IMU group of 10 values at 100 Hz, plus the status stream at 10 Hz.
 
 | Motors × 3 signals | 100 Hz | 200 Hz | 500 Hz | 1 kHz |
 |---|---|---|---|---|
-| 2 (frame 43 B) | 11 % | 16 % | 30 % | 53 % |
-| 4 (frame 67 B) | 14 % | 21 % | 43 % | 79 % |
-| 8 (frame 115 B) | 19 % | 32 % | 69 % | 132 % |
+| 2 (frame 45 B) | 12 % | 17 % | 31 % | 56 % |
+| 4 (frame 69 B) | 14 % | 22 % | 44 % | 82 % |
+| 8 (frame 117 B) | 20 % | 32 % | 70 % | 134 % |
 
 Host → ESP, one velocity per motor:
 
 | Motors | 100 Hz | 200 Hz | 500 Hz | 1 kHz |
 |---|---|---|---|---|
-| 4 (frame 27 B) | 3 % | 6 % | 15 % | 29 % |
-| 8 (frame 43 B) | 5 % | 9 % | 23 % | 47 % |
+| 4 (frame 29 B) | 3 % | 6 % | 16 % | 31 % |
+| 8 (frame 45 B) | 5 % | 10 % | 24 % | 49 % |
 
 What follows from the tables:
 - Normal running at 100–200 Hz uses a small share of 921600 baud.
@@ -197,7 +212,8 @@ drivelink_v2/
 │  ├─ src/
 │  └─ test/
 ├─ host/
-│  ├─ CMakeLists.txt  CMakePresets.json  CLAUDE.md
+│  ├─ CLAUDE.md
+│  ├─ superbuild/             CMakeLists.txt + CMakePresets.json (COLCON_IGNORE)
 │  ├─ libdrivelink/           (+ package.xml)
 │  ├─ vdev/                   drivelink-vdev: links firmware/components/{core,core_os,mod_*} natively
 │  ├─ cli/                    drivelink-cli
@@ -226,11 +242,12 @@ Each directory is created by the phase that first puts something in it. No empty
   - Under IDF (`ESP_PLATFORM`), `protocol/` calls `idf_component_register`.
   - Otherwise each one is an ordinary library that installs and exports a CMake package (`find_package(drivelink_protocol)`, `find_package(drivelink)`).
   - Each one also has a `package.xml` with `<build_type>cmake</build_type>`, so colcon builds it as a dependency in the same workspace.
-- **Host superbuild:** `host/CMakeLists.txt` brings in `protocol/` and builds libdrivelink, vdev, cli, agent and gui together.
+- **Host superbuild:** `host/superbuild/CMakeLists.txt` brings in `protocol/` and builds libdrivelink, vdev, cli, agent and gui together (`add_subdirectory` with explicit binary dirs).
+  - It lives in its own directory, not at `host/CMakeLists.txt`. colcon treats any directory with a `CMakeLists.txt` that calls `project()` as a package and does not look for packages inside it, so a superbuild at `host/` would hide `host/libdrivelink` and `host/ros/*`.
   - `vdev` compiles the firmware core and modules against `core_os`'s native backend.
   - `CMakePresets.json` has `windows-mingw`, `linux` and `linux-no-gui` presets.
   - The Windows preset names Qt's MinGW compiler explicitly.
-- **ROS:** `colcon build` from the repo root. `firmware/` and `host/gui/` carry `COLCON_IGNORE`.
+- **ROS:** `colcon build` from the repo root. `firmware/`, `host/superbuild/`, `host/gui/`, `host/vdev/`, `host/cli/` and `host/agent/` carry `COLCON_IGNORE`. colcon finds `protocol/`, `host/libdrivelink/` and `host/ros/*` through their `package.xml`.
 - **MinGW notes:**
   - Never mix compilers. Qt, libdrivelink, vdev and the GUI all build with Qt's MinGW kit.
   - Strawberry Perl puts a different `g++` on `PATH` (the firmware host tests use it today). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
@@ -241,7 +258,7 @@ Each directory is created by the phase that first puts something in it. No empty
 
 1. `protocol/defs/<type>.yaml`: the type id, params, signals, inputs, actions and loop classes. Then run the generator.
 2. `firmware/components/mod_<...>/`: the factory and the `Instance`, which binds the generated ids to its storage, plus native tests for its pure logic.
-3. diag codes for its faults in `diag_codes.yaml`, with `blocks_arm` and `disarms` set.
+3. diag codes for its faults in `diag_codes.yaml`, with `blocks_arm` and `disarms` set. The device serves their names and descriptions, so the host needs no rebuild to show them.
 4. Host: nothing. Optionally, a custom GUI panel.
 5. ROS: nothing in code. Only the joint or sensor mapping in the robot's config.
 
@@ -264,9 +281,9 @@ Each directory is created by the phase that first puts something in it. No empty
 | Phase | Content |
 |---|---|
 | 1 | Repo restructure (detailed below). No behavior change. |
-| F1–F10 | The firmware plan ([firmware-architecture.md](firmware-architecture.md)). |
-| H1 | `libdrivelink` (transport, session, time, device model, services), `drivelink-cli`, and the host-linux and host-windows CI. Tested against vdev. |
-| H2 | GUI in local mode: connect, device, layout, tune and monitor screens, plant identification. |
+| F1–F10 | The firmware plan ([firmware-architecture.md](firmware-architecture.md)). From F3 on, each firmware phase also extends the first slice of `libdrivelink` and `drivelink-cli`, which drive and test it. The host-linux CI job starts in F3. |
+| H1 | Complete `libdrivelink`: the time model, the device model, the remaining services, and plant identification math. The host-windows CI job. Tested against vdev. |
+| H2 | GUI in local mode: connect, device, layout, tune and monitor screens. |
 | H3 | Agent: arbitration, lease, clock model distribution. The GUI's remote mode. |
 | H4 | `drivelink_hardware` and `drivelink_bringup`, the diagnostics node, the ROS CI job. |
 
@@ -322,7 +339,7 @@ The paths inside `review/` and `TODO.md` are written relative to the firmware ro
 - `firmware/README.md`: fix the build commands and paths.
 - `.gitignore`:
   - `/components/.idf/` becomes `/firmware/components/.idf/`
-  - Fix the lines with trailing `# ...` comments (`*.exe`, `*.workspace`, `*.suo`, `*.sln.docstates`). Git treats the `#` as part of the pattern, so these lines match nothing today. This was checked with `git check-ignore`.
+  - Fix the lines with trailing `# ...` comments (`flasher_args.json`, `*.exe`, `*.workspace`, `*.suo`, `*.sln.docstates`). Git treats the `#` as part of the pattern, so these lines match nothing today. This was checked with `git check-ignore`.
 - `plans/esp-timer-control-loop.md`, `plans/imu-timer-sampling.md` and the diag plan are records of done work. Leave them as they are, and add one line at the top of each saying that paths are relative to `firmware/`.
 - `firmware/test/uart_comm/conftest.py` and `pytest_uart_comm.py`: their docstrings give `test/uart_comm/...` paths and `idf.py -C test/uart_comm`. Prefix them with `firmware/`. The code itself has no repo paths.
 
