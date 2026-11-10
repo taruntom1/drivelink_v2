@@ -130,7 +130,7 @@ menu "IMU BNO055 Configuration"
 
     config IMU_BMO_055_STREAM_TASK_STACK
         int "Stream task stack size"
-        default 4096
+        default 5120
         range 2048 16384
         help
             Stack size in bytes for the IMU stream task.
@@ -144,7 +144,7 @@ menu "IMU BNO055 Configuration"
 
     config IMU_BMO_055_CONFIG_TASK_STACK
         int "Config task stack size"
-        default 4096
+        default 5120
         range 2048 16384
         help
             Stack size in bytes for the IMU configuration task.

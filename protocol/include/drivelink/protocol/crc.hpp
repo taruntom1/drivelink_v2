@@ -12,4 +12,11 @@ namespace drivelink::protocol {
 /// @param len   Number of bytes
 uint16_t crc16Ccitt(const uint8_t *data, size_t len);
 
+/// CRC-8 (CRC-8/SMBUS): polynomial 0x07, initial value 0x00, no reflection,
+/// no final XOR. The check value of "123456789" is 0xF4. Used for the frame
+/// header CRC (HCRC).
+/// @param data  Bytes to checksum (may be nullptr if len == 0)
+/// @param len   Number of bytes
+uint8_t crc8(const uint8_t *data, size_t len);
+
 } // namespace drivelink::protocol

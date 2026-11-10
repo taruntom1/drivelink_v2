@@ -2,7 +2,8 @@
  * @file test_uart_comm_main.cpp
  * @brief ESP32-S3 test firmware for the uart_comm component.
  *
- * Acts as a command responder on UART0 (TX=GPIO43, RX=GPIO44) at 921600 baud.
+ * Acts as a command responder on UART0 (TX=GPIO43, RX=GPIO44) at
+ * CONFIG_UART_COMM_BAUD_RATE (921600 by default).
  * All communication uses the uart_comm framing protocol.
  * IDF logging is routed to the built-in USB-Serial-JTAG CDC interface (GPIO19/20);
  * connect the ESP32-S3 "USB" port to your PC and open it with idf.py monitor.
@@ -12,13 +13,14 @@
  *  PC → ESP (commands, MSG_TYPE 0x01-0x07):
  *
  *  0x01  CMD_ECHO           Payload: N bytes  → ESP replies RSP_ECHO (0x41) with same payload
- *  0x02  CMD_GET_COUNTERS   Payload: empty    → RSP_COUNTERS (0x42), 24 bytes:
+ *  0x02  CMD_GET_COUNTERS   Payload: empty    → RSP_COUNTERS (0x42), 28 bytes:
  *                               [crc_errors:u32le][timeouts:u32le]
  *                               [uart_errors:u32le][overflows:u32le]
  *                               [length_errors:u32le][discarded_bytes:u32le]
+ *                               [header_crc_errors:u32le]
  *  0x03  CMD_READ_STREAM    Payload: empty    → RSP_STREAM_DATA (0x44)
  *                               If the stream-receive callback has fired since last read:
- *                                 [1:u8][stored_payload...]
+ *                                 [1:u8][stored_payload...] (cut to MAX_PAYLOAD - 1 bytes)
  *                               If no data:
  *                                 [0:u8]
  *  0x04  CMD_SENDCMD_STREAM Payload: any      → ESP calls sendCommand(0x80, payload, len)
@@ -57,6 +59,7 @@
  *   case use GPIO43/44 breakout pins with any USB-UART dongle for test comms.
  */
 
+#include <algorithm>
 #include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -93,10 +96,17 @@ static volatile bool    g_stream_received = false;
 static uint8_t          g_stream_payload[CONFIG_UART_COMM_MAX_PAYLOAD];
 static volatile uint16_t g_stream_len     = 0;
 
+// Frame buffers are static, not on the main task's stack: with 1024-byte
+// payloads each is about 1 KB.
+static RxFrame g_frame{};
+static uint8_t g_reply[CONFIG_UART_COMM_MAX_PAYLOAD];
+
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "uart_comm test firmware starting");
-    ESP_LOGI(TAG, "UART0 TX=GPIO43 RX=GPIO44 @ 115200 baud");
+    ESP_LOGI(TAG, "UART%d TX=GPIO%d RX=GPIO%d @ %d baud, max payload %d", CONFIG_UART_COMM_PORT_NUM,
+             CONFIG_UART_COMM_TX_PIN, CONFIG_UART_COMM_RX_PIN, CONFIG_UART_COMM_BAUD_RATE,
+             CONFIG_UART_COMM_MAX_PAYLOAD);
     ESP_LOGI(TAG, "Logging via USB-Serial-JTAG CDC (this port).");
     ESP_LOGI(TAG, "Connect the board UART0 port to PC and run pytest_uart_comm.py");
 
@@ -127,7 +137,7 @@ extern "C" void app_main(void)
     }, stream_cb);
 
     // ── Main dispatch loop ────────────────────────────────────────────────────
-    RxFrame frame{};
+    RxFrame& frame = g_frame;
     while (true) {
         esp_err_t ret = comm.receive(frame, pdMS_TO_TICKS(15000));
         if (ret == ESP_ERR_TIMEOUT) {
@@ -151,13 +161,14 @@ extern "C" void app_main(void)
         case CMD_GET_COUNTERS: {
                 ESP_LOGI(TAG, "Test: CMD_GET_COUNTERS started");
             ErrorCounters ec = comm.getErrorCounters();
-            uint8_t buf[24];
-            std::memcpy(buf + 0,  &ec.crc_errors,      4);
-            std::memcpy(buf + 4,  &ec.timeouts,        4);
-            std::memcpy(buf + 8,  &ec.uart_errors,     4);
-            std::memcpy(buf + 12, &ec.overflows,       4);
-            std::memcpy(buf + 16, &ec.length_errors,   4);
-            std::memcpy(buf + 20, &ec.discarded_bytes, 4);
+            uint8_t buf[28];
+            std::memcpy(buf + 0,  &ec.crc_errors,        4);
+            std::memcpy(buf + 4,  &ec.timeouts,          4);
+            std::memcpy(buf + 8,  &ec.uart_errors,       4);
+            std::memcpy(buf + 12, &ec.overflows,         4);
+            std::memcpy(buf + 16, &ec.length_errors,     4);
+            std::memcpy(buf + 20, &ec.discarded_bytes,   4);
+            std::memcpy(buf + 24, &ec.header_crc_errors, 4);
             comm.sendCommand(RSP_COUNTERS, buf, sizeof(buf));
             break;
         }
@@ -167,11 +178,12 @@ extern "C" void app_main(void)
         // First byte is a has-data flag; remaining bytes are the payload.
         case CMD_READ_STREAM: {
                 ESP_LOGI(TAG, "Test: CMD_READ_STREAM started");
-            uint8_t buf[1 + CONFIG_UART_COMM_MAX_PAYLOAD];
+            uint8_t* buf = g_reply;
             size_t reply_len = 0;
             if (g_stream_received) {
                 buf[0] = 0x01;
-                size_t plen = g_stream_len;
+                // The flag byte takes one byte of the reply.
+                const size_t plen = std::min<size_t>(g_stream_len, sizeof(g_reply) - 1U);
                 std::memcpy(&buf[1], g_stream_payload, plen);
                 reply_len = 1u + plen;
                 // Clear for the next test

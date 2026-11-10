@@ -375,6 +375,7 @@ void Reporter::Impl::foldUartCounters()
     fold(codes::uart_comm::kRxOverflow, now.overflows, uart_last.overflows);
     fold(codes::uart_comm::kLengthError, now.length_errors, uart_last.length_errors);
     fold(codes::uart_comm::kDiscardedBytes, now.discarded_bytes, uart_last.discarded_bytes);
+    fold(codes::uart_comm::kHeaderCrcError, now.header_crc_errors, uart_last.header_crc_errors);
 }
 
 void Reporter::Impl::sendCounterDeltas()

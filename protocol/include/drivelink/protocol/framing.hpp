@@ -5,16 +5,24 @@
 
 namespace drivelink::protocol {
 
-/// Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16`.
-/// The CRC (little-endian on the wire) covers MSG_TYPE, LEN and the payload.
+/// Frame layout (docs/protocol/framing.md):
+///
+///     AA AA AA | MSG_TYPE u8 | LEN u16 | HCRC u8 | payload | CRC16
+///
+/// - LEN and CRC16 are little-endian.
+/// - HCRC is crc8() over MSG_TYPE and LEN (3 bytes), so a receiver can reject
+///   a false preamble before it waits for the payload.
+/// - CRC16 is crc16Ccitt() over MSG_TYPE, LEN, HCRC and the payload.
 inline constexpr uint8_t kStartByte = 0xAA;
 inline constexpr size_t kStartLen = 3;
-inline constexpr size_t kHeaderLen = 2; // MSG_TYPE + LEN
+inline constexpr size_t kHeaderCrcSpan = 3; // MSG_TYPE + LEN, covered by HCRC
+inline constexpr size_t kHeaderLen = 4;     // MSG_TYPE + LEN + HCRC
 inline constexpr size_t kCrcLen = 2;
-inline constexpr size_t kOverhead = kStartLen + kHeaderLen + kCrcLen;
+inline constexpr size_t kOverhead = kStartLen + kHeaderLen + kCrcLen; // 9
 
-/// Largest payload the LEN field can carry.
-inline constexpr size_t kMaxPayload = 255;
+/// Largest payload of any frame: a protocol constant. A receiver may be
+/// built with a smaller limit, never a larger one.
+inline constexpr size_t kMaxPayload = 1024;
 
 /// Total size of a frame with a payload of `payload_len` bytes.
 constexpr size_t frameSize(size_t payload_len)
@@ -49,10 +57,22 @@ constexpr bool isEvent(uint8_t type) { return type >= kEventMin && type <= kEven
 ///                  does not fit in `capacity`. Nothing is written on failure.
 size_t encodeFrame(uint8_t *buf, size_t capacity, uint8_t msg_type, const uint8_t *payload, size_t len);
 
-/// Check the CRC of a received frame body.
+/// The LEN field of a received header.
+/// @param header  Pointer to the MSG_TYPE byte; must hold kHeaderLen bytes
+constexpr size_t headerPayloadLen(const uint8_t *header)
+{
+    return static_cast<size_t>(header[1]) | (static_cast<size_t>(header[2]) << 8U);
+}
+
+/// Check the HCRC of a received header.
+/// @param header  Pointer to the MSG_TYPE byte; must hold kHeaderLen bytes
+/// @return        true if HCRC matches MSG_TYPE and LEN
+bool headerCrcValid(const uint8_t *header);
+
+/// Check the CRC16 of a received frame body.
 /// @param data         Pointer to the MSG_TYPE byte (the first byte after the preamble)
-/// @param payload_len  The LEN field value. `data` must hold payload_len + 4 bytes
-///                     (MSG_TYPE, LEN, payload, CRC16).
+/// @param payload_len  The LEN field value. `data` must hold
+///                     kHeaderLen + payload_len + kCrcLen bytes.
 /// @return             true if the CRC matches
 bool validateCrc(const uint8_t *data, size_t payload_len);
 

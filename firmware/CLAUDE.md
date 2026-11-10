@@ -57,7 +57,13 @@ pytest pytest_uart_comm.py --port COM5                      # USB-UART adapter o
 pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 ```
 
-`conftest.py` defaults `--baud` to 115200, which matches the Kconfig default, even though some comments say 921600. Everything else is checked by a clean `idf.py -C firmware build` (there are no warnings today, so keep it that way) and by watching runtime logs.
+`conftest.py` defaults `--baud` to 921600, the Kconfig default. The same directory holds `smoke_main_firmware.py`, a standalone script for the **main** firmware (not the test app): it checks that diag, motor_manager, the IMU and time_sync answer over the link with their current protocol versions (`python smoke_main_firmware.py --port COM5`).
+
+**Stack sizes** are checked on hardware. The main firmware logs every task's stack high-water mark on the console every `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off; it needs `CONFIG_FREERTOS_USE_TRACE_FACILITY`, set in `firmware/sdkconfig.defaults`). The HIL test app logs the uart_comm RX/TX marks when idle.
+
+**Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD` and the stack sizes), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
+
+Everything else is checked by a clean `idf.py -C firmware build` (there are no warnings today, so keep it that way) and by watching runtime logs.
 
 ## Architecture
 
@@ -77,8 +83,10 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 - `diag` reports errors to the host as codes. The `DIAG_*` macros latch a per-code slot and queue a record, and `diag::Reporter` sends events and answers queries over `uart_comm`. Only the managers and `main` report. The hardware layers return errors and don't depend on `diag`, and the reporter reads `uart_comm`'s link counters itself. Its codec and slot table are pure modules (`diag_protocol`, `diag_table`).
 
 **UART protocol** (`uart_comm`):
-- Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16-CCITT(0x1021, init 0xFFFF)`. The CRC covers MSG_TYPE, LEN and the payload. Encoding, CRC and scanning come from `protocol/`.
-- RX framing is done in software; hardware pattern detection is not used. `uart_comm`'s `Parser` is the driver side: driver events only wake the RX task, and `Parser::nextFrame()` pulls bytes from the ring buffer into a `drivelink::protocol::Scanner`, which scans for the preamble. The preamble is not escaped, so a rejected candidate (bad LEN or CRC) drops one byte and rescans. Never flush the RX buffer: it may already hold the next valid frames. The stale-frame timer and the logging stay in `Parser`; the scanner has no clock.
+- Frame layout: `AA AA AA | MSG_TYPE | LEN u16 | HCRC | payload | CRC16`, specified in `docs/protocol/framing.md`. HCRC is a CRC-8 over MSG_TYPE and LEN; the CRC16 (CCITT-FALSE) covers MSG_TYPE, LEN, HCRC and the payload. Encoding, CRCs and scanning come from `protocol/`.
+- `MAX_PAYLOAD` is 1024 (`CONFIG_UART_COMM_MAX_PAYLOAD`, 128 to 1024; the protocol limit is `drivelink::protocol::kMaxPayload`). It sizes `RxFrame`, so every queue of `RxFrame`s and every `RxFrame` on a stack costs about 1 KB per entry. Don't put an `RxFrame` or a `MAX_PAYLOAD` buffer on a task stack without checking that task's stack mark.
+- The default baud rate is 921600, and the UART ISR runs from IRAM (`CONFIG_UART_ISR_IN_IRAM`). The driver's RX and TX ring buffers are 4096 bytes, above one full frame.
+- RX framing is done in software; hardware pattern detection is not used. `uart_comm`'s `Parser` is the driver side: driver events only wake the RX task, and `Parser::nextFrame()` pulls bytes from the ring buffer into a `drivelink::protocol::Scanner`, which scans for the preamble. The preamble is not escaped, so a rejected candidate (bad HCRC, LEN or CRC16) drops one byte and rescans. The HCRC and LEN are checked before the payload is awaited, so a false preamble doesn't hold up RX. Never flush the RX buffer: it may already hold the next valid frames. The stale-frame timer and the logging stay in `Parser`; the scanner has no clock.
 - MSG_TYPE ranges: commands `0x01–0x3F`, responses `0x40–0x7F`, streams `0x80–0xBF`, events `0xC0–0xFE`.
 - TX has two paths, and both use only buffers allocated in the constructor or `openStream()`:
   - `sendCommand()` takes a free frame buffer from a preallocated pool (`CONFIG_UART_COMM_CMD_QUEUE_DEPTH` buffers), encodes into it and queues its index. The TX task drains the queue first. `ESP_ERR_NO_MEM` means the pool is empty.
@@ -92,11 +100,11 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
   - diag: query `0x23` / `0x63`, events `0xC0`
   - Nothing checks for collisions between these IDs.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
-  - motor_manager and IMU are both at v4. Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. Every configure response carries `result` then a `detail` byte (each manager's `ResultDetail`) saying why it failed; the manager methods return the pair as a `Result`. A command that arrives while the config queue is full is answered from the RX callback (`QueueFull`) instead of being dropped. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
+  - motor_manager and IMU are both at v5 (v5 changed no payload: every version was bumped with the F1b framing). Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. Every configure response carries `result` then a `detail` byte (each manager's `ResultDetail`) saying why it failed; the manager methods return the pair as a `Result`. A command that arrives while the config queue is full is answered from the RX callback (`QueueFull`) instead of being dropped. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
   - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 6-byte header.
   - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 5-byte header.
   - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
-  - time_sync is at v1. Its ESP-initiated request already carries a `u16 request_id`.
+  - time_sync is at v2, diag at v2 (both bumped with the F1b framing). time_sync's ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.

@@ -11,13 +11,13 @@ All headers are under `include/drivelink/protocol/`, namespace `drivelink::proto
 | Header | What |
 |---|---|
 | `wire_codec.hpp` | `wire::Reader` and `wire::Writer`: bounds-checked little-endian field codec with a sticky error flag. Header-only. |
-| `crc.hpp` | `crc16Ccitt()`: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), table-driven. |
-| `framing.hpp` | Frame constants (`kStartByte`, `kMaxPayload`, ...), `frameSize()`, the MSG_TYPE ranges and `isCommand/isResponse/isStream/isEvent`, `encodeFrame()`, `validateCrc()`. |
+| `crc.hpp` | `crc16Ccitt()`: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), and `crc8()`: CRC-8 (poly 0x07, init 0x00), both table-driven. |
+| `framing.hpp` | Frame constants (`kStartByte`, `kMaxPayload` = 1024, `kOverhead` = 9, ...), `frameSize()`, the MSG_TYPE ranges and `isCommand/isResponse/isStream/isEvent`, `encodeFrame()`, `headerPayloadLen()`, `headerCrcValid()`, `validateCrc()`. |
 | `scanner.hpp` | `Scanner`: finds frames in a byte stream and resyncs after noise. |
 
-## Frame (current)
+## Frame
 
-`AA AA AA | MSG_TYPE u8 | LEN u8 | payload | CRC16 (little-endian)`. The CRC covers MSG_TYPE, LEN and the payload. F1b changes this to a `u16` LEN with a header CRC8.
+`AA AA AA | MSG_TYPE u8 | LEN u16 | HCRC u8 | payload | CRC16`, little-endian. HCRC is `crc8()` over MSG_TYPE and LEN; the CRC16 covers MSG_TYPE, LEN, HCRC and the payload. [docs/protocol/framing.md](../docs/protocol/framing.md) is the spec, with golden frames.
 
 ## Using the scanner
 
@@ -37,8 +37,9 @@ scanner.dropStale();
 ```
 
 Rules:
-- A candidate with a bad LEN or CRC drops one byte and the scan resumes. A false `AA AA AA` inside a payload can't hide a real frame behind it.
-- `Scanner` has no clock and no logging. The caller decides when a partial frame is stale and what to log. `counters()` reports CRC errors, length errors, timeouts and discarded bytes.
+- At each preamble: the HCRC first (as soon as the 4 header bytes are in), then LEN against the limit, then the CRC16 once the frame is complete. A candidate that fails drops one byte and the scan resumes. A false `AA AA AA` inside a payload can't hide a real frame behind it, and a false preamble is rejected without waiting for its payload.
+- `Scanner` has no clock and no logging. The caller decides when a partial frame is stale and what to log. `counters()` reports CRC errors, header CRC errors, length errors, timeouts and discarded bytes.
+- The window is allocated once (two maximum-size frames). Rejecting a byte only advances a read offset; the unconsumed bytes are moved to the front in `writable()`.
 - Frame payloads are views into the window (no copy). Copy what you need before the next call.
 
 ## Tests

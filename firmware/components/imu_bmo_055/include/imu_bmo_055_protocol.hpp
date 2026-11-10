@@ -32,8 +32,9 @@ enum class StreamField : uint16_t {
 // values echoed) replaces SetStreamPeriodMs; configure bodies must have their
 // exact length; the stream timestamp is wall-clock time.
 // v4: a detail byte follows result in configure responses.
+// v5: no payload change; bumped with the link framing (u16 LEN + HCRC, overhaul F1b).
 // The version covers every IMU payload, including the stream.
-constexpr uint8_t kProtocolVersion = 0x04;
+constexpr uint8_t kProtocolVersion = 0x05;
 // Sent as the subcommand in a configure response when the request header
 // could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;

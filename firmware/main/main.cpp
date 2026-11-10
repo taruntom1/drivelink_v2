@@ -5,6 +5,7 @@
 // destroyed and left out; the others keep running, so the host can still
 // connect and ask what went wrong. app_main never returns.
 
+#include <array>
 #include <optional>
 
 #include "diag.hpp"
@@ -20,11 +21,45 @@ static const char *const TAG = "main";
 
 namespace {
 
+#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0
+#if !CONFIG_FREERTOS_USE_TRACE_FACILITY
+#error "The stack high-water log needs CONFIG_FREERTOS_USE_TRACE_FACILITY=y (or set CONFIG_DRIVELINK_STACK_LOG_PERIOD_S=0)"
+#endif
+
+// Room for every task the firmware runs, with a margin. Static: nothing is
+// allocated while idling.
+constexpr size_t kMaxLoggedTasks = 40;
+std::array<TaskStatus_t, kMaxLoggedTasks> s_task_status;
+
+/// Log every task's stack high-water mark: the least free stack, in bytes,
+/// since the task started. Used to size the task stacks.
+void logStackHighWater()
+{
+    const UBaseType_t n = uxTaskGetSystemState(s_task_status.data(), s_task_status.size(), nullptr);
+    if (n == 0U) {
+        ESP_LOGW(TAG, "Stack high-water: more than %u tasks, not logged", static_cast<unsigned>(kMaxLoggedTasks));
+        return;
+    }
+    for (UBaseType_t i = 0; i < n; ++i) {
+        ESP_LOGI(TAG, "Stack high-water: %-16s %5u bytes free", s_task_status[i].pcTaskName,
+                 static_cast<unsigned>(s_task_status[i].usStackHighWaterMark));
+    }
+}
+#endif
+
 [[noreturn]] void idleForever()
 {
+#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0
+    constexpr TickType_t kPeriod = pdMS_TO_TICKS(CONFIG_DRIVELINK_STACK_LOG_PERIOD_S * 1000);
+    while (true) {
+        vTaskDelay(kPeriod);
+        logStackHighWater();
+    }
+#else
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
+#endif
 }
 
 } // namespace

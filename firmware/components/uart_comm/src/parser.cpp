@@ -123,6 +123,10 @@ void Parser::publishCounters()
         ESP_LOGW(TAG, "CRC mismatch on port %d (%lu so far), resyncing", m_port,
                  static_cast<unsigned long>(c.crc_errors));
     }
+    if (c.header_crc_errors != m_counters.header_crc_errors.load(std::memory_order_relaxed)) {
+        ESP_LOGW(TAG, "Header CRC mismatch on port %d (%lu so far), resyncing", m_port,
+                 static_cast<unsigned long>(c.header_crc_errors));
+    }
     if (c.length_errors != m_counters.length_errors.load(std::memory_order_relaxed)) {
         ESP_LOGW(TAG, "Payload length above max %u on port %d (%lu so far), resyncing",
                  static_cast<unsigned>(m_scanner.maxPayload()), m_port,
@@ -130,6 +134,7 @@ void Parser::publishCounters()
     }
 
     m_counters.crc_errors.store(c.crc_errors, std::memory_order_relaxed);
+    m_counters.header_crc_errors.store(c.header_crc_errors, std::memory_order_relaxed);
     m_counters.length_errors.store(c.length_errors, std::memory_order_relaxed);
     m_counters.timeouts.store(c.timeouts, std::memory_order_relaxed);
     m_counters.discarded_bytes.store(c.discarded_bytes, std::memory_order_relaxed);
@@ -139,6 +144,7 @@ Parser::Counters Parser::getCounters() const
 {
     Counters out = {};
     out.crc_errors = m_counters.crc_errors.load(std::memory_order_relaxed);
+    out.header_crc_errors = m_counters.header_crc_errors.load(std::memory_order_relaxed);
     out.timeouts = m_counters.timeouts.load(std::memory_order_relaxed);
     out.uart_errors = m_counters.uart_errors.load(std::memory_order_relaxed);
     out.overflows = m_counters.overflows.load(std::memory_order_relaxed);

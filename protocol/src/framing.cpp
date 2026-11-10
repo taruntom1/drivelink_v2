@@ -15,21 +15,29 @@ size_t encodeFrame(uint8_t *buf, size_t capacity, uint8_t msg_type, const uint8_
     buf[0] = kStartByte;
     buf[1] = kStartByte;
     buf[2] = kStartByte;
-    buf[3] = msg_type;
-    buf[4] = static_cast<uint8_t>(len);
+    uint8_t *header = &buf[kStartLen];
+    header[0] = msg_type;
+    header[1] = static_cast<uint8_t>(len & 0xFFU);
+    header[2] = static_cast<uint8_t>(len >> 8U);
+    header[3] = crc8(header, kHeaderCrcSpan);
     if (len > 0U) {
-        std::memcpy(&buf[kStartLen + kHeaderLen], payload, len);
+        std::memcpy(&header[kHeaderLen], payload, len);
     }
 
-    const uint16_t crc = crc16Ccitt(&buf[kStartLen], kHeaderLen + len);
-    buf[kStartLen + kHeaderLen + len] = static_cast<uint8_t>(crc & 0xFFU);
-    buf[kStartLen + kHeaderLen + len + 1U] = static_cast<uint8_t>(crc >> 8U);
+    const uint16_t crc = crc16Ccitt(header, kHeaderLen + len);
+    header[kHeaderLen + len] = static_cast<uint8_t>(crc & 0xFFU);
+    header[kHeaderLen + len + 1U] = static_cast<uint8_t>(crc >> 8U);
     return frameSize(len);
+}
+
+bool headerCrcValid(const uint8_t *header)
+{
+    return crc8(header, kHeaderCrcSpan) == header[kHeaderCrcSpan];
 }
 
 bool validateCrc(const uint8_t *data, size_t payload_len)
 {
-    // Layout: [MSG_TYPE][LEN][PAYLOAD...][CRC_LO][CRC_HI]
+    // Layout: [MSG_TYPE][LEN_LO][LEN_HI][HCRC][PAYLOAD...][CRC_LO][CRC_HI]
     const uint16_t computed = crc16Ccitt(data, kHeaderLen + payload_len);
     const auto received = static_cast<uint16_t>(static_cast<uint16_t>(data[kHeaderLen + payload_len]) |
                                                 (static_cast<uint16_t>(data[kHeaderLen + payload_len + 1U]) << 8U));

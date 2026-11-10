@@ -170,8 +170,7 @@ Result MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint
         return Result{ResultCode::InternalError, ResultDetail::None};
     }
 
-    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload,
-                                             static_cast<uint8_t>(payload_len));
+    const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload, payload_len);
     if (ret != ESP_OK) {
         // The command's own result stands: it may have been applied. Counted
         // only: this may run on the RX task.

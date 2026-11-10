@@ -740,7 +740,7 @@ void MotorManager::publishTelemetry()
     }
 
     uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD] = {};
-    uint8_t payload_len = 0;
+    size_t payload_len = 0;
 
     if (xSemaphoreTake(m_mutex, kMutexTimeoutTicks) != pdTRUE) {
         return;
@@ -825,7 +825,7 @@ void MotorManager::updateTaskLoop()
         const uint64_t sample_time_us = publish ? wallClockUs() : 0U;
         updateAllLocked(dt_s);
 
-        uint8_t payload_len = 0;
+        size_t payload_len = 0;
         ResultCode enc_rc = ResultCode::InvalidState;
         if (publish) {
             enc_rc = encodeTelemetryLocked(payload, sizeof(payload), payload_len, sample_time_us);
@@ -909,7 +909,7 @@ void MotorManager::watchControlTimer(ControlTimerWatch &watch)
     }
 }
 
-ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len,
+ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, size_t &out_len,
                                                uint64_t timestamp_us) const
 {
     if (cap < kTelemetryPacketHeaderSize) {
@@ -956,7 +956,7 @@ ResultCode MotorManager::encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t
         out_len = 0;
         return ResultCode::InternalError;
     }
-    out_len = static_cast<uint8_t>(len);
+    out_len = len;
     return ResultCode::Ok;
 }
 

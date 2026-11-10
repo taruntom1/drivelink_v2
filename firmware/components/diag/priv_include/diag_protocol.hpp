@@ -1,6 +1,7 @@
 #pragma once
 
-/// diag wire format (protocol v1): pure byte-in/byte-out codec with no
+/// diag wire format (protocol v2; v2 changed no payload, it was bumped with the
+/// link framing in overhaul F1b): pure byte-in/byte-out codec with no
 /// ESP-IDF or FreeRTOS dependency, so the host unit tests cover it.
 /// README.md is the spec. MSG_TYPEs come from Kconfig (diag_reporter.hpp).
 
@@ -9,7 +10,7 @@
 
 namespace diag::protocol {
 
-constexpr uint8_t kProtocolVersion = 0x01;
+constexpr uint8_t kProtocolVersion = 0x02;
 /// Echoed as the subcommand when a query header could not be parsed.
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 /// GetEntries `next` value when no listed slot remains.

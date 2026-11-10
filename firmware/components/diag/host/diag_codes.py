@@ -44,7 +44,7 @@ CODES = {
         "clears": False,
         "arg0": None,
         "arg1": None,
-        "description": 'A frame candidate was rejected for a CRC mismatch.',
+        "description": 'A frame candidate with a valid header was rejected for a CRC16 mismatch.',
         "retired": False,
     },
     (0x02, 0x0002): {
@@ -84,7 +84,7 @@ CODES = {
         "clears": False,
         "arg0": None,
         "arg1": None,
-        "description": 'A frame candidate was rejected because LEN exceeded the maximum payload.',
+        "description": 'A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload.',
         "retired": False,
     },
     (0x02, 0x0006): {
@@ -95,6 +95,16 @@ CODES = {
         "arg0": None,
         "arg1": None,
         "description": 'Received bytes that were not part of any valid frame (counts bytes, not events).',
+        "retired": False,
+    },
+    (0x02, 0x0007): {
+        "name": 'HeaderCrcError',
+        "severity": 'warning',
+        "kind": 'counter',
+        "clears": False,
+        "arg0": None,
+        "arg1": None,
+        "description": 'A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.',
         "retired": False,
     },
     (0x03, 0x0001): {

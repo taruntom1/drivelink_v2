@@ -1,0 +1,13 @@
+menu "DriveLink main"
+
+    config DRIVELINK_STACK_LOG_PERIOD_S
+        int "Task stack high-water log period (s)"
+        default 30
+        range 0 3600
+        help
+            While app_main idles, log the smallest free stack (high-water
+            mark, in bytes) of every FreeRTOS task this often. 0 turns the
+            log off. Used to size task stacks; needs
+            CONFIG_FREERTOS_USE_TRACE_FACILITY (set in sdkconfig.defaults).
+
+endmenu

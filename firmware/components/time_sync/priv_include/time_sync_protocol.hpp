@@ -5,7 +5,8 @@
 
 namespace time_sync::protocol {
 
-constexpr uint8_t kProtocolVersion = 1;
+// v2: no payload change; bumped with the link framing (u16 LEN + HCRC, overhaul F1b).
+constexpr uint8_t kProtocolVersion = 2;
 
 struct TimeSyncRequest {
     uint16_t request_id;
