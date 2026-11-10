@@ -1,5 +1,6 @@
 #include "parser.hpp"
 #include "uart_comm.hpp"
+#include "drivelink/protocol/framing.hpp"
 #include "esp_log.h"
 #include <algorithm>
 #include <cstring>
@@ -80,9 +81,12 @@ bool Parser::nextFrame(RxFrame& out_frame)
             return false;
         }
         // The sender stopped part-way through a frame. The scanner drops its
-        // first byte and rescans, in case a real frame starts inside it.
-        ESP_LOGW(TAG, "Incomplete frame on port %d (have %u bytes), dropping",
-                 m_port, static_cast<unsigned>(m_scanner.buffered()));
+        // first byte and rescans, in case a real frame starts inside it. A
+        // lone partial preamble is noise and is dropped without a message.
+        if (m_scanner.buffered() >= drivelink::protocol::kStartLen) {
+            ESP_LOGW(TAG, "Incomplete frame on port %d (have %u bytes), dropping",
+                     m_port, static_cast<unsigned>(m_scanner.buffered()));
+        }
         (void)m_scanner.dropStale();
     }
 }

@@ -43,7 +43,9 @@ std::vector<Got> run(Scanner &s, const std::vector<uint8_t> &bytes, size_t chunk
     while (pos < bytes.size()) {
         const std::vector<uint8_t> part(bytes.begin() + static_cast<long>(pos),
                                         bytes.begin() + static_cast<long>(std::min(bytes.size(), pos + chunk)));
-        pos += feed(s, part);
+        const size_t taken = feed(s, part);
+        REQUIRE(taken > 0); // a full window after next() returned false means the scan is stuck
+        pos += taken;
         Scanner::Frame f;
         while (s.next(f)) {
             got.push_back({f.msg_type, std::vector<uint8_t>(f.payload, f.payload + f.len)});
@@ -107,10 +109,12 @@ TEST_CASE("A false preamble inside a payload does not hide the real frame")
     const auto outer = makeFrame(0x42, inner);
     const auto bytes = concat({outer, makeFrame(0x43, {0x01})});
     const auto got = run(s, bytes, bytes.size());
-    REQUIRE(got.size() >= 2);
+    // The outer frame is valid, so it is delivered whole. The frame inside its
+    // payload is not delivered on its own.
+    REQUIRE(got.size() == 2);
     CHECK(got[0].type == 0x42);
     CHECK(got[0].payload == inner);
-    CHECK(got.back().type == 0x43);
+    CHECK(got[1].type == 0x43);
 }
 
 TEST_CASE("A bad CRC drops one byte, and the following frame is found")
@@ -176,6 +180,22 @@ TEST_CASE("A run of start bytes before a preamble is resync, not an error")
     CHECK(got[0].payload == std::vector<uint8_t>{7});
     CHECK(s.counters().length_errors == 0);
     CHECK(s.counters().crc_errors == 0);
+}
+
+TEST_CASE("An ambiguous candidate that fails its CRC is resync, not a CRC error")
+{
+    // The firmware's default limit: a stray start byte before a real frame makes
+    // the first candidate `AA AA AA AA 41 ...` (MSG_TYPE 0xAA, LEN 0x41 = 65),
+    // which is within the limit, so the scanner waits for 71 bytes and then
+    // rejects it on its CRC. That must not be counted.
+    Scanner s(128);
+    const auto bytes = concat({{0xAA}, makeFrame(0x41, {7}), std::vector<uint8_t>(80, 0x00)});
+    const auto got = run(s, bytes, bytes.size());
+    REQUIRE(got.size() == 1);
+    CHECK(got[0].type == 0x41);
+    CHECK(got[0].payload == std::vector<uint8_t>{7});
+    CHECK(s.counters().crc_errors == 0);
+    CHECK(s.counters().length_errors == 0);
 }
 
 TEST_CASE("A frame whose MSG_TYPE is 0xAA is delivered")
@@ -253,6 +273,45 @@ TEST_CASE("Frame data stays valid until the next call")
     REQUIRE(s.next(f));
     CHECK(f.msg_type == 0x42);
     CHECK(f.payload[1] == 5);
+}
+
+TEST_CASE("The deferred consume happens before the window is refilled, as uart_comm does")
+{
+    Scanner s(32);
+    const auto first = makeFrame(0x41, {1, 2, 3});
+    const auto second = makeFrame(0x42, {4, 5});
+    feed(s, first);
+
+    Scanner::Frame f;
+    REQUIRE(s.next(f));
+    CHECK(f.msg_type == 0x41);
+    CHECK(s.buffered() == 0);
+
+    // The caller returns after one frame, then refills: writable() must have
+    // consumed the first frame, or the second would land after it.
+    feed(s, second);
+    CHECK(s.buffered() == second.size());
+    REQUIRE(s.next(f));
+    CHECK(f.msg_type == 0x42);
+    CHECK(f.len == 2);
+    CHECK(f.payload[0] == 4);
+    CHECK(f.payload[1] == 5);
+    CHECK_FALSE(s.next(f));
+}
+
+TEST_CASE("dropStale after a returned frame consumes that frame first")
+{
+    Scanner s(32);
+    const auto frame = makeFrame(0x41, {1});
+    const std::vector<uint8_t> partial = {0xAA, 0xAA};
+    feed(s, concat({frame, partial}));
+
+    Scanner::Frame f;
+    REQUIRE(s.next(f));
+    CHECK(s.buffered() == 2);   // the frame no longer counts
+    CHECK(s.dropStale());       // drops the partial preamble, not part of the frame
+    CHECK(s.buffered() == 0);
+    CHECK(s.counters().timeouts == 0);
 }
 
 TEST_CASE("A full window of noise always makes progress")

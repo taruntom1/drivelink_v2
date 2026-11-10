@@ -17,7 +17,7 @@ uint8_t *Scanner::writable(size_t &space)
 {
     settle();
     space = m_buf.size() - m_len;
-    return &m_buf[m_len];
+    return m_buf.data() + m_len;
 }
 
 void Scanner::commit(size_t n)

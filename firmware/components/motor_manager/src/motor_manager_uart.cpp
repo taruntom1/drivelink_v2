@@ -75,7 +75,7 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
     }
 }
 
-Result MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t len)
+Result MotorManager::parseAndDispatchConfigure(const uint8_t *payload, size_t len)
 {
     protocol::ConfigureRequest req{};
     const Result decode_rc = protocol::decodeConfigure(payload, len, req);
@@ -84,10 +84,10 @@ Result MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t l
     if (!decode_rc.ok()) {
         if (decode_rc.detail == ResultDetail::BadVersion || len < kConfigureHeaderSize) {
             ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
-                     len, (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
+                     static_cast<unsigned>(len), (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
         } else {
-            ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (len=%u): %s", hdr.subcommand, len,
-                     resultDetailToString(decode_rc.detail));
+            ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (len=%u): %s", hdr.subcommand,
+                     static_cast<unsigned>(len), resultDetailToString(decode_rc.detail));
         }
         return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id, decode_rc);
     }

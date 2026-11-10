@@ -636,7 +636,7 @@ void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
 
 Result ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
                                                    const uint8_t *body,
-                                                   uint8_t len,
+                                                   size_t len,
                                                    uint8_t &response_len,
                                                    uint8_t *response_payload,
                                                    size_t response_capacity)
@@ -867,7 +867,7 @@ void ImuBno055Manager::configTaskLoop()
             rc = self->parseAndDispatchConfigure(
                 static_cast<ConfigureSubcommand>(header.subcommand),
                 body,
-                static_cast<uint8_t>(body_len),
+                body_len,
                 response_extra_len,
                 response_extra,
                 sizeof(response_extra));
