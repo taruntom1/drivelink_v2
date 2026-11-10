@@ -27,16 +27,18 @@ public:
 
     bool isValid() const;
 
-    ResultCode createMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
-    ResultCode deleteMotor(uint8_t motor_id);
-    ResultCode configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
-    ResultCode setMode(uint8_t motor_id, motor_controller::ControlMode mode);
-    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
-    ResultCode setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
-    ResultCode stopMotor(uint8_t motor_id);
-    ResultCode resetMotor(uint8_t motor_id);
-    ResultCode setTelemetryGlobal(bool enabled, uint8_t field_mask);
-    ResultCode setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
+    // Each command returns its result code and why it failed (ResultDetail),
+    // as sent in the configure response.
+    Result createMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
+    Result deleteMotor(uint8_t motor_id);
+    Result configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
+    Result setMode(uint8_t motor_id, motor_controller::ControlMode mode);
+    Result setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
+    Result setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
+    Result stopMotor(uint8_t motor_id);
+    Result resetMotor(uint8_t motor_id);
+    Result setTelemetryGlobal(bool enabled, uint8_t field_mask);
+    Result setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
 
     /// Change the control loop and telemetry periods at runtime.
     /// A value of 0 keeps the current setting, so setTiming(0, 0, ...) just
@@ -47,16 +49,9 @@ public:
     /// the telemetry rate is re-derived when only the control period changes.
     /// @param applied_control_period_us    Control period now in effect.
     /// @param applied_telemetry_period_us  Telemetry period now in effect.
-    ResultCode setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
-                         uint32_t &applied_control_period_us,
-                         uint32_t &applied_telemetry_period_us);
-
-    /// Number of control ticks that were late or skipped (because the loop
-    /// overran or the manager mutex was busy) since construction.
-    uint32_t getControlOverrunCount() const;
-
-    /// Setpoint stream frames and entries rejected since construction.
-    SetpointStreamCounters getSetpointStreamCounters() const;
+    Result setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
+                     uint32_t &applied_control_period_us,
+                     uint32_t &applied_telemetry_period_us);
 
     /// Run one control cycle for every motor with the given dt. Only needed
     /// when the internal update task is disabled.
@@ -89,20 +84,30 @@ private:
         std::array<float, kSetpointKindCount> value{};
     };
 
+    // Config-task state for detecting a stalled control timer.
+    struct ControlTimerWatch {
+        uint32_t last_wakes = 0;
+        int64_t last_change_us = 0;
+        bool stalled = false; ///< motor_manager.ControlTimerStalled is active
+    };
+
     void updateTaskLoop();
     void configTaskLoop();
+    /// Report or clear ControlTimerStalled. Config task only.
+    void watchControlTimer(ControlTimerWatch &watch);
     void updateAllLocked(float dt_s);
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
-    ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
+    Result parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
-    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
-                                     const uint8_t *body = nullptr, size_t body_len = 0);
+    /// Encode and queue a configure response. Non-blocking, so the RX task
+    /// can use it too. Returns `result` (the command's own outcome).
+    Result sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, Result result,
+                                 const uint8_t *body = nullptr, size_t body_len = 0);
     void stopTasks();
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
-    ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
+    Result setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
     void applyPendingSetpointsLocked();
-    void logSetpointCountersIfChanged(SetpointStreamCounters &last_logged, int64_t &last_log_us) const;
-    ResultCode checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
+    Result checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
     void setMotorKnown(uint8_t motor_id, bool known);
     bool isMotorKnown(uint8_t motor_id) const;
 
@@ -126,9 +131,9 @@ private:
     std::atomic<uint32_t> m_control_period_us{0};
     std::atomic<uint32_t> m_telemetry_divider{1};
     uint32_t m_requested_telemetry_period_us = 0; // guarded by m_mutex
-    std::atomic<uint32_t> m_overrun_count{0};
-    std::atomic<uint32_t> m_bad_setpoint_frames{0};
-    std::atomic<uint32_t> m_rejected_setpoints{0};
+    // Bumped by the update task on every timer wake; the config task
+    // watches it to report a stalled control timer.
+    std::atomic<uint32_t> m_timer_wakes{0};
 
     // Motor ids that exist, one bit per id. Written under m_mutex when a
     // motor is created or deleted; read lock-free by queueSetpoint() on the

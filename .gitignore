@@ -80,3 +80,6 @@ Desktop.ini
 
 .clangd
 .vscode/
+
+# Extra idf.py build dirs (CI config variants, e.g. sdkconfig.ci.nolog)
+build_variant/

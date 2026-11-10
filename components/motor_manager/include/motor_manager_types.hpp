@@ -63,15 +63,8 @@ struct ManagerConfig {
     UBaseType_t config_task_priority = CONFIG_MOTOR_MANAGER_DEFAULT_CONFIG_TASK_PRIO;
 };
 
-/// Setpoint stream problems, counted instead of logged per entry (the stream
-/// is handled on the UART RX task and applied on the control tick). The
-/// config task logs a summary of new counts at most once per second.
-struct SetpointStreamCounters {
-    uint32_t bad_frames = 0;       ///< wrong version or length; whole frame dropped
-    uint32_t rejected_entries = 0; ///< entries rejected (unknown motor id, bad kind, mailbox full, ...)
-};
-
 const char *resultCodeToString(ResultCode code);
+const char *resultDetailToString(ResultDetail detail);
 esp_err_t resultCodeToEspErr(ResultCode code);
 
 } // namespace motor_manager

@@ -33,7 +33,7 @@ Primary config struct:
 
 - `imu_bmo_055::ManagerConfig` (in `include/imu_bmo_055_types.hpp`)
 
-Wire-level types (`ResultCode`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
+Wire-level types (`ResultCode`, `ResultDetail`, `Result`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
 
 Important runtime methods:
 
@@ -44,9 +44,9 @@ Important runtime methods:
 - `readCalibration(CalibrationBlob&)`
 - `writeCalibration(const CalibrationBlob&)`
 - `applyCalibration()`
-- `getStreamCounters()`: stream health totals (`late`, `busy`, `read_errors`, `encode_errors`)
+- Stream health is counted through diag (see 4.1); there is no on-device getter.
 
-Device-level failures map to `Busy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` otherwise.
+Each method returns `Result { ResultCode code; ResultDetail detail; }`, the same pair the configure response carries (see the protocol guide, section 2.3). Device-level failures map to `Busy` / `DeviceBusy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` / `DeviceError` otherwise.
 
 ## 3. Quick Integration In ESP App
 
@@ -134,12 +134,13 @@ For complete host payload details, see:
 - The tick never waits:
   - It reads the stream settings from atomics, without the manager mutex.
   - It try-locks the device. If a config operation (mode switch, calibration) holds it, the tick is skipped and counted as `busy`.
-- Counters (`getStreamCounters()`):
+- Counters:
   - `late`: timer periods that passed without a sample, because the task woke late or an I2C read ran long
   - `busy`: ticks skipped because the device was in use
   - `read_errors`: I2C failures
   - `encode_errors`: payload overflows
-  - A summary is logged at most once per second, only when something changed.
+  - They are diag counters (`imu.SampleLate`, `imu.DeviceBusy`, `imu.ReadError`, `imu.EncodeError`), sent to the host as 1 Hz deltas. Nothing is logged per tick.
+  - If the stream is enabled but the timer stops waking the task, `imu.SamplerStalled` is reported once and cleared when it fires again, the stream is disabled or the task stops. A wait that spans a timer restart (enable, `SetStreamTiming`) is not counted as a stall.
 - When a publish tick fails (busy or read error), the next good sample is published, so the telemetry rate holds.
 - Disabling the stream stops the timer. `SetOperationMode` stops it for the duration of the mode switch and restarts it if the stream was enabled. The first sample after re-enabling is always published.
 
@@ -153,7 +154,6 @@ Menu path:
 
 - `IMU_BMO_055_CONFIGURE_MSG_TYPE` (default `0x22`)
 - `IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x42`)
-- `IMU_BMO_055_EVENT_MSG_TYPE` (default `0xC2`)
 - `IMU_BMO_055_STREAM_CHANNEL` (default `0x82`)
 
 ### 5.2 I2C Sensor Config
@@ -219,19 +219,34 @@ idf.py fullclean
 idf.py build
 ```
 
+## 4.2 Errors reported to the host
+
+Besides the configure `result`, the manager reports through the `diag` component (events on `0xC0`, see `components/diag/README.md` for the full code table). Source `imu`:
+
+| Code | Kind | When |
+|---|---|---|
+| `InitFailed` | error | The constructor failed. `arg0` is the stage (mutex, config, BNO055 device, default mode, queue, callback, tasks, timer). |
+| `FallbackToMock` | warning | The BNO055 did not come up and `fallback_to_mock_on_init_failure` switched to mock data. `esp_err` is the device error. |
+| `ModeSwitchFailed`, `CalibrationReadFailed`, `CalibrationApplyFailed` | error | A device operation failed on the bus. A busy device is only answered with `BUSY`. |
+| `StreamReenableFailed` | error | The stream stayed off after a mode switch. |
+| `TimerRestartFailed` | error | `SetStreamTiming` could not restart the sampling timer. |
+| `SamplerStalled` | warning, clears | See 4.1. |
+| `SampleLate`, `DeviceBusy`, `ReadError`, `EncodeError`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. A command that arrives while the config queue is full is not applied and is answered with `Busy` / `QueueFull`. |
+
 ## 8. Troubleshooting
 
 - `isValid() == false` at startup:
+  - The host gets `imu.InitFailed` (its `arg0` names the stage) and `system.ManagerStartFailed`.
   - Check I2C pins/port/address Kconfig values.
   - Check BNO055 wiring and power.
   - Check UART component validity before constructing IMU manager.
 - No stream packets on host:
   - Verify stream channel ID matches host expectation.
   - Verify stream is enabled and the periods are not too large (`SetStreamTiming(0, 0)` reads them back).
-  - Watch the log for the rate-limited `IMU stream:` counter line (busy, read errors).
+  - Watch the diag counters `imu.DeviceBusy` and `imu.ReadError`, and the `imu.SamplerStalled` record.
   - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
 - Command rejected:
-  - Verify protocol version byte is `0x03` and is followed by a `seq` byte.
+  - Verify protocol version byte is `0x04` and is followed by a `seq` byte. The response's `detail` byte says which check failed.
   - Verify the body has its exact length (v3 rejects trailing bytes) and little-endian encoding for numeric fields.
 
 ## 9. Additional Docs

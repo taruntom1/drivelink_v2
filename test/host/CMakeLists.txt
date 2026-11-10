@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Host-side unit tests for the pure-logic parts of the firmware: the wire
-# codec, the protocol encoders/decoders, the PID and the velocity estimator.
+# codec, the protocol encoders/decoders (including diag's codec and slot
+# table), the PID and the velocity estimator.
 # These sources have no ESP-IDF or FreeRTOS dependency; shim/ provides the
 # two IDF headers they still include (sdkconfig.h, esp_log.h).
 #
@@ -25,6 +26,8 @@ set(FIRMWARE_SOURCES
     ${COMPONENTS_DIR}/motor_manager/src/motor_protocol.cpp
     ${COMPONENTS_DIR}/imu_bmo_055/src/imu_protocol.cpp
     ${COMPONENTS_DIR}/time_sync/src/time_sync_protocol.cpp
+    ${COMPONENTS_DIR}/diag/src/diag_protocol.cpp
+    ${COMPONENTS_DIR}/diag/src/diag_table.cpp
 )
 
 set(TEST_SOURCES
@@ -36,6 +39,8 @@ set(TEST_SOURCES
     tests/test_motor_validation.cpp
     tests/test_imu_protocol.cpp
     tests/test_time_sync_protocol.cpp
+    tests/test_diag_protocol.cpp
+    tests/test_diag_table.cpp
 )
 
 add_executable(host_tests ${TEST_SOURCES} ${FIRMWARE_SOURCES})
@@ -50,6 +55,8 @@ target_include_directories(host_tests PRIVATE
     ${COMPONENTS_DIR}/imu_bmo_055/include
     ${COMPONENTS_DIR}/imu_bmo_055/priv_include
     ${COMPONENTS_DIR}/time_sync/priv_include
+    ${COMPONENTS_DIR}/diag/include
+    ${COMPONENTS_DIR}/diag/priv_include
 )
 # Third-party headers: no warnings from them.
 target_include_directories(host_tests SYSTEM PRIVATE

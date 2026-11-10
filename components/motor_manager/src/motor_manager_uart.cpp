@@ -1,5 +1,6 @@
 #include "motor_manager.hpp"
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "motor_protocol.hpp"
 
@@ -31,10 +32,10 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     }
 
     // This runs on the UART RX task (a real-time path): problems are counted,
-    // not logged. The config task logs a rate-limited summary.
+    // not logged. diag sends the counts to the host.
     uint8_t count = 0;
     if (!protocol::decodeSetpointStreamHeader(frame.payload, frame.len, count)) {
-        m_bad_setpoint_frames.fetch_add(1U, std::memory_order_relaxed);
+        DIAG_COUNT(diag::codes::motor_manager::kSetpointBadFrame);
         return;
     }
 
@@ -46,10 +47,10 @@ void MotorManager::handleSetpointStream(const uart_comm::RxFrame &frame)
     for (uint8_t i = 0; i < count; ++i) {
         const protocol::SetpointEntry entry = protocol::decodeSetpointEntry(frame.payload, frame.len, i);
         const auto kind = static_cast<SetpointKind>(entry.kind);
-        const ResultCode rc = use_mailbox ? queueSetpoint(entry.motor_id, kind, entry.value)
-                                          : setSetpoint(entry.motor_id, kind, entry.value);
-        if (rc != ResultCode::Ok) {
-            m_rejected_setpoints.fetch_add(1U, std::memory_order_relaxed);
+        const bool applied = use_mailbox ? (queueSetpoint(entry.motor_id, kind, entry.value) == ResultCode::Ok)
+                                         : setSetpoint(entry.motor_id, kind, entry.value).ok();
+        if (!applied) {
+            DIAG_COUNT(diag::codes::motor_manager::kSetpointRejected);
         }
     }
 }
@@ -65,28 +66,33 @@ void MotorManager::handleConfigureCommand(const uart_comm::RxFrame &frame)
         return;
     }
     if (xQueueSend(m_config_queue, &frame, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "Configure queue full; dropping command");
+        // RX task: count, don't log. Answer so the host is not left waiting:
+        // the command was not applied.
+        DIAG_COUNT(diag::codes::motor_manager::kConfigQueueFull);
+        const protocol::ConfigureHeader hdr = protocol::decodeConfigureHeader(frame.payload, frame.len);
+        (void)sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id,
+                                    Result{ResultCode::InvalidState, ResultDetail::QueueFull});
     }
 }
 
-ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t len)
+Result MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8_t len)
 {
     protocol::ConfigureRequest req{};
-    const protocol::DecodeStatus status = protocol::decodeConfigure(payload, len, req);
+    const Result decode_rc = protocol::decodeConfigure(payload, len, req);
     const protocol::ConfigureHeader &hdr = req.header;
 
-    if (status != protocol::DecodeStatus::Ok) {
-        if (status == protocol::DecodeStatus::BadHeader) {
+    if (!decode_rc.ok()) {
+        if (decode_rc.detail == ResultDetail::BadVersion || len < kConfigureHeaderSize) {
             ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
                      len, (len >= 1U) ? payload[0] : 0U, kProtocolVersion);
         } else {
-            ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (len=%u)", hdr.subcommand, len);
+            ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected (len=%u): %s", hdr.subcommand, len,
+                     resultDetailToString(decode_rc.detail));
         }
-        return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id,
-                                     protocol::resultForDecodeStatus(status));
+        return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id, decode_rc);
     }
 
-    ResultCode rc = ResultCode::InvalidArgument;
+    Result rc{};
     uint8_t resp_body[kSetTimingResponseBodySize] = {};
     size_t resp_body_len = 0;
 
@@ -128,46 +134,50 @@ ResultCode MotorManager::parseAndDispatchConfigure(const uint8_t *payload, uint8
             uint32_t applied_telemetry_us = 0;
             rc = setTiming(req.control_period_us, req.telemetry_period_us,
                            applied_control_us, applied_telemetry_us);
-            if (rc == ResultCode::Ok) {
+            if (rc.ok()) {
                 resp_body_len = protocol::encodeSetTimingResponseBody(applied_control_us, applied_telemetry_us,
                                                                       resp_body, sizeof(resp_body));
             }
             break;
         }
         default:
-            rc = ResultCode::NotSupported; // unreachable: the decoder rejects unknown subcommands
+            // unreachable: the decoder rejects unknown subcommands
+            rc = Result{ResultCode::NotSupported, ResultDetail::UnknownSubcommand};
             break;
     }
 
-    if (rc == ResultCode::InvalidArgument) {
-        ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected by the manager", hdr.subcommand);
+    if (rc.code == ResultCode::InvalidArgument) {
+        ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected by the manager: %s", hdr.subcommand,
+                 resultDetailToString(rc.detail));
     }
     return sendConfigureResponse(hdr.seq, hdr.subcommand, hdr.motor_id, rc, resp_body, resp_body_len);
 }
 
-ResultCode MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
-                                               const uint8_t *body, size_t body_len)
+Result MotorManager::sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, Result result,
+                                           const uint8_t *body, size_t body_len)
 {
+    // Also called on the RX task (config queue full): no logging before the
+    // send, and sendCommand() does not block.
     uint8_t payload[kConfigureResponseHeaderSize + kSetTimingResponseBodySize] = {};
     protocol::ConfigureHeader hdr{};
     hdr.seq = seq;
     hdr.subcommand = subcommand;
     hdr.motor_id = motor_id;
     const size_t payload_len =
-        protocol::encodeConfigureResponse(hdr, code, body, body_len, payload, sizeof(payload));
+        protocol::encodeConfigureResponse(hdr, result, body, body_len, payload, sizeof(payload));
     if (payload_len == 0U) {
         ESP_LOGE(TAG, "Configure response body too large (%u bytes)", static_cast<unsigned>(body_len));
-        return ResultCode::InternalError;
+        return Result{ResultCode::InternalError, ResultDetail::None};
     }
 
     const esp_err_t ret = m_uart.sendCommand(m_config.configure_response_msg_type, payload,
                                              static_cast<uint8_t>(payload_len));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send configure response (msg=0x%02X): %s",
-                 m_config.configure_response_msg_type, esp_err_to_name(ret));
-        return ResultCode::InternalError;
+        // The command's own result stands: it may have been applied. Counted
+        // only: this may run on the RX task.
+        DIAG_COUNT(diag::codes::motor_manager::kResponseTxDropped);
     }
-    return code;
+    return result;
 }
 
 const char *resultCodeToString(ResultCode code)
@@ -190,6 +200,50 @@ const char *resultCodeToString(ResultCode code)
         case ResultCode::InternalError:
         default:
             return "INTERNAL_ERROR";
+    }
+}
+
+const char *resultDetailToString(ResultDetail detail)
+{
+    switch (detail) {
+        case ResultDetail::None:
+            return "none";
+        case ResultDetail::BadVersion:
+            return "bad version";
+        case ResultDetail::BadLength:
+            return "bad length";
+        case ResultDetail::UnknownSubcommand:
+            return "unknown subcommand";
+        case ResultDetail::NonFiniteFloat:
+            return "non-finite float";
+        case ResultDetail::BadEnum:
+            return "bad enum value";
+        case ResultDetail::BadFieldMask:
+            return "bad field mask";
+        case ResultDetail::BadGpio:
+            return "bad GPIO";
+        case ResultDetail::GpioInUse:
+            return "GPIO in use";
+        case ResultDetail::UnknownMotor:
+            return "unknown motor";
+        case ResultDetail::MotorExists:
+            return "motor exists";
+        case ResultDetail::MotorLimit:
+            return "motor limit";
+        case ResultDetail::NotReady:
+            return "not ready";
+        case ResultDetail::QueueFull:
+            return "queue full";
+        case ResultDetail::LockTimeout:
+            return "lock timeout";
+        case ResultDetail::MotorDriverFailed:
+            return "motor driver failed";
+        case ResultDetail::EncoderFailed:
+            return "encoder failed";
+        case ResultDetail::TimerFailed:
+            return "timer failed";
+        default:
+            return "?";
     }
 }
 

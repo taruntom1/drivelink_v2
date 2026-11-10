@@ -44,21 +44,23 @@ struct ConfigureHeader {
 /// Decode the configure request header (version, seq, subcommand).
 /// @param[out] header  Always filled in, so a response can be sent.
 /// @param[out] body, body_len  The bytes after the header, on success.
-/// @return false if the payload is too short or has the wrong version.
-bool decodeConfigureHeader(const uint8_t *payload, size_t len, ConfigureHeader &header,
-                           const uint8_t *&body, size_t &body_len);
+/// @return InvalidArgument with BadVersion, or BadLength if the payload is
+///         too short.
+Result decodeConfigureHeader(const uint8_t *payload, size_t len, ConfigureHeader &header,
+                             const uint8_t *&body, size_t &body_len);
 
-// Body decoders. Each requires the exact body size and rejects values outside
-// the allowed set; on failure `out` is left unchanged.
-bool decodeSetStreamEnabled(const uint8_t *body, size_t len, bool &enabled);
-bool decodeSetStreamTiming(const uint8_t *body, size_t len, uint32_t &sample_period_us,
-                           uint32_t &telemetry_period_us);
-bool decodeSetStreamFieldMask(const uint8_t *body, size_t len, uint16_t &field_mask);
-bool decodeSetOperationMode(const uint8_t *body, size_t len, uint8_t &mode);
+// Body decoders. Each requires the exact body size (else BadLength) and
+// rejects values outside the allowed set (BadEnum); on failure `out` is left
+// unchanged.
+Result decodeSetStreamEnabled(const uint8_t *body, size_t len, bool &enabled);
+Result decodeSetStreamTiming(const uint8_t *body, size_t len, uint32_t &sample_period_us,
+                             uint32_t &telemetry_period_us);
+Result decodeSetStreamFieldMask(const uint8_t *body, size_t len, uint16_t &field_mask);
+Result decodeSetOperationMode(const uint8_t *body, size_t len, uint8_t &mode);
 
 /// Decode an exactly kCalibrationBlobSize-byte blob. Rejects a has_sic byte
-/// other than 0 or 1.
-bool decodeCalibrationBlob(const uint8_t *body, size_t len, CalibrationBlob &out);
+/// other than 0 or 1 (BadEnum).
+Result decodeCalibrationBlob(const uint8_t *body, size_t len, CalibrationBlob &out);
 
 /// @return kCalibrationBlobSize, or 0 if it does not fit in `cap`.
 size_t encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap);
@@ -67,9 +69,9 @@ size_t encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t c
 size_t encodeSetStreamTimingResponseBody(uint32_t sample_period_us, uint32_t telemetry_period_us,
                                          uint8_t *out, size_t cap);
 
-/// Encode a configure response: the 4-byte header, then `body` (may be empty).
+/// Encode a configure response: the 5-byte header, then `body` (may be empty).
 /// @return The payload length, or 0 if it does not fit in `cap`.
-size_t encodeConfigureResponse(const ConfigureHeader &header, ResultCode result,
+size_t encodeConfigureResponse(const ConfigureHeader &header, Result result,
                                const uint8_t *body, size_t body_len, uint8_t *out, size_t cap);
 
 /// Encode one stream packet with the fields in `field_mask`.

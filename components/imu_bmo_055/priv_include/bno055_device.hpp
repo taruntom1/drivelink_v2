@@ -23,6 +23,11 @@ public:
     Bno055Device &operator=(Bno055Device &&) = delete;
 
     bool isValid() const;
+    /// Why construction failed: ESP_OK when valid. ESP_ERR_NO_MEM (mutex),
+    /// ESP_ERR_INVALID_STATE (a second instance), the I2C driver error,
+    /// ESP_FAIL (bno055_init: no answer on the bus) or
+    /// ESP_ERR_INVALID_RESPONSE (wrong chip id).
+    esp_err_t initError() const;
 
     esp_err_t setOperationMode(uint8_t operation_mode);
     esp_err_t getOperationMode(uint8_t &operation_mode) const;
@@ -55,6 +60,7 @@ private:
     I2cConfig m_config;
     mutable SemaphoreHandle_t m_mutex;
     bool m_valid;
+    esp_err_t m_init_error;
     bool m_driver_installed;
     // Bus error log rate limit. Only touched under m_mutex (or during
     // construction, before anything else can use the device).

@@ -9,10 +9,11 @@ The IMU component uses the `uart_comm` type/channel model:
 
 - Configure command message type: default `0x22`
 - Configure response message type: default `0x42`
-- Event message type: default `0xC2` (reserved; no event payload currently emitted)
 - Telemetry stream channel: default `0x82`
 
 These IDs are configurable in ESP Kconfig, so host and firmware must use the same values.
+
+The IMU has no event message type of its own. Errors and stream health counters are reported by the `diag` component (event `0xC0`, source `imu`; see `components/diag/README.md`).
 
 All multi-byte integers in IMU payloads are little-endian.
 
@@ -20,21 +21,27 @@ All multi-byte integers in IMU payloads are little-endian.
 
 ### 2.1 Protocol version
 
-- Current version: `0x03`
+- Current version: `0x04`
 - All configure command and response payloads start with protocol version byte.
 - All stream payloads start with protocol version byte.
 - Commands with any other version are rejected (see section 4).
 
-### 2.2 Changes from v2
+### 2.2 Changes from v3
+
+- Every configure response carries a `detail` byte after the result code (section 2.3), so the response header is 5 bytes and response data starts at byte 5.
+- A command that arrives while the config queue is full is answered with `Busy` / `QueueFull` instead of being dropped silently.
+- The stream layout is unchanged; it carries version `0x04`.
+
+### 2.2.1 Changes from v2 (in v3)
 
 - Subcommand `0x02` is now `SetStreamTiming`: `u32 sample_period_us | u32 telemetry_period_us`, and its response carries the applied values. It replaces `SetStreamPeriodMs` (`u16 period_ms`).
 - Every configure body must have its **exact** length. v2 accepted trailing bytes; v3 answers `InvalidArgument` and applies nothing.
 - Stricter values: `SetStreamEnabled` takes only `0` or `1`, `SetStreamFieldMask` rejects bits outside `0x01FF`, and the calibration blob's `has_sic` must be `0` or `1`.
 - The stream `timestamp_us` is now wall-clock time (the time_sync-corrected clock, the same one motor telemetry uses), taken at the midpoint of the sample's I2C reads. In v2 it was `esp_timer` time since boot, taken before the reads.
-- The stream layout is otherwise unchanged; it carries version `0x03`.
+- The stream layout was otherwise unchanged.
 - Device-busy failures (sensor held by another operation) now return `Busy` instead of `InternalError`.
 
-### 2.3 Result codes (response byte 3)
+### 2.3 Result codes (response byte 3) and details (byte 4)
 
 - `0x00` = `Ok`
 - `0x01` = `InvalidArgument`
@@ -42,6 +49,25 @@ All multi-byte integers in IMU payloads are little-endian.
 - `0x03` = `NotSupported`
 - `0x04` = `Busy`
 - `0x05` = `InternalError`
+
+The detail byte says why a command failed (`ResultDetail` in `imu_bmo_055_protocol.hpp`). The values never change meaning; new ones are only added.
+
+| Value | Name | With | Meaning |
+|---|---|---|---|
+| `0x00` | `None` | `Ok` | |
+| `0x01` | `BadVersion` | `InvalidArgument` | Wrong `version`; the header was not parsed. |
+| `0x02` | `BadLength` | `InvalidArgument` | Header shorter than 3 bytes, or a body that is not its exact length. |
+| `0x03` | `UnknownSubcommand` | `NotSupported` | |
+| `0x04` | `BadEnum` | `InvalidArgument` | `enabled` or `has_sic` not 0/1, or an operation mode above `0x0C`. |
+| `0x05` | `BadFieldMask` | `InvalidArgument` | Stream field mask bits outside `0x01FF`. |
+| `0x06` | `NotReady` | `InvalidState` | The manager failed to start. |
+| `0x07` | `QueueFull` | `Busy` | The config queue was full; the command was not applied. |
+| `0x08` | `LockTimeout` | `Busy` | The manager was busy for the whole mutex timeout. |
+| `0x09` | `DeviceBusy` | `Busy` | The sensor was held by another operation (mode switch, calibration). |
+| `0x0A` | `DeviceError` | `InternalError` | A sensor (I2C) operation failed. |
+| `0x0B` | `TimerFailed` | `InternalError` | The sampling timer could not be started or retimed. |
+| `0x0C` | `NoCalibration` | `InvalidState` | `ApplyCalibration` before any `ReadCalibration` or `WriteCalibration`. |
+| `0x0D` | `EncodeFailed` | `InternalError` | The response data did not fit (a firmware bug). |
 
 ### 2.4 Configure subcommands
 
@@ -59,12 +85,12 @@ All multi-byte integers in IMU payloads are little-endian.
 
 General shape:
 
-- Byte 0: `version` (`0x03`)
+- Byte 0: `version` (`0x04`)
 - Byte 1: `seq`, chosen by the host and echoed in the response
 - Byte 2: `subcommand`
 - Byte 3..N: subcommand body, exactly the length in the table above
 
-Commands are queued and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`.
+Commands are queued and answered in order. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`. A command that arrives while the queue is full is answered at once with `Busy` / `QueueFull`, so that response can overtake the ones still queued.
 
 ### 3.1 SetStreamEnabled (`subcommand = 0x01`)
 
@@ -147,25 +173,26 @@ No body. Total length: 3
 
 General shape:
 
-- Byte 0: version (`0x03`)
+- Byte 0: version (`0x04`)
 - Byte 1: `seq` echo
 - Byte 2: subcommand echo
 - Byte 3: result code
-- Byte 4..N: optional response data
+- Byte 4: detail (section 2.3), `0x00` on `Ok`
+- Byte 5..N: optional response data
 
 Response data, sent only when the result is `Ok`:
 
-- `SetStreamTiming`: bytes 4..7 `applied_sample_period_us` (`uint32` LE), bytes 8..11 `applied_telemetry_period_us` (`uint32` LE). The telemetry value is always a whole multiple of the sample value.
-- `ReadCalibration`: bytes 4..44 carry the 41-byte calibration blob in the same format as WriteCalibration.
-- Every other subcommand: no data (response length 4).
+- `SetStreamTiming`: bytes 5..8 `applied_sample_period_us` (`uint32` LE), bytes 9..12 `applied_telemetry_period_us` (`uint32` LE). The telemetry value is always a whole multiple of the sample value.
+- `ReadCalibration`: bytes 5..45 carry the 41-byte calibration blob in the same format as WriteCalibration.
+- Every other subcommand: no data (response length 5).
 
-If the command header could not be parsed (payload shorter than 3 bytes, or wrong `version`), the response has subcommand `0xFF` and result `InvalidArgument`. `seq` is echoed when the command's version was right and it carried a `seq` byte; otherwise it is `0`.
+If the command header could not be parsed (payload shorter than 3 bytes, or wrong `version`), the response has subcommand `0xFF`, result `InvalidArgument` and detail `BadVersion` or `BadLength`. `seq` is echoed when the command's version was right and it carried a `seq` byte; otherwise it is `0`.
 
 ## 5. Telemetry Stream Payload (`stream channel`, default `0x82`)
 
 ### 5.1 Base header (always present)
 
-- Byte 0: version (`0x03`)
+- Byte 0: version (`0x04`)
 - Byte 1..2: field_mask (`uint16` LE)
 - Byte 3..10: timestamp_us (`uint64` LE)
 
@@ -206,14 +233,14 @@ Total length depends on active mask.
 ### 5.4 Max payload
 
 Encoded stream payload is bounded by `CONFIG_UART_COMM_MAX_PAYLOAD`.
-If a chosen mask could exceed transport max, firmware drops that packet and counts it (`encode_errors`).
+If a chosen mask could exceed transport max, firmware drops that packet and counts it (diag counter `imu.EncodeError`).
 
 ## 6. Host Implementation Checklist
 
 1. Use matching message IDs/channels from firmware config.
-2. Always set version byte to `0x03` in configure commands, followed by a `seq` byte.
+2. Always set version byte to `0x04` in configure commands, followed by a `seq` byte.
 3. Send each body at its exact length (section 2.4).
-4. Parse response as `[version, seq, subcommand, result, optional...]` and match it to its command by `seq`.
+4. Parse response as `[version, seq, subcommand, result, detail, optional...]` and match it to its command by `seq`.
 5. Parse stream header first, then decode fields strictly by bitmask and fixed append order.
 6. Use little-endian decode for all multi-byte values.
 7. Treat `timestamp_us` as wall-clock µs on the same time base as motor telemetry.
@@ -237,9 +264,11 @@ Calibration restore sequence:
 
 ## 8. Error Handling Guidance
 
-- `InvalidArgument` usually means wrong body length, version mismatch, or an invalid value (mode, mask bits, `enabled`, `has_sic`). A subcommand echo of `0xFF` means the command header itself was rejected.
-- `InvalidState` usually means manager/device not ready, or calibration apply requested before write/read cache.
-- `Busy` means mutex or resource contention, including the sensor being held by another operation (a mode switch or calibration in progress). Retrying later is fine.
-- `InternalError` means a sensor operation failed at device layer (I2C error), or the sampling timer could not be started or retimed.
+The detail byte (section 2.3) names the exact cause. By result:
 
-Host should log the subcommand + result and retry only where appropriate.
+- `InvalidArgument`: wrong body length, version mismatch, or an invalid value (mode, mask bits, `enabled`, `has_sic`). A subcommand echo of `0xFF` means the command header itself was rejected. Fix the command; retrying it unchanged fails again.
+- `InvalidState`: manager not ready (`NotReady`), or calibration apply requested before write/read cache (`NoCalibration`).
+- `Busy`: a full config queue (`QueueFull`), the manager mutex (`LockTimeout`), or the sensor held by another operation (`DeviceBusy`). The command was not applied; retrying later is fine.
+- `InternalError`: a sensor operation failed at device layer (`DeviceError`), or the sampling timer could not be started or retimed (`TimerFailed`).
+
+Host should log the subcommand, result and detail, and retry only on `Busy`.

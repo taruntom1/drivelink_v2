@@ -41,7 +41,6 @@ struct I2cConfig {
 struct ManagerConfig {
     uint8_t configure_msg_type = kImuConfigureMsgType;
     uint8_t configure_response_msg_type = kImuConfigureResponseMsgType;
-    uint8_t event_msg_type = kImuEventMsgType;
     uint8_t telemetry_stream_channel = kImuStreamChannel;
     bool use_mock_data = kDefaultUseMockData;
     bool fallback_to_mock_on_init_failure = kDefaultFallbackToMockOnInitFail;
@@ -58,18 +57,7 @@ struct ManagerConfig {
     I2cConfig i2c;
 };
 
-/// Stream health counters since startup. Each one is a running total.
-struct StreamCounters {
-    /// Timer periods that elapsed without a sample (the task woke late).
-    uint32_t late = 0;
-    /// Ticks skipped because the device was busy (config command in progress).
-    uint32_t busy = 0;
-    /// Ticks whose I2C read failed.
-    uint32_t read_errors = 0;
-    /// Samples that could not be encoded (payload overflow).
-    uint32_t encode_errors = 0;
-};
-
 const char *resultCodeToString(ResultCode code);
+const char *resultDetailToString(ResultDetail detail);
 
 } // namespace imu_bmo_055

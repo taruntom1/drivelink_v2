@@ -62,11 +62,15 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 ## E5. Low: `app_main` fails silently
 
+**Fixed.** `app_main` never returns. A manager that fails to start is reported to the host as `system.ManagerStartFailed` over the diag event channel, then destroyed, and the others keep running. A failed periodic sync start is reported as `system.PeriodicSyncStartFailed`. If `UartComm` itself fails, the error goes to the console only, and the board idles. See `components/diag/README.md`.
+
 [main.cpp:13-62](../main/main.cpp): every init failure does a bare `return` with the comment `// … failed`, and no log. Then (C1 in [01](01-concurrency-and-lifecycle.md)) the destructors run and may crash. At minimum, `ESP_LOGE` the reason. For a field device, prefer staying alive in a degraded state (UART up, report the error over an event message) so the host can diagnose it.
 
 ---
 
 ## E6. Low: error codes are lossy
+
+**Fixed.** `createMotor` answers `CAPACITY_REACHED` when the MCPWM or PCNT pool is empty (the HALs keep their `initError()`, and `MotorController::hardwareFailure()` names the stage), and reports `motor_manager.MotorCreateFailed` with the motor id, the stage and the `esp_err` through diag. `sendConfigureResponse` no longer overwrites the result when TX fails: it counts `motor_manager.ResponseTxDropped` and returns the command's own result. Motor and IMU configure responses (protocol v4) carry a `detail` byte after the result that names the exact cause (bad length, non-finite float, GPIO in use, lock timeout, encoder failed, ...), and a full config queue is answered with `QueueFull` instead of being dropped.
 
 - `createMotor` returns `InternalError` for every HAL failure, including running out of PCNT units, which is really `CapacityReached`.
 - `sendConfigureResponse` returns `InternalError` when TX fails, which overwrites the real result `code` that the caller then logs. The motor operation may have succeeded.

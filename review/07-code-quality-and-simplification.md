@@ -71,7 +71,7 @@ This patches the first register write that happens to fail. The underlying probl
 | Item | Location |
 |------|----------|
 | `bno055_support.c` (Bosch template), now being added to the build | **Fixed:** deleted (I3 in [04](04-imu-bno055.md)). |
-| `IMU_BMO_055_EVENT_MSG_TYPE` Kconfig: defined, never used | [imu Kconfig](../components/imu_bmo_055/Kconfig) |
+| `IMU_BMO_055_EVENT_MSG_TYPE` Kconfig: defined, never used. **Fixed:** removed, with `ManagerConfig::event_msg_type`; IMU errors go out on diag's event channel. | [imu Kconfig](../components/imu_bmo_055/Kconfig) |
 | `time_sync::protocol::decodeRequest` / `encodeResponse`: server-side helpers, unused on the device | [time_sync_protocol.cpp](../components/time_sync/src/time_sync_protocol.cpp) (fine for tests, but they are not tested) |
 | `PidController` copy constructor/assignment: deep copy of an object that is only ever a member, never copied | [pid_controller.cpp:105-129](../components/pid/src/pid_controller.cpp) |
 | `ImuStreamSample` carries every field even when the mask selects one | minor |

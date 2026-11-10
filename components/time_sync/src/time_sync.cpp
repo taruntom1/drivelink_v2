@@ -6,6 +6,7 @@
 #include <cstring>
 #include <sys/time.h>
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/queue.h"
@@ -40,6 +41,44 @@ esp_err_t setUnixUs(int64_t unix_us)
         return ESP_FAIL;
     }
     return ESP_OK;
+}
+
+namespace codes = diag::codes::time_sync;
+
+// time_sync.InitFailed arg0. Reported to the host: never renumber.
+namespace init_stage {
+constexpr uint32_t kUartInvalid = 1;
+constexpr uint32_t kMutex = 2;
+constexpr uint32_t kResponseQueue = 3;
+constexpr uint32_t kResponseCallback = 4;
+} // namespace init_stage
+
+// time_sync.SyncFailed arg0. kNone with an error means another sync was in
+// progress, which is not a failure and is never reported.
+namespace sync_stage {
+constexpr uint8_t kNone = 0;
+constexpr uint8_t kSend = 1;
+constexpr uint8_t kNoResponse = 2;
+constexpr uint8_t kHostStatus = 3;
+constexpr uint8_t kApply = 4;
+} // namespace sync_stage
+
+const char* syncStageName(uint8_t stage)
+{
+    switch (stage) {
+        case sync_stage::kSend:
+            return "send";
+        case sync_stage::kNoResponse:
+            return "no response";
+        case sync_stage::kHostStatus:
+            return "host status";
+        case sync_stage::kApply:
+            return "apply";
+        case sync_stage::kNone:
+            return "another sync in progress";
+        default:
+            return "?";
+    }
 }
 
 } // namespace
@@ -85,19 +124,20 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
     m_impl->last_sync_monotonic_us = 0;
 
     if (!m_impl->uart->isValid()) {
-        ESP_LOGE(TAG, "uart_comm is not valid; cannot initialize time_sync");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_STATE, init_stage::kUartInvalid, 0,
+                   "uart_comm is not valid; cannot initialize time_sync");
         return;
     }
 
     m_impl->sync_mutex = xSemaphoreCreateMutex();
     if (m_impl->sync_mutex == nullptr) {
-        ESP_LOGE(TAG, "Failed to create sync mutex");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kMutex, 0, "Failed to create sync mutex");
         return;
     }
 
     m_impl->state_mutex = xSemaphoreCreateMutex();
     if (m_impl->state_mutex == nullptr) {
-        ESP_LOGE(TAG, "Failed to create state mutex");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kMutex, 0, "Failed to create state mutex");
         vSemaphoreDelete(m_impl->sync_mutex);
         m_impl->sync_mutex = nullptr;
         return;
@@ -105,7 +145,8 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
 
     m_impl->response_queue = xQueueCreate(1, sizeof(SyncResponseEvent));
     if (m_impl->response_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create response queue");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kResponseQueue, 0,
+                   "Failed to create response queue");
         vSemaphoreDelete(m_impl->state_mutex);
         vSemaphoreDelete(m_impl->sync_mutex);
         m_impl->state_mutex = nullptr;
@@ -120,8 +161,9 @@ TimeSync::TimeSync(uart_comm::UartComm& uart, const TimeSyncConfig& config)
         },
         m_impl->response_cb);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register callback for msg_type=0x%02X: %s",
-                 m_impl->config.response_msg_type, esp_err_to_name(ret));
+        DIAG_ERROR(codes::kInitFailed, ret, init_stage::kResponseCallback, 0,
+                   "Failed to register callback for msg_type=0x%02X: %s",
+                   m_impl->config.response_msg_type, esp_err_to_name(ret));
         vQueueDelete(m_impl->response_queue);
         vSemaphoreDelete(m_impl->state_mutex);
         vSemaphoreDelete(m_impl->sync_mutex);
@@ -200,7 +242,15 @@ esp_err_t TimeSync::triggerManualSync(bool wait_for_response, TickType_t timeout
         return m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, static_cast<uint8_t>(len));
     }
 
-    return performSync(timeout);
+    uint8_t failed_stage = sync_stage::kNone;
+    uint8_t host_status = 0;
+    const esp_err_t ret = performSync(timeout, failed_stage, host_status);
+    if (ret != ESP_OK) {
+        // Manual syncs are not reported through diag: the caller gets the error.
+        ESP_LOGW(TAG, "Manual sync failed (%s, host status %u): %s", syncStageName(failed_stage), host_status,
+                 esp_err_to_name(ret));
+    }
+    return ret;
 }
 
 esp_err_t TimeSync::startPeriodicSync()
@@ -301,15 +351,36 @@ uint64_t TimeSync::getLastSyncMonotonicUs() const
 void TimeSync::periodicTask()
 {
     TickType_t last_wake = xTaskGetTickCount();
+    bool failing = false; // time_sync.SyncFailed is active
 
     while (!m_impl->periodic_task.stopRequested()) {
         TickType_t timeout = rtos_util::msToTicksCeil(m_impl->config.response_timeout_ms);
-        esp_err_t ret = performSync(timeout);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Periodic sync failed: %s", esp_err_to_name(ret));
+        uint8_t failed_stage = sync_stage::kNone;
+        uint8_t host_status = 0;
+        esp_err_t ret = performSync(timeout, failed_stage, host_status);
+        if (ret != ESP_OK && failed_stage == sync_stage::kNone) {
+            // A manual sync held the lock: skip this round, report nothing.
+            ESP_LOGD(TAG, "Periodic sync skipped: another sync in progress");
+        } else if (ret != ESP_OK) {
+            // Reported once per run of failures; the rest are debug lines.
+            if (!failing) {
+                failing = true;
+                DIAG_WARN(codes::kSyncFailed, ret, failed_stage, host_status,
+                          "Periodic sync failed (%s, host status %u): %s",
+                          syncStageName(failed_stage), host_status, esp_err_to_name(ret));
+            } else {
+                ESP_LOGD(TAG, "Periodic sync failed again (%s): %s", syncStageName(failed_stage),
+                         esp_err_to_name(ret));
+            }
+        } else if (failing) {
+            failing = false;
+            DIAG_CLEAR(codes::kSyncFailed);
         }
 
         m_impl->periodic_task.sleepUntil(last_wake, rtos_util::msToTicksCeil(m_impl->config.sync_interval_ms));
+    }
+    if (failing) {
+        DIAG_CLEAR(codes::kSyncFailed); // periodic sync stopped: nothing watches it any more
     }
 }
 
@@ -317,7 +388,7 @@ void TimeSync::onResponseFrame(const uart_comm::RxFrame& frame)
 {
     protocol::TimeSyncResponse response = {};
     if (!protocol::decodeResponse(frame.payload, frame.len, response)) {
-        ESP_LOGW(TAG, "Invalid time sync response len=%u msg_type=0x%02X", frame.len, frame.msg_type);
+        DIAG_COUNT(codes::kBadResponseFrame); // RX task: count, don't log
         return;
     }
 
@@ -328,10 +399,12 @@ void TimeSync::onResponseFrame(const uart_comm::RxFrame& frame)
     xQueueOverwrite(m_impl->response_queue, &event);
 }
 
-esp_err_t TimeSync::performSync(TickType_t timeout)
+esp_err_t TimeSync::performSync(TickType_t timeout, uint8_t& failed_stage, uint8_t& host_status)
 {
+    failed_stage = sync_stage::kNone;
+    host_status = 0;
     if (xSemaphoreTake(m_impl->sync_mutex, timeout) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
+        return ESP_ERR_TIMEOUT; // another sync held the lock: failed_stage stays kNone
     }
 
     protocol::TimeSyncRequest req = {};
@@ -342,6 +415,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
     size_t len = protocol::encodeRequest(req, payload, sizeof(payload));
     if (len == 0) {
         xSemaphoreGive(m_impl->sync_mutex);
+        failed_stage = sync_stage::kSend;
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -352,6 +426,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
     esp_err_t send_ret = m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, static_cast<uint8_t>(len));
     if (send_ret != ESP_OK) {
         xSemaphoreGive(m_impl->sync_mutex);
+        failed_stage = sync_stage::kSend;
         return send_ret;
     }
 
@@ -361,6 +436,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         TickType_t elapsed = now - start;
         if (elapsed >= timeout) {
             xSemaphoreGive(m_impl->sync_mutex);
+            failed_stage = sync_stage::kNoResponse;
             return ESP_ERR_TIMEOUT;
         }
 
@@ -368,6 +444,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         SyncResponseEvent event = {};
         if (xQueueReceive(m_impl->response_queue, &event, remaining) != pdTRUE) {
             xSemaphoreGive(m_impl->sync_mutex);
+            failed_stage = sync_stage::kNoResponse;
             return ESP_ERR_TIMEOUT;
         }
 
@@ -376,10 +453,12 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         }
 
         if (event.response.status != 0) {
-            ESP_LOGW(TAG, "Server returned error status=%u request_id=%u",
+            ESP_LOGD(TAG, "Server returned error status=%u request_id=%u",
                      event.response.status,
                      event.response.request_id);
             xSemaphoreGive(m_impl->sync_mutex);
+            failed_stage = sync_stage::kHostStatus;
+            host_status = event.response.status;
             return ESP_ERR_INVALID_RESPONSE;
         }
 
@@ -404,9 +483,10 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         int64_t corrected_now_us = t3 + offset_us;
         esp_err_t set_ret = setUnixUs(corrected_now_us);
         if (set_ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to apply synchronized time request_id=%u",
+            ESP_LOGD(TAG, "Failed to apply synchronized time request_id=%u",
                      event.response.request_id);
             xSemaphoreGive(m_impl->sync_mutex);
+            failed_stage = sync_stage::kApply;
             return set_ret;
         }
 
@@ -416,6 +496,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout)
         m_impl->last_server_unix_us = t2;
         m_impl->last_sync_monotonic_us = static_cast<uint64_t>(esp_timer_get_time());
         xSemaphoreGive(m_impl->state_mutex);
+        diag::setTimeSynced(); // diag events now carry the time_synced flag
 
         ESP_LOGI(TAG,
                  "Synced request_id=%u offset_us=%lld rtt_us=%lu",

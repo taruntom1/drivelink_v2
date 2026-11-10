@@ -16,6 +16,8 @@ The BNO055 datasheet (§3.6.4, "Reading Calibration profile") says to switch to 
 
 ## I2. Medium: silent fallback to random mock data
 
+**Partly fixed.** The fallback is no longer silent: it reports `imu.FallbackToMock` (with the device `esp_err`, I2C port and address) to the host through diag. The Kconfig still defaults to `y`, and stream packets still carry no "synthetic" flag. The IMU event MSG_TYPE was removed; diag's event channel replaces it.
+
 - [imu_bmo_055.cpp:312-323](../components/imu_bmo_055/src/imu_bmo_055.cpp)
 - [Kconfig](../components/imu_bmo_055/Kconfig) `IMU_BMO_055_FALLBACK_TO_MOCK_ON_INIT_FAIL` has `default y`
 

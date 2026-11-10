@@ -121,6 +121,16 @@ The PC side should:
 - Callback execution is in `uart_comm` RX task context; keep callback logic short.
 - Same-instance concurrent `triggerManualSync` calls are serialized internally.
 
+## Errors reported to the host
+
+time_sync reports through the `diag` component (events on `0xC0`, see `components/diag/README.md`). Source `time_sync`:
+
+- `InitFailed` (error): the constructor failed. `arg0` is the stage: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback.
+- `SyncFailed` (warning, clears): a periodic sync failed. It is reported once per run of failures and cleared by the next successful sync. `arg0` is the stage (1 send, 2 no response before `response_timeout_ms`, 3 the host answered with a non-zero status, 4 setting the clock), and `arg1` is the host's status byte for stage 3. A periodic round skipped because a manual sync held the lock is not a failure. `SyncFailed` is also cleared when periodic sync stops. Manual syncs (`triggerManualSync`) return their error to the caller and log a console warning with the stage; they are not reported through diag.
+- `BadResponseFrame` (counter): a response that could not be decoded was dropped on the RX task.
+
+After the first successful sync, every diag event carries the `time_synced` flag.
+
 ## Kconfig
 
 Under `Time Sync Configuration` in `menuconfig`, these defaults can be changed:

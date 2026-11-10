@@ -36,6 +36,7 @@ Bno055Device::Bno055Device(const I2cConfig &config)
       m_config(config),
       m_mutex(xSemaphoreCreateMutex()),
       m_valid(false),
+      m_init_error(ESP_ERR_NO_MEM),
       m_driver_installed(false),
       m_last_bus_log_us(0),
       m_suppressed_bus_logs(0)
@@ -47,6 +48,7 @@ Bno055Device::Bno055Device(const I2cConfig &config)
 
     if (s_active_device != nullptr) {
         ESP_LOGE(TAG, "Only one BNO055 instance is supported");
+        m_init_error = ESP_ERR_INVALID_STATE;
         return;
     }
 
@@ -66,6 +68,7 @@ Bno055Device::Bno055Device(const I2cConfig &config)
                  m_config.sda_pin,
                  m_config.scl_pin,
                  esp_err_to_name(ret));
+        m_init_error = ret;
         return;
     }
 
@@ -78,6 +81,7 @@ Bno055Device::Bno055Device(const I2cConfig &config)
         ESP_LOGE(TAG, "i2c_driver_install failed (port=%d): %s",
                  m_config.port_num,
                  esp_err_to_name(ret));
+        m_init_error = ret;
         return;
     }
 
@@ -96,15 +100,18 @@ Bno055Device::Bno055Device(const I2cConfig &config)
     if (init_ret != BNO055_SUCCESS) {
         ESP_LOGE(TAG, "bno055_init failed (addr=0x%02X)", m_config.device_address);
         s_active_device = nullptr;
+        m_init_error = ESP_FAIL;
         return;
     }
 
     if (m_dev.chip_id != kExpectedChipId) {
         ESP_LOGE(TAG, "Unexpected chip id: 0x%02X", m_dev.chip_id);
         s_active_device = nullptr;
+        m_init_error = ESP_ERR_INVALID_RESPONSE;
         return;
     }
 
+    m_init_error = ESP_OK;
     m_valid = true;
     ESP_LOGI(TAG, "BNO055 ready (i2c_port=%d addr=0x%02X)", m_config.port_num, m_config.device_address);
 }
@@ -134,6 +141,11 @@ Bno055Device::~Bno055Device()
 bool Bno055Device::isValid() const
 {
     return m_valid;
+}
+
+esp_err_t Bno055Device::initError() const
+{
+    return m_init_error;
 }
 
 esp_err_t Bno055Device::setOperationMode(uint8_t operation_mode)

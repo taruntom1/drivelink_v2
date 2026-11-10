@@ -18,6 +18,7 @@ struct EncoderImpl {
     int64_t prev_time_us;
     float current_rate;
     int32_t last_delta;
+    esp_err_t init_error;
     bool valid;
 };
 
@@ -72,6 +73,7 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     m_impl->current_rate = 0.0f;
     m_impl->last_delta = 0;
     m_impl->valid = false;
+    m_impl->init_error = ESP_ERR_INVALID_ARG;
 
     if (!GPIO_IS_VALID_GPIO(pin_a) || !GPIO_IS_VALID_GPIO(pin_b) || pin_a == pin_b) {
         ESP_LOGE(TAG, "Invalid encoder pins: pin_a=%d pin_b=%d (must be distinct valid GPIOs)", pin_a, pin_b);
@@ -83,6 +85,7 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate PCNT unit for pins %d/%d: %s",
                  pin_a, pin_b, esp_err_to_name(ret));
+        m_impl->init_error = ret;
         return;
     }
 
@@ -92,10 +95,12 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
         ESP_LOGE(TAG, "Failed to read initial PCNT count for pins %d/%d: %s",
                  pin_a, pin_b, esp_err_to_name(ret));
         detail::PcntPool::deallocate(m_impl->pcnt);
+        m_impl->init_error = ret;
         return;
     }
     m_impl->prev_count = static_cast<int32_t>(count);
 
+    m_impl->init_error = ESP_OK;
     m_impl->valid = true;
     ESP_LOGI(TAG, "Encoder created: pin_a=%d pin_b=%d", pin_a, pin_b);
 }
@@ -188,6 +193,11 @@ void Encoder::reset()
 bool Encoder::isValid() const
 {
     return m_impl && m_impl->valid;
+}
+
+esp_err_t Encoder::initError() const
+{
+    return m_impl ? m_impl->init_error : ESP_ERR_INVALID_STATE;
 }
 
 } // namespace rotary_encoder_hal

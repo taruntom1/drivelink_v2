@@ -9,6 +9,7 @@ extern "C" {
 #include "bno055.h"
 }
 
+#include "diag.hpp"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -27,7 +28,25 @@ constexpr size_t kMaxStreamPayload = CONFIG_UART_COMM_MAX_PAYLOAD;
 // The stream task waits for the timer at most 2 periods + this margin before
 // it reports that the timer is not firing.
 constexpr uint32_t kWakeTimeoutMarginMs = 100U;
-constexpr int64_t kStreamLogIntervalUs = 1000000;
+
+namespace codes = diag::codes::imu;
+
+// imu.InitFailed arg0. Reported to the host: never renumber.
+namespace init_stage {
+constexpr uint32_t kMutex = 1;
+constexpr uint32_t kInvalidConfig = 2;
+constexpr uint32_t kDevice = 3;
+constexpr uint32_t kDefaultMode = 4;
+constexpr uint32_t kConfigQueue = 5;
+constexpr uint32_t kConfigureCallback = 6;
+constexpr uint32_t kConfigTask = 7;
+constexpr uint32_t kStreamTask = 8;
+constexpr uint32_t kSamplingTimer = 9;
+} // namespace init_stage
+
+// imu.StreamReenableFailed arg0.
+constexpr uint32_t kReenableMutexBusy = 1;
+constexpr uint32_t kReenableTimerFailed = 2;
 
 bool isValidOperationMode(uint8_t mode)
 {
@@ -115,13 +134,19 @@ uint32_t telemetryDivider(uint32_t requested_telemetry_us, uint32_t sample_perio
     return std::max<uint32_t>(1U, (tp + sample_period_us - 1U) / sample_period_us);
 }
 
-ResultCode deviceErrToResult(esp_err_t err)
+// Failures shared by most configure commands.
+constexpr Result kNotReady{ResultCode::InvalidState, ResultDetail::NotReady};
+constexpr Result kLockTimeout{ResultCode::Busy, ResultDetail::LockTimeout};
+constexpr Result kTimerFailed{ResultCode::InternalError, ResultDetail::TimerFailed};
+
+Result deviceErrToResult(esp_err_t err)
 {
     if (err == ESP_OK) {
-        return ResultCode::Ok;
+        return Result{};
     }
     // ESP_ERR_TIMEOUT: the device lock is held by another operation.
-    return (err == ESP_ERR_TIMEOUT) ? ResultCode::Busy : ResultCode::InternalError;
+    return (err == ESP_ERR_TIMEOUT) ? Result{ResultCode::Busy, ResultDetail::DeviceBusy}
+                                    : Result{ResultCode::InternalError, ResultDetail::DeviceError};
 }
 
 } // namespace
@@ -139,30 +164,28 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
       m_stream_restarted(true),
       m_requested_telemetry_period_us(0),
       m_operation_mode(0),
-      m_late_count(0),
-      m_busy_count(0),
-      m_read_error_count(0),
-      m_encode_error_count(0),
       m_cached_calibration(),
       m_has_cached_calibration(false),
       m_use_mock_data(false),
       m_device(nullptr)
 {
     if (m_mutex == nullptr) {
-        ESP_LOGE(TAG, "Failed to create mutex");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kMutex, 0, "Failed to create mutex");
         return;
     }
 
     if (!m_uart.isValid()) {
-        ESP_LOGE(TAG, "uart_comm instance is invalid");
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_STATE, init_stage::kInvalidConfig, 0,
+                   "uart_comm instance is invalid");
         return;
     }
 
     // Validate the period bounds before clamping with them (std::clamp is
     // undefined when lo > hi).
     if (m_config.min_sample_period_us == 0U || m_config.min_sample_period_us > m_config.max_sample_period_us) {
-        ESP_LOGE(TAG, "Invalid sample period bounds: min=%" PRIu32 " max=%" PRIu32 " us",
-                 m_config.min_sample_period_us, m_config.max_sample_period_us);
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_ARG, init_stage::kInvalidConfig, 0,
+                   "Invalid sample period bounds: min=%" PRIu32 " max=%" PRIu32 " us",
+                   m_config.min_sample_period_us, m_config.max_sample_period_us);
         return;
     }
 
@@ -190,7 +213,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     m_operation_mode = m_config.default_operation_mode;
 
     if (!isValidOperationMode(m_operation_mode)) {
-        ESP_LOGE(TAG, "Invalid default operation mode: 0x%02X", m_operation_mode);
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_INVALID_ARG, init_stage::kInvalidConfig, 0,
+                   "Invalid default operation mode: 0x%02X", m_operation_mode);
         return;
     }
 
@@ -198,12 +222,15 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     if (!m_use_mock_data) {
         m_device = std::make_unique<Bno055Device>(m_config.i2c);
         if (!m_device->isValid()) {
+            const esp_err_t dev_err = m_device->initError();
             if (m_config.fallback_to_mock_on_init_failure) {
-                ESP_LOGW(TAG, "BNO055 init failed; falling back to mock telemetry");
+                DIAG_WARN(codes::kFallbackToMock, dev_err, m_config.i2c.port_num, m_config.i2c.device_address,
+                          "BNO055 init failed (%s); falling back to mock telemetry", esp_err_to_name(dev_err));
                 m_device.reset();
                 m_use_mock_data = true;
             } else {
-                ESP_LOGE(TAG, "Failed to initialize BNO055 device");
+                DIAG_ERROR(codes::kInitFailed, dev_err, init_stage::kDevice, 0,
+                           "Failed to initialize BNO055 device: %s", esp_err_to_name(dev_err));
                 return;
             }
         }
@@ -212,8 +239,9 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     if (!m_use_mock_data) {
         const esp_err_t mode_ret = m_device->setOperationMode(m_operation_mode);
         if (mode_ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to set default operation mode 0x%02X: %s",
-                     m_operation_mode, esp_err_to_name(mode_ret));
+            DIAG_ERROR(codes::kInitFailed, mode_ret, init_stage::kDefaultMode, 0,
+                       "Failed to set default operation mode 0x%02X: %s",
+                       m_operation_mode, esp_err_to_name(mode_ret));
             return;
         }
     } else {
@@ -222,7 +250,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
 
     m_config_queue = xQueueCreate(m_config.config_queue_depth, sizeof(uart_comm::RxFrame));
     if (m_config_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create config queue (depth=%u)", static_cast<unsigned>(m_config.config_queue_depth));
+        DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kConfigQueue, 0,
+                   "Failed to create config queue (depth=%u)", static_cast<unsigned>(m_config.config_queue_depth));
         return;
     }
 
@@ -233,9 +262,9 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         },
         m_configure_cb);
     if (cb_ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register configure callback (msg=0x%02X): %s",
-                 m_config.configure_msg_type,
-                 esp_err_to_name(cb_ret));
+        DIAG_ERROR(codes::kInitFailed, cb_ret, init_stage::kConfigureCallback, 0,
+                   "Failed to register configure callback (msg=0x%02X): %s",
+                   m_config.configure_msg_type, esp_err_to_name(cb_ret));
         return;
     }
 
@@ -246,7 +275,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         [this] { configTaskLoop(); });
     if (cfg_task_ret != ESP_OK) {
         m_configure_cb.reset();
-        ESP_LOGE(TAG, "Failed to create config task: %s", esp_err_to_name(cfg_task_ret));
+        DIAG_ERROR(codes::kInitFailed, cfg_task_ret, init_stage::kConfigTask, 0,
+                   "Failed to create config task: %s", esp_err_to_name(cfg_task_ret));
         return;
     }
 
@@ -259,7 +289,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         if (stream_task_ret != ESP_OK) {
             m_configure_cb.reset();
             stopTasks();
-            ESP_LOGE(TAG, "Failed to create stream task: %s", esp_err_to_name(stream_task_ret));
+            DIAG_ERROR(codes::kInitFailed, stream_task_ret, init_stage::kStreamTask, 0,
+                       "Failed to create stream task: %s", esp_err_to_name(stream_task_ret));
             return;
         }
 
@@ -274,7 +305,8 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
         if (tmr_ret != ESP_OK) {
             m_configure_cb.reset();
             stopTasks();
-            ESP_LOGE(TAG, "Failed to start sampling timer: %s", esp_err_to_name(tmr_ret));
+            DIAG_ERROR(codes::kInitFailed, tmr_ret, init_stage::kSamplingTimer, 0,
+                       "Failed to start sampling timer: %s", esp_err_to_name(tmr_ret));
             return;
         }
     }
@@ -314,55 +346,58 @@ bool ImuBno055Manager::isValid() const
     return m_valid.load(std::memory_order_acquire);
 }
 
-ResultCode ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
+esp_err_t ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
 {
     const bool was_enabled = m_stream_enabled.load(std::memory_order_relaxed);
     if (enabled == was_enabled) {
-        return ResultCode::Ok;
+        return ESP_OK;
     }
 
     if (!enabled) {
         m_stream_enabled.store(false, std::memory_order_release);
         // A callback already in flight only wakes the task, which then sees
         // the stream disabled and does nothing.
-        return (m_stream_timer.stop() == ESP_OK) ? ResultCode::Ok : ResultCode::InternalError;
+        return m_stream_timer.stop();
     }
 
     m_stream_restarted.store(true, std::memory_order_release);
+    m_timer_epoch.fetch_add(1U, std::memory_order_release);
     m_stream_enabled.store(true, std::memory_order_release);
-    if (m_stream_timer.isCreated() &&
-        m_stream_timer.start(m_sample_period_us.load(std::memory_order_relaxed)) != ESP_OK) {
-        m_stream_enabled.store(false, std::memory_order_release);
-        return ResultCode::InternalError;
+    if (m_stream_timer.isCreated()) {
+        const esp_err_t err = m_stream_timer.start(m_sample_period_us.load(std::memory_order_relaxed));
+        if (err != ESP_OK) {
+            m_stream_enabled.store(false, std::memory_order_release);
+            return err;
+        }
     }
-    return ResultCode::Ok;
+    return ESP_OK;
 }
 
-ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
+Result ImuBno055Manager::setStreamEnabled(bool enabled)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
-    const ResultCode rc = applyStreamEnabledLocked(enabled);
+    const esp_err_t err = applyStreamEnabledLocked(enabled);
     xSemaphoreGive(m_mutex);
-    return rc;
+    return (err == ESP_OK) ? Result{} : kTimerFailed;
 }
 
-ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
+Result ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
                                              uint32_t telemetry_period_us,
                                              uint32_t &applied_sample_period_us,
                                              uint32_t &applied_telemetry_period_us)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
 
     const uint32_t old_period = m_sample_period_us.load(std::memory_order_relaxed);
@@ -374,14 +409,16 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
         m_requested_telemetry_period_us = telemetry_period_us;
     }
 
-    ResultCode rc = ResultCode::Ok;
+    Result rc{};
+    esp_err_t timer_err = ESP_OK;
     if (new_period != old_period && m_stream_timer.isCreated()) {
-        const esp_err_t err = m_stream_timer.setPeriod(new_period);
-        if (err != ESP_OK) {
-            rc = ResultCode::InternalError;
+        timer_err = m_stream_timer.setPeriod(new_period);
+        m_timer_epoch.fetch_add(1U, std::memory_order_release); // restarted: not a stall
+        if (timer_err != ESP_OK) {
+            rc = kTimerFailed; // reported below, after m_mutex is released
         }
     }
-    if (rc == ResultCode::Ok) {
+    if (rc.ok()) {
         m_sample_period_us.store(new_period, std::memory_order_relaxed);
     }
     const uint32_t period_now = m_sample_period_us.load(std::memory_order_relaxed);
@@ -390,6 +427,11 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
     m_telemetry_divider.store(divider, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
 
+    if (timer_err != ESP_OK) {
+        DIAG_ERROR(codes::kTimerRestartFailed, timer_err, new_period, 0,
+                   "Failed to restart sampling timer at %" PRIu32 " us: %s", new_period, esp_err_to_name(timer_err));
+    }
+
     applied_sample_period_us = period_now;
     applied_telemetry_period_us = divider * period_now;
     ESP_LOGI(TAG, "Stream timing: sample=%" PRIu32 " us telemetry=%" PRIu32 " us (every %" PRIu32 " samples)",
@@ -397,85 +439,91 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
     return rc;
 }
 
-ResultCode ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
+Result ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
     if ((field_mask & static_cast<uint16_t>(~kStreamFieldAll)) != 0U) {
-        return ResultCode::InvalidArgument;
+        return Result{ResultCode::InvalidArgument, ResultDetail::BadFieldMask};
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_field_mask.store(field_mask, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
+Result ImuBno055Manager::setOperationMode(uint8_t operation_mode)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
     if (!isValidOperationMode(operation_mode)) {
-        return ResultCode::InvalidArgument;
+        return Result{ResultCode::InvalidArgument, ResultDetail::BadEnum};
     }
 
     if (m_use_mock_data) {
         if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-            return ResultCode::Busy;
+            return kLockTimeout;
         }
         m_operation_mode = operation_mode;
         xSemaphoreGive(m_mutex);
-        return ResultCode::Ok;
+        return Result{};
     }
 
     // Pause the stream (and its timer) around the mode switch, which holds
     // the device for 20-600 ms.
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     const bool resume_stream = m_stream_enabled.load(std::memory_order_relaxed);
     (void)applyStreamEnabledLocked(false);
     xSemaphoreGive(m_mutex);
 
     const esp_err_t ret = m_device->setOperationMode(operation_mode);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set operation mode 0x%02X: %s",
-                 operation_mode,
-                 esp_err_to_name(ret));
+    if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) { // a busy device is answered with BUSY only
+        DIAG_ERROR(codes::kModeSwitchFailed, ret, operation_mode, 0,
+                   "Failed to set operation mode 0x%02X: %s", operation_mode, esp_err_to_name(ret));
     }
 
-    ResultCode rc = deviceErrToResult(ret);
+    Result rc = deviceErrToResult(ret);
     if (xSemaphoreTake(m_mutex, kMutexTimeout) == pdTRUE) {
         if (ret == ESP_OK) {
             m_operation_mode = operation_mode;
         }
-        if (resume_stream && applyStreamEnabledLocked(true) != ResultCode::Ok && rc == ResultCode::Ok) {
-            rc = ResultCode::InternalError;
-        }
+        const esp_err_t reenable_err = resume_stream ? applyStreamEnabledLocked(true) : ESP_OK;
         xSemaphoreGive(m_mutex);
+        if (reenable_err != ESP_OK) {
+            DIAG_ERROR(codes::kStreamReenableFailed, reenable_err, kReenableTimerFailed, 0,
+                       "Could not re-enable the stream after the mode switch (sampling timer): %s",
+                       esp_err_to_name(reenable_err));
+            if (rc.ok()) {
+                rc = kTimerFailed;
+            }
+        }
     } else if (resume_stream) {
-        ESP_LOGE(TAG, "Could not re-enable the stream after the mode switch (mutex busy)");
-        if (rc == ResultCode::Ok) {
-            rc = ResultCode::Busy;
+        DIAG_ERROR(codes::kStreamReenableFailed, ESP_ERR_TIMEOUT, kReenableMutexBusy, 0,
+                   "Could not re-enable the stream after the mode switch (mutex busy)");
+        if (rc.ok()) {
+            rc = kLockTimeout;
         }
     }
 
     return rc;
 }
 
-ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
+Result ImuBno055Manager::readCalibration(CalibrationBlob &out)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (m_use_mock_data) {
         if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-            return ResultCode::Busy;
+            return kLockTimeout;
         }
         if (!m_has_cached_calibration) {
             m_cached_calibration = CalibrationBlob{};
@@ -483,79 +531,75 @@ ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
         }
         out = m_cached_calibration;
         xSemaphoreGive(m_mutex);
-        return ResultCode::Ok;
+        return Result{};
     }
 
     const esp_err_t ret = m_device->readCalibration(out);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to read calibration: %s", esp_err_to_name(ret));
+        if (ret != ESP_ERR_TIMEOUT) { // a busy device is answered with BUSY only
+            DIAG_ERROR(codes::kCalibrationReadFailed, ret, 0, 0, "Failed to read calibration: %s",
+                       esp_err_to_name(ret));
+        }
         return deviceErrToResult(ret);
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_cached_calibration = out;
     m_has_cached_calibration = true;
     xSemaphoreGive(m_mutex);
 
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::writeCalibration(const CalibrationBlob &blob)
+Result ImuBno055Manager::writeCalibration(const CalibrationBlob &blob)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_cached_calibration = blob;
     m_has_cached_calibration = true;
     xSemaphoreGive(m_mutex);
 
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::applyCalibration()
+Result ImuBno055Manager::applyCalibration()
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     CalibrationBlob blob{};
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
 
     if (!m_has_cached_calibration) {
         xSemaphoreGive(m_mutex);
-        return ResultCode::InvalidState;
+        return Result{ResultCode::InvalidState, ResultDetail::NoCalibration};
     }
     blob = m_cached_calibration;
     xSemaphoreGive(m_mutex);
 
     if (m_use_mock_data) {
-        return ResultCode::Ok;
+        return Result{};
     }
 
     const esp_err_t ret = m_device->writeCalibration(blob);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to apply calibration: %s", esp_err_to_name(ret));
+        if (ret != ESP_ERR_TIMEOUT) { // a busy device is answered with BUSY only
+            DIAG_ERROR(codes::kCalibrationApplyFailed, ret, 0, 0, "Failed to apply calibration: %s",
+                       esp_err_to_name(ret));
+        }
         return deviceErrToResult(ret);
     }
-    return ResultCode::Ok;
-}
-
-StreamCounters ImuBno055Manager::getStreamCounters() const
-{
-    StreamCounters c{};
-    c.late = m_late_count.load(std::memory_order_relaxed);
-    c.busy = m_busy_count.load(std::memory_order_relaxed);
-    c.read_errors = m_read_error_count.load(std::memory_order_relaxed);
-    c.encode_errors = m_encode_error_count.load(std::memory_order_relaxed);
-    return c;
+    return Result{};
 }
 
 void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
@@ -565,43 +609,54 @@ void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
     }
 
     if (xQueueSend(m_config_queue, &frame, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "Config queue full; dropping command");
+        // RX task: count, don't log. Answer so the host is not left waiting:
+        // the command was not applied.
+        DIAG_COUNT(codes::kConfigQueueFull);
+        protocol::ConfigureHeader header{};
+        const uint8_t *body = nullptr;
+        size_t body_len = 0;
+        (void)protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len);
+        if (sendConfigureResponse(header.seq, header.subcommand,
+                                  Result{ResultCode::Busy, ResultDetail::QueueFull}, nullptr, 0) != ESP_OK) {
+            DIAG_COUNT(codes::kResponseTxDropped);
+        }
     }
 }
 
-ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
-                                                       const uint8_t *body,
-                                                       uint8_t len,
-                                                       uint8_t &response_len,
-                                                       uint8_t *response_payload,
-                                                       size_t response_capacity)
+Result ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
+                                                   const uint8_t *body,
+                                                   uint8_t len,
+                                                   uint8_t &response_len,
+                                                   uint8_t *response_payload,
+                                                   size_t response_capacity)
 {
     // body is the payload after the configure request header; len is its
-    // length. Every body must have its exact size (protocol v3).
+    // length. Every body must have its exact size.
     response_len = 0;
+    constexpr Result kBadLength{ResultCode::InvalidArgument, ResultDetail::BadLength};
+    constexpr Result kEncodeFailed{ResultCode::InternalError, ResultDetail::EncodeFailed};
 
     switch (subcommand) {
         case ConfigureSubcommand::SetStreamEnabled: {
             bool enabled = false;
-            if (!protocol::decodeSetStreamEnabled(body, len, enabled)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setStreamEnabled(enabled);
+            const Result dec = protocol::decodeSetStreamEnabled(body, len, enabled);
+            return dec.ok() ? setStreamEnabled(enabled) : dec;
         }
         case ConfigureSubcommand::SetStreamTiming: {
             uint32_t sample_us = 0;
             uint32_t telemetry_us = 0;
-            if (!protocol::decodeSetStreamTiming(body, len, sample_us, telemetry_us)) {
-                return ResultCode::InvalidArgument;
+            const Result dec = protocol::decodeSetStreamTiming(body, len, sample_us, telemetry_us);
+            if (!dec.ok()) {
+                return dec;
             }
             uint32_t applied_sample_us = 0;
             uint32_t applied_telemetry_us = 0;
-            const ResultCode rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
-            if (rc == ResultCode::Ok) {
+            const Result rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
+            if (rc.ok()) {
                 const size_t n = protocol::encodeSetStreamTimingResponseBody(
                     applied_sample_us, applied_telemetry_us, response_payload, response_capacity);
                 if (n == 0U) {
-                    return ResultCode::InternalError;
+                    return kEncodeFailed;
                 }
                 response_len = static_cast<uint8_t>(n);
             }
@@ -609,54 +664,48 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
         }
         case ConfigureSubcommand::SetStreamFieldMask: {
             uint16_t mask = 0;
-            if (!protocol::decodeSetStreamFieldMask(body, len, mask)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setStreamFieldMask(mask);
+            const Result dec = protocol::decodeSetStreamFieldMask(body, len, mask);
+            return dec.ok() ? setStreamFieldMask(mask) : dec;
         }
         case ConfigureSubcommand::SetOperationMode: {
             uint8_t mode = 0;
-            if (!protocol::decodeSetOperationMode(body, len, mode)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setOperationMode(mode);
+            const Result dec = protocol::decodeSetOperationMode(body, len, mode);
+            return dec.ok() ? setOperationMode(mode) : dec;
         }
         case ConfigureSubcommand::ReadCalibration: {
             if (len != 0U) {
-                return ResultCode::InvalidArgument;
+                return kBadLength;
             }
             CalibrationBlob blob{};
-            const ResultCode rc = readCalibration(blob);
-            if (rc != ResultCode::Ok) {
+            const Result rc = readCalibration(blob);
+            if (!rc.ok()) {
                 return rc;
             }
             const size_t n = protocol::encodeCalibrationBlob(blob, response_payload, response_capacity);
             if (n == 0U) {
-                return ResultCode::InternalError;
+                return kEncodeFailed;
             }
             response_len = static_cast<uint8_t>(n);
-            return ResultCode::Ok;
+            return Result{};
         }
         case ConfigureSubcommand::WriteCalibration: {
             CalibrationBlob blob{};
-            if (!protocol::decodeCalibrationBlob(body, len, blob)) {
-                return ResultCode::InvalidArgument;
-            }
-            return writeCalibration(blob);
+            const Result dec = protocol::decodeCalibrationBlob(body, len, blob);
+            return dec.ok() ? writeCalibration(blob) : dec;
         }
         case ConfigureSubcommand::ApplyCalibration:
             if (len != 0U) {
-                return ResultCode::InvalidArgument;
+                return kBadLength;
             }
             return applyCalibration();
         default:
-            return ResultCode::NotSupported;
+            return Result{ResultCode::NotSupported, ResultDetail::UnknownSubcommand};
     }
 }
 
 esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
                                                   uint8_t subcommand,
-                                                  ResultCode code,
+                                                  Result result,
                                                   const uint8_t *extra_payload,
                                                   uint8_t extra_len)
 {
@@ -664,7 +713,7 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
     protocol::ConfigureHeader header{};
     header.seq = seq;
     header.subcommand = subcommand;
-    const size_t len = protocol::encodeConfigureResponse(header, code, extra_payload, extra_len,
+    const size_t len = protocol::encodeConfigureResponse(header, result, extra_payload, extra_len,
                                                          payload, sizeof(payload));
     if (len == 0U) {
         return ESP_ERR_INVALID_ARG;
@@ -698,59 +747,38 @@ void ImuBno055Manager::stopTasks()
     m_valid.store(false, std::memory_order_release);
 }
 
-void ImuBno055Manager::logStreamCountersIfChanged(StreamCounters &last_logged, int64_t &last_log_us)
-{
-    const int64_t now_us = esp_timer_get_time();
-    if ((now_us - last_log_us) < kStreamLogIntervalUs) {
-        return;
-    }
-    const StreamCounters now = getStreamCounters();
-    if (now.late == last_logged.late && now.busy == last_logged.busy &&
-        now.read_errors == last_logged.read_errors && now.encode_errors == last_logged.encode_errors) {
-        return;
-    }
-    ESP_LOGW(TAG, "IMU stream: late +%" PRIu32 " busy +%" PRIu32 " read_err +%" PRIu32 " encode_err +%" PRIu32
-                  " (totals %" PRIu32 "/%" PRIu32 "/%" PRIu32 "/%" PRIu32 ") sample=%" PRIu32 " us",
-             now.late - last_logged.late, now.busy - last_logged.busy,
-             now.read_errors - last_logged.read_errors, now.encode_errors - last_logged.encode_errors,
-             now.late, now.busy, now.read_errors, now.encode_errors,
-             m_sample_period_us.load(std::memory_order_relaxed));
-    last_logged = now;
-    last_log_us = now_us;
-}
-
 void ImuBno055Manager::streamTaskLoop()
 {
     uint8_t tx_payload[kMaxStreamPayload] = {0};
     // Samples until the next publish; <= 0 means publish this sample.
     int32_t countdown = 0;
-    StreamCounters last_logged{};
-    int64_t last_counter_log_us = 0;
-    int64_t last_timeout_log_us = 0;
+    bool sampler_stalled = false; // imu.SamplerStalled is active
 
     while (!m_stream_task.stopRequested()) {
         // Woken by the sampling timer (and by stop()). The count is the
         // number of timer periods since we last took the notification.
         const uint32_t period_us = m_sample_period_us.load(std::memory_order_relaxed);
         const TickType_t wait = rtos_util::msToTicksCeil((2U * (period_us / 1000U)) + kWakeTimeoutMarginMs);
+        const uint32_t epoch = m_timer_epoch.load(std::memory_order_acquire);
         const uint32_t fired = ulTaskNotifyTake(pdTRUE, wait);
         if (m_stream_task.stopRequested()) {
             break;
         }
 
         const bool enabled = m_stream_enabled.load(std::memory_order_acquire);
-        if (fired == 0U) {
-            // While disabled the timer is stopped, so a timeout is normal.
-            const int64_t now_us = esp_timer_get_time();
-            if (enabled && (now_us - last_timeout_log_us) >= kStreamLogIntervalUs) {
-                last_timeout_log_us = now_us;
-                ESP_LOGW(TAG, "Sampling timer has not fired for %" PRIu32 " ms",
-                         static_cast<uint32_t>(pdTICKS_TO_MS(wait)));
-            }
-            continue;
+        // While disabled the timer is stopped, so a timeout is normal. So is
+        // one across a timer restart: the wait was sized for the old period.
+        const bool restarted = m_timer_epoch.load(std::memory_order_acquire) != epoch;
+        const bool stalled_now = (fired == 0U) && enabled && !restarted;
+        if (stalled_now && !sampler_stalled) {
+            DIAG_WARN(codes::kSamplerStalled, ESP_ERR_TIMEOUT, pdTICKS_TO_MS(wait), 0,
+                      "Sampling timer has not fired for %" PRIu32 " ms", static_cast<uint32_t>(pdTICKS_TO_MS(wait)));
+        } else if (!stalled_now && sampler_stalled) {
+            DIAG_CLEAR(codes::kSamplerStalled);
         }
-        if (!enabled) {
-            continue; // a late callback after disable
+        sampler_stalled = stalled_now;
+        if (fired == 0U || !enabled) {
+            continue; // a timeout, or a late callback after disable
         }
 
         uint32_t elapsed = fired;
@@ -761,7 +789,7 @@ void ImuBno055Manager::streamTaskLoop()
             elapsed = 1U;
         }
         if (elapsed > 1U) {
-            m_late_count.fetch_add(elapsed - 1U, std::memory_order_relaxed);
+            DIAG_COUNT_N(codes::kSampleLate, elapsed - 1U);
         }
         // Late ticks still count toward the telemetry countdown, so the
         // telemetry rate holds when samples are missed.
@@ -778,9 +806,9 @@ void ImuBno055Manager::streamTaskLoop()
         }
 
         if (read_ret == ESP_ERR_TIMEOUT) {
-            m_busy_count.fetch_add(1U, std::memory_order_relaxed);
+            DIAG_COUNT(codes::kDeviceBusy);
         } else if (read_ret != ESP_OK) {
-            m_read_error_count.fetch_add(1U, std::memory_order_relaxed);
+            DIAG_COUNT(codes::kReadError);
         } else if (countdown <= 0) {
             // A publish slot whose read failed stays pending (countdown
             // stays <= 0), so the next good sample is published.
@@ -791,14 +819,15 @@ void ImuBno055Manager::streamTaskLoop()
             if (tx_len > 0U) {
                 m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, static_cast<uint8_t>(tx_len));
             } else {
-                m_encode_error_count.fetch_add(1U, std::memory_order_relaxed);
+                DIAG_COUNT(codes::kEncodeError);
             }
         }
         // Samples read on non-publish ticks are dropped for now. This is
         // where an on-board consumer (latest-sample accessor, filter) would
         // take every sample when sampling faster than the telemetry rate.
-
-        logStreamCountersIfChanged(last_logged, last_counter_log_us);
+    }
+    if (sampler_stalled) {
+        DIAG_CLEAR(codes::kSamplerStalled); // nothing watches it any more
     }
 }
 
@@ -819,12 +848,11 @@ void ImuBno055Manager::configTaskLoop()
 
         uint8_t response_extra[kMaxResponseExtraPayload] = {0};
         uint8_t response_extra_len = 0;
-        ResultCode rc = ResultCode::InvalidArgument;
-
         protocol::ConfigureHeader header{};
         const uint8_t *body = nullptr;
         size_t body_len = 0;
-        if (protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len)) {
+        Result rc = protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len);
+        if (rc.ok()) {
             rc = self->parseAndDispatchConfigure(
                 static_cast<ConfigureSubcommand>(header.subcommand),
                 body,
@@ -832,6 +860,10 @@ void ImuBno055Manager::configTaskLoop()
                 response_extra_len,
                 response_extra,
                 sizeof(response_extra));
+            if (rc.code == ResultCode::InvalidArgument) {
+                ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected: %s", header.subcommand,
+                         resultDetailToString(rc.detail));
+            }
         } else {
             ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
                      frame.len, (frame.len >= 1U) ? frame.payload[0] : 0U, kProtocolVersion);
@@ -840,7 +872,8 @@ void ImuBno055Manager::configTaskLoop()
         const esp_err_t send_ret = self->sendConfigureResponse(header.seq, header.subcommand, rc,
                                                                response_extra, response_extra_len);
         if (send_ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send IMU configure response: %s", esp_err_to_name(send_ret));
+            DIAG_COUNT(codes::kResponseTxDropped);
+            ESP_LOGW(TAG, "Failed to send IMU configure response: %s", esp_err_to_name(send_ret));
         }
     }
 }
@@ -861,6 +894,42 @@ const char *resultCodeToString(ResultCode code)
         case ResultCode::InternalError:
         default:
             return "INTERNAL_ERROR";
+    }
+}
+
+const char *resultDetailToString(ResultDetail detail)
+{
+    switch (detail) {
+        case ResultDetail::None:
+            return "none";
+        case ResultDetail::BadVersion:
+            return "bad version";
+        case ResultDetail::BadLength:
+            return "bad length";
+        case ResultDetail::UnknownSubcommand:
+            return "unknown subcommand";
+        case ResultDetail::BadEnum:
+            return "bad enum value";
+        case ResultDetail::BadFieldMask:
+            return "bad field mask";
+        case ResultDetail::NotReady:
+            return "not ready";
+        case ResultDetail::QueueFull:
+            return "queue full";
+        case ResultDetail::LockTimeout:
+            return "lock timeout";
+        case ResultDetail::DeviceBusy:
+            return "device busy";
+        case ResultDetail::DeviceError:
+            return "device error";
+        case ResultDetail::TimerFailed:
+            return "timer failed";
+        case ResultDetail::NoCalibration:
+            return "no calibration";
+        case ResultDetail::EncodeFailed:
+            return "encode failed";
+        default:
+            return "?";
     }
 }
 

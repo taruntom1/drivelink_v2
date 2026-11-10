@@ -47,7 +47,10 @@ private:
 
     void periodicTask();
     void onResponseFrame(const uart_comm::RxFrame& frame);
-    esp_err_t performSync(TickType_t timeout);
+    /// On failure, `failed_stage` is the time_sync.SyncFailed stage and
+    /// `host_status` the host's status byte (stage 3 only). `failed_stage`
+    /// stays 0 when another sync held the lock for the whole timeout.
+    esp_err_t performSync(TickType_t timeout, uint8_t& failed_stage, uint8_t& host_status);
 };
 
 } // namespace time_sync

@@ -21,6 +21,40 @@ enum class ResultCode : uint8_t {
     InternalError = 0x07
 };
 
+/// Why a configure command failed: the byte after `result` in every
+/// configure response (v4). None when the result is Ok. The numbers are part
+/// of the wire format: never renumber.
+enum class ResultDetail : uint8_t {
+    None = 0x00,
+    BadVersion = 0x01,        ///< wrong protocol version (header not parsed)
+    BadLength = 0x02,         ///< header too short, or body not its exact size
+    UnknownSubcommand = 0x03, ///< with NotSupported
+    NonFiniteFloat = 0x04,    ///< NaN or infinity in a float field
+    BadEnum = 0x05,           ///< mode, PID kind or setpoint kind out of range
+    BadFieldMask = 0x06,      ///< telemetry field bits outside kTelemetryFieldAll
+    BadGpio = 0x07,           ///< pins not distinct, missing or reserved
+    GpioInUse = 0x08,         ///< a pin another motor already owns
+    UnknownMotor = 0x09,      ///< with NotFound
+    MotorExists = 0x0A,       ///< with AlreadyExists
+    MotorLimit = 0x0B,        ///< max_motors reached (CapacityReached)
+    NotReady = 0x0C,          ///< the manager failed to start (InvalidState)
+    QueueFull = 0x0D,         ///< config queue full, command dropped (InvalidState)
+    LockTimeout = 0x0E,       ///< manager mutex busy for the whole timeout (InternalError)
+    MotorDriverFailed = 0x0F, ///< MCPWM/DIR setup failed; CapacityReached when the MCPWM pool is empty
+    EncoderFailed = 0x10,     ///< PCNT setup failed; CapacityReached when the PCNT pool is empty
+    TimerFailed = 0x11,       ///< the control timer could not be restarted (InternalError)
+};
+
+/// A result code and why. Default-constructed it is Ok / None.
+struct Result {
+    ResultCode code = ResultCode::Ok;
+    ResultDetail detail = ResultDetail::None;
+
+    constexpr Result() = default;
+    constexpr Result(ResultCode c, ResultDetail d) : code(c), detail(d) {}
+    constexpr bool ok() const { return code == ResultCode::Ok; }
+};
+
 enum class ConfigureSubcommand : uint8_t {
     CreateMotor = 0x01,
     DeleteMotor = 0x02,
@@ -66,14 +100,15 @@ constexpr bool isValidSetpointKind(SetpointKind kind)
 // v2 added a seq byte after the version in configure requests and responses.
 // v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
 // the SetTiming subcommand, response bodies and the telemetry output field.
+// v4 added the detail byte after result in configure responses.
 // The version covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x03;
+constexpr uint8_t kProtocolVersion = 0x04;
 // Sent as subcommand and motor_id in a configure response when the request
 // header could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 
 constexpr size_t kConfigureHeaderSize = 4;         // version + seq + subcommand + motor_id
-constexpr size_t kConfigureResponseHeaderSize = 5; // version + seq + subcommand + motor_id + result
+constexpr size_t kConfigureResponseHeaderSize = 6; // version + seq + subcommand + motor_id + result + detail
 
 // Exact configure body sizes (bytes after the configure header).
 constexpr size_t kMotorConfigGpioCount = 4;

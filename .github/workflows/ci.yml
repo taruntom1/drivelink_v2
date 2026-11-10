@@ -14,13 +14,22 @@ concurrency:
 
 jobs:
   firmware:
-    name: idf.py build (${{ matrix.app }})
+    name: idf.py build (${{ matrix.name }})
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.2
     strategy:
       fail-fast: false
       matrix:
-        app: [".", "test/uart_comm"]
+        include:
+          - name: firmware
+            app: "."
+            defaults: ""
+          - name: firmware, console logs off
+            app: "."
+            defaults: "sdkconfig.defaults;sdkconfig.ci.nolog"
+          - name: test/uart_comm
+            app: "test/uart_comm"
+            defaults: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +41,15 @@ jobs:
           # IDF runs git to stamp the app version.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
-          idf.py -C "${{ matrix.app }}" build 2>&1 | tee build.log
+          if [ -n "${{ matrix.defaults }}" ]; then
+            # A separate build dir and sdkconfig, so the variant never
+            # touches the default configuration.
+            idf.py -C "${{ matrix.app }}" -B build_variant \
+              -D SDKCONFIG=build_variant/sdkconfig \
+              -D SDKCONFIG_DEFAULTS="${{ matrix.defaults }}" build 2>&1 | tee build.log
+          else
+            idf.py -C "${{ matrix.app }}" build 2>&1 | tee build.log
+          fi
           if grep -E "warning:" build.log; then
             echo "::error::Compiler warnings found; the build must stay warning-free."
             exit 1
@@ -44,8 +61,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install Ninja and PyYAML
+        run: sudo apt-get update && sudo apt-get install -y ninja-build python3-yaml
+
+      - name: Check generated diag code files
+        run: python3 tools/gen_diag_codes.py --check
 
       - name: Configure
         run: cmake -S test/host -B test/host/build -G Ninja

@@ -44,15 +44,17 @@ std::vector<uint8_t> createMotorRequest(uint8_t seq = 9, uint8_t motor_id = 3)
     return p;
 }
 
-DecodeStatus decode(const std::vector<uint8_t> &p, ConfigureRequest &req)
+Result decode(const std::vector<uint8_t> &p, ConfigureRequest &req)
 {
     return decodeConfigure(p.data(), p.size(), req);
 }
 
 } // namespace
 
-TEST_CASE("Wire sizes match the v3 spec")
+TEST_CASE("Wire sizes match the v4 spec")
 {
+    CHECK(kProtocolVersion == 4);
+    CHECK(kConfigureResponseHeaderSize == 6);
     CHECK(kMotorConfigBodySize == 64);
     CHECK(kSetPidParamsBodySize == 17);
     CHECK(kSetSetpointBodySize == 5);
@@ -65,7 +67,7 @@ TEST_CASE("CreateMotor decodes every field in wire order")
     REQUIRE(p.size() == kConfigureHeaderSize + kMotorConfigBodySize);
 
     ConfigureRequest req{};
-    REQUIRE(decode(p, req) == DecodeStatus::Ok);
+    REQUIRE((decode(p, req)).ok());
     CHECK(req.header.seq == 9);
     CHECK(req.header.subcommand == static_cast<uint8_t>(ConfigureSubcommand::CreateMotor));
     CHECK(req.header.motor_id == 3);
@@ -98,14 +100,14 @@ TEST_CASE("CreateMotor body must be exactly 64 bytes")
 
     auto shorter = p;
     shorter.pop_back();
-    CHECK(decode(shorter, req) == DecodeStatus::BadBody);
+    CHECK((decode(shorter, req)).detail == ResultDetail::BadLength);
     CHECK(req.header.seq == 9); // header still echoed
     CHECK(req.header.motor_id == 3);
 
     auto longer = p;
     longer.push_back(0);
-    CHECK(decode(longer, req) == DecodeStatus::BadBody);
-    CHECK(resultForDecodeStatus(DecodeStatus::BadBody) == ResultCode::InvalidArgument);
+    CHECK((decode(longer, req)).detail == ResultDetail::BadLength);
+    CHECK(decode(longer, req).code == ResultCode::InvalidArgument);
 }
 
 TEST_CASE("Unparsable configure headers")
@@ -114,40 +116,62 @@ TEST_CASE("Unparsable configure headers")
 
     SUBCASE("empty payload")
     {
-        CHECK(decodeConfigure(nullptr, 0, req) == DecodeStatus::BadHeader);
+        CHECK((decodeConfigure(nullptr, 0, req)).detail == ResultDetail::BadLength);
         CHECK(req.header.seq == 0);
     }
     SUBCASE("version only")
     {
         const std::vector<uint8_t> p = {kProtocolVersion};
-        CHECK(decode(p, req) == DecodeStatus::BadHeader);
+        CHECK((decode(p, req)).detail == ResultDetail::BadLength);
         CHECK(req.header.seq == 0);
     }
     SUBCASE("right version, seq present, header still short: seq is echoed")
     {
         const std::vector<uint8_t> p = {kProtocolVersion, 0x42, 0x01};
-        CHECK(decode(p, req) == DecodeStatus::BadHeader);
+        CHECK((decode(p, req)).detail == ResultDetail::BadLength);
         CHECK(req.header.seq == 0x42);
     }
     SUBCASE("wrong version: nothing is echoed")
     {
         auto p = createMotorRequest(0x42);
         p[0] = kProtocolVersion - 1;
-        CHECK(decode(p, req) == DecodeStatus::BadHeader);
+        CHECK((decode(p, req)).detail == ResultDetail::BadVersion);
         CHECK(req.header.seq == 0);
     }
     CHECK(req.header.subcommand == kUnparsedHeaderByte);
     CHECK(req.header.motor_id == kUnparsedHeaderByte);
-    CHECK(resultForDecodeStatus(DecodeStatus::BadHeader) == ResultCode::InvalidArgument);
+}
+
+TEST_CASE("decodeConfigureHeader gives the same echo bytes as decodeConfigure")
+{
+    const auto full = createMotorRequest(0x42, 5);
+    ConfigureHeader hdr = decodeConfigureHeader(full.data(), full.size());
+    CHECK(hdr.seq == 0x42);
+    CHECK(hdr.subcommand == static_cast<uint8_t>(ConfigureSubcommand::CreateMotor));
+    CHECK(hdr.motor_id == 5);
+
+    // A body is not needed: only the header is read.
+    hdr = decodeConfigureHeader(full.data(), kConfigureHeaderSize);
+    CHECK(hdr.motor_id == 5);
+
+    const std::vector<uint8_t> short_hdr = {kProtocolVersion, 0x17};
+    hdr = decodeConfigureHeader(short_hdr.data(), short_hdr.size());
+    CHECK(hdr.seq == 0x17);
+    CHECK(hdr.subcommand == kUnparsedHeaderByte);
+    CHECK(hdr.motor_id == kUnparsedHeaderByte);
+
+    hdr = decodeConfigureHeader(nullptr, 0);
+    CHECK(hdr.seq == 0);
+    CHECK(hdr.subcommand == kUnparsedHeaderByte);
 }
 
 TEST_CASE("Unknown subcommand is NotSupported, with the header echoed")
 {
     const std::vector<uint8_t> p = {kProtocolVersion, 1, 0x7E, 2};
     ConfigureRequest req{};
-    CHECK(decode(p, req) == DecodeStatus::UnknownSubcommand);
+    CHECK((decode(p, req)).detail == ResultDetail::UnknownSubcommand);
     CHECK(req.header.subcommand == 0x7E);
-    CHECK(resultForDecodeStatus(DecodeStatus::UnknownSubcommand) == ResultCode::NotSupported);
+    CHECK(decode(p, req).code == ResultCode::NotSupported);
 }
 
 TEST_CASE("Empty-body subcommands reject any body")
@@ -156,9 +180,9 @@ TEST_CASE("Empty-body subcommands reject any body")
                      ConfigureSubcommand::ResetMotor}) {
         auto p = header(1, sub, 2);
         ConfigureRequest req{};
-        CHECK(decode(p, req) == DecodeStatus::Ok);
+        CHECK((decode(p, req)).ok());
         p.push_back(0);
-        CHECK(decode(p, req) == DecodeStatus::BadBody);
+        CHECK((decode(p, req)).detail == ResultDetail::BadLength);
     }
 }
 
@@ -168,13 +192,13 @@ TEST_CASE("SetMode accepts modes 0..2 only")
         auto p = header(1, ConfigureSubcommand::SetMode, 2);
         p.push_back(mode);
         ConfigureRequest req{};
-        REQUIRE(decode(p, req) == DecodeStatus::Ok);
+        REQUIRE((decode(p, req)).ok());
         CHECK(static_cast<uint8_t>(req.mode) == mode);
     }
     auto p = header(1, ConfigureSubcommand::SetMode, 2);
     p.push_back(3);
     ConfigureRequest req{};
-    CHECK(decode(p, req) == DecodeStatus::BadBody);
+    CHECK((decode(p, req)).detail == ResultDetail::BadEnum);
 }
 
 TEST_CASE("SetPidParams, SetSetpoint, telemetry and SetTiming bodies")
@@ -187,31 +211,31 @@ TEST_CASE("SetPidParams, SetSetpoint, telemetry and SetTiming bodies")
     appendF32(pid, 2.0f);
     appendF32(pid, 3.0f);
     appendF32(pid, 40.0f);
-    REQUIRE(decode(pid, req) == DecodeStatus::Ok);
+    REQUIRE((decode(pid, req)).ok());
     CHECK(req.pid_kind == PidKind::Position);
     CHECK(req.kp == 1.0f);
     CHECK(req.ki == 2.0f);
     CHECK(req.kd == 3.0f);
     CHECK(req.d_cutoff_hz == 40.0f);
     pid.pop_back();
-    CHECK(decode(pid, req) == DecodeStatus::BadBody);
+    CHECK((decode(pid, req)).detail == ResultDetail::BadLength);
 
     auto sp = header(1, ConfigureSubcommand::SetSetpoint, 2);
     sp.push_back(static_cast<uint8_t>(SetpointKind::VelocityRadPerSec));
     appendF32(sp, -2.25f);
-    REQUIRE(decode(sp, req) == DecodeStatus::Ok);
+    REQUIRE((decode(sp, req)).ok());
     CHECK(req.setpoint_kind == SetpointKind::VelocityRadPerSec);
     CHECK(req.setpoint_value == -2.25f);
 
     auto tg = header(1, ConfigureSubcommand::SetTelemetryGlobal, 0);
     tg.insert(tg.end(), {1, kTelemetryFieldAngle});
-    REQUIRE(decode(tg, req) == DecodeStatus::Ok);
+    REQUIRE((decode(tg, req)).ok());
     CHECK(req.telemetry_enabled);
     CHECK(req.telemetry_field_mask == kTelemetryFieldAngle);
 
     auto tm = header(1, ConfigureSubcommand::SetTelemetryMotor, 4);
     tm.insert(tm.end(), {0, kTelemetryFieldAll, 1});
-    REQUIRE(decode(tm, req) == DecodeStatus::Ok);
+    REQUIRE((decode(tm, req)).ok());
     CHECK_FALSE(req.telemetry_enabled);
     CHECK(req.telemetry_field_mask == kTelemetryFieldAll);
     CHECK(req.telemetry_apply_mask);
@@ -219,11 +243,11 @@ TEST_CASE("SetPidParams, SetSetpoint, telemetry and SetTiming bodies")
     auto timing = header(1, ConfigureSubcommand::SetTiming, 0);
     appendU32(timing, 2000);
     appendU32(timing, 20000);
-    REQUIRE(decode(timing, req) == DecodeStatus::Ok);
+    REQUIRE((decode(timing, req)).ok());
     CHECK(req.control_period_us == 2000);
     CHECK(req.telemetry_period_us == 20000);
     timing.push_back(0);
-    CHECK(decode(timing, req) == DecodeStatus::BadBody);
+    CHECK((decode(timing, req)).detail == ResultDetail::BadLength);
 }
 
 TEST_CASE("Configure response with the SetTiming body")
@@ -236,12 +260,12 @@ TEST_CASE("Configure response with the SetTiming body")
     hdr.subcommand = static_cast<uint8_t>(ConfigureSubcommand::SetTiming);
     hdr.motor_id = 0;
     std::array<uint8_t, 16> out{};
-    const size_t len = encodeConfigureResponse(hdr, ResultCode::Ok, body, sizeof(body), out.data(), out.size());
+    const size_t len = encodeConfigureResponse(hdr, Result{}, body, sizeof(body), out.data(), out.size());
     REQUIRE(len == kConfigureResponseHeaderSize + kSetTimingResponseBodySize);
 
-    const std::array<uint8_t, 13> expected = {
-        kProtocolVersion, 0x11, 0x0B, 0x00, 0x00, // version seq subcommand motor_id result
-        0xE8, 0x03, 0x00, 0x00,                   // 1000
+    const std::array<uint8_t, 14> expected = {
+        kProtocolVersion, 0x11, 0x0B, 0x00, 0x00, 0x00, // version seq subcommand motor_id result detail
+        0xE8, 0x03, 0x00, 0x00,                         // 1000
         0x45, 0x23, 0x01, 0x00,                   // 0x12345
     };
     CHECK(std::memcmp(out.data(), expected.data(), expected.size()) == 0);
@@ -251,15 +275,17 @@ TEST_CASE("Configure response encode fails when it does not fit")
 {
     const uint8_t body[8] = {};
     std::array<uint8_t, kConfigureResponseHeaderSize + 7> out{};
-    CHECK(encodeConfigureResponse(ConfigureHeader{}, ResultCode::Ok, body, sizeof(body), out.data(), out.size()) == 0);
+    CHECK(encodeConfigureResponse(ConfigureHeader{}, Result{}, body, sizeof(body), out.data(), out.size()) == 0);
     CHECK(encodeSetTimingResponseBody(1, 2, out.data(), 7) == 0);
 
-    const size_t len = encodeConfigureResponse(ConfigureHeader{}, ResultCode::InvalidArgument, nullptr, 0,
-                                               out.data(), out.size());
+    const size_t len = encodeConfigureResponse(ConfigureHeader{},
+                                               Result{ResultCode::InvalidArgument, ResultDetail::BadVersion},
+                                               nullptr, 0, out.data(), out.size());
     REQUIRE(len == kConfigureResponseHeaderSize);
     CHECK(out[2] == kUnparsedHeaderByte);
     CHECK(out[3] == kUnparsedHeaderByte);
     CHECK(out[4] == static_cast<uint8_t>(ResultCode::InvalidArgument));
+    CHECK(out[5] == static_cast<uint8_t>(ResultDetail::BadVersion));
 }
 
 TEST_CASE("Setpoint stream framing")
