@@ -96,7 +96,7 @@ inline constexpr ::diag::Code kControlOverrun{15, ::diag::Source::MotorManager, 
 inline constexpr ::diag::Code kSetpointBadFrame{16, ::diag::Source::MotorManager, 0x0006, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
 /// A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox).
 inline constexpr ::diag::Code kSetpointRejected{17, ::diag::Source::MotorManager, 0x0007, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
-/// A configure command was dropped without a response because the config queue was full.
+/// A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
 inline constexpr ::diag::Code kConfigQueueFull{18, ::diag::Source::MotorManager, 0x0008, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
 /// A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.
 inline constexpr ::diag::Code kResponseTxDropped{19, ::diag::Source::MotorManager, 0x0009, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
@@ -146,7 +146,7 @@ inline constexpr ::diag::Code kDeviceBusy{32, ::diag::Source::Imu, 0x000A, ::dia
 inline constexpr ::diag::Code kReadError{33, ::diag::Source::Imu, 0x000B, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
 /// Samples that could not be encoded into a stream packet.
 inline constexpr ::diag::Code kEncodeError{34, ::diag::Source::Imu, 0x000C, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
-/// A configure command was dropped without a response because the config queue was full.
+/// A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
 inline constexpr ::diag::Code kConfigQueueFull{35, ::diag::Source::Imu, 0x000D, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};
 /// A configure response could not be queued for UART transmission and was dropped.
 inline constexpr ::diag::Code kResponseTxDropped{36, ::diag::Source::Imu, 0x000E, ::diag::Severity::Warning, ::diag::CodeKind::Counter, false};

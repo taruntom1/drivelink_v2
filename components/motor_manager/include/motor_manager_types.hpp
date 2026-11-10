@@ -64,6 +64,7 @@ struct ManagerConfig {
 };
 
 const char *resultCodeToString(ResultCode code);
+const char *resultDetailToString(ResultDetail detail);
 esp_err_t resultCodeToEspErr(ResultCode code);
 
 } // namespace motor_manager

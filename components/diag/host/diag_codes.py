@@ -204,7 +204,7 @@ CODES = {
         "clears": False,
         "arg0": None,
         "arg1": None,
-        "description": 'A configure command was dropped without a response because the config queue was full.',
+        "description": 'A configure command was not applied because the config queue was full. It is answered with detail QueueFull.',
         "retired": False,
     },
     (0x10, 0x0009): {
@@ -374,7 +374,7 @@ CODES = {
         "clears": False,
         "arg0": None,
         "arg1": None,
-        "description": 'A configure command was dropped without a response because the config queue was full.',
+        "description": 'A configure command was not applied because the config queue was full. It is answered with detail QueueFull.',
         "retired": False,
     },
     (0x12, 0x000E): {

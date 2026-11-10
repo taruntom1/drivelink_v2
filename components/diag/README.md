@@ -181,7 +181,7 @@ Header, 5 bytes: `version u8 (=0x01) | seq u16 | kind u8 | flags u8`
 | `motor_manager` (0x10) | 0x0005 | ControlOverrun | warning | counter | no | - | - | Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex). |
 | `motor_manager` (0x10) | 0x0006 | SetpointBadFrame | warning | counter | no | - | - | A setpoint stream frame was dropped because its header or length was invalid. |
 | `motor_manager` (0x10) | 0x0007 | SetpointRejected | warning | counter | no | - | - | A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox). |
-| `motor_manager` (0x10) | 0x0008 | ConfigQueueFull | warning | counter | no | - | - | A configure command was dropped without a response because the config queue was full. |
+| `motor_manager` (0x10) | 0x0008 | ConfigQueueFull | warning | counter | no | - | - | A configure command was not applied because the config queue was full. It is answered with detail QueueFull. |
 | `motor_manager` (0x10) | 0x0009 | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. The command itself was still applied. |
 | `time_sync` (0x11) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback | unused | TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
 | `time_sync` (0x11) | 0x0002 | SyncFailed | warning | record | yes | stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock | host status byte (stage 3), else 0 | A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported. |
@@ -198,7 +198,7 @@ Header, 5 bytes: `version u8 (=0x01) | seq u16 | kind u8 | flags u8`
 | `imu` (0x12) | 0x000A | DeviceBusy | warning | counter | no | - | - | Samples skipped because a configure operation held the BNO055. |
 | `imu` (0x12) | 0x000B | ReadError | warning | counter | no | - | - | Samples that failed to read from the BNO055. |
 | `imu` (0x12) | 0x000C | EncodeError | warning | counter | no | - | - | Samples that could not be encoded into a stream packet. |
-| `imu` (0x12) | 0x000D | ConfigQueueFull | warning | counter | no | - | - | A configure command was dropped without a response because the config queue was full. |
+| `imu` (0x12) | 0x000D | ConfigQueueFull | warning | counter | no | - | - | A configure command was not applied because the config queue was full. It is answered with detail QueueFull. |
 | `imu` (0x12) | 0x000E | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. |
 
 <!-- diag-codes:end -->

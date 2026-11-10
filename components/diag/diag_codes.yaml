@@ -181,7 +181,7 @@ codes:
     name: ConfigQueueFull
     severity: warning
     kind: counter
-    description: A configure command was dropped without a response because the config queue was full.
+    description: A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
 
   - source: motor_manager
     code: 0x0009
@@ -332,7 +332,7 @@ codes:
     name: ConfigQueueFull
     severity: warning
     kind: counter
-    description: A configure command was dropped without a response because the config queue was full.
+    description: A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
 
   - source: imu
     code: 0x000E

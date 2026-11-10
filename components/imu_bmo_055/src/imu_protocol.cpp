@@ -14,10 +14,15 @@ bool hasField(uint16_t field_mask, StreamField field)
     return (field_mask & static_cast<uint16_t>(field)) != 0U;
 }
 
+constexpr Result invalid(ResultDetail detail)
+{
+    return Result{ResultCode::InvalidArgument, detail};
+}
+
 } // namespace
 
-bool decodeConfigureHeader(const uint8_t *payload, size_t len, ConfigureHeader &header,
-                           const uint8_t *&body, size_t &body_len)
+Result decodeConfigureHeader(const uint8_t *payload, size_t len, ConfigureHeader &header,
+                             const uint8_t *&body, size_t &body_len)
 {
     header = ConfigureHeader{};
     body = nullptr;
@@ -25,80 +30,91 @@ bool decodeConfigureHeader(const uint8_t *payload, size_t len, ConfigureHeader &
 
     Reader r(payload, len);
     const uint8_t version = r.readU8();
-    const bool version_ok = r.ok() && version == kProtocolVersion;
-    if (!version_ok || len < kConfigureRequestHeaderSize) {
+    if (!r.ok()) {
+        return invalid(ResultDetail::BadLength);
+    }
+    if (version != kProtocolVersion) {
+        return invalid(ResultDetail::BadVersion);
+    }
+    if (len < kConfigureRequestHeaderSize) {
         // The header layout is unknown, so the subcommand cannot be echoed.
         // seq is echoed when the version matches and it is present.
-        if (version_ok && len >= 2U) {
+        if (len >= 2U) {
             header.seq = payload[1];
         }
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
 
     header.seq = r.readU8();
     header.subcommand = r.readU8();
     body = &payload[kConfigureRequestHeaderSize];
     body_len = len - kConfigureRequestHeaderSize;
-    return true;
+    return Result{};
 }
 
-bool decodeSetStreamEnabled(const uint8_t *body, size_t len, bool &enabled)
+Result decodeSetStreamEnabled(const uint8_t *body, size_t len, bool &enabled)
 {
+    if (len != kSetStreamEnabledBodySize) {
+        return invalid(ResultDetail::BadLength);
+    }
     Reader r(body, len);
     const uint8_t raw = r.readU8();
-    if (len != kSetStreamEnabledBodySize || !r.done() || raw > 1U) {
-        return false;
+    if (!r.done()) {
+        return invalid(ResultDetail::BadLength);
+    }
+    if (raw > 1U) {
+        return invalid(ResultDetail::BadEnum);
     }
     enabled = (raw != 0U);
-    return true;
+    return Result{};
 }
 
-bool decodeSetStreamTiming(const uint8_t *body, size_t len, uint32_t &sample_period_us,
-                           uint32_t &telemetry_period_us)
+Result decodeSetStreamTiming(const uint8_t *body, size_t len, uint32_t &sample_period_us,
+                             uint32_t &telemetry_period_us)
 {
     Reader r(body, len);
     const uint32_t sample = r.readU32Le();
     const uint32_t telemetry = r.readU32Le();
     if (len != kSetStreamTimingBodySize || !r.done()) {
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
     sample_period_us = sample;
     telemetry_period_us = telemetry;
-    return true;
+    return Result{};
 }
 
-bool decodeSetStreamFieldMask(const uint8_t *body, size_t len, uint16_t &field_mask)
+Result decodeSetStreamFieldMask(const uint8_t *body, size_t len, uint16_t &field_mask)
 {
     Reader r(body, len);
     const uint16_t mask = r.readU16Le();
     if (len != kSetStreamFieldMaskBodySize || !r.done()) {
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
     field_mask = mask;
-    return true;
+    return Result{};
 }
 
-bool decodeSetOperationMode(const uint8_t *body, size_t len, uint8_t &mode)
+Result decodeSetOperationMode(const uint8_t *body, size_t len, uint8_t &mode)
 {
     Reader r(body, len);
     const uint8_t raw = r.readU8();
     if (len != kSetOperationModeBodySize || !r.done()) {
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
     mode = raw;
-    return true;
+    return Result{};
 }
 
-bool decodeCalibrationBlob(const uint8_t *body, size_t len, CalibrationBlob &out)
+Result decodeCalibrationBlob(const uint8_t *body, size_t len, CalibrationBlob &out)
 {
     if (len != kCalibrationBlobSize) {
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
 
     Reader r(body, len);
     const uint8_t has_sic = r.readU8();
     if (has_sic > 1U) {
-        return false;
+        return invalid(ResultDetail::BadEnum);
     }
 
     CalibrationBlob blob{};
@@ -122,10 +138,10 @@ bool decodeCalibrationBlob(const uint8_t *body, size_t len, CalibrationBlob &out
     }
 
     if (!r.done()) {
-        return false;
+        return invalid(ResultDetail::BadLength);
     }
     out = blob;
-    return true;
+    return Result{};
 }
 
 size_t encodeCalibrationBlob(const CalibrationBlob &blob, uint8_t *out, size_t cap)
@@ -161,14 +177,15 @@ size_t encodeSetStreamTimingResponseBody(uint32_t sample_period_us, uint32_t tel
     return w.ok() ? w.size() : 0U;
 }
 
-size_t encodeConfigureResponse(const ConfigureHeader &header, ResultCode result,
+size_t encodeConfigureResponse(const ConfigureHeader &header, Result result,
                                const uint8_t *body, size_t body_len, uint8_t *out, size_t cap)
 {
     Writer w(out, cap);
     w.appendU8(kProtocolVersion);
     w.appendU8(header.seq);
     w.appendU8(header.subcommand);
-    w.appendU8(static_cast<uint8_t>(result));
+    w.appendU8(static_cast<uint8_t>(result.code));
+    w.appendU8(static_cast<uint8_t>(result.detail));
     w.appendBytes(body, body_len);
     return w.ok() ? w.size() : 0U;
 }

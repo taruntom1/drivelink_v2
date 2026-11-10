@@ -27,16 +27,18 @@ public:
 
     bool isValid() const;
 
-    ResultCode createMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
-    ResultCode deleteMotor(uint8_t motor_id);
-    ResultCode configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
-    ResultCode setMode(uint8_t motor_id, motor_controller::ControlMode mode);
-    ResultCode setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
-    ResultCode setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
-    ResultCode stopMotor(uint8_t motor_id);
-    ResultCode resetMotor(uint8_t motor_id);
-    ResultCode setTelemetryGlobal(bool enabled, uint8_t field_mask);
-    ResultCode setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
+    // Each command returns its result code and why it failed (ResultDetail),
+    // as sent in the configure response.
+    Result createMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
+    Result deleteMotor(uint8_t motor_id);
+    Result configureMotor(uint8_t motor_id, const MotorConfigPayload &cfg);
+    Result setMode(uint8_t motor_id, motor_controller::ControlMode mode);
+    Result setPidParams(uint8_t motor_id, PidKind kind, float kp, float ki, float kd, float d_cutoff_hz);
+    Result setSetpoint(uint8_t motor_id, SetpointKind kind, float value);
+    Result stopMotor(uint8_t motor_id);
+    Result resetMotor(uint8_t motor_id);
+    Result setTelemetryGlobal(bool enabled, uint8_t field_mask);
+    Result setTelemetryForMotor(uint8_t motor_id, bool enabled, uint8_t field_mask, bool update_field_mask);
 
     /// Change the control loop and telemetry periods at runtime.
     /// A value of 0 keeps the current setting, so setTiming(0, 0, ...) just
@@ -47,9 +49,9 @@ public:
     /// the telemetry rate is re-derived when only the control period changes.
     /// @param applied_control_period_us    Control period now in effect.
     /// @param applied_telemetry_period_us  Telemetry period now in effect.
-    ResultCode setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
-                         uint32_t &applied_control_period_us,
-                         uint32_t &applied_telemetry_period_us);
+    Result setTiming(uint32_t control_period_us, uint32_t telemetry_period_us,
+                     uint32_t &applied_control_period_us,
+                     uint32_t &applied_telemetry_period_us);
 
     /// Run one control cycle for every motor with the given dt. Only needed
     /// when the internal update task is disabled.
@@ -95,15 +97,17 @@ private:
     void watchControlTimer(ControlTimerWatch &watch);
     void updateAllLocked(float dt_s);
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
-    ResultCode parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
+    Result parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
-    ResultCode sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, ResultCode code,
-                                     const uint8_t *body = nullptr, size_t body_len = 0);
+    /// Encode and queue a configure response. Non-blocking, so the RX task
+    /// can use it too. Returns `result` (the command's own outcome).
+    Result sendConfigureResponse(uint8_t seq, uint8_t subcommand, uint8_t motor_id, Result result,
+                                 const uint8_t *body = nullptr, size_t body_len = 0);
     void stopTasks();
     ResultCode queueSetpoint(uint8_t motor_id, SetpointKind kind, float value);
-    ResultCode setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
+    Result setSetpointLocked(uint8_t motor_id, SetpointKind kind, float value);
     void applyPendingSetpointsLocked();
-    ResultCode checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
+    Result checkNewMotorLocked(uint8_t motor_id, uint64_t pin_mask) const;
     void setMotorKnown(uint8_t motor_id, bool known);
     bool isMotorKnown(uint8_t motor_id) const;
 

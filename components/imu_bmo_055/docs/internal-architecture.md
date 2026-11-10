@@ -110,16 +110,16 @@ Atomic flags are used for stop signals and validity state.
 2. UART callback enqueues `RxFrame` to `m_config_queue`.
 3. Config task dequeues frame and checks the header (`version`, `seq`, `subcommand`).
 4. `parseAndDispatchConfigure()` gets the subcommand and the body after the header, and validates the body length.
-5. Subcommand method runs and returns `ResultCode`.
+5. Subcommand method runs and returns a `Result` (code and detail).
 6. `sendConfigureResponse()` emits standardized response payload.
 
 ### Important behavior details
 
-- Every command gets a response.
+- Every command gets a response, including one that arrives while the queue is full: the UART callback answers it with `Busy` / `QueueFull` without queuing it.
 - Unknown subcommand returns `NotSupported`.
-- Invalid lengths/version return `InvalidArgument`. When the header itself is rejected, the response echoes subcommand `0xFF`.
+- Invalid lengths/version return `InvalidArgument` with detail `BadLength` / `BadVersion`. When the header itself is rejected, the response echoes subcommand `0xFF`.
 - Every response echoes the command's `seq`.
-- Every body must have its exact length (protocol v3).
+- Every body must have its exact length (since protocol v3).
 - `SetStreamTiming` clamps the periods and echoes the applied values; 0 keeps a value.
 - Mode set stops the stream and its timer during the mode switch and restores the prior enabled state.
 

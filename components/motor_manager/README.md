@@ -105,15 +105,20 @@ Enable via either:
 - `ManagerConfig::use_mock_feedback = true`
 - Kconfig option `MOTOR_MANAGER_USE_MOCK_FEEDBACK`
 
-## Binary protocol (version 3)
+## Binary protocol (version 4)
 
 All payloads begin with:
 
-- `version` (`uint8_t`) = `0x03`
+- `version` (`uint8_t`) = `0x04`
 
 Payloads with any other version are rejected.
 
-Changes from version 2:
+Changes from version 3:
+- Every configure response carries a `detail` byte after `result_code` (see [Result codes and details](#result-codes-and-details)), so the header is 6 bytes and the SET_TIMING values start at byte 6.
+- A command that arrives while the config queue is full is answered with `INVALID_STATE` / `QueueFull` instead of being dropped silently.
+- The stream layouts are unchanged; they carry version `0x04`.
+
+Changes from version 2 (in version 3):
 - CREATE/CONFIGURE: `sample_time_ms` and the two reserved floats are removed. `vel_d_cutoff_hz`, `pos_d_cutoff_hz` and `vel_filter_cutoff_hz` are added. The body is now 64 bytes.
 - SET_PID_PARAMS: `sample_time_ms` is replaced by `d_cutoff_hz`.
 - New SET_TIMING subcommand (`0x0B`). Its response carries a body after the 5-byte header.
@@ -136,15 +141,15 @@ Code layout: the wire-level enums, field values and sizes, and `MotorConfigPaylo
   - `motor_id` (`uint8_t`)
   - subcommand-specific bytes
 
-Commands are queued (up to `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH`, default 8) and answered in order. A command that arrives while the queue is full is dropped without a response and counted as `motor_manager.ConfigQueueFull`. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
+Commands are queued (up to `MOTOR_MANAGER_CONFIG_QUEUE_DEPTH`, default 8) and answered in order. A command that arrives while the queue is full is not applied: it is answered straight away with `INVALID_STATE` / `QueueFull` and counted as `motor_manager.ConfigQueueFull`. That response can overtake responses to commands still in the queue, so match on `seq`. Give every in-flight command a different `seq` (for example a wrapping counter) and match each response on `seq`; `subcommand` and `motor_id` alone cannot tell two commands to the same motor apart.
 
 Every subcommand body has a fixed size, and the body must be exactly that size. A body with missing or extra bytes gets `INVALID_ARGUMENT`. DELETE_MOTOR, STOP_MOTOR and RESET_MOTOR have an empty body. All multi-byte values are little-endian.
 
-Invalid values are rejected with `INVALID_ARGUMENT`, and nothing is applied:
-- any non-finite `float32` (NaN, ±Inf) in any body
-- an unknown `mode`, `pid_kind` or `setpoint_kind`
-- telemetry `field_mask` bits outside `0x07`
-- CREATE_MOTOR pins (when not in mock mode) that are not four distinct GPIOs a host may use: they must exist on the ESP32-S3 (0–21, 26–48), and must not be USB (19, 20), flash/PSRAM (26–37), the uart_comm TX/RX pins, or a pin another motor already owns. CONFIGURE_MOTOR does not change pins, so it ignores them.
+Invalid values are rejected with `INVALID_ARGUMENT`, and nothing is applied. The `detail` byte says which check failed:
+- any non-finite `float32` (NaN, ±Inf) in any body (`NonFiniteFloat`)
+- an unknown `mode`, `pid_kind` or `setpoint_kind` (`BadEnum`)
+- telemetry `field_mask` bits outside `0x07` (`BadFieldMask`)
+- CREATE_MOTOR pins (when not in mock mode) that are not four distinct GPIOs a host may use: they must exist on the ESP32-S3 (0–21, 26–48), and must not be USB (19, 20), flash/PSRAM (26–37) or the uart_comm TX/RX pins (`BadGpio`), or a pin another motor already owns (`GpioInUse`). CONFIGURE_MOTOR does not change pins, so it ignores them.
 
 Valid numbers outside their range are clamped or ignored as before (for example `output_min`/`output_max` are clamped to [-1, 1], and a non-positive `counts_per_rev` keeps the previous value).
 
@@ -227,17 +232,58 @@ The firmware clamps and rounds both values (see [Control loop and timing](#contr
 Configure response:
 
 - UART message type: `CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE` (default `0x61`)
-- Payload (5 bytes, plus a body for some subcommands):
+- Payload (6 bytes, plus a body for some subcommands):
   - `version` (`uint8_t`)
   - `seq` (`uint8_t`): echoed from the request
   - `subcommand` (`uint8_t`): echoed from the request
   - `motor_id` (`uint8_t`): echoed from the request
   - `result_code` (`uint8_t`)
-  - response body, only for SET_TIMING with `result_code = OK` (8 bytes):
+  - `detail` (`uint8_t`): why the command failed, `0` (`None`) on `OK`
+  - response body, only for SET_TIMING with `result_code = OK` (8 bytes, at byte 6):
     - `applied_control_period_us` `uint32_t`
     - `applied_telemetry_period_us` `uint32_t`
 
-If the request header could not be parsed (payload shorter than 4 bytes, or wrong `version`), the response has `subcommand = 0xFF`, `motor_id = 0xFF` and `result_code = INVALID_ARGUMENT`. `seq` is echoed when the request's version was right and it carried a `seq` byte; otherwise it is `0`.
+If the request header could not be parsed (payload shorter than 4 bytes, or wrong `version`), the response has `subcommand = 0xFF`, `motor_id = 0xFF`, `result_code = INVALID_ARGUMENT` and `detail` `BadVersion` or `BadLength`. `seq` is echoed when the request's version was right and it carried a `seq` byte; otherwise it is `0`. The response always carries the firmware's version, so a host on the wrong version can see which one to use.
+
+### Result codes and details
+
+`result_code`:
+
+| Value | Name |
+|---|---|
+| `0x00` | `OK` |
+| `0x01` | `INVALID_ARGUMENT` |
+| `0x02` | `NOT_FOUND` |
+| `0x03` | `ALREADY_EXISTS` |
+| `0x04` | `CAPACITY_REACHED` |
+| `0x05` | `INVALID_STATE` |
+| `0x06` | `NOT_SUPPORTED` |
+| `0x07` | `INTERNAL_ERROR` |
+
+`detail` (`ResultDetail` in `motor_manager_protocol.hpp`). The values never change meaning; new ones are only added:
+
+| Value | Name | With | Meaning |
+|---|---|---|---|
+| `0x00` | `None` | `OK` | |
+| `0x01` | `BadVersion` | `INVALID_ARGUMENT` | Wrong `version`; the header was not parsed. |
+| `0x02` | `BadLength` | `INVALID_ARGUMENT` | Header shorter than 4 bytes, or a body that is not its exact size. |
+| `0x03` | `UnknownSubcommand` | `NOT_SUPPORTED` | |
+| `0x04` | `NonFiniteFloat` | `INVALID_ARGUMENT` | NaN or ±Inf in a `float32` field. |
+| `0x05` | `BadEnum` | `INVALID_ARGUMENT` | `mode`, `pid_kind` or `setpoint_kind` out of range. |
+| `0x06` | `BadFieldMask` | `INVALID_ARGUMENT` | Telemetry `field_mask` bits outside `0x07`. |
+| `0x07` | `BadGpio` | `INVALID_ARGUMENT` | CREATE_MOTOR pins not distinct, missing on the chip, or reserved. |
+| `0x08` | `GpioInUse` | `INVALID_ARGUMENT` | A CREATE_MOTOR pin is owned by another motor. |
+| `0x09` | `UnknownMotor` | `NOT_FOUND` | No motor with this id. |
+| `0x0A` | `MotorExists` | `ALREADY_EXISTS` | CREATE_MOTOR with an id that exists. |
+| `0x0B` | `MotorLimit` | `CAPACITY_REACHED` | `max_motors` motors exist already. |
+| `0x0C` | `NotReady` | `INVALID_STATE` | The manager failed to start. |
+| `0x0D` | `QueueFull` | `INVALID_STATE` | The config queue was full; the command was not applied. |
+| `0x0E` | `LockTimeout` | `INTERNAL_ERROR` | The manager was busy for the whole mutex timeout. Retrying is fine. |
+| `0x0F` | `MotorDriverFailed` | `CAPACITY_REACHED` / `INTERNAL_ERROR` | CREATE_MOTOR could not set up the DIR GPIO or MCPWM: `CAPACITY_REACHED` when the MCPWM pool is empty. |
+| `0x10` | `EncoderFailed` | `CAPACITY_REACHED` / `INTERNAL_ERROR` | CREATE_MOTOR could not set up the PCNT encoder: `CAPACITY_REACHED` when the PCNT pool is empty. |
+| `0x11` | `TimerFailed` | `INTERNAL_ERROR` | SET_TIMING could not restart the control timer. |
+
+The C++ API returns the same pair: every configure method returns `motor_manager::Result { ResultCode code; ResultDetail detail; }`.
 
 ### Setpoint stream (PC → ESP)
 
@@ -283,12 +329,12 @@ With the internal update task, telemetry is sent every N control ticks (see [Con
 
 ## Errors reported to the host
 
-Besides the configure `result_code`, the manager reports through the `diag` component (events on `0xC0`, see `components/diag/README.md` for the full code table). Source `motor_manager`:
+Besides the configure `result_code` and `detail`, the manager reports through the `diag` component (events on `0xC0`, see `components/diag/README.md` for the full code table). Source `motor_manager`:
 
 | Code | Kind | When |
 |---|---|---|
 | `InitFailed` | error | The constructor failed. `arg0` is the stage (mutex, queue, config, callbacks, tasks, timer). |
-| `MotorCreateFailed` | error | CREATE_MOTOR passed validation but the hardware did not come up. `arg0` is the motor id, and `arg1` is 1 for the motor driver (DIR GPIO, MCPWM) or 2 for the encoder (PCNT). When the MCPWM or PCNT pool is empty (`esp_err` `ESP_ERR_NOT_FOUND`), the response is `CAPACITY_REACHED`; otherwise it is `INTERNAL_ERROR`. |
+| `MotorCreateFailed` | error | CREATE_MOTOR passed validation but the hardware did not come up. `arg0` is the motor id, and `arg1` is 1 for the motor driver (DIR GPIO, MCPWM) or 2 for the encoder (PCNT). When the MCPWM or PCNT pool is empty (`esp_err` `ESP_ERR_NOT_FOUND`), the response is `CAPACITY_REACHED`; otherwise it is `INTERNAL_ERROR`. The response `detail` is `MotorDriverFailed` or `EncoderFailed`. |
 | `TimerRestartFailed` | error | SET_TIMING could not restart the control timer. |
 | `ControlTimerStalled` | warning, clears | The control loop stopped ticking. |
 | `ControlOverrun`, `SetpointBadFrame`, `SetpointRejected`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. |

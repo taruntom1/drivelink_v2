@@ -58,5 +58,6 @@ struct ManagerConfig {
 };
 
 const char *resultCodeToString(ResultCode code);
+const char *resultDetailToString(ResultDetail detail);
 
 } // namespace imu_bmo_055

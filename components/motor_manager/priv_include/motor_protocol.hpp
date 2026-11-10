@@ -43,26 +43,22 @@ struct ConfigureRequest {
     uint32_t telemetry_period_us = 0;
 };
 
-enum class DecodeStatus : uint8_t {
-    Ok,
-    BadHeader,         ///< too short or wrong version; header holds the echo bytes
-    BadBody,           ///< wrong length, non-finite float, unknown enum value or field bit
-    UnknownSubcommand, ///< header parsed, subcommand not known
-};
-
 /// Decode a configure request payload. out.header is always filled in, so a
-/// response can be sent for every status.
-DecodeStatus decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out);
+/// response can be sent for every result. On failure the result is
+/// NotSupported / UnknownSubcommand, or InvalidArgument with the reason
+/// (BadVersion, BadLength, NonFiniteFloat, BadEnum, BadFieldMask).
+Result decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out);
+
+/// Decode only the echo bytes of the header, as decodeConfigure() does. Used
+/// to answer a command that is not dispatched (config queue full).
+ConfigureHeader decodeConfigureHeader(const uint8_t *payload, size_t len);
 
 /// True if every float in a CreateMotor / ConfigureMotor body is finite.
 bool isMotorConfigFinite(const MotorConfigPayload &cfg);
 
-/// The result code to answer a request that failed to decode with.
-ResultCode resultForDecodeStatus(DecodeStatus status);
-
-/// Encode a configure response: the 5-byte header, then `body` (may be empty).
+/// Encode a configure response: the 6-byte header, then `body` (may be empty).
 /// @return The payload length, or 0 if it does not fit in `cap`.
-size_t encodeConfigureResponse(const ConfigureHeader &header, ResultCode result,
+size_t encodeConfigureResponse(const ConfigureHeader &header, Result result,
                                const uint8_t *body, size_t body_len,
                                uint8_t *out, size_t cap);
 

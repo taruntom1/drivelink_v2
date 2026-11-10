@@ -134,13 +134,19 @@ uint32_t telemetryDivider(uint32_t requested_telemetry_us, uint32_t sample_perio
     return std::max<uint32_t>(1U, (tp + sample_period_us - 1U) / sample_period_us);
 }
 
-ResultCode deviceErrToResult(esp_err_t err)
+// Failures shared by most configure commands.
+constexpr Result kNotReady{ResultCode::InvalidState, ResultDetail::NotReady};
+constexpr Result kLockTimeout{ResultCode::Busy, ResultDetail::LockTimeout};
+constexpr Result kTimerFailed{ResultCode::InternalError, ResultDetail::TimerFailed};
+
+Result deviceErrToResult(esp_err_t err)
 {
     if (err == ESP_OK) {
-        return ResultCode::Ok;
+        return Result{};
     }
     // ESP_ERR_TIMEOUT: the device lock is held by another operation.
-    return (err == ESP_ERR_TIMEOUT) ? ResultCode::Busy : ResultCode::InternalError;
+    return (err == ESP_ERR_TIMEOUT) ? Result{ResultCode::Busy, ResultDetail::DeviceBusy}
+                                    : Result{ResultCode::InternalError, ResultDetail::DeviceError};
 }
 
 } // namespace
@@ -367,31 +373,31 @@ esp_err_t ImuBno055Manager::applyStreamEnabledLocked(bool enabled)
     return ESP_OK;
 }
 
-ResultCode ImuBno055Manager::setStreamEnabled(bool enabled)
+Result ImuBno055Manager::setStreamEnabled(bool enabled)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     const esp_err_t err = applyStreamEnabledLocked(enabled);
     xSemaphoreGive(m_mutex);
-    return (err == ESP_OK) ? ResultCode::Ok : ResultCode::InternalError;
+    return (err == ESP_OK) ? Result{} : kTimerFailed;
 }
 
-ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
+Result ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
                                              uint32_t telemetry_period_us,
                                              uint32_t &applied_sample_period_us,
                                              uint32_t &applied_telemetry_period_us)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
 
     const uint32_t old_period = m_sample_period_us.load(std::memory_order_relaxed);
@@ -403,16 +409,16 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
         m_requested_telemetry_period_us = telemetry_period_us;
     }
 
-    ResultCode rc = ResultCode::Ok;
+    Result rc{};
     esp_err_t timer_err = ESP_OK;
     if (new_period != old_period && m_stream_timer.isCreated()) {
         timer_err = m_stream_timer.setPeriod(new_period);
         m_timer_epoch.fetch_add(1U, std::memory_order_release); // restarted: not a stall
         if (timer_err != ESP_OK) {
-            rc = ResultCode::InternalError; // reported below, after m_mutex is released
+            rc = kTimerFailed; // reported below, after m_mutex is released
         }
     }
-    if (rc == ResultCode::Ok) {
+    if (rc.ok()) {
         m_sample_period_us.store(new_period, std::memory_order_relaxed);
     }
     const uint32_t period_now = m_sample_period_us.load(std::memory_order_relaxed);
@@ -433,45 +439,45 @@ ResultCode ImuBno055Manager::setStreamTiming(uint32_t sample_period_us,
     return rc;
 }
 
-ResultCode ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
+Result ImuBno055Manager::setStreamFieldMask(uint16_t field_mask)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
     if ((field_mask & static_cast<uint16_t>(~kStreamFieldAll)) != 0U) {
-        return ResultCode::InvalidArgument;
+        return Result{ResultCode::InvalidArgument, ResultDetail::BadFieldMask};
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_field_mask.store(field_mask, std::memory_order_relaxed);
     xSemaphoreGive(m_mutex);
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
+Result ImuBno055Manager::setOperationMode(uint8_t operation_mode)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
     if (!isValidOperationMode(operation_mode)) {
-        return ResultCode::InvalidArgument;
+        return Result{ResultCode::InvalidArgument, ResultDetail::BadEnum};
     }
 
     if (m_use_mock_data) {
         if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-            return ResultCode::Busy;
+            return kLockTimeout;
         }
         m_operation_mode = operation_mode;
         xSemaphoreGive(m_mutex);
-        return ResultCode::Ok;
+        return Result{};
     }
 
     // Pause the stream (and its timer) around the mode switch, which holds
     // the device for 20-600 ms.
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     const bool resume_stream = m_stream_enabled.load(std::memory_order_relaxed);
     (void)applyStreamEnabledLocked(false);
@@ -483,7 +489,7 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
                    "Failed to set operation mode 0x%02X: %s", operation_mode, esp_err_to_name(ret));
     }
 
-    ResultCode rc = deviceErrToResult(ret);
+    Result rc = deviceErrToResult(ret);
     if (xSemaphoreTake(m_mutex, kMutexTimeout) == pdTRUE) {
         if (ret == ESP_OK) {
             m_operation_mode = operation_mode;
@@ -494,30 +500,30 @@ ResultCode ImuBno055Manager::setOperationMode(uint8_t operation_mode)
             DIAG_ERROR(codes::kStreamReenableFailed, reenable_err, kReenableTimerFailed, 0,
                        "Could not re-enable the stream after the mode switch (sampling timer): %s",
                        esp_err_to_name(reenable_err));
-            if (rc == ResultCode::Ok) {
-                rc = ResultCode::InternalError;
+            if (rc.ok()) {
+                rc = kTimerFailed;
             }
         }
     } else if (resume_stream) {
         DIAG_ERROR(codes::kStreamReenableFailed, ESP_ERR_TIMEOUT, kReenableMutexBusy, 0,
                    "Could not re-enable the stream after the mode switch (mutex busy)");
-        if (rc == ResultCode::Ok) {
-            rc = ResultCode::Busy;
+        if (rc.ok()) {
+            rc = kLockTimeout;
         }
     }
 
     return rc;
 }
 
-ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
+Result ImuBno055Manager::readCalibration(CalibrationBlob &out)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (m_use_mock_data) {
         if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-            return ResultCode::Busy;
+            return kLockTimeout;
         }
         if (!m_has_cached_calibration) {
             m_cached_calibration = CalibrationBlob{};
@@ -525,7 +531,7 @@ ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
         }
         out = m_cached_calibration;
         xSemaphoreGive(m_mutex);
-        return ResultCode::Ok;
+        return Result{};
     }
 
     const esp_err_t ret = m_device->readCalibration(out);
@@ -538,51 +544,51 @@ ResultCode ImuBno055Manager::readCalibration(CalibrationBlob &out)
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_cached_calibration = out;
     m_has_cached_calibration = true;
     xSemaphoreGive(m_mutex);
 
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::writeCalibration(const CalibrationBlob &blob)
+Result ImuBno055Manager::writeCalibration(const CalibrationBlob &blob)
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
     m_cached_calibration = blob;
     m_has_cached_calibration = true;
     xSemaphoreGive(m_mutex);
 
-    return ResultCode::Ok;
+    return Result{};
 }
 
-ResultCode ImuBno055Manager::applyCalibration()
+Result ImuBno055Manager::applyCalibration()
 {
     if (!isValid()) {
-        return ResultCode::InvalidState;
+        return kNotReady;
     }
 
     CalibrationBlob blob{};
     if (xSemaphoreTake(m_mutex, kMutexTimeout) != pdTRUE) {
-        return ResultCode::Busy;
+        return kLockTimeout;
     }
 
     if (!m_has_cached_calibration) {
         xSemaphoreGive(m_mutex);
-        return ResultCode::InvalidState;
+        return Result{ResultCode::InvalidState, ResultDetail::NoCalibration};
     }
     blob = m_cached_calibration;
     xSemaphoreGive(m_mutex);
 
     if (m_use_mock_data) {
-        return ResultCode::Ok;
+        return Result{};
     }
 
     const esp_err_t ret = m_device->writeCalibration(blob);
@@ -593,7 +599,7 @@ ResultCode ImuBno055Manager::applyCalibration()
         }
         return deviceErrToResult(ret);
     }
-    return ResultCode::Ok;
+    return Result{};
 }
 
 void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
@@ -603,44 +609,54 @@ void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
     }
 
     if (xQueueSend(m_config_queue, &frame, 0) != pdTRUE) {
-        // RX task: count, don't log.
+        // RX task: count, don't log. Answer so the host is not left waiting:
+        // the command was not applied.
         DIAG_COUNT(codes::kConfigQueueFull);
+        protocol::ConfigureHeader header{};
+        const uint8_t *body = nullptr;
+        size_t body_len = 0;
+        (void)protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len);
+        if (sendConfigureResponse(header.seq, header.subcommand,
+                                  Result{ResultCode::Busy, ResultDetail::QueueFull}, nullptr, 0) != ESP_OK) {
+            DIAG_COUNT(codes::kResponseTxDropped);
+        }
     }
 }
 
-ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
-                                                       const uint8_t *body,
-                                                       uint8_t len,
-                                                       uint8_t &response_len,
-                                                       uint8_t *response_payload,
-                                                       size_t response_capacity)
+Result ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
+                                                   const uint8_t *body,
+                                                   uint8_t len,
+                                                   uint8_t &response_len,
+                                                   uint8_t *response_payload,
+                                                   size_t response_capacity)
 {
     // body is the payload after the configure request header; len is its
-    // length. Every body must have its exact size (protocol v3).
+    // length. Every body must have its exact size.
     response_len = 0;
+    constexpr Result kBadLength{ResultCode::InvalidArgument, ResultDetail::BadLength};
+    constexpr Result kEncodeFailed{ResultCode::InternalError, ResultDetail::EncodeFailed};
 
     switch (subcommand) {
         case ConfigureSubcommand::SetStreamEnabled: {
             bool enabled = false;
-            if (!protocol::decodeSetStreamEnabled(body, len, enabled)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setStreamEnabled(enabled);
+            const Result dec = protocol::decodeSetStreamEnabled(body, len, enabled);
+            return dec.ok() ? setStreamEnabled(enabled) : dec;
         }
         case ConfigureSubcommand::SetStreamTiming: {
             uint32_t sample_us = 0;
             uint32_t telemetry_us = 0;
-            if (!protocol::decodeSetStreamTiming(body, len, sample_us, telemetry_us)) {
-                return ResultCode::InvalidArgument;
+            const Result dec = protocol::decodeSetStreamTiming(body, len, sample_us, telemetry_us);
+            if (!dec.ok()) {
+                return dec;
             }
             uint32_t applied_sample_us = 0;
             uint32_t applied_telemetry_us = 0;
-            const ResultCode rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
-            if (rc == ResultCode::Ok) {
+            const Result rc = setStreamTiming(sample_us, telemetry_us, applied_sample_us, applied_telemetry_us);
+            if (rc.ok()) {
                 const size_t n = protocol::encodeSetStreamTimingResponseBody(
                     applied_sample_us, applied_telemetry_us, response_payload, response_capacity);
                 if (n == 0U) {
-                    return ResultCode::InternalError;
+                    return kEncodeFailed;
                 }
                 response_len = static_cast<uint8_t>(n);
             }
@@ -648,54 +664,48 @@ ResultCode ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subco
         }
         case ConfigureSubcommand::SetStreamFieldMask: {
             uint16_t mask = 0;
-            if (!protocol::decodeSetStreamFieldMask(body, len, mask)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setStreamFieldMask(mask);
+            const Result dec = protocol::decodeSetStreamFieldMask(body, len, mask);
+            return dec.ok() ? setStreamFieldMask(mask) : dec;
         }
         case ConfigureSubcommand::SetOperationMode: {
             uint8_t mode = 0;
-            if (!protocol::decodeSetOperationMode(body, len, mode)) {
-                return ResultCode::InvalidArgument;
-            }
-            return setOperationMode(mode);
+            const Result dec = protocol::decodeSetOperationMode(body, len, mode);
+            return dec.ok() ? setOperationMode(mode) : dec;
         }
         case ConfigureSubcommand::ReadCalibration: {
             if (len != 0U) {
-                return ResultCode::InvalidArgument;
+                return kBadLength;
             }
             CalibrationBlob blob{};
-            const ResultCode rc = readCalibration(blob);
-            if (rc != ResultCode::Ok) {
+            const Result rc = readCalibration(blob);
+            if (!rc.ok()) {
                 return rc;
             }
             const size_t n = protocol::encodeCalibrationBlob(blob, response_payload, response_capacity);
             if (n == 0U) {
-                return ResultCode::InternalError;
+                return kEncodeFailed;
             }
             response_len = static_cast<uint8_t>(n);
-            return ResultCode::Ok;
+            return Result{};
         }
         case ConfigureSubcommand::WriteCalibration: {
             CalibrationBlob blob{};
-            if (!protocol::decodeCalibrationBlob(body, len, blob)) {
-                return ResultCode::InvalidArgument;
-            }
-            return writeCalibration(blob);
+            const Result dec = protocol::decodeCalibrationBlob(body, len, blob);
+            return dec.ok() ? writeCalibration(blob) : dec;
         }
         case ConfigureSubcommand::ApplyCalibration:
             if (len != 0U) {
-                return ResultCode::InvalidArgument;
+                return kBadLength;
             }
             return applyCalibration();
         default:
-            return ResultCode::NotSupported;
+            return Result{ResultCode::NotSupported, ResultDetail::UnknownSubcommand};
     }
 }
 
 esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
                                                   uint8_t subcommand,
-                                                  ResultCode code,
+                                                  Result result,
                                                   const uint8_t *extra_payload,
                                                   uint8_t extra_len)
 {
@@ -703,7 +713,7 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
     protocol::ConfigureHeader header{};
     header.seq = seq;
     header.subcommand = subcommand;
-    const size_t len = protocol::encodeConfigureResponse(header, code, extra_payload, extra_len,
+    const size_t len = protocol::encodeConfigureResponse(header, result, extra_payload, extra_len,
                                                          payload, sizeof(payload));
     if (len == 0U) {
         return ESP_ERR_INVALID_ARG;
@@ -838,12 +848,11 @@ void ImuBno055Manager::configTaskLoop()
 
         uint8_t response_extra[kMaxResponseExtraPayload] = {0};
         uint8_t response_extra_len = 0;
-        ResultCode rc = ResultCode::InvalidArgument;
-
         protocol::ConfigureHeader header{};
         const uint8_t *body = nullptr;
         size_t body_len = 0;
-        if (protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len)) {
+        Result rc = protocol::decodeConfigureHeader(frame.payload, frame.len, header, body, body_len);
+        if (rc.ok()) {
             rc = self->parseAndDispatchConfigure(
                 static_cast<ConfigureSubcommand>(header.subcommand),
                 body,
@@ -851,6 +860,10 @@ void ImuBno055Manager::configTaskLoop()
                 response_extra_len,
                 response_extra,
                 sizeof(response_extra));
+            if (rc.code == ResultCode::InvalidArgument) {
+                ESP_LOGD(TAG, "Configure subcommand 0x%02X rejected: %s", header.subcommand,
+                         resultDetailToString(rc.detail));
+            }
         } else {
             ESP_LOGW(TAG, "Configure header rejected: len=%u version=%u expected=%u",
                      frame.len, (frame.len >= 1U) ? frame.payload[0] : 0U, kProtocolVersion);
@@ -881,6 +894,42 @@ const char *resultCodeToString(ResultCode code)
         case ResultCode::InternalError:
         default:
             return "INTERNAL_ERROR";
+    }
+}
+
+const char *resultDetailToString(ResultDetail detail)
+{
+    switch (detail) {
+        case ResultDetail::None:
+            return "none";
+        case ResultDetail::BadVersion:
+            return "bad version";
+        case ResultDetail::BadLength:
+            return "bad length";
+        case ResultDetail::UnknownSubcommand:
+            return "unknown subcommand";
+        case ResultDetail::BadEnum:
+            return "bad enum value";
+        case ResultDetail::BadFieldMask:
+            return "bad field mask";
+        case ResultDetail::NotReady:
+            return "not ready";
+        case ResultDetail::QueueFull:
+            return "queue full";
+        case ResultDetail::LockTimeout:
+            return "lock timeout";
+        case ResultDetail::DeviceBusy:
+            return "device busy";
+        case ResultDetail::DeviceError:
+            return "device error";
+        case ResultDetail::TimerFailed:
+            return "timer failed";
+        case ResultDetail::NoCalibration:
+            return "no calibration";
+        case ResultDetail::EncodeFailed:
+            return "encode failed";
+        default:
+            return "?";
     }
 }
 

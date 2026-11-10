@@ -33,7 +33,7 @@ Primary config struct:
 
 - `imu_bmo_055::ManagerConfig` (in `include/imu_bmo_055_types.hpp`)
 
-Wire-level types (`ResultCode`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
+Wire-level types (`ResultCode`, `ResultDetail`, `Result`, `CalibrationStatus`, `CalibrationBlob`, subcommands, stream fields and sizes) are in `include/imu_bmo_055_protocol.hpp`, which `imu_bmo_055_types.hpp` includes. The payload codec (`priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`) has no ESP-IDF dependency and is covered by the host unit tests in `test/host/`.
 
 Important runtime methods:
 
@@ -46,7 +46,7 @@ Important runtime methods:
 - `applyCalibration()`
 - Stream health is counted through diag (see 4.1); there is no on-device getter.
 
-Device-level failures map to `Busy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` otherwise.
+Each method returns `Result { ResultCode code; ResultDetail detail; }`, the same pair the configure response carries (see the protocol guide, section 2.3). Device-level failures map to `Busy` / `DeviceBusy` when the sensor is held by another operation (lock wait timed out, 100 ms) and to `InternalError` / `DeviceError` otherwise.
 
 ## 3. Quick Integration In ESP App
 
@@ -231,7 +231,7 @@ Besides the configure `result`, the manager reports through the `diag` component
 | `StreamReenableFailed` | error | The stream stayed off after a mode switch. |
 | `TimerRestartFailed` | error | `SetStreamTiming` could not restart the sampling timer. |
 | `SamplerStalled` | warning, clears | See 4.1. |
-| `SampleLate`, `DeviceBusy`, `ReadError`, `EncodeError`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. A command that arrives while the config queue is full is dropped without a response. |
+| `SampleLate`, `DeviceBusy`, `ReadError`, `EncodeError`, `ConfigQueueFull`, `ResponseTxDropped` | counters | Sent as 1 Hz deltas when they change. A command that arrives while the config queue is full is not applied and is answered with `Busy` / `QueueFull`. |
 
 ## 8. Troubleshooting
 
@@ -246,7 +246,7 @@ Besides the configure `result`, the manager reports through the `diag` component
   - Watch the diag counters `imu.DeviceBusy` and `imu.ReadError`, and the `imu.SamplerStalled` record.
   - Confirm host UART layer is consuming stream range (`0x80..0xBF`).
 - Command rejected:
-  - Verify protocol version byte is `0x03` and is followed by a `seq` byte.
+  - Verify protocol version byte is `0x04` and is followed by a `seq` byte. The response's `detail` byte says which check failed.
   - Verify the body has its exact length (v3 rejects trailing bytes) and little-endian encoding for numeric fields.
 
 ## 9. Additional Docs

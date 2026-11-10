@@ -43,7 +43,7 @@ TEST_CASE("IMU configure header")
     SUBCASE("valid header with a body")
     {
         const std::vector<uint8_t> p = {kProtocolVersion, 0x21, 0x02, 0xAA, 0xBB};
-        REQUIRE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len));
+        REQUIRE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len).ok());
         CHECK(hdr.seq == 0x21);
         CHECK(hdr.subcommand == 0x02);
         CHECK(body == &p[3]);
@@ -52,20 +52,20 @@ TEST_CASE("IMU configure header")
     SUBCASE("valid header, empty body")
     {
         const std::vector<uint8_t> p = {kProtocolVersion, 1, 0x05};
-        REQUIRE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len));
+        REQUIRE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len).ok());
         CHECK(body_len == 0);
     }
     SUBCASE("short, version and seq present: seq echoed")
     {
         const std::vector<uint8_t> p = {kProtocolVersion, 0x33};
-        CHECK_FALSE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len));
+        CHECK(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len).detail == ResultDetail::BadLength);
         CHECK(hdr.seq == 0x33);
         CHECK(hdr.subcommand == kUnparsedHeaderByte);
     }
     SUBCASE("wrong version: nothing echoed")
     {
         const std::vector<uint8_t> p = {kProtocolVersion + 1, 0x33, 0x01};
-        CHECK_FALSE(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len));
+        CHECK(decodeConfigureHeader(p.data(), p.size(), hdr, body, body_len).detail == ResultDetail::BadVersion);
         CHECK(hdr.seq == 0);
         CHECK(hdr.subcommand == kUnparsedHeaderByte);
         CHECK(body == nullptr);
@@ -73,7 +73,7 @@ TEST_CASE("IMU configure header")
     }
     SUBCASE("empty")
     {
-        CHECK_FALSE(decodeConfigureHeader(nullptr, 0, hdr, body, body_len));
+        CHECK(decodeConfigureHeader(nullptr, 0, hdr, body, body_len).detail == ResultDetail::BadLength);
         CHECK(hdr.seq == 0);
     }
 }
@@ -82,19 +82,19 @@ TEST_CASE("SetStreamEnabled accepts only 0 or 1, exact length")
 {
     bool enabled = false;
     const uint8_t on[] = {1};
-    REQUIRE(decodeSetStreamEnabled(on, 1, enabled));
+    REQUIRE(decodeSetStreamEnabled(on, 1, enabled).ok());
     CHECK(enabled);
     const uint8_t off[] = {0};
-    REQUIRE(decodeSetStreamEnabled(off, 1, enabled));
+    REQUIRE(decodeSetStreamEnabled(off, 1, enabled).ok());
     CHECK_FALSE(enabled);
 
     const uint8_t two[] = {2};
     enabled = true;
-    CHECK_FALSE(decodeSetStreamEnabled(two, 1, enabled));
+    CHECK(decodeSetStreamEnabled(two, 1, enabled).detail == ResultDetail::BadEnum);
     CHECK(enabled); // unchanged
     const uint8_t longer[] = {1, 0};
-    CHECK_FALSE(decodeSetStreamEnabled(longer, 2, enabled));
-    CHECK_FALSE(decodeSetStreamEnabled(nullptr, 0, enabled));
+    CHECK(decodeSetStreamEnabled(longer, 2, enabled).detail == ResultDetail::BadLength);
+    CHECK(decodeSetStreamEnabled(nullptr, 0, enabled).detail == ResultDetail::BadLength);
 }
 
 TEST_CASE("SetStreamTiming request and response bodies")
@@ -102,10 +102,10 @@ TEST_CASE("SetStreamTiming request and response bodies")
     const std::vector<uint8_t> body = {0x10, 0x27, 0, 0, 0x20, 0x4E, 0, 0}; // 10000, 20000
     uint32_t sample = 0;
     uint32_t telemetry = 0;
-    REQUIRE(decodeSetStreamTiming(body.data(), body.size(), sample, telemetry));
+    REQUIRE(decodeSetStreamTiming(body.data(), body.size(), sample, telemetry).ok());
     CHECK(sample == 10000);
     CHECK(telemetry == 20000);
-    CHECK_FALSE(decodeSetStreamTiming(body.data(), body.size() - 1, sample, telemetry));
+    CHECK(decodeSetStreamTiming(body.data(), body.size() - 1, sample, telemetry).detail == ResultDetail::BadLength);
 
     std::array<uint8_t, kSetStreamTimingResponseBodySize> out{};
     REQUIRE(encodeSetStreamTimingResponseBody(10000, 20000, out.data(), out.size()) == out.size());
@@ -117,15 +117,15 @@ TEST_CASE("SetStreamFieldMask and SetOperationMode bodies")
 {
     const uint8_t mask_body[] = {0xFF, 0x01};
     uint16_t mask = 0;
-    REQUIRE(decodeSetStreamFieldMask(mask_body, sizeof(mask_body), mask));
+    REQUIRE(decodeSetStreamFieldMask(mask_body, sizeof(mask_body), mask).ok());
     CHECK(mask == 0x01FF);
-    CHECK_FALSE(decodeSetStreamFieldMask(mask_body, 1, mask));
+    CHECK(decodeSetStreamFieldMask(mask_body, 1, mask).detail == ResultDetail::BadLength);
 
     const uint8_t mode_body[] = {0x0C, 0x00};
     uint8_t mode = 0;
-    REQUIRE(decodeSetOperationMode(mode_body, 1, mode));
+    REQUIRE(decodeSetOperationMode(mode_body, 1, mode).ok());
     CHECK(mode == 0x0C);
-    CHECK_FALSE(decodeSetOperationMode(mode_body, 2, mode));
+    CHECK(decodeSetOperationMode(mode_body, 2, mode).detail == ResultDetail::BadLength);
 }
 
 TEST_CASE("Calibration blob round-trips")
@@ -138,7 +138,7 @@ TEST_CASE("Calibration blob round-trips")
     CHECK(buf[2] == 0xFF);
 
     CalibrationBlob out{};
-    REQUIRE(decodeCalibrationBlob(buf.data(), buf.size(), out));
+    REQUIRE(decodeCalibrationBlob(buf.data(), buf.size(), out).ok());
     CHECK(out.has_sic == blob.has_sic);
     CHECK(out.accel_offset_x == blob.accel_offset_x);
     CHECK(out.accel_offset_z == blob.accel_offset_z);
@@ -159,10 +159,10 @@ TEST_CASE("Calibration blob decode rejects bad input and leaves the output alone
 
     CalibrationBlob out{};
     out.mag_radius = 1234;
-    CHECK_FALSE(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize - 1, out));
-    CHECK_FALSE(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize + 1, out));
+    CHECK(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize - 1, out).detail == ResultDetail::BadLength);
+    CHECK(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize + 1, out).detail == ResultDetail::BadLength);
     buf[0] = 2; // has_sic must be 0 or 1
-    CHECK_FALSE(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize, out));
+    CHECK(decodeCalibrationBlob(buf.data(), kCalibrationBlobSize, out).detail == ResultDetail::BadEnum);
     CHECK(out.mag_radius == 1234);
 
     std::array<uint8_t, kCalibrationBlobSize - 1> small{};
@@ -176,15 +176,19 @@ TEST_CASE("Configure response layout")
     hdr.subcommand = static_cast<uint8_t>(ConfigureSubcommand::ReadCalibration);
     const uint8_t body[] = {0xAA, 0xBB};
     std::array<uint8_t, 8> out{};
-    REQUIRE(encodeConfigureResponse(hdr, ResultCode::Busy, body, sizeof(body), out.data(), out.size()) == 6);
+    CHECK(kProtocolVersion == 4);
+    CHECK(kConfigureResponseHeaderSize == 5);
+    REQUIRE(encodeConfigureResponse(hdr, Result{ResultCode::Busy, ResultDetail::QueueFull}, body, sizeof(body),
+                                    out.data(), out.size()) == 7);
     CHECK(out[0] == kProtocolVersion);
     CHECK(out[1] == 7);
     CHECK(out[2] == 0x05);
     CHECK(out[3] == static_cast<uint8_t>(ResultCode::Busy));
-    CHECK(out[4] == 0xAA);
-    CHECK(out[5] == 0xBB);
+    CHECK(out[4] == static_cast<uint8_t>(ResultDetail::QueueFull));
+    CHECK(out[5] == 0xAA);
+    CHECK(out[6] == 0xBB);
 
-    CHECK(encodeConfigureResponse(hdr, ResultCode::Ok, body, sizeof(body), out.data(), 5) == 0);
+    CHECK(encodeConfigureResponse(hdr, Result{}, body, sizeof(body), out.data(), 6) == 0);
 }
 
 TEST_CASE("Stream sample: header and field order")

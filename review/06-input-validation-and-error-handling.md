@@ -70,7 +70,7 @@ The project guidelines say "Check every ESP-IDF return value". Places that don't
 
 ## E6. Low: error codes are lossy
 
-**Fixed.** `createMotor` answers `CAPACITY_REACHED` when the MCPWM or PCNT pool is empty (the HALs keep their `initError()`, and `MotorController::hardwareFailure()` names the stage), and reports `motor_manager.MotorCreateFailed` with the motor id, the stage and the `esp_err` through diag. `sendConfigureResponse` no longer overwrites the result when TX fails: it counts `motor_manager.ResponseTxDropped` and returns the command's own result. The `detail` byte in configure responses (diag plan, phase 3) is still to come.
+**Fixed.** `createMotor` answers `CAPACITY_REACHED` when the MCPWM or PCNT pool is empty (the HALs keep their `initError()`, and `MotorController::hardwareFailure()` names the stage), and reports `motor_manager.MotorCreateFailed` with the motor id, the stage and the `esp_err` through diag. `sendConfigureResponse` no longer overwrites the result when TX fails: it counts `motor_manager.ResponseTxDropped` and returns the command's own result. Motor and IMU configure responses (protocol v4) carry a `detail` byte after the result that names the exact cause (bad length, non-finite float, GPIO in use, lock timeout, encoder failed, ...), and a full config queue is answered with `QueueFull` instead of being dropped.
 
 - `createMotor` returns `InternalError` for every HAL failure, including running out of PCNT units, which is really `CapacityReached`.
 - `sendConfigureResponse` returns `InternalError` when TX fails, which overwrites the real result `code` that the caller then logs. The motor operation may have succeeded.

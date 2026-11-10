@@ -92,11 +92,11 @@ TEST_CASE("CreateMotor / ConfigureMotor reject any non-finite float")
         CAPTURE(i);
         for (float bad : {kNaN, kInf, -kInf}) {
             const auto p = createWithFloat(i, bad);
-            CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+            CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::NonFiniteFloat);
         }
     }
     const auto ok = createWithFloat(0, 2.0f);
-    CHECK(decodeConfigure(ok.data(), ok.size(), req) == DecodeStatus::Ok);
+    CHECK((decodeConfigure(ok.data(), ok.size(), req)).ok());
     CHECK(isMotorConfigFinite(req.motor));
     req.motor.gear_ratio = kNaN;
     CHECK_FALSE(isMotorConfigFinite(req.motor));
@@ -115,13 +115,13 @@ TEST_CASE("SetPidParams rejects an unknown PID kind and non-finite gains")
         return p;
     };
     auto p = make(1, 1.0f);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::Ok);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).ok());
     p = make(2, 1.0f);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::BadEnum);
     p = make(0, kNaN);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::NonFiniteFloat);
     p = make(0, kInf);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::NonFiniteFloat);
 }
 
 TEST_CASE("SetSetpoint rejects an unknown kind and a non-finite value")
@@ -134,13 +134,13 @@ TEST_CASE("SetSetpoint rejects an unknown kind and a non-finite value")
         return p;
     };
     auto p = make(2, -3.0f);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::Ok);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).ok());
     p = make(3, 1.0f);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::BadEnum);
     p = make(0, kNaN);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::NonFiniteFloat);
     p = make(1, -kInf);
-    CHECK(decodeConfigure(p.data(), p.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(p.data(), p.size(), req)).detail == ResultDetail::NonFiniteFloat);
 }
 
 TEST_CASE("Telemetry configure rejects unknown field bits")
@@ -148,11 +148,11 @@ TEST_CASE("Telemetry configure rejects unknown field bits")
     ConfigureRequest req{};
     auto global = withHeader(ConfigureSubcommand::SetTelemetryGlobal);
     global.insert(global.end(), {1, 0x08});
-    CHECK(decodeConfigure(global.data(), global.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(global.data(), global.size(), req)).detail == ResultDetail::BadFieldMask);
 
     auto motor = withHeader(ConfigureSubcommand::SetTelemetryMotor);
     motor.insert(motor.end(), {1, 0x80, 1});
-    CHECK(decodeConfigure(motor.data(), motor.size(), req) == DecodeStatus::BadBody);
+    CHECK((decodeConfigure(motor.data(), motor.size(), req)).detail == ResultDetail::BadFieldMask);
 }
 
 TEST_CASE("Enum helpers")

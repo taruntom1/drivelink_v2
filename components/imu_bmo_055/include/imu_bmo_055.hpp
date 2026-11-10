@@ -30,23 +30,26 @@ public:
 
 	bool isValid() const;
 
+	// Each command returns its result code and why it failed (ResultDetail),
+	// as sent in the configure response.
+
 	/// Start or stop streaming. Stopping also stops the sampling timer.
-	ResultCode setStreamEnabled(bool enabled);
+	Result setStreamEnabled(bool enabled);
 	/// Set the sample (timer) period and the telemetry (packet) period, in us.
 	/// 0 keeps the current value. The sample period is clamped to
 	/// [min, max]_sample_period_us; the telemetry period to
 	/// [sample period, max_sample_period_us], rounded up to a whole multiple
 	/// of the sample period. The applied values are returned.
-	ResultCode setStreamTiming(uint32_t sample_period_us,
-							   uint32_t telemetry_period_us,
-							   uint32_t &applied_sample_period_us,
-							   uint32_t &applied_telemetry_period_us);
+	Result setStreamTiming(uint32_t sample_period_us,
+						   uint32_t telemetry_period_us,
+						   uint32_t &applied_sample_period_us,
+						   uint32_t &applied_telemetry_period_us);
 	/// Rejects bits outside kStreamFieldAll with InvalidArgument.
-	ResultCode setStreamFieldMask(uint16_t field_mask);
-	ResultCode setOperationMode(uint8_t operation_mode);
-	ResultCode readCalibration(CalibrationBlob &out);
-	ResultCode writeCalibration(const CalibrationBlob &blob);
-	ResultCode applyCalibration();
+	Result setStreamFieldMask(uint16_t field_mask);
+	Result setOperationMode(uint8_t operation_mode);
+	Result readCalibration(CalibrationBlob &out);
+	Result writeCalibration(const CalibrationBlob &blob);
+	Result applyCalibration();
 
 	void handleConfigureCommand(const uart_comm::RxFrame &frame);
 
@@ -58,13 +61,15 @@ private:
 	/// Returns the timer error, if any.
 	esp_err_t applyStreamEnabledLocked(bool enabled);
 
-	ResultCode parseAndDispatchConfigure(ConfigureSubcommand subcommand,
-										 const uint8_t *body, uint8_t len,
-										 uint8_t &response_len, uint8_t *response_payload,
-										 size_t response_capacity);
+	Result parseAndDispatchConfigure(ConfigureSubcommand subcommand,
+									 const uint8_t *body, uint8_t len,
+									 uint8_t &response_len, uint8_t *response_payload,
+									 size_t response_capacity);
+	/// Encode and queue a configure response. Non-blocking, so the RX task
+	/// can use it too.
 	esp_err_t sendConfigureResponse(uint8_t seq,
 									uint8_t subcommand,
-									ResultCode code,
+									Result result,
 									const uint8_t *extra_payload,
 									uint8_t extra_len);
 	void stopTasks();

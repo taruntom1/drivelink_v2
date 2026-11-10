@@ -52,22 +52,27 @@ void readMotorConfig(Reader &r, MotorConfigPayload &cfg)
     cfg.vel_filter_cutoff_hz = r.readF32Le();
 }
 
+constexpr Result invalid(ResultDetail detail)
+{
+    return Result{ResultCode::InvalidArgument, detail};
+}
+
 // Decode the body of a known subcommand. Every body has a fixed size and must
 // match it exactly: a different length means host and firmware disagree on
 // the layout. Untrusted values that cannot be clamped (non-finite floats,
 // unknown enum values, unknown telemetry field bits) are rejected here, so
 // nothing is applied.
-DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
+Result decodeBody(Reader &body, ConfigureRequest &out)
 {
     switch (out.subcommand) {
         case ConfigureSubcommand::CreateMotor:
         case ConfigureSubcommand::ConfigureMotor:
             if (body.remaining() != kMotorConfigBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             readMotorConfig(body, out.motor);
             if (!isMotorConfigFinite(out.motor)) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::NonFiniteFloat);
             }
             break;
 
@@ -77,71 +82,107 @@ DecodeStatus decodeBody(Reader &body, ConfigureRequest &out)
             break; // empty body
 
         case ConfigureSubcommand::SetMode:
-            if (body.remaining() != kSetModeBodySize || !decodeControlMode(body.readU8(), out.mode)) {
-                return DecodeStatus::BadBody;
+            if (body.remaining() != kSetModeBodySize) {
+                return invalid(ResultDetail::BadLength);
+            }
+            if (!decodeControlMode(body.readU8(), out.mode)) {
+                return invalid(ResultDetail::BadEnum);
             }
             break;
 
         case ConfigureSubcommand::SetPidParams:
             if (body.remaining() != kSetPidParamsBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             out.pid_kind = static_cast<PidKind>(body.readU8());
             out.kp = body.readF32Le();
             out.ki = body.readF32Le();
             out.kd = body.readF32Le();
             out.d_cutoff_hz = body.readF32Le();
-            if (!isValidPidKind(out.pid_kind) || !allFinite({out.kp, out.ki, out.kd, out.d_cutoff_hz})) {
-                return DecodeStatus::BadBody;
+            if (!isValidPidKind(out.pid_kind)) {
+                return invalid(ResultDetail::BadEnum);
+            }
+            if (!allFinite({out.kp, out.ki, out.kd, out.d_cutoff_hz})) {
+                return invalid(ResultDetail::NonFiniteFloat);
             }
             break;
 
         case ConfigureSubcommand::SetSetpoint:
             if (body.remaining() != kSetSetpointBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             out.setpoint_kind = static_cast<SetpointKind>(body.readU8());
             out.setpoint_value = body.readF32Le();
-            if (!isValidSetpointKind(out.setpoint_kind) || !std::isfinite(out.setpoint_value)) {
-                return DecodeStatus::BadBody;
+            if (!isValidSetpointKind(out.setpoint_kind)) {
+                return invalid(ResultDetail::BadEnum);
+            }
+            if (!std::isfinite(out.setpoint_value)) {
+                return invalid(ResultDetail::NonFiniteFloat);
             }
             break;
 
         case ConfigureSubcommand::SetTelemetryGlobal:
             if (body.remaining() != kSetTelemetryGlobalBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             out.telemetry_enabled = (body.readU8() != 0U);
             out.telemetry_field_mask = body.readU8();
             if ((out.telemetry_field_mask & ~kTelemetryFieldAll) != 0U) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadFieldMask);
             }
             break;
 
         case ConfigureSubcommand::SetTelemetryMotor:
             if (body.remaining() != kSetTelemetryMotorBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             out.telemetry_enabled = (body.readU8() != 0U);
             out.telemetry_field_mask = body.readU8();
             out.telemetry_apply_mask = (body.readU8() != 0U);
             if ((out.telemetry_field_mask & ~kTelemetryFieldAll) != 0U) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadFieldMask);
             }
             break;
 
         case ConfigureSubcommand::SetTiming:
             if (body.remaining() != kSetTimingBodySize) {
-                return DecodeStatus::BadBody;
+                return invalid(ResultDetail::BadLength);
             }
             out.control_period_us = body.readU32Le();
             out.telemetry_period_us = body.readU32Le();
             break;
 
         default:
-            return DecodeStatus::UnknownSubcommand;
+            return Result{ResultCode::NotSupported, ResultDetail::UnknownSubcommand};
     }
-    return body.done() ? DecodeStatus::Ok : DecodeStatus::BadBody;
+    return body.done() ? Result{} : invalid(ResultDetail::BadLength);
+}
+
+// Parse the header. On failure `header` holds the echo bytes and the result
+// says why: BadVersion, or BadLength for a short header.
+Result parseHeader(const uint8_t *payload, size_t len, ConfigureHeader &header)
+{
+    header = ConfigureHeader{};
+    Reader r(payload, len);
+    const uint8_t version = r.readU8();
+    if (!r.ok()) {
+        return invalid(ResultDetail::BadLength);
+    }
+    if (version != kProtocolVersion) {
+        return invalid(ResultDetail::BadVersion);
+    }
+    if (len < kConfigureHeaderSize) {
+        // The header layout is unknown, so subcommand and motor_id cannot be
+        // echoed. seq is echoed when the version matches and it is present.
+        if (len >= 2U) {
+            header.seq = payload[1];
+        }
+        return invalid(ResultDetail::BadLength);
+    }
+    header.seq = r.readU8();
+    header.subcommand = r.readU8();
+    header.motor_id = r.readU8();
+    return Result{};
 }
 
 } // namespace
@@ -154,45 +195,27 @@ bool isMotorConfigFinite(const MotorConfigPayload &c)
                       c.velocity_feedforward, c.position_feedforward, c.vel_filter_cutoff_hz});
 }
 
-DecodeStatus decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out)
+Result decodeConfigure(const uint8_t *payload, size_t len, ConfigureRequest &out)
 {
     out = ConfigureRequest{};
-    Reader r(payload, len);
-    const uint8_t version = r.readU8();
-    const bool version_ok = r.ok() && version == kProtocolVersion;
-    if (!version_ok || len < kConfigureHeaderSize) {
-        // The header layout is unknown, so subcommand and motor_id cannot be
-        // echoed. seq is echoed when the version matches and it is present.
-        if (version_ok && len >= 2U) {
-            out.header.seq = payload[1];
-        }
-        return DecodeStatus::BadHeader;
+    const Result header_rc = parseHeader(payload, len, out.header);
+    if (!header_rc.ok()) {
+        return header_rc;
     }
-
-    out.header.seq = r.readU8();
-    out.header.subcommand = r.readU8();
-    out.header.motor_id = r.readU8();
     out.subcommand = static_cast<ConfigureSubcommand>(out.header.subcommand);
 
     Reader body(&payload[kConfigureHeaderSize], len - kConfigureHeaderSize);
     return decodeBody(body, out);
 }
 
-ResultCode resultForDecodeStatus(DecodeStatus status)
+ConfigureHeader decodeConfigureHeader(const uint8_t *payload, size_t len)
 {
-    switch (status) {
-        case DecodeStatus::Ok:
-            return ResultCode::Ok;
-        case DecodeStatus::UnknownSubcommand:
-            return ResultCode::NotSupported;
-        case DecodeStatus::BadHeader:
-        case DecodeStatus::BadBody:
-        default:
-            return ResultCode::InvalidArgument;
-    }
+    ConfigureHeader header{};
+    (void)parseHeader(payload, len, header);
+    return header;
 }
 
-size_t encodeConfigureResponse(const ConfigureHeader &header, ResultCode result,
+size_t encodeConfigureResponse(const ConfigureHeader &header, Result result,
                                const uint8_t *body, size_t body_len,
                                uint8_t *out, size_t cap)
 {
@@ -201,7 +224,8 @@ size_t encodeConfigureResponse(const ConfigureHeader &header, ResultCode result,
     w.appendU8(header.seq);
     w.appendU8(header.subcommand);
     w.appendU8(header.motor_id);
-    w.appendU8(static_cast<uint8_t>(result));
+    w.appendU8(static_cast<uint8_t>(result.code));
+    w.appendU8(static_cast<uint8_t>(result.detail));
     w.appendBytes(body, body_len);
     return w.ok() ? w.size() : 0U;
 }
