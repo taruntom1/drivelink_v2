@@ -18,7 +18,8 @@ One session runs one step and ends with one PR into `firmware_overhaul`. Follow 
    - the argument, if one was given
    - otherwise the first step in the table whose state is `planned`, provided every step it depends on is `merged`
    - If a step it depends on isn't merged, stop and tell the user.
-4. Read the code the step will change before planning.
+4. Read the step's row for **Build model · effort** and **Review effort**, and the "Models and effort" rules in the status file. Planning runs on Opus 5.5 at high effort. If the session runs on a different model or effort, tell the user to switch before planning (in the app's model picker), then continue.
+5. Read the code the step will change before planning. For wide searches, use an `Explore` agent with `model: "haiku"`. Search agents only read; they never write code.
 
 ## 2. Plan (approval point)
 
@@ -33,6 +34,8 @@ Enter plan mode and write a short step plan:
 - **Docs:** `docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, READMEs of new components, and the status file.
 
 Wait for the user's approval. Answer any deviation questions before you build.
+
+After approval, if the step's build model or effort differs from planning (Opus, high), tell the user which model and effort to switch to (for example "switch to Sonnet 5.5, medium"), and wait until they say it's done.
 
 ## 3. Build
 
@@ -52,7 +55,7 @@ Wait for the user's approval. Answer any deviation questions before you build.
 
 ## 4. Review
 
-Spawn an independent review agent (`general-purpose`) on `git diff origin/firmware_overhaul...HEAD`. Give it:
+Spawn an independent review agent (`general-purpose`) on `git diff origin/firmware_overhaul...HEAD`. Always pass `model: "opus"`, and pass `effort` set to the step's **Review effort** from the status table (`high` or `xhigh`). This skill is the instruction that sets that effort. Give the agent:
 - the step plan and the relevant plan sections
 - the `CLAUDE.md` rules
 - a brief to find correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans
