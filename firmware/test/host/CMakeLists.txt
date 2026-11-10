@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Host-side unit tests for the pure-logic parts of the firmware: the wire
-# codec, the protocol encoders/decoders (including diag's codec and slot
+# Host-side unit tests for the pure-logic parts of the firmware: the
+# protocol/ library (CRC, framing, frame scanner, wire codec; its tests are
+# protocol/test) and the protocol encoders/decoders (including diag's codec and slot
 # table), the PID and the velocity estimator.
 # These sources have no ESP-IDF or FreeRTOS dependency; shim/ provides the
 # two IDF headers they still include (sdkconfig.h, esp_log.h).
@@ -17,6 +18,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON) # gnu++20, close to IDF's gnu++2b
 
 set(COMPONENTS_DIR ${CMAKE_CURRENT_LIST_DIR}/../../components)
+set(PROTOCOL_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../protocol)
+
+# The pure wire library, built as the ordinary host library. Warnings are
+# errors here, like for the firmware sources below.
+add_subdirectory(${PROTOCOL_DIR} ${CMAKE_CURRENT_BINARY_DIR}/protocol)
+target_compile_options(drivelink_protocol PRIVATE -Werror)
 
 # Firmware sources under test. Add a file here only if it builds without
 # ESP-IDF (beyond the shims).
@@ -32,7 +39,10 @@ set(FIRMWARE_SOURCES
 
 set(TEST_SOURCES
     tests/test_main.cpp
-    tests/test_wire_codec.cpp
+    ${PROTOCOL_DIR}/test/test_crc.cpp
+    ${PROTOCOL_DIR}/test/test_framing.cpp
+    ${PROTOCOL_DIR}/test/test_scanner.cpp
+    ${PROTOCOL_DIR}/test/test_wire_codec.cpp
     tests/test_pid.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp
@@ -44,10 +54,10 @@ set(TEST_SOURCES
 )
 
 add_executable(host_tests ${TEST_SOURCES} ${FIRMWARE_SOURCES})
+target_link_libraries(host_tests PRIVATE drivelink::protocol)
 
 target_include_directories(host_tests PRIVATE
     shim
-    ${COMPONENTS_DIR}/uart_comm/include
     ${COMPONENTS_DIR}/pid/include
     ${COMPONENTS_DIR}/motor_controller/include
     ${COMPONENTS_DIR}/motor_manager/include

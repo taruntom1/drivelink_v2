@@ -1,7 +1,7 @@
 #include "doctest.h"
 
 #include "motor_protocol.hpp"
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 #include <array>
 #include <cstring>
@@ -9,7 +9,7 @@
 
 using namespace motor_manager;
 using namespace motor_manager::protocol;
-using uart_comm::wire::Writer;
+using drivelink::protocol::wire::Writer;
 
 namespace {
 
@@ -383,7 +383,7 @@ TEST_CASE("Telemetry packet layout")
     CHECK(out[2] == 0x08); // timestamp, little-endian
     CHECK(out[9] == 0x01);
 
-    uart_comm::wire::Reader r(&out[kTelemetryPacketHeaderSize], len - kTelemetryPacketHeaderSize);
+    drivelink::protocol::wire::Reader r(&out[kTelemetryPacketHeaderSize], len - kTelemetryPacketHeaderSize);
     CHECK(r.readU8() == 1);
     CHECK(r.readU8() == kTelemetryFieldAll);
     CHECK(r.readF32Le() == 1.0f);

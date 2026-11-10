@@ -1,13 +1,13 @@
 #include "imu_protocol.hpp"
 
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 namespace imu_bmo_055::protocol {
 
 namespace {
 
-using uart_comm::wire::Reader;
-using uart_comm::wire::Writer;
+using drivelink::protocol::wire::Reader;
+using drivelink::protocol::wire::Writer;
 
 bool hasField(uint16_t field_mask, StreamField field)
 {

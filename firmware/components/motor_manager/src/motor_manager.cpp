@@ -52,6 +52,7 @@ constexpr uint32_t kSetpointCallback = 5;
 constexpr uint32_t kUpdateTask = 6;
 constexpr uint32_t kControlTimer = 7;
 constexpr uint32_t kConfigTask = 8;
+constexpr uint32_t kStreamOpen = 9;
 } // namespace init_stage
 
 static_assert(gpio_policy::kGpioCount == GPIO_NUM_MAX, "gpio_policy is written for the ESP32-S3");
@@ -132,6 +133,16 @@ MotorManager::MotorManager(uart_comm::UartComm &uart, const ManagerConfig &confi
     m_control_period_us.store(control_period_us, std::memory_order_relaxed);
     m_telemetry_divider.store(telemetryDivider(m_requested_telemetry_period_us, control_period_us),
                               std::memory_order_relaxed);
+
+    // The telemetry slot is allocated here, once, so sendData() on the control
+    // tick never allocates or waits.
+    const esp_err_t stream_ret = m_uart.openStream(m_config.telemetry_stream_channel, CONFIG_UART_COMM_MAX_PAYLOAD);
+    if (stream_ret != ESP_OK) {
+        DIAG_ERROR(codes::kInitFailed, stream_ret, init_stage::kStreamOpen, 0,
+                   "Failed to open telemetry stream (ch=0x%02X): %s",
+                   m_config.telemetry_stream_channel, esp_err_to_name(stream_ret));
+        return;
+    }
 
     const esp_err_t cfg_cb_ret = m_uart.registerCallback(
         m_config.configure_msg_type,

@@ -91,7 +91,7 @@ static constexpr uint8_t STREAM_TEST = 0x80;
 // ── Global state shared between callback and main loop ──────────────────────
 static volatile bool    g_stream_received = false;
 static uint8_t          g_stream_payload[CONFIG_UART_COMM_MAX_PAYLOAD];
-static volatile uint8_t g_stream_len      = 0;
+static volatile uint16_t g_stream_len     = 0;
 
 extern "C" void app_main(void)
 {
@@ -110,6 +110,12 @@ extern "C" void app_main(void)
     }
     ESP_LOGI(TAG, "UartComm ready");
 
+    // sendData() needs its channel opened once, at setup.
+    if (comm.openStream(STREAM_TEST, CONFIG_UART_COMM_MAX_PAYLOAD) != ESP_OK) {
+        ESP_LOGE(TAG, "openStream failed – halt");
+        return;
+    }
+
     // ── Register callback for the stream test channel (0x80) ─────────────────
     // Frames arriving on 0x80 are NOT pushed to the RX queue; they go here.
     // stream_cb must be destroyed before comm; declaring it after comm ensures that.
@@ -125,7 +131,9 @@ extern "C" void app_main(void)
     while (true) {
         esp_err_t ret = comm.receive(frame, pdMS_TO_TICKS(15000));
         if (ret == ESP_ERR_TIMEOUT) {
-            ESP_LOGI(TAG, "Idle – waiting for test commands on UART0...");
+            const StackHighWater hw = comm.stackHighWater();
+            ESP_LOGI(TAG, "Idle – waiting for test commands on UART0 (stack free: rx=%u tx=%u bytes)",
+                     static_cast<unsigned>(hw.rx_free), static_cast<unsigned>(hw.tx_free));
             continue;
         }
 
@@ -160,12 +168,12 @@ extern "C" void app_main(void)
         case CMD_READ_STREAM: {
                 ESP_LOGI(TAG, "Test: CMD_READ_STREAM started");
             uint8_t buf[1 + CONFIG_UART_COMM_MAX_PAYLOAD];
-            uint8_t reply_len = 0;
+            size_t reply_len = 0;
             if (g_stream_received) {
                 buf[0] = 0x01;
-                uint8_t plen = g_stream_len;
+                size_t plen = g_stream_len;
                 std::memcpy(&buf[1], g_stream_payload, plen);
-                reply_len = static_cast<uint8_t>(1u + plen);
+                reply_len = 1u + plen;
                 // Clear for the next test
                 g_stream_received = false;
                 g_stream_len      = 0;

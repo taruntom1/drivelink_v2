@@ -1,6 +1,6 @@
 #include "uart_comm.hpp"
-#include "frame.hpp"
 #include "parser.hpp"
+#include "drivelink/protocol/framing.hpp"
 #include "stoppable_task.hpp"
 #include "sdkconfig.h"
 #include "esp_log.h"
@@ -11,28 +11,64 @@
 #include "freertos/semphr.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <utility>
-#include <atomic>
 
 static const char *const TAG = "uart_comm";
 
 namespace uart_comm {
 
+namespace protocol = drivelink::protocol;
+
+namespace {
+
+constexpr size_t kMaxPayload = CONFIG_UART_COMM_MAX_PAYLOAD;
+constexpr size_t kMaxFrameSize = protocol::frameSize(kMaxPayload);
+constexpr size_t kCmdPoolSize = CONFIG_UART_COMM_CMD_QUEUE_DEPTH;
+
+static_assert(kMaxPayload <= protocol::kMaxPayload, "CONFIG_UART_COMM_MAX_PAYLOAD is above the LEN field's range");
+static_assert(kCmdPoolSize <= 255U, "command buffers are identified by a uint8_t index");
+
+// The TX task waits at most this long for a stream slot's lock. Writers hold
+// it only for a memcpy, so this is never reached in practice.
+constexpr TickType_t kStreamLockTimeout = pdMS_TO_TICKS(100);
+
+} // namespace
+
 // ── Stream slot: holds the latest payload for one data stream channel ──
+//
+// Two buffers: the TX task sends from one while sendData() fills the other.
+//   ready   index of the buffer holding unsent data, or -1. Guarded by `mutex`.
+//   sending index of the buffer the TX task is encoding from, or -1. Set by
+//           the TX task under `mutex`, cleared by it without. sendData() reads
+//           it under `mutex` and never writes the buffer it names.
 
 struct StreamSlot {
-    std::array<uint8_t, CONFIG_UART_COMM_MAX_PAYLOAD> payload{};
-    uint8_t len = 0;
-    bool dirty = false;
-};
+    StreamSlot(size_t capacity_bytes, SemaphoreHandle_t lock)
+        : capacity(capacity_bytes), mutex(lock)
+    {
+        for (size_t i = 0; i < buf.size(); ++i) {
+            buf[i] = std::make_unique<uint8_t[]>(capacity_bytes);
+        }
+    }
 
-// ── Internal TX queue item: a pre-encoded frame buffer ──
+    ~StreamSlot()
+    {
+        vSemaphoreDelete(mutex);
+    }
 
-struct TxItem {
-    std::array<uint8_t, detail::kMaxFrameSize> data{};
-    size_t size = 0;
+    StreamSlot(const StreamSlot&) = delete;
+    StreamSlot& operator=(const StreamSlot&) = delete;
+
+    const size_t capacity;
+    SemaphoreHandle_t const mutex;
+    std::array<std::unique_ptr<uint8_t[]>, 2> buf;
+    std::array<size_t, 2> len{};
+    int ready = -1;
+    std::atomic<int> sending{-1};
 };
 
 // ── Impl ────────────────────────────────────────────────────────────────
@@ -40,6 +76,7 @@ struct TxItem {
 struct UartComm::Impl {
     // Configuration
     uart_port_t port;
+    bool driver_installed;
 
     // UART event queue (from driver)
     QueueHandle_t uart_event_queue;
@@ -48,15 +85,24 @@ struct UartComm::Impl {
     rtos_util::StoppableTask rx_task;
     rtos_util::StoppableTask tx_task;
 
-    // TX: high-priority command queue
-    QueueHandle_t cmd_queue;
+    // TX: command frames. A fixed pool of frame buffers moves between two
+    // queues of buffer indices: `cmd_free` holds the idle ones, `cmd_ready`
+    // the encoded ones in send order. A queue never holds more than the pool
+    // size, so posting an index cannot fail.
+    std::unique_ptr<uint8_t[]> cmd_pool;           // kCmdPoolSize * kMaxFrameSize bytes
+    std::array<size_t, kCmdPoolSize> cmd_size;     // encoded size per buffer
+    QueueHandle_t cmd_free;
+    QueueHandle_t cmd_ready;
 
-    // TX: low-priority stream slots (latest-wins per channel)
-    std::array<StreamSlot, detail::kStreamChannelCount> stream_slots{};
-    SemaphoreHandle_t stream_mutex;
+    // TX: low-priority stream slots (latest-wins per channel). A slot is created
+    // by openStream() and read by the TX task, hence the atomic pointers.
+    std::array<std::atomic<StreamSlot*>, protocol::kStreamChannelCount> stream_slots;
+    std::atomic<uint32_t> stream_skipped;
+    std::unique_ptr<uint8_t[]> tx_frame;           // TX task: encode buffer for stream frames
 
     // RX: delivery queue for frames without a registered callback
     QueueHandle_t rx_queue;
+    RxFrame rx_frame;                              // RX task: the frame being delivered
 
     // RX: per-MSG_TYPE callback table.
     // callback_mutex is recursive. The RX task holds it while a callback runs,
@@ -77,7 +123,7 @@ struct UartComm::Impl {
 void UartComm::rxTaskBody(Impl* impl)
 {
     uart_event_t event = {};
-    RxFrame frame = {};
+    RxFrame& frame = impl->rx_frame;
 
     while (!impl->rx_task.stopRequested()) {
         // Driver events only wake us up (and report errors); the parser pulls
@@ -111,40 +157,47 @@ void UartComm::rxTaskBody(Impl* impl)
 
 void UartComm::txTaskBody(Impl* impl)
 {
-    TxItem item = {};
-
-    // Local buffer for encoding stream frames
-    std::array<uint8_t, detail::kMaxFrameSize> stream_buf{};
-    std::array<uint8_t, CONFIG_UART_COMM_MAX_PAYLOAD> payload_copy{};
-
     while (!impl->tx_task.stopRequested()) {
         // Block until notified that there's work to do (or a stop request)
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
 
         // Phase 1: Drain ALL pending commands (high priority)
-        while (xQueueReceive(impl->cmd_queue, &item, 0) == pdTRUE) {
-            uart_write_bytes(impl->port, item.data.data(), item.size);
+        uint8_t index = 0;
+        while (xQueueReceive(impl->cmd_ready, &index, 0) == pdTRUE) {
+            uart_write_bytes(impl->port, &impl->cmd_pool[static_cast<size_t>(index) * kMaxFrameSize],
+                             impl->cmd_size[index]);
+            // Hand the buffer back. This cannot fail: the free queue has room for the whole pool.
+            (void)xQueueSend(impl->cmd_free, &index, 0);
         }
 
-        // Phase 2: Send latest value for each dirty stream slot
-        for (int i = 0; i < detail::kStreamChannelCount; i++) {
-            uint8_t len = 0;
-            bool was_dirty = false;
-
-            xSemaphoreTake(impl->stream_mutex, portMAX_DELAY);
-            if (impl->stream_slots[i].dirty) {
-                len = impl->stream_slots[i].len;
-                std::memcpy(payload_copy.data(), impl->stream_slots[i].payload.data(), len);
-                impl->stream_slots[i].dirty = false;
-                was_dirty = true;
+        // Phase 2: Send the latest value of each stream channel that has new data
+        for (size_t i = 0; i < protocol::kStreamChannelCount; i++) {
+            StreamSlot* slot = impl->stream_slots[i].load(std::memory_order_acquire);
+            if (slot == nullptr) {
+                continue;
             }
-            xSemaphoreGive(impl->stream_mutex);
 
-            if (was_dirty) {
-                uint8_t channel = detail::kStreamMin + static_cast<uint8_t>(i);
-                size_t frame_size = detail::encodeFrame(stream_buf.data(), channel, payload_copy.data(), len);
-                uart_write_bytes(impl->port, stream_buf.data(), frame_size);
+            int taken = -1;
+            if (xSemaphoreTake(slot->mutex, kStreamLockTimeout) == pdTRUE) {
+                taken = slot->ready;
+                if (taken >= 0) {
+                    slot->ready = -1;
+                    slot->sending.store(taken);
+                }
+                xSemaphoreGive(slot->mutex);
             }
+            if (taken < 0) {
+                continue;
+            }
+
+            // The lock is not held here: sendData() fills the other buffer meanwhile.
+            const auto channel = static_cast<uint8_t>(protocol::kStreamMin + i);
+            const size_t frame_size = protocol::encodeFrame(impl->tx_frame.get(), kMaxFrameSize, channel,
+                                                            slot->buf[taken].get(), slot->len[taken]);
+            if (frame_size > 0U) {
+                uart_write_bytes(impl->port, impl->tx_frame.get(), frame_size);
+            }
+            slot->sending.store(-1);
         }
     }
 }
@@ -155,8 +208,20 @@ UartComm::UartComm(const UartCommConfig& config)
     : m_impl(new Impl{}) // NOSONAR: explicit ownership is paired with staged teardown ordering for RTOS/driver resources.
 {
     m_impl->port = static_cast<uart_port_t>(config.port_num);
-    m_impl->parser = nullptr;
+    m_impl->driver_installed = false;
+    m_impl->uart_event_queue = nullptr;
+    m_impl->cmd_size.fill(0);
+    m_impl->cmd_free = nullptr;
+    m_impl->cmd_ready = nullptr;
+    for (auto& slot : m_impl->stream_slots) {
+        slot.store(nullptr);
+    }
+    m_impl->stream_skipped = 0;
+    m_impl->rx_queue = nullptr;
+    m_impl->rx_frame = {};
+    m_impl->callback_mutex = nullptr;
     m_impl->active_registrations = 0;
+    m_impl->parser = nullptr;
     m_impl->valid = false;
 
     // Configure UART parameters
@@ -197,6 +262,7 @@ UartComm::UartComm(const UartCommConfig& config)
                  m_impl->port, esp_err_to_name(ret));
         return;
     }
+    m_impl->driver_installed = true;
 
     // RX timeout: the driver posts UART_DATA after this many idle symbols,
     // which wakes the RX task promptly at the end of each burst.
@@ -206,43 +272,39 @@ UartComm::UartComm(const UartCommConfig& config)
                  m_impl->port, esp_err_to_name(ret));
     }
 
-    // Create FreeRTOS primitives
-    m_impl->cmd_queue = xQueueCreate(CONFIG_UART_COMM_CMD_QUEUE_DEPTH, sizeof(TxItem));
-    if (m_impl->cmd_queue == nullptr) {
-        ESP_LOGE(TAG, "Failed to create TX command queue");
-        uart_driver_delete(m_impl->port);
+    // Preallocate every buffer and queue now, so nothing allocates while running.
+    // A failed `new` aborts, which is acceptable for setup-time allocation.
+    m_impl->cmd_pool = std::make_unique<uint8_t[]>(kCmdPoolSize * kMaxFrameSize);
+    m_impl->tx_frame = std::make_unique<uint8_t[]>(kMaxFrameSize);
+
+    m_impl->cmd_free = xQueueCreate(kCmdPoolSize, sizeof(uint8_t));
+    m_impl->cmd_ready = xQueueCreate(kCmdPoolSize, sizeof(uint8_t));
+    if (m_impl->cmd_free == nullptr || m_impl->cmd_ready == nullptr) {
+        ESP_LOGE(TAG, "Failed to create TX command queues");
+        releaseResources(m_impl);
         return;
+    }
+    for (size_t i = 0; i < kCmdPoolSize; ++i) {
+        const auto index = static_cast<uint8_t>(i);
+        (void)xQueueSend(m_impl->cmd_free, &index, 0);
     }
 
     m_impl->rx_queue = xQueueCreate(CONFIG_UART_COMM_RX_QUEUE_DEPTH, sizeof(RxFrame));
     if (m_impl->rx_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create RX delivery queue");
-        vQueueDelete(m_impl->cmd_queue);
-        uart_driver_delete(m_impl->port);
-        return;
-    }
-
-    m_impl->stream_mutex = xSemaphoreCreateMutex();
-    if (m_impl->stream_mutex == nullptr) {
-        ESP_LOGE(TAG, "Failed to create stream mutex");
-        vQueueDelete(m_impl->rx_queue);
-        vQueueDelete(m_impl->cmd_queue);
-        uart_driver_delete(m_impl->port);
+        releaseResources(m_impl);
         return;
     }
 
     m_impl->callback_mutex = xSemaphoreCreateRecursiveMutex();
     if (m_impl->callback_mutex == nullptr) {
         ESP_LOGE(TAG, "Failed to create callback mutex");
-        vSemaphoreDelete(m_impl->stream_mutex);
-        vQueueDelete(m_impl->rx_queue);
-        vQueueDelete(m_impl->cmd_queue);
-        uart_driver_delete(m_impl->port);
+        releaseResources(m_impl);
         return;
     }
 
     // Create parser
-    m_impl->parser = new detail::Parser(m_impl->port, detail::kMaxPayload); // NOSONAR: parser lifetime is explicitly coordinated with task shutdown.
+    m_impl->parser = new detail::Parser(m_impl->port, kMaxPayload); // NOSONAR: parser lifetime is explicitly coordinated with task shutdown.
 
     // Create RX task
     Impl* impl = m_impl;
@@ -252,13 +314,7 @@ UartComm::UartComm(const UartCommConfig& config)
                                                [impl] { rxTaskBody(impl); });
     if (task_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create RX task");
-        delete m_impl->parser; // NOSONAR: explicit destruction keeps teardown deterministic after task creation failure.
-        m_impl->parser = nullptr;
-        vSemaphoreDelete(m_impl->callback_mutex);
-        vSemaphoreDelete(m_impl->stream_mutex);
-        vQueueDelete(m_impl->rx_queue);
-        vQueueDelete(m_impl->cmd_queue);
-        uart_driver_delete(m_impl->port);
+        releaseResources(m_impl);
         return;
     }
 
@@ -270,19 +326,51 @@ UartComm::UartComm(const UartCommConfig& config)
     if (task_ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create TX task");
         m_impl->rx_task.stop();
-        delete m_impl->parser; // NOSONAR: explicit parser cleanup on partial construction failure.
-        m_impl->parser = nullptr;
-        vSemaphoreDelete(m_impl->callback_mutex);
-        vSemaphoreDelete(m_impl->stream_mutex);
-        vQueueDelete(m_impl->rx_queue);
-        vQueueDelete(m_impl->cmd_queue);
-        uart_driver_delete(m_impl->port);
+        releaseResources(m_impl);
         return;
     }
 
     m_impl->valid = true;
     ESP_LOGI(TAG, "Initialized on UART%d tx=%d rx=%d baud=%d",
              m_impl->port, config.tx_pin, config.rx_pin, config.baud_rate);
+}
+
+// ── Teardown ────────────────────────────────────────────────────────────
+
+// Release every resource that exists, in reverse order of creation. Safe to
+// call on a partly built Impl, and more than once. The tasks must be stopped.
+void UartComm::releaseResources(Impl* impl)
+{
+    if (impl->driver_installed) {
+        uart_driver_delete(impl->port);
+        impl->driver_installed = false;
+        impl->uart_event_queue = nullptr;
+    }
+
+    delete impl->parser; // NOSONAR: parser must outlive RX task loop and be released after shutdown.
+    impl->parser = nullptr;
+
+    if (impl->callback_mutex != nullptr) {
+        vSemaphoreDelete(impl->callback_mutex);
+        impl->callback_mutex = nullptr;
+    }
+    if (impl->rx_queue != nullptr) {
+        vQueueDelete(impl->rx_queue);
+        impl->rx_queue = nullptr;
+    }
+    for (auto& slot : impl->stream_slots) {
+        delete slot.exchange(nullptr); // NOSONAR: slots are created by openStream() and owned by the Impl.
+    }
+    if (impl->cmd_ready != nullptr) {
+        vQueueDelete(impl->cmd_ready);
+        impl->cmd_ready = nullptr;
+    }
+    if (impl->cmd_free != nullptr) {
+        vQueueDelete(impl->cmd_free);
+        impl->cmd_free = nullptr;
+    }
+    impl->tx_frame.reset();
+    impl->cmd_pool.reset();
 }
 
 // ── Destructor ──────────────────────────────────────────────────────────
@@ -308,14 +396,7 @@ UartComm::~UartComm()
             m_impl->rx_task.stop();
             m_impl->tx_task.stop();
 
-            uart_driver_delete(m_impl->port);
-
-            vSemaphoreDelete(m_impl->callback_mutex);
-            vSemaphoreDelete(m_impl->stream_mutex);
-            vQueueDelete(m_impl->rx_queue);
-            vQueueDelete(m_impl->cmd_queue);
-
-            delete m_impl->parser; // NOSONAR: parser must outlive RX task loop and be released after shutdown.
+            releaseResources(m_impl);
         }
         delete m_impl; // NOSONAR: impl owns non-RAII RTOS handles that are released in ordered teardown above.
         m_impl = nullptr;
@@ -348,78 +429,132 @@ bool UartComm::isValid() const
 
 // ── sendCommand ─────────────────────────────────────────────────────────
 
-esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_t len)
+esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len)
 {
     if (!m_impl || !m_impl->valid) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (detail::isStream(msg_type)) {
+    if (protocol::isStream(msg_type)) {
         ESP_LOGE(TAG, "sendCommand called with stream type 0x%02X, use sendData()", msg_type);
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (!detail::isCommand(msg_type) && !detail::isResponse(msg_type) && !detail::isEvent(msg_type)) {
+    if (!protocol::isCommand(msg_type) && !protocol::isResponse(msg_type) && !protocol::isEvent(msg_type)) {
         ESP_LOGE(TAG, "sendCommand called with reserved msg_type 0x%02X", msg_type);
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (len > detail::kMaxPayload) {
+    if (len > kMaxPayload) {
         ESP_LOGE(TAG, "sendCommand payload too long: msg_type=0x%02X len=%u max=%u",
-                 msg_type, len, detail::kMaxPayload);
+                 msg_type, static_cast<unsigned>(len), static_cast<unsigned>(kMaxPayload));
         return ESP_ERR_INVALID_ARG;
     }
 
     if (payload == nullptr && len > 0) {
-        ESP_LOGE(TAG, "sendCommand called with null payload, msg_type=0x%02X len=%u", msg_type, len);
+        ESP_LOGE(TAG, "sendCommand called with null payload, msg_type=0x%02X len=%u",
+                 msg_type, static_cast<unsigned>(len));
         return ESP_ERR_INVALID_ARG;
     }
 
-    TxItem item = {};
-    item.size = detail::encodeFrame(item.data.data(), msg_type, payload, len);
-
-    if (xQueueSend(m_impl->cmd_queue, &item, 0) != pdTRUE) {
+    // Take an idle buffer without waiting and encode straight into it.
+    uint8_t index = 0;
+    if (xQueueReceive(m_impl->cmd_free, &index, 0) != pdTRUE) {
         ESP_LOGW(TAG, "TX command queue full, msg_type=0x%02X", msg_type);
         return ESP_ERR_NO_MEM;
     }
 
+    const size_t size = protocol::encodeFrame(&m_impl->cmd_pool[static_cast<size_t>(index) * kMaxFrameSize],
+                                              kMaxFrameSize, msg_type, payload, len);
+    if (size == 0U) {
+        // Unreachable after the checks above; give the buffer back anyway.
+        (void)xQueueSend(m_impl->cmd_free, &index, 0);
+        return ESP_ERR_INVALID_ARG;
+    }
+    m_impl->cmd_size[index] = size;
+
+    // Cannot fail: the ready queue has room for the whole pool.
+    (void)xQueueSend(m_impl->cmd_ready, &index, 0);
     m_impl->tx_task.notify();
+    return ESP_OK;
+}
+
+// ── openStream ──────────────────────────────────────────────────────────
+
+esp_err_t UartComm::openStream(uint8_t channel, size_t max_len)
+{
+    if (!m_impl || !m_impl->valid) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!protocol::isStream(channel) || max_len == 0U || max_len > kMaxPayload) {
+        ESP_LOGE(TAG, "openStream invalid arguments: channel=0x%02X max_len=%u max=%u",
+                 channel, static_cast<unsigned>(max_len), static_cast<unsigned>(kMaxPayload));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    SemaphoreHandle_t lock = xSemaphoreCreateMutex();
+    if (lock == nullptr) {
+        ESP_LOGE(TAG, "openStream: failed to create the mutex for channel 0x%02X", channel);
+        return ESP_ERR_NO_MEM;
+    }
+    auto* slot = new StreamSlot(max_len, lock); // NOSONAR: owned by the Impl, deleted in releaseResources().
+
+    StreamSlot* expected = nullptr;
+    if (!m_impl->stream_slots[channel - protocol::kStreamMin].compare_exchange_strong(
+            expected, slot, std::memory_order_acq_rel)) {
+        delete slot; // NOSONAR: lost the race, or the channel was already open.
+        ESP_LOGE(TAG, "openStream: channel 0x%02X is already open", channel);
+        return ESP_ERR_INVALID_STATE;
+    }
     return ESP_OK;
 }
 
 // ── sendData ────────────────────────────────────────────────────────────
 
-esp_err_t UartComm::sendData(uint8_t channel, const uint8_t* payload, uint8_t len)
+esp_err_t UartComm::sendData(uint8_t channel, const uint8_t* payload, size_t len)
 {
     if (!m_impl || !m_impl->valid) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (!detail::isStream(channel)) {
+    if (!protocol::isStream(channel)) {
         ESP_LOGE(TAG, "sendData called with non-stream channel 0x%02X", channel);
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (len > detail::kMaxPayload) {
+    StreamSlot* slot = m_impl->stream_slots[channel - protocol::kStreamMin].load(std::memory_order_acquire);
+    if (slot == nullptr) {
+        ESP_LOGE(TAG, "sendData on channel 0x%02X that was not opened with openStream()", channel);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (len > slot->capacity) {
         ESP_LOGE(TAG, "sendData payload too long: channel=0x%02X len=%u max=%u",
-                 channel, len, detail::kMaxPayload);
+                 channel, static_cast<unsigned>(len), static_cast<unsigned>(slot->capacity));
         return ESP_ERR_INVALID_ARG;
     }
 
     if (payload == nullptr && len > 0) {
-        ESP_LOGE(TAG, "sendData called with null payload, channel=0x%02X len=%u", channel, len);
+        ESP_LOGE(TAG, "sendData called with null payload, channel=0x%02X len=%u",
+                 channel, static_cast<unsigned>(len));
         return ESP_ERR_INVALID_ARG;
     }
 
-    const int index = channel - detail::kStreamMin;
-
-    xSemaphoreTake(m_impl->stream_mutex, portMAX_DELAY);
-    if (len > 0) {
-        std::memcpy(m_impl->stream_slots[index].payload.data(), payload, len);
+    // Never wait: this runs on the control tick. A busy lock skips this write.
+    if (xSemaphoreTake(slot->mutex, 0) != pdTRUE) {
+        m_impl->stream_skipped.fetch_add(1, std::memory_order_relaxed);
+        return ESP_ERR_TIMEOUT;
     }
-    m_impl->stream_slots[index].len = len;
-    m_impl->stream_slots[index].dirty = true;
-    xSemaphoreGive(m_impl->stream_mutex);
+    // Fill the buffer the TX task is not sending. If unsent data is waiting in
+    // it, this overwrites it: only the latest value is sent.
+    const int target = (slot->sending.load() == 0) ? 1 : 0;
+    if (len > 0) {
+        std::memcpy(slot->buf[target].get(), payload, len);
+    }
+    slot->len[target] = len;
+    slot->ready = target;
+    xSemaphoreGive(slot->mutex);
 
     m_impl->tx_task.notify();
     return ESP_OK;
@@ -524,7 +659,18 @@ ErrorCounters UartComm::getErrorCounters() const
     out.overflows = pc.overflows;
     out.length_errors = pc.length_errors;
     out.discarded_bytes = pc.discarded_bytes;
+    out.stream_skipped = m_impl->stream_skipped.load(std::memory_order_relaxed);
     return out;
+}
+
+// ── stackHighWater ──────────────────────────────────────────────────────
+
+StackHighWater UartComm::stackHighWater() const
+{
+    if (!m_impl || !m_impl->valid) {
+        return {};
+    }
+    return {m_impl->rx_task.stackHighWaterMark(), m_impl->tx_task.stackHighWaterMark()};
 }
 
 } // namespace uart_comm

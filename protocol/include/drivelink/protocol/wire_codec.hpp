@@ -17,7 +17,7 @@
 #include <cstring>
 #include <limits>
 
-namespace uart_comm::wire {
+namespace drivelink::protocol::wire {
 
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
               "wire floats are IEEE-754 binary32");
@@ -156,4 +156,4 @@ private:
     bool m_ok = true;
 };
 
-} // namespace uart_comm::wire
+} // namespace drivelink::protocol::wire

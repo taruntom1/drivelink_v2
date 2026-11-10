@@ -2,7 +2,7 @@
 
 #include "gpio_policy.hpp"
 #include "motor_protocol.hpp"
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 #include <cmath>
 #include <limits>
@@ -35,7 +35,7 @@ std::vector<uint8_t> withHeader(ConfigureSubcommand sub)
 void appendF32(std::vector<uint8_t> &v, float f)
 {
     uint8_t b[4];
-    uart_comm::wire::Writer w(b, sizeof(b));
+    drivelink::protocol::wire::Writer w(b, sizeof(b));
     w.appendF32Le(f);
     v.insert(v.end(), b, b + 4);
 }

@@ -5,14 +5,15 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F1a, the framing and codec extraction into `protocol/`.
-- **Handoff:**
-  - S1 moved the firmware into `firmware/` (commit 1 is moves only, so `git log --follow` works) and wrote the root `CLAUDE.md` (repo map, cross-cutting rules, the temporary overhaul section) and root `README.md`. `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md` keep the firmware rules.
-  - Paths in `firmware/CLAUDE.md` are relative to the repo root. Firmware commands run from the root with `-C firmware`. The nolog variant builds from inside `firmware/` (`idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build`), and CI does the same by `cd`ing into each app, because `-B` resolves against the current directory while `SDKCONFIG` resolves against the project.
-  - The CI check for the HIL app is now named `idf.py build (firmware/test/uart_comm)`. If branch protection requires the old name, update it.
-  - `gen_diag_codes.py` reads `firmware/components/diag/`. The code table is still `docs/protocol/diag-codes.md`.
-  - F1a creates `protocol/` at the repo root. It joins the firmware build through `EXTRA_COMPONENT_DIRS` in `firmware/CMakeLists.txt` and `firmware/test/uart_comm/CMakeLists.txt`, and its tests join the host test build.
-  - Local follow-ups for the user (not in the PR): delete the old root `build/` and `sdkconfig`, point the VS Code ESP-IDF extension at `firmware/`, and rebase other worktrees.
+- **Next step:** F1b, the new framing (u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud, UART ISR in IRAM, protocol version bumps). It needs the user's board for the HIL run.
+- **Handoff (F1a):**
+  - `protocol/` is at the repo root: an IDF component through `EXTRA_COMPONENT_DIRS` (in `firmware/CMakeLists.txt` and `firmware/test/uart_comm/CMakeLists.txt`) and a plain static library `drivelink::protocol` elsewhere. Namespace `drivelink::protocol`, headers under `drivelink/protocol/`: `wire_codec.hpp` (`::wire`), `crc.hpp`, `framing.hpp`, `scanner.hpp`. Its tests are in `protocol/test/` and are compiled into `firmware/test/host` (it has the vendored doctest). The wire format is unchanged. The CRC is now a pure table (the ROM CRC is gone), cross-checked against `firmware/test/uart_comm/protocol.py`.
+  - F1b changes the frame in `framing.hpp` (`kMaxPayload`, `encodeFrame`, `validateCrc`, a header CRC8) and in `scanner.cpp` (reject on HCRC or LEN before waiting for the payload). `Scanner` takes `max_payload` and sizes its window as two frames. The `uint8_t` LEN assumption sits in `framing.cpp` and `scanner.cpp` only. `RxFrame::len` is already `uint16_t`, and `sendCommand` / `sendData` already take `size_t`.
+  - `uart_comm` now allocates everything at setup: a command buffer pool (`CONFIG_UART_COMM_CMD_QUEUE_DEPTH` buffers of one max frame, two index queues), `Impl::rx_frame`, the TX stream encode buffer, and per-channel stream slots from `openStream(channel, max_len)`. `sendData` on an unopened channel fails with `ESP_ERR_INVALID_STATE`; a busy slot skips the write (`ESP_ERR_TIMEOUT`, counted in `ErrorCounters::stream_skipped`). `motor_manager` and the IMU open their channel in their constructors (new `InitFailed` stage 9 and 10 in `diag_codes.yaml`).
+  - **Raising `MAX_PAYLOAD` to 1024 costs memory in F1b:** the command pool grows to `depth × 1033` bytes, `RxFrame` to about 1 KB (it is copied into `rx_queue` and into the managers' config queues, whose item size is `sizeof(RxFrame)`), and the stack buffers `uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD]` in `motor_manager.cpp` (telemetry encode, two places) and `imu_bmo_055.cpp` (`tx_payload`) become 1 KB on the stack. Check each, and the `static_assert`s in `diag_reporter.cpp`. `CONFIG_UART_COMM_TX_BUF_SIZE` (1024) should exceed a full frame, or `uart_write_bytes` blocks the TX task. The Kconfig range for `UART_COMM_MAX_PAYLOAD` is still 1..255.
+  - Task stacks are unchanged (4096 each). `UartComm::stackHighWater()` (backed by the new `StoppableTask::stackHighWaterMark()`) is logged by the HIL test app on every idle timeout. F1b sets the sizes from the marks it reads with 1024-byte frames.
+  - No hardware was run in F1a. F1b's HIL run is the first hardware test of the rewritten TX paths, so expect to look at `stream_skipped` and the stack marks there.
+  - Local follow-ups for the user (not in the PR): delete the old root `build/` and `sdkconfig`, point the VS Code ESP-IDF extension at `firmware/`, rebase other worktrees, and update branch protection if it requires the old name of the HIL CI check (now `idf.py build (firmware/test/uart_comm)`).
 
 ## Steps
 
@@ -20,9 +21,9 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Build model · effort | Review effort | State | PR |
 |---|---|---|---|---|---|---|
-| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | Sonnet · medium | high | in review | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
-| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | Sonnet · medium | high | in review | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
-| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack sizes, non-blocking `sendData`) | no | Sonnet · high | high | planned | |
+| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | Sonnet · medium | high | merged | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
+| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | Sonnet · medium | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
+| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | Sonnet · high | high | in review | |
 | F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | Opus · high | xhigh | planned | |
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | planned | |
 | F3a | `core_os` (IDF and native), registry, loops, layout and NVS (A/B, validation, GPIO registry), safe mode, `firmware/test/native` | no | Opus · high | high | planned | |
@@ -63,6 +64,12 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-10 | S1 | CI builds each app from inside its directory (`cd`) instead of `idf.py -C <app> -B build_variant ...` | `-B` resolves against the current directory but `SDKCONFIG` and the defaults resolve against the project dir, so with `-C` the variant paths would split between the root and `firmware/` | n/a |
 | 2026-11-10 | S1 | `firmware/CLAUDE.md` writes all paths relative to the repo root, and the root `CLAUDE.md` holds the repo map and cross-cutting rules | An agent never has to guess the base directory | n/a |
 | 2026-11-10 | S0 | The restructure no longer moves `review/` or `TODO.md`, and phases update `docs/protocol/` instead of component READMEs or `review/` statuses | Those files were removed in `f4de709` | yes |
+| 2026-11-10 | F1a | `protocol/` uses namespace `drivelink::protocol` (`::wire` for the codec) and headers under `drivelink/protocol/` | Matches the host plan's tree and keeps the host from depending on `uart_comm` | n/a |
+| 2026-11-10 | F1a | CRC-16 is a pure table in `protocol/` instead of `esp_rom_crc16_be` | One tested implementation for the firmware and the host; same results (check value 0x29B1, checked against `protocol.py`) | n/a |
+| 2026-11-10 | F1a | `Scanner` is the pure half of the old `Parser`: it returns frames as views, has no clock and no logging, and loops past rejected candidates itself. `Parser` keeps the driver reads, the stale timer, the atomics and the log lines | `protocol/` has to build without IDF or an OS | n/a |
+| 2026-11-10 | F1a | Task stack sizes are not changed in F1a; `stackHighWater()` is added and logged, and F1b sets the sizes from HIL measurements | With 255-byte frames and the buffers moved off the stacks, nothing needs a bigger stack yet; the real sizes depend on 1024-byte frames | n/a |
+| 2026-11-10 | F1a | `sendData` needs `openStream(channel, max_len)` first, and a busy slot skips the write (counted locally in `ErrorCounters::stream_skipped`, no diag code until F3b) | The control tick must never wait or allocate; each channel gets a slot of its own size | n/a |
+| 2026-11-10 | F1a | The CMake package export and `package.xml` for `protocol/` wait for F3c; the protocol tests are built by `firmware/test/host` until then | No host consumer exists yet | n/a |
 
 ## Hardware test results
 
