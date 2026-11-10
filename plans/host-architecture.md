@@ -198,11 +198,10 @@ drivelink_v2/
 ├─ CLAUDE.md                  repo map and cross-cutting rules
 ├─ README.md                  project overview
 ├─ firmware/                  ESP-IDF project
-│  ├─ CLAUDE.md  README.md  TODO.md  CMakeLists.txt  sdkconfig.defaults  sdkconfig.ci.nolog
+│  ├─ CLAUDE.md  README.md  CMakeLists.txt  sdkconfig.defaults  sdkconfig.ci.nolog
 │  ├─ main/
 │  ├─ components/             uart_comm, diag, core, core_os, mod_motor, mod_imu_bno055,
 │  │                          mod_mock, motor_hal, rotary_encoder_hal, pid, rtos_util
-│  ├─ review/
 │  └─ test/
 │     ├─ native/              core and module tests, built natively
 │     └─ uart_comm/           HIL test app + pytest
@@ -280,7 +279,8 @@ Each directory is created by the phase that first puts something in it. No empty
 
 | Phase | Content |
 |---|---|
-| 1 | Repo restructure (detailed below). No behavior change. |
+| S0 | Workflow setup on `firmware_overhaul`: the status file, the temporary `CLAUDE.md` section, CI, the `/overhaul-step` skill. |
+| S1 | Repo restructure (detailed below). No behavior change. |
 | F1–F10 | The firmware plan ([firmware-architecture.md](firmware-architecture.md)). From F3 on, each firmware phase also extends the first slice of `libdrivelink` and `drivelink-cli`, which drive and test it. The host-linux CI job starts in F3. |
 | H1 | Complete `libdrivelink`: the time model, the device model, the remaining services, and plant identification math. The host-windows CI job. Tested against vdev. |
 | H2 | GUI in local mode: connect, device, layout, tune and monitor screens. |
@@ -289,9 +289,14 @@ Each directory is created by the phase that first puts something in it. No empty
 
 H1 can start once F4 is done, because vdev then covers the descriptors, params, groups and arming. Later firmware phases add services to `libdrivelink` as they land.
 
-### Phase 1: restructure in detail
+### S1: restructure in detail
 
-This assumes the diag plan has landed, so `components/diag`, `tools/gen_diag_codes.py` and `sdkconfig.ci.nolog` exist. It is done in two commits, so git's rename detection is exact and `git log --follow` keeps working.
+This is based on `firmware_overhaul` after S0:
+- diag has landed, so `components/diag`, `tools/gen_diag_codes.py` and `sdkconfig.ci.nolog` exist.
+- The cleanup commit `f4de709` removed the component READMEs, `review/` and `TODO.md`.
+- `docs/protocol/diag-codes.md` exists.
+
+It is done in two commits, so git's rename detection is exact and `git log --follow` keeps working.
 
 **Commit 1: moves only (`git mv`, no content changes)**
 
@@ -303,19 +308,14 @@ This assumes the diag plan has landed, so `components/diag`, `tools/gen_diag_cod
 | `sdkconfig.defaults`, `sdkconfig.ci.nolog` | `firmware/` |
 | `test/host/` | `firmware/test/host/` |
 | `test/uart_comm/` | `firmware/test/uart_comm/` |
-| `review/` | `firmware/review/` |
-| `TODO.md` | `firmware/TODO.md` |
 | `CLAUDE.md` | `firmware/CLAUDE.md` |
 | `README.md` | `firmware/README.md` |
 
-`tools/`, `plans/` and `.github/` stay at the root.
+`tools/`, `plans/`, `docs/`, `.claude/` and `.github/` stay at the root.
 
 These relative paths stay valid because the depth does not change:
 - `firmware/test/uart_comm/CMakeLists.txt` → `../../components`
 - `firmware/test/host/CMakeLists.txt` → `../../components`
-- the links between component READMEs
-
-The paths inside `review/` and `TODO.md` are written relative to the firmware root, so they stay correct after the move.
 
 **Commit 2: path updates and new root files**
 
@@ -324,23 +324,24 @@ The paths inside `review/` and `TODO.md` are written relative to the firmware ro
   - the nolog build: `firmware/sdkconfig.ci.nolog`
   - host tests: `firmware/test/host`
   - the generated-files check: the new output paths
-- `tools/gen_diag_codes.py`: its input and output paths under `firmware/components/diag/`. In F2 it is replaced by `tools/gen/`.
+- `tools/gen_diag_codes.py`: its input and output paths under `firmware/components/diag/`. The code table stays at `docs/protocol/diag-codes.md`. In F2 the script is replaced by `tools/gen/`.
 - `firmware/CMakeLists.txt`: the rule that sets `LOG_LOCAL_LEVEL` for the nolog build matches components by path. Check that it still finds them.
 - `firmware/CLAUDE.md`:
   - commands become `idf.py -C firmware ...`, or tell the reader to work from `firmware/`
   - paths to `test/host`, `test/uart_comm` and `tools/`
-  - the line on `review/` and `TODO.md`
+  - the temporary overhaul section moves to the new root `CLAUDE.md`, not to `firmware/CLAUDE.md`
 - New root `CLAUDE.md` (short):
   - repo map
   - the "host and firmware change together" rule
   - where each area's rules live (`firmware/CLAUDE.md`, later `protocol/` and `host/CLAUDE.md`)
   - the definition of done for each area
+  - the temporary overhaul section, moved here from today's `CLAUDE.md`
 - New root `README.md`: what DriveLink is (firmware plus host), the layout, and links to `firmware/README.md` and the two plans.
 - `firmware/README.md`: fix the build commands and paths.
 - `.gitignore`:
   - `/components/.idf/` becomes `/firmware/components/.idf/`
   - Fix the lines with trailing `# ...` comments (`flasher_args.json`, `*.exe`, `*.workspace`, `*.suo`, `*.sln.docstates`). Git treats the `#` as part of the pattern, so these lines match nothing today. This was checked with `git check-ignore`.
-- `plans/esp-timer-control-loop.md`, `plans/imu-timer-sampling.md` and the diag plan are records of done work. Leave them as they are, and add one line at the top of each saying that paths are relative to `firmware/`.
+- `plans/firmware-architecture.md` already uses the `firmware/` paths. `plans/overhaul-status.md`: mark S1 merged and write the handoff for F1a.
 - `firmware/test/uart_comm/conftest.py` and `pytest_uart_comm.py`: their docstrings give `test/uart_comm/...` paths and `idf.py -C test/uart_comm`. Prefix them with `firmware/`. The code itself has no repo paths.
 
 **Local follow-ups (not in the PR):**

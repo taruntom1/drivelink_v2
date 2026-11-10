@@ -5,7 +5,9 @@ Status: draft, 2026-11-10 (revised after review). Nothing here is built yet.
 **Baseline.** This plan assumes:
 - `main` at `b72655b`
 - the whole `diag` plan, phases 1–3 (error codes over UART, the `Boot` event, `GetInfo`, `diag_codes.yaml` with its generator, the `detail` byte, motor and IMU configure protocols at v4)
-- the repo restructure (phase 1 of [host-architecture.md](host-architecture.md)): the firmware lives in `firmware/`
+- the repo restructure (step S1, detailed in [host-architecture.md](host-architecture.md)): the firmware lives in `firmware/`
+
+The work runs on the `firmware_overhaul` branch, one session and one PR per step. [overhaul-status.md](overhaul-status.md) holds the step list, the current state and the decision log.
 
 All paths below are relative to the repo root.
 
@@ -53,7 +55,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Testing | The core's logic is pure, behind thin OS adapters. The whole core also builds natively as a **virtual device** with mock modules, which serves as the host's simulator. |
 | Dev client | A minimal C++ `libdrivelink` slice and `drivelink-cli` start in F3 and grow with each phase. H1 completes them for the GUI and ROS. |
 | Migration | Clean break. Each manager is ported to the core, and its typed protocol is deleted in the same PR. |
-| Docs | Every phase updates the READMEs, `docs/protocol/`, `CLAUDE.md` and `components/CLAUDE.md` in the same PR as the change, as the definition of done requires. |
+| Docs | Every phase updates `docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, the READMEs of the components it adds, and `plans/overhaul-status.md`, in the same PR as the change. The legacy component READMEs and `review/` were removed in `f4de709` and are not recreated. |
 
 ## Concepts
 
@@ -484,7 +486,7 @@ CI adds three jobs: the native core and module tests, a vdev integration job, an
 
 ## Phases
 
-Each phase is one PR, or a short series of PRs. Each builds with zero warnings, keeps CI green, and updates its docs (READMEs, `docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, `review/` statuses) in the same PR. The repo restructure comes before F1.
+Each phase is one PR, or a short series of PRs. The steps are listed in [overhaul-status.md](overhaul-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
 
 | Phase | Content | Done when |
 |---|---|---|
@@ -497,7 +499,7 @@ Each phase is one PR, or a short series of PRs. Each builds with zero warnings, 
 | F7 Capture and test signals | The capture and testgen families, PSRAM enabled (caps alloc only). Evaluate `SPIRAM_XIP_FROM_PSRAM`. | A step response and a chirp, captured at 1 kHz on hardware with their inputs |
 | F8 Time | The ping on `0x02`, with TX-time stamping in the TX task. Delete `time_sync`. | The host's offset and drift estimate is stable, with jitter below 100 µs over the Pi's GPIO UART (USB-UART adapters add up to 1 ms of USB frame jitter; their target is a stable estimate, not a jitter bound) |
 | F9 OTA | The partition table (NVS unchanged), the OTA family with sequential and idempotent writes, and rollback. | Updating with the CLI, a retried chunk is acknowledged, and rollback when `CONFIRM` isn't sent |
-| F10 Cleanup | Remove the leftover Kconfig and legacy registry entries, final `review/` statuses, and a full docs consistency pass. | Every rule in the docs matches the code |
+| F10 Cleanup | Remove the leftover Kconfig and legacy registry entries. Rewrite `CLAUDE.md` for the new architecture and remove its temporary overhaul section. A full docs consistency pass. Merge `firmware_overhaul` into `main`. | Every rule in the docs matches the code, and `main` holds the new firmware |
 
 Arming lands (F4) before any real motor is driven through the core (F5), so the board is never driven by the new code without the watchdog and the monitor. From F3 to F5 the old `motor_manager` keeps working alongside the core. Each manager is deleted in the phase that ports it, so no module ever exists in both forms.
 

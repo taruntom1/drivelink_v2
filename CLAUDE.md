@@ -6,6 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DriveLink v2 is ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It drives DC motors (MCPWM + DIR GPIO), reads quadrature encoders (PCNT), runs PID velocity/position loops, streams BNO055 IMU data, and syncs time with a host. The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
 
+## Firmware overhaul in progress (temporary, removed in F10)
+
+The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware-architecture.md), and the host follows ([plans/host-architecture.md](plans/host-architecture.md)). Where this section conflicts with the rest of this file, this section wins. The rest of this file describes the code as it is now, and each step updates it as it changes the code.
+
+- **Start here.** Read [plans/overhaul-status.md](plans/overhaul-status.md) first: the next step, the handoff note and the decision log. Start a step with `/overhaul-step`.
+- **One session per step.**
+  - Branch from `origin/firmware_overhaul`, and open one PR into `firmware_overhaul` (`gh pr create --base firmware_overhaul`).
+  - Never target `main`. It is frozen except for critical fixes.
+- **Every PR updates the status file:** the step's state, its PR link, any decisions, and the handoff note for the next step.
+- **Plan changes.**
+  - Small internal choices: decide, and log them in the decision log.
+  - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user. Then update the plan in the same PR.
+- **Docs.**
+  - The component READMEs and `review/` were removed. `docs/protocol/` is the wire spec, updated in the same PR as any wire change.
+  - New components get a short README (purpose, API, rules) when they land.
+  - There are no `review/` statuses or `TODO.md` to update.
+- **Legacy code.**
+  - `motor_manager`, `imu_bmo_055` and `time_sync` keep working until their phase ports them.
+  - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
+  - Their wire format is defined by their code and host tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
+- **Hardware.** Sessions don't flash the board. A step that needs a hardware check stops before its PR and gives the user a short test script: what to flash, what to run, what to look for.
+
 ## Build, flash, test
 
 ESP-IDF must be exported in the shell first:
@@ -36,7 +58,7 @@ test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
 
 A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `shim/sdkconfig.h`.
 
-**CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`:
+**CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main` and `firmware_overhaul`:
 - `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `/`, then `/` again with `sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `test/uart_comm`.
 - On Ubuntu, `tools/gen_diag_codes.py --check` and the host tests.
 
@@ -119,7 +141,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 ## Conventions
 
-This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [components/CLAUDE.md](components/CLAUDE.md). Code that breaks a rule today is listed in `review/10-docs-and-conventions.md`, and its fix is in `TODO.md`.
+This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [components/CLAUDE.md](components/CLAUDE.md).
 
 ### Real-time paths
 
@@ -146,12 +168,12 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
 - **IDs from Kconfig.** MSG_TYPE values and stream channels come only from Kconfig, within the `uart_comm` ranges above.
-- **The README is the spec.** The component README, or `docs/protocol-api-guide.md` for the IMU, defines the wire format. It is updated in the same commit as any wire change.
+- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section): their wire format is their code and host tests, and the IMU also has `components/imu_bmo_055/docs/protocol-api-guide.md`.
 
 ### Errors, failures and memory
 
 - Check every ESP-IDF return value, and log failures with `esp_err_to_name`.
-- **Report errors to the host through diag** (see `components/diag/README.md`):
+- **Report errors to the host through diag** (the codes are listed in `docs/protocol/diag-codes.md`):
   - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
   - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
   - Each new code goes in `diag_codes.yaml`, then regenerate.
@@ -170,19 +192,14 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 A change is done when all of the following are true:
 - **Builds:** `idf.py build` (also with `sdkconfig.ci.nolog`) and `idf.py -C test/uart_comm build` succeed with zero warnings, the generated diag files are current, and the host tests pass. CI checks all of them.
 - **Docs in the same commit:**
-  - Any public API, protocol or Kconfig change updates the component README in that commit.
+  - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.
-- **Review status:** a change that fixes or affects a `review/` item marks its status in the same change: **Fixed**, **Partly fixed** or **No longer applicable**, with a one-line note.
+- **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md`.
 - **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `test/host/`, and they pass.
 
 ### Files not to edit
 
-- **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand. `components/diag/include/diag_codes.hpp`, `components/diag/host/diag_codes.py` and the code table in `components/diag/README.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
+- **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand. `components/diag/include/diag_codes.hpp`, `components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
 - **Vendor code:**
   - `components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
-
-## Review notes and TODO
-
-- `review/` holds a full-repo code review, with one markdown file per aspect and a ranked index in `review/README.md`. Check it before changing an area: many known issues are listed there with fixes, and each item's status is marked.
-- `TODO.md` lists planned work that is not started yet, including the fixes for current convention violations.
