@@ -1,4 +1,4 @@
 # CI build variant (layered on sdkconfig.defaults): diag console text off.
 # Checks that the firmware builds warning-free with every first-party log
-# compiled out (see components/diag/README.md).
+# compiled out (see docs/protocol/diag-codes.md).
 CONFIG_DIAG_CONSOLE_LOG=n

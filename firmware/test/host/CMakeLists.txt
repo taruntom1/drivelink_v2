@@ -6,9 +6,9 @@ cmake_minimum_required(VERSION 3.16)
 # These sources have no ESP-IDF or FreeRTOS dependency; shim/ provides the
 # two IDF headers they still include (sdkconfig.h, esp_log.h).
 #
-#   cmake -S test/host -B test/host/build -G Ninja
-#   cmake --build test/host/build
-#   ctest --test-dir test/host/build --output-on-failure
+#   cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
+#   cmake --build firmware/test/host/build
+#   ctest --test-dir firmware/test/host/build --output-on-failure
 
 project(drivelink_host_tests LANGUAGES C CXX)
 

@@ -44,7 +44,7 @@ In short, it is the real-time robot control runtime that talks to an upstream co
 
 ## Runtime Architecture
 
-The firmware entry point (`main/main.cpp`) brings up the stack in this order:
+The firmware entry point (`firmware/main/main.cpp`) brings up the stack in this order:
 
 1. `uart_comm::UartComm`
 2. `motor_manager::MotorManager`
@@ -55,22 +55,22 @@ Each module validates initialization through `isValid()`. If any required subsys
 
 ## Components
 
-- `components/uart_comm`:
+- `firmware/components/uart_comm`:
 	- Binary framing and transport over UART.
 	- RX/TX tasks, callback registration, queued receive path, and diagnostics counters.
-- `components/motor_hal`:
+- `firmware/components/motor_hal`:
 	- Low-level motor control API (`motor_hal::Motor`) over MCPWM + DIR GPIO.
-- `components/rotary_encoder_hal`:
+- `firmware/components/rotary_encoder_hal`:
 	- Encoder position/rate/direction API (`rotary_encoder_hal::Encoder`) using PCNT.
-- `components/pid`:
+- `firmware/components/pid`:
 	- Hardware-independent PID algorithm implementation.
-- `components/motor_controller`:
+- `firmware/components/motor_controller`:
 	- Binds motor HAL + encoder HAL + PID for one motor control instance.
-- `components/motor_manager`:
+- `firmware/components/motor_manager`:
 	- Protocol-facing manager for multiple motors, config commands, setpoint stream, telemetry stream.
-- `components/imu_bmo_055`:
+- `firmware/components/imu_bmo_055`:
 	- BNO055 device management and telemetry/control protocol integration.
-- `components/time_sync`:
+- `firmware/components/time_sync`:
 	- Request/response time sync protocol and periodic synchronization task.
 
 ## Protocol-Oriented Control Model
@@ -85,6 +85,8 @@ This design allows low-latency control updates while keeping configuration and d
 
 ## Build And Flash
 
+Run every command from the repository root; paths below are relative to it.
+
 Prerequisites:
 
 - ESP-IDF installed and exported in your shell.
@@ -93,35 +95,35 @@ Prerequisites:
 Typical development flow:
 
 ```bash
-idf.py build
-idf.py flash
-idf.py monitor
+idf.py -C firmware build
+idf.py -C firmware flash
+idf.py -C firmware monitor
 ```
 
 One-shot flow:
 
 ```bash
-idf.py build flash monitor
+idf.py -C firmware build flash monitor
 ```
 
 Configuration menu:
 
 ```bash
-idf.py menuconfig
+idf.py -C firmware menuconfig
 ```
 
 If target/config artifacts become inconsistent:
 
 ```bash
-idf.py fullclean
-idf.py build
+idf.py -C firmware fullclean
+idf.py -C firmware build
 ```
 
 ## Configuration Notes
 
 - Most component defaults are configured via Kconfig and emitted into `sdkconfig`.
 - UART pins/baud, manager message types/channels, IMU stream behavior, and control loop timings are tunable.
-- `main/main.cpp` currently sets example startup values (for example `max_motors = 4` and periodic time sync every 5 seconds).
+- `firmware/main/main.cpp` currently sets example startup values (for example `max_motors = 4` and periodic time sync every 5 seconds).
 
 ## Current Validation Strategy
 

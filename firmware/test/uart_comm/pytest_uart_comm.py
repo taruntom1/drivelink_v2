@@ -3,8 +3,8 @@ pytest_uart_comm.py - Hardware-in-the-loop tests for the uart_comm component.
 
 Prerequisites
 -------------
-1.  Flash ESP32-S3 with the firmware in test/uart_comm/main/test_uart_comm_main.cpp
-    idf.py -C test/uart_comm build flash
+1.  Flash ESP32-S3 with the firmware in firmware/test/uart_comm/main/test_uart_comm_main.cpp
+    idf.py -C firmware/test/uart_comm build flash
 2.  Wire a USB-UART adapter:
     ESP32-S3 GPIO43 (TX) -> USB-UART RXD
     ESP32-S3 GPIO44 (RX) -> USB-UART TXD

@@ -1,32 +1,12 @@
-# CLAUDE.md
+# CLAUDE.md (firmware)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working on the firmware. The repo map and cross-cutting rules are in the root [CLAUDE.md](../CLAUDE.md).
+
+**Paths.** Every path in this file is relative to the repository root, so the firmware sources are `firmware/main/` and `firmware/components/`. Commands run from the repository root and use `-C firmware`.
 
 ## What this is
 
 DriveLink v2 is ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It drives DC motors (MCPWM + DIR GPIO), reads quadrature encoders (PCNT), runs PID velocity/position loops, streams BNO055 IMU data, and syncs time with a host. The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
-
-## Firmware overhaul in progress (temporary, removed in F10)
-
-The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware-architecture.md), and the host follows ([plans/host-architecture.md](plans/host-architecture.md)). Where this section conflicts with the rest of this file, this section wins. The rest of this file describes the code as it is now, and each step updates it as it changes the code.
-
-- **Start here.** Read [plans/overhaul-status.md](plans/overhaul-status.md) first: the next step, the handoff note and the decision log. Start a step with `/overhaul-step`.
-- **One session per step.**
-  - Branch from `origin/firmware_overhaul`, and open one PR into `firmware_overhaul` (`gh pr create --base firmware_overhaul`).
-  - Never target `main`. It is frozen except for critical fixes.
-- **Every PR updates the status file:** the step's state, its PR link, any decisions, and the handoff note for the next step.
-- **Plan changes.**
-  - Small internal choices: decide, and log them in the decision log.
-  - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user. Then update the plan in the same PR.
-- **Docs.**
-  - The component READMEs and `review/` were removed. `docs/protocol/` is the wire spec, updated in the same PR as any wire change.
-  - New components get a short README (purpose, API, rules) when they land.
-  - There are no `review/` statuses or `TODO.md` to update.
-- **Legacy code.**
-  - `motor_manager`, `imu_bmo_055` and `time_sync` keep working until their phase ports them.
-  - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
-  - Their wire format is defined by their code and host tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
-- **Hardware.** Sessions don't flash the board. A step that needs a hardware check stops before its PR and gives the user a short test script: what to flash, what to run, what to look for.
 
 ## Build, flash, test
 
@@ -35,44 +15,44 @@ ESP-IDF must be exported in the shell first:
 - On this machine, the IDF Python env is built for Python 3.11. If `export.ps1` reports a missing `py3.14` env, put `C:\Espressif\tools\idf-python\3.11.2` first on `PATH` and run export again.
 - The shell's `IDF_TOOLS_PATH` points at `~\.espressif\Espressif`, which has no `python_env`. `export.ps1` then fails ("ESP-IDF Python virtual environment ... not found"), and `idf.py` is not found. The env is under `~\.espressif`. Shell state does not persist between agent tool calls, so run everything in one PowerShell call:
   ```powershell
-  $env:IDF_TOOLS_PATH = "$HOME\.espressif"; $env:PATH = "C:\Espressif\tools\idf-python\3.11.2;" + $env:PATH; . $HOME\esp\v5.5.2\esp-idf\export.ps1 *> $null; idf.py build
+  $env:IDF_TOOLS_PATH = "$HOME\.espressif"; $env:PATH = "C:\Espressif\tools\idf-python\3.11.2;" + $env:PATH; . $HOME\esp\v5.5.2\esp-idf\export.ps1 *> $null; idf.py -C firmware build
   ```
 
 ```bash
-idf.py build                 # firmware (target esp32s3, from sdkconfig.defaults)
-idf.py build flash monitor
-idf.py menuconfig            # all component tunables live under their Kconfig menus
-idf.py fullclean             # when target/config changes leave the build inconsistent
+idf.py -C firmware build                 # firmware (target esp32s3, from sdkconfig.defaults)
+idf.py -C firmware build flash monitor
+idf.py -C firmware menuconfig            # all component tunables live under their Kconfig menus
+idf.py -C firmware fullclean             # when target/config changes leave the build inconsistent
 ```
 
 There are two kinds of automated tests.
 
-**Host unit tests** (`test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`third_party/doctest`). It compiles those firmware sources directly with the host compiler. `shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+**Host unit tests** (`firmware/test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`third_party/doctest`). It compiles those firmware sources directly with the host compiler. `shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
 
 ```bash
-cmake -S test/host -B test/host/build -G Ninja
-cmake --build test/host/build
-ctest --test-dir test/host/build --output-on-failure   # or run test/host/build/host_tests directly
-test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
+cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
+cmake --build firmware/test/host/build
+ctest --test-dir firmware/test/host/build --output-on-failure   # or run firmware/test/host/build/host_tests directly
+firmware/test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
 ```
 
-A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `shim/sdkconfig.h`.
+A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `firmware/test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `firmware/test/host/shim/sdkconfig.h`.
 
 **CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main` and `firmware_overhaul`:
-- `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `/`, then `/` again with `sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `test/uart_comm`.
+- `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`.
 - On Ubuntu, `tools/gen_diag_codes.py --check` and the host tests.
 
-**diag codes** are defined in `components/diag/diag_codes.yaml`. After editing it, regenerate and commit the outputs; CI fails if they are stale. The script needs PyYAML, which the IDF Python env and this machine's Python both have:
+**diag codes** are defined in `firmware/components/diag/diag_codes.yaml`. After editing it, regenerate and commit the outputs; CI fails if they are stale. The script needs PyYAML, which the IDF Python env and this machine's Python both have:
 
 ```bash
 python tools/gen_diag_codes.py
 ```
 
-**Hardware-in-the-loop tests** for `uart_comm` live in `test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
+**Hardware-in-the-loop tests** for `uart_comm` live in `firmware/test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
 
 ```bash
-idf.py -C test/uart_comm build flash           # flash the test firmware
-cd test/uart_comm && pip install -r requirements.txt
+idf.py -C firmware/test/uart_comm build flash           # flash the test firmware
+cd firmware/test/uart_comm && pip install -r requirements.txt
 pytest pytest_uart_comm.py --port COM5                      # USB-UART adapter on GPIO43/44
 pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 ```
@@ -81,13 +61,13 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 ## Architecture
 
-**Startup** (`main/main.cpp`):
+**Startup** (`firmware/main/main.cpp`):
 - The order is `diag::init()`, `UartComm`, then `MotorManager`, `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then `diag::Reporter`.
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
 - The Reporter comes last so its `Boot` event carries the final `started_mask`. Records from the startup wait in the diag queue until then.
 - `app_main` never returns. If `UartComm` fails, there is no link to report on: it logs to the console and idles.
 
-**Layering** (each one is an ESP-IDF component under `components/`):
+**Layering** (each one is an ESP-IDF component under `firmware/components/`):
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
 - `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
@@ -141,7 +121,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 ## Conventions
 
-This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [components/CLAUDE.md](components/CLAUDE.md).
+This file holds the project-wide conventions. Component rules (layout, Kconfig scope, API shape, resources, logging, naming and style) are in [firmware/components/CLAUDE.md](components/CLAUDE.md).
 
 ### Real-time paths
 
@@ -168,7 +148,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
 - **IDs from Kconfig.** MSG_TYPE values and stream channels come only from Kconfig, within the `uart_comm` ranges above.
-- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section): their wire format is their code and host tests, and the IMU also has `components/imu_bmo_055/docs/protocol-api-guide.md`.
+- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section in the root `CLAUDE.md`): their wire format is their code and host tests, and the IMU also has `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
 
 ### Errors, failures and memory
 
@@ -179,7 +159,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
   - Each new code goes in `diag_codes.yaml`, then regenerate.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
   - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`. Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery or when the task watching them stops, not on every occurrence. A real-time task only counts; a non-real-time task watches the count and reports (the motor config task does this for the control timer).
-  - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (the root `CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `components/` and `main/`). Code must build warning-free that way too, which CI checks.
+  - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (`firmware/CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `firmware/components/` and `firmware/main/`). Code must build warning-free that way too, which CI checks.
 - **Never abort on runtime errors** that the host or the hardware can cause. Return `esp_err_t` or `bool`, expose `isValid()`, and log the failure.
   - No `ESP_ERROR_CHECK` anywhere.
   - `assert` / `configASSERT` / `abort` are only for invariants that indicate a programmer error. One example: `UartComm` being destroyed while registrations are still active.
@@ -190,16 +170,16 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py build` (also with `sdkconfig.ci.nolog`) and `idf.py -C test/uart_comm build` succeed with zero warnings, the generated diag files are current, and the host tests pass. CI checks all of them.
+- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated diag files are current, and the host tests pass. CI checks all of them.
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
-  - A change to an architecture, concurrency or convention rule updates this file or `components/CLAUDE.md`.
-- **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md`.
-- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `test/host/`, and they pass.
+  - A change to an architecture, concurrency or convention rule updates this file or `firmware/components/CLAUDE.md`.
+- **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
+- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `firmware/test/host/`, and they pass.
 
 ### Files not to edit
 
-- **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand. `components/diag/include/diag_codes.hpp`, `components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
+- **Generated files:** don't edit anything under `build/` or the generated `sdkconfig` by hand. `firmware/components/diag/include/diag_codes.hpp`, `firmware/components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
 - **Vendor code:**
-  - `components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
+  - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
