@@ -70,6 +70,9 @@ jobs:
       - name: Check generated diag code files
         run: python3 tools/gen_diag_codes.py --check
 
+      - name: Check the Python frame reference (HIL protocol.py)
+        run: python3 firmware/test/uart_comm/protocol.py
+
       - name: Configure
         run: cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
 

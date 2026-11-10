@@ -59,7 +59,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 `conftest.py` defaults `--baud` to 921600, the Kconfig default. The same directory holds `smoke_main_firmware.py`, a standalone script for the **main** firmware (not the test app): it checks that diag, motor_manager, the IMU and time_sync answer over the link with their current protocol versions (`python smoke_main_firmware.py --port COM5`).
 
-**Stack sizes** are checked on hardware. The main firmware logs every task's stack high-water mark on the console every `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off; it needs `CONFIG_FREERTOS_USE_TRACE_FACILITY`, set in `firmware/sdkconfig.defaults`). The HIL test app logs the uart_comm RX/TX marks when idle.
+**Stack sizes** are checked on hardware. The main firmware logs each of its tasks' stack high-water mark on the console every `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off; the task names are listed in `firmware/main/main.cpp`, so add a new task there). It uses `uxTaskGetStackHighWaterMark()`, which takes no kernel lock; don't use `uxTaskGetSystemState()`, which scans every stack inside a critical section and stalls the control loop on the other core. The HIL test app logs the uart_comm RX/TX marks when idle.
 
 **Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD` and the stack sizes), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
 

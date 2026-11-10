@@ -71,7 +71,7 @@ The firmware counts each kind of reject (`uart_comm::ErrorCounters`) and reports
 
 ## Golden frames
 
-These exact bytes are checked by the C++ tests (`protocol/test/test_framing.cpp`) and by `protocol.py`.
+These exact bytes are checked by the C++ tests (`protocol/test/test_framing.cpp`) and by `protocol.py` (on import, and in its self-test, `python firmware/test/uart_comm/protocol.py`, which CI runs).
 
 MSG_TYPE `0x41`, payload `11 22 33`:
 
@@ -85,7 +85,7 @@ preamble  type LEN  HCRC payload   CRC16
 
 MSG_TYPE `0x80`, empty payload: `AA AA AA 80 00 00 0B 93 E8`.
 
-MSG_TYPE `0x63`, a 300-byte payload: the header is `63 2C 01 2D` (`LEN` = `0x012C`).
+MSG_TYPE `0x63`, a 300-byte payload whose byte `i` is `i & 0xFF`: the header is `63 2C 01 2D` (`LEN` = `0x012C`) and the CRC16 is sent as `22 71`.
 
 ## Versions
 

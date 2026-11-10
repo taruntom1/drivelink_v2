@@ -210,6 +210,28 @@ TEST_CASE("Every corrupted header byte is caught before the payload is awaited")
     }
 }
 
+TEST_CASE("A full-size window always makes progress past a false maximum-length header")
+{
+    // The worst case for the two-frame window: a valid header announcing the
+    // maximum length, with a real maximum-size frame starting right after
+    // it. The scanner waits for 1033 bytes, rejects the candidate on its
+    // CRC16, and must still have room to find the whole real frame.
+    std::vector<uint8_t> big(kMaxPayload);
+    for (size_t i = 0; i < big.size(); ++i) {
+        big[i] = static_cast<uint8_t>(i * 13U);
+    }
+    const auto bytes = concat({makeHeader(0x41, kMaxPayload), makeFrame(0x42, big), makeFrame(0x43, {1})});
+    for (size_t chunk : {1U, 64U, 1033U, 2066U}) {
+        Scanner sc(kMaxPayload);
+        const auto got = run(sc, bytes, chunk);
+        REQUIRE(got.size() == 2);
+        CHECK(got[0].type == 0x42);
+        CHECK(got[0].payload == big);
+        CHECK(got[1].type == 0x43);
+        CHECK(sc.counters().crc_errors == 1);
+    }
+}
+
 TEST_CASE("A long run of start bytes is resync and makes progress")
 {
     Scanner s(64);

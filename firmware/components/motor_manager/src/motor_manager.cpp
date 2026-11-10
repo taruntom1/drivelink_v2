@@ -1085,8 +1085,9 @@ void MotorManager::stopTasks()
         // Wake the config task out of xQueueReceive. It re-checks the stop
         // flag before handling a frame, so this frame is never dispatched.
         // If the queue is full, the 100 ms receive timeout wakes it instead.
-        uart_comm::RxFrame wake{};
-        (void)xQueueSend(m_config_queue, &wake, 0);
+        // Static: an RxFrame is about 1 KB, too big for the caller's stack.
+        static const uart_comm::RxFrame kWake{};
+        (void)xQueueSend(m_config_queue, &kWake, 0);
     }
     m_update_task.stop();
     m_config_task.stop();

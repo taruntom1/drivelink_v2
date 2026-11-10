@@ -741,8 +741,9 @@ void ImuBno055Manager::stopTasks()
     if (m_config_queue != nullptr && m_config_task.isRunning()) {
         // Wake the config task out of xQueueReceive. If the queue is full,
         // its 100 ms receive timeout wakes it instead.
-        uart_comm::RxFrame wake{};
-        (void)xQueueSend(m_config_queue, &wake, 0);
+        // Static: an RxFrame is about 1 KB, too big for the caller's stack.
+        static const uart_comm::RxFrame kWake{};
+        (void)xQueueSend(m_config_queue, &kWake, 0);
     }
 
     // Join the config task first: it is the only other user of the timer

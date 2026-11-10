@@ -21,35 +21,38 @@ static const char *const TAG = "main";
 
 namespace {
 
-#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0
-#if !CONFIG_FREERTOS_USE_TRACE_FACILITY
-#error "The stack high-water log needs CONFIG_FREERTOS_USE_TRACE_FACILITY=y (or set CONFIG_DRIVELINK_STACK_LOG_PERIOD_S=0)"
-#endif
+#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0 && CONFIG_DIAG_CONSOLE_LOG
+#define DRIVELINK_LOG_STACKS 1
 
-// Room for every task the firmware runs, with a margin. Static: nothing is
-// allocated while idling.
-constexpr size_t kMaxLoggedTasks = 40;
-std::array<TaskStatus_t, kMaxLoggedTasks> s_task_status;
+// The firmware's tasks, by the names they are created with. A name with no
+// task (a manager that did not start) is skipped.
+// esp_timer runs the timer callbacks (the control and IMU sampling timers).
+constexpr std::array<const char *, 10> kLoggedTasks = {
+    "main",       "uart_rx",        "uart_tx", "motor_mgr_upd", "motor_mgr_cfg",
+    "imu_cfg",    "imu_stream",     "time_sync_task", "diag",   "esp_timer",
+};
 
-/// Log every task's stack high-water mark: the least free stack, in bytes,
+/// Log each task's stack high-water mark: the least free stack, in bytes,
 /// since the task started. Used to size the task stacks.
+/// uxTaskGetStackHighWaterMark() scans the stack without the kernel lock, and
+/// xTaskGetHandle() holds it only to walk the task lists, so this doesn't
+/// stall the control loop on the other core. (uxTaskGetSystemState() would
+/// scan every stack inside the kernel's critical section.)
 void logStackHighWater()
 {
-    const UBaseType_t n = uxTaskGetSystemState(s_task_status.data(), s_task_status.size(), nullptr);
-    if (n == 0U) {
-        ESP_LOGW(TAG, "Stack high-water: more than %u tasks, not logged", static_cast<unsigned>(kMaxLoggedTasks));
-        return;
-    }
-    for (UBaseType_t i = 0; i < n; ++i) {
-        ESP_LOGI(TAG, "Stack high-water: %-16s %5u bytes free", s_task_status[i].pcTaskName,
-                 static_cast<unsigned>(s_task_status[i].usStackHighWaterMark));
+    for (const char *name : kLoggedTasks) {
+        TaskHandle_t handle = xTaskGetHandle(name);
+        if (handle != nullptr) {
+            ESP_LOGI(TAG, "Stack high-water: %-15s %5u bytes free", name,
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(handle)));
+        }
     }
 }
 #endif
 
 [[noreturn]] void idleForever()
 {
-#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0
+#if DRIVELINK_LOG_STACKS
     constexpr TickType_t kPeriod = pdMS_TO_TICKS(CONFIG_DRIVELINK_STACK_LOG_PERIOD_S * 1000);
     while (true) {
         vTaskDelay(kPeriod);

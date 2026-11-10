@@ -9,6 +9,7 @@ the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
 
 It checks, each with the protocol version the firmware must speak:
   - diag      GetInfo (0x23) -> response on 0x63, diag v2
+  - diag      GetEntries(0) -> response on 0x63 (the diag task's largest stack use)
   - motor     SET_TIMING (0x21) -> response on 0x61, motor_manager v5, result Ok
   - IMU       SetStreamEnabled(0) (0x22) -> response on 0x42, IMU v5, any result
               (skipped if diag reports the IMU manager did not start, e.g. no IMU fitted)
@@ -81,6 +82,17 @@ def main() -> int:
                              f"started_mask 0x{started_mask:02X}, {len(p)} bytes"))
     except TimeoutError as exc:
         results.append(check("diag GetInfo", False, str(exc)))
+
+    # diag GetEntries from slot 0: version, seq, subcommand GetEntries, start.
+    proto.send_command(DIAG_QUERY, bytes([DIAG_VERSION, 0x34, 0x02, 0x00]))
+    try:
+        p = wait_for(proto, DIAG_RESPONSE, 0x34, 3.0)
+        ok = len(p) >= 6 and p[0] == DIAG_VERSION and p[2] == 0x02 and p[3] == 0x00
+        results.append(check("diag GetEntries", ok,
+                             f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}, "
+                             f"total {p[4] if len(p) > 4 else '?'}, {len(p)} bytes"))
+    except TimeoutError as exc:
+        results.append(check("diag GetEntries", False, str(exc)))
 
     # motor SET_TIMING: version, seq, subcommand 0x0B, motor_id, control_us, telemetry_us.
     if started_mask & STARTED_MOTOR:

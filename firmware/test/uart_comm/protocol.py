@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import struct
 import time
-import serial
+
+try:
+    import serial  # used only in annotations; the self-test runs without pyserial
+except ImportError:
+    serial = None
 
 
 # -- CRCs (same algorithms as protocol/src/crc.cpp) --
@@ -109,6 +113,8 @@ def encode_false_header(msg_type: int, length: int, good_hcrc: bool) -> bytes:
 # The golden frames of protocol/test/test_framing.cpp (and docs/protocol/framing.md).
 assert encode_frame(0x41, b"\x11\x22\x33") == bytes.fromhex("aaaaaa410300d21122332f0d")
 assert encode_frame(0x80) == bytes.fromhex("aaaaaa8000000b93e8")
+_GOLDEN_300 = encode_frame(0x63, bytes(i & 0xFF for i in range(300)))
+assert _GOLDEN_300[:7] == bytes.fromhex("aaaaaa632c012d") and _GOLDEN_300[-2:] == bytes.fromhex("2271")
 
 
 # -- UartCommProto: thin serial wrapper --
@@ -250,3 +256,58 @@ class UartCommProto:
             "length_errors": length_errors,
             "discarded_bytes": discarded_bytes,
         }
+
+
+# -- Self-test (no hardware): python protocol.py. CI runs it. --
+
+class _FakeSerial:
+    """Hands out the given bytes in small reads, to exercise the buffering."""
+
+    def __init__(self, data: bytes) -> None:
+        self.data = bytearray(data)
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self.data)
+
+    def read(self, n: int) -> bytes:
+        n = min(n, 5)
+        out = bytes(self.data[:n])
+        del self.data[:n]
+        return out
+
+    def reset_input_buffer(self) -> None:
+        self.data.clear()
+
+
+def _frames(data: bytes, count: int) -> list[tuple[int, bytes]]:
+    proto = UartCommProto(_FakeSerial(data))  # type: ignore[arg-type]
+    return [proto.read_frame(timeout=0.2) for _ in range(count)]
+
+
+def _self_test() -> None:
+    # Back-to-back frames, some holding a false preamble, one of maximum size.
+    payloads = [b"\x01", b"\xAA\xAA\xAA", b"", bytes(range(32)), b"\xAA" * 16, bytes(MAX_PAYLOAD)]
+    got = _frames(b"".join(encode_frame(0x41, x) for x in payloads), len(payloads))
+    assert [x[1] for x in got] == payloads
+    # A bad-HCRC false header announcing 1000 bytes does not hold up the frame behind it.
+    assert _frames(encode_false_header(0x41, 1000, False) + encode_frame(0x42, b"\x09"), 1) == [(0x42, b"\x09")]
+    # A valid header with LEN above the limit is skipped.
+    assert _frames(encode_false_header(0x41, MAX_PAYLOAD + 1, True) + encode_frame(0x43, b"\x07"), 1) == [
+        (0x43, b"\x07")
+    ]
+    # A bad CRC16 and stray start bytes are skipped.
+    assert _frames(encode_frame_bad_crc(0x41, b"\x01\x02") + b"\xAA\xAA" + encode_frame(0x44), 1) == [(0x44, b"")]
+    # A run of start bytes, then a frame whose MSG_TYPE is 0xAA.
+    assert _frames(b"\xAA" * 50 + encode_frame(0xAA, b"\x05"), 1) == [(0xAA, b"\x05")]
+    # Nothing valid: read_frame times out.
+    try:
+        _frames(encode_false_header(0x41, 10, True) + bytes(5), 1)
+        raise AssertionError("expected a timeout")
+    except TimeoutError:
+        pass
+    print("protocol.py self-test: ok")
+
+
+if __name__ == "__main__":
+    _self_test()

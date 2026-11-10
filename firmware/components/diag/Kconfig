@@ -60,7 +60,7 @@ menu "Diagnostics (diag)"
 
     config DIAG_TASK_STACK
         int "Reporter task stack size"
-        default 5120
+        default 4096
         range 2048 16384
         help
             Stack size in bytes for the diag reporter task.
