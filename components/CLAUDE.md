@@ -1,6 +1,6 @@
 # Component conventions
 
-These rules apply to every component under `components/`. They add to the project-wide rules in the root `CLAUDE.md`: architecture, concurrency, real-time paths, protocol, failure handling and definition of done. Known violations are tracked in `review/10-docs-and-conventions.md`, and their fixes are in `TODO.md`.
+These rules apply to every component under `components/`. They add to the project-wide rules in the root `CLAUDE.md`: architecture, concurrency, real-time paths, protocol, failure handling and definition of done.
 
 ## Layout
 
@@ -10,7 +10,7 @@ These rules apply to every component under `components/`. They add to the projec
   - `src/`: implementation files.
   - `Kconfig`: tunable defaults and their valid ranges (see below).
   - `CMakeLists.txt`: `idf_component_register` with explicit `SRCS`, `INCLUDE_DIRS`, `PRIV_INCLUDE_DIRS` and `REQUIRES`.
-  - `README.md`: the component's API, Kconfig options and, for protocol-facing components, the wire format.
+  - `README.md`: the component's purpose, API, Kconfig options and rules. The wire format lives in `docs/protocol/`, not here. During the overhaul, legacy components have no README, and new components add one when they land.
 - Third-party code lives untouched in a `vendor/` subfolder of the component that uses it. Wrap it; don't edit it.
 
 ## Kconfig scope
