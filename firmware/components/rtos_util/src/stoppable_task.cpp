@@ -106,6 +106,12 @@ void StoppableTask::notify()
     }
 }
 
+uint32_t StoppableTask::stackHighWaterMark() const
+{
+    TaskHandle_t handle = m_handle.load(std::memory_order_acquire);
+    return (handle != nullptr) ? static_cast<uint32_t>(uxTaskGetStackHighWaterMark(handle)) : 0U;
+}
+
 bool StoppableTask::sleepFor(TickType_t ticks)
 {
     TickType_t last_wake = xTaskGetTickCount();

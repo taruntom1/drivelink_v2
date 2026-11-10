@@ -1,13 +1,13 @@
 #include "doctest.h"
 
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 #include <array>
 #include <cmath>
 #include <limits>
 
-using uart_comm::wire::Reader;
-using uart_comm::wire::Writer;
+using drivelink::protocol::wire::Reader;
+using drivelink::protocol::wire::Writer;
 
 TEST_CASE("Writer encodes little-endian fields")
 {

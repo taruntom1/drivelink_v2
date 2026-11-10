@@ -66,6 +66,11 @@ public:
     /// Wake the task (xTaskNotifyGive). No-op when not running.
     void notify();
 
+    /// Smallest amount of stack that has been free since the task started, in
+    /// bytes, or 0 if the task is not running. For diagnostics. Like notify(),
+    /// call it only while the owner is not concurrently calling stop().
+    uint32_t stackHighWaterMark() const;
+
     /// Sleep for `ticks`, returning early if a stop is requested.
     /// Call only from the body. @return false if a stop was requested.
     bool sleepFor(TickType_t ticks);

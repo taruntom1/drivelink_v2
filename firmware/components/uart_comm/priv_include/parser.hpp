@@ -4,10 +4,9 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+#include "drivelink/protocol/scanner.hpp"
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
 
 namespace uart_comm {
 
@@ -15,16 +14,16 @@ struct RxFrame;
 
 namespace detail {
 
-/// Software UART frame parser.
+/// The UART-driver side of frame reception.
 ///
-/// Bytes are pulled from the UART driver's ring buffer into a local window
-/// and scanned for `AA AA AA | MSG_TYPE | LEN | PAYLOAD | CRC`. A candidate
-/// whose LEN is too large or whose CRC does not match is treated as noise:
-/// only its first byte is dropped and the scan resumes, so a false
-/// `AA AA AA` inside a payload can never hide a real frame that follows it,
-/// and valid frames already buffered are never flushed.
+/// Bytes are pulled from the UART driver's ring buffer straight into the
+/// receive window of a `drivelink::protocol::Scanner`, which finds the frames
+/// (see scanner.hpp for the resync rules: a rejected candidate drops one byte,
+/// and valid frames already buffered are never flushed). This class adds what
+/// the pure scanner leaves out: the driver reads, the stale-frame timer,
+/// driver error events, the counters other tasks read, and logging.
 ///
-/// Used only from the RX task.
+/// Used only from the RX task, except getCounters().
 class Parser {
 public:
     struct Counters {
@@ -38,7 +37,7 @@ public:
 
     /// @param port        UART port number
     /// @param max_payload Maximum payload size to accept
-    Parser(uart_port_t port, uint8_t max_payload);
+    Parser(uart_port_t port, size_t max_payload);
 
     ~Parser() = default;
 
@@ -60,17 +59,11 @@ public:
     Counters getCounters() const;
 
 private:
-    enum class ScanResult { Frame, NeedMore, Dropped };
-
-    /// Copy bytes waiting in the driver into the window (non-blocking).
+    /// Copy bytes waiting in the driver into the scanner window (non-blocking).
     /// @return number of bytes read
     size_t fillFromDriver();
-    /// Try to decode a frame at the start of the window.
-    ScanResult scan(RxFrame& out_frame);
-    /// Remove `n` bytes from the start of the window.
-    void consume(size_t n);
-    /// Drop `n` bytes that were not part of a valid frame.
-    void discard(size_t n);
+    /// Copy the scanner's counters into the atomics, and log new rejects.
+    void publishCounters();
 
     // Written only by the RX task, read from any task via getCounters().
     // Each counter is atomic; a snapshot of all of them is not taken atomically.
@@ -84,9 +77,7 @@ private:
     };
 
     uart_port_t m_port;
-    uint8_t m_max_payload;
-    std::vector<uint8_t> m_buf;   // receive window, valid bytes are [0, m_len)
-    size_t m_len;
+    drivelink::protocol::Scanner m_scanner;
     TickType_t m_last_rx_tick;    // when bytes last arrived from the driver
     AtomicCounters m_counters;
 };

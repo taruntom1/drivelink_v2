@@ -193,7 +193,7 @@ bool Reporter::Impl::sendEvent(const uint8_t *payload, size_t len)
     if (len == 0U || len > kMaxPayload) {
         return false;
     }
-    if (uart.sendCommand(config.event_msg_type, payload, static_cast<uint8_t>(len)) != ESP_OK) {
+    if (uart.sendCommand(config.event_msg_type, payload, len) != ESP_OK) {
         tx_backoff_until_us = esp_timer_get_time() + kTxBackoffUs;
         return false;
     }
@@ -308,7 +308,7 @@ void Reporter::Impl::handleQuery(const uart_comm::RxFrame &frame)
 
     uint8_t out[kMaxPayload];
     const size_t len = protocol::encodeQueryResponse(header, result, resp_body, resp_body_len, out, sizeof(out));
-    if (len == 0U || uart.sendCommand(config.query_response_msg_type, out, static_cast<uint8_t>(len)) != ESP_OK) {
+    if (len == 0U || uart.sendCommand(config.query_response_msg_type, out, len) != ESP_OK) {
         DIAG_COUNT(codes::diag::kEventTxDropped);
     }
 }

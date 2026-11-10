@@ -18,7 +18,7 @@ import time
 import serial
 
 
-# -- CRC-16/CCITT (same algorithm as crc16Ccitt() in frame.cpp) --
+# -- CRC-16/CCITT (same algorithm as crc16Ccitt() in protocol/src/crc.cpp) --
 
 def _build_crc_table() -> list[int]:
     table = []

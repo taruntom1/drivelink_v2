@@ -27,7 +27,7 @@ idf.py -C firmware fullclean             # when target/config changes leave the 
 
 There are two kinds of automated tests.
 
-**Host unit tests** (`firmware/test/host/`) cover the pure logic: the wire codec, the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It compiles those firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+**Host unit tests** (`firmware/test/host/`) cover the pure logic: the `protocol/` library (CRC, framing, scanner, wire codec; its tests live in `protocol/test/` and are compiled into this build), the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It builds `protocol/` as the host library `drivelink::protocol` and compiles the other firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
 
 ```bash
 cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
@@ -71,15 +71,19 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
 - `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
-- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `uart_comm::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
+- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `drivelink::protocol::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
+- `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) holds the pure wire library: CRC, framing, the frame `Scanner` and `wire_codec`. `uart_comm` and every protocol codec build on it. Its rules are in [protocol/CLAUDE.md](../protocol/CLAUDE.md).
 - `rtos_util` provides `StoppableTask`.
 - `diag` reports errors to the host as codes. The `DIAG_*` macros latch a per-code slot and queue a record, and `diag::Reporter` sends events and answers queries over `uart_comm`. Only the managers and `main` report. The hardware layers return errors and don't depend on `diag`, and the reporter reads `uart_comm`'s link counters itself. Its codec and slot table are pure modules (`diag_protocol`, `diag_table`).
 
 **UART protocol** (`uart_comm`):
-- Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16-CCITT(0x1021, init 0xFFFF)`. The CRC covers MSG_TYPE, LEN and the payload.
-- RX framing is done in software (`Parser`); hardware pattern detection is not used. Driver events only wake the RX task, and `Parser::nextFrame()` pulls bytes from the ring buffer and scans for the preamble. The preamble is not escaped, so a rejected candidate (bad LEN or CRC) drops one byte and rescans. Never flush the RX buffer: it may already hold the next valid frames.
+- Frame layout: `AA AA AA | MSG_TYPE | LEN | payload | CRC16-CCITT(0x1021, init 0xFFFF)`. The CRC covers MSG_TYPE, LEN and the payload. Encoding, CRC and scanning come from `protocol/`.
+- RX framing is done in software; hardware pattern detection is not used. `uart_comm`'s `Parser` is the driver side: driver events only wake the RX task, and `Parser::nextFrame()` pulls bytes from the ring buffer into a `drivelink::protocol::Scanner`, which scans for the preamble. The preamble is not escaped, so a rejected candidate (bad LEN or CRC) drops one byte and rescans. Never flush the RX buffer: it may already hold the next valid frames. The stale-frame timer and the logging stay in `Parser`; the scanner has no clock.
 - MSG_TYPE ranges: commands `0x01–0x3F`, responses `0x40–0x7F`, streams `0x80–0xBF`, events `0xC0–0xFE`.
-- TX has two paths. `sendCommand()` uses a FIFO queue that is drained first. `sendData()` writes to per-channel stream slots where only the latest value is sent.
+- TX has two paths, and both use only buffers allocated in the constructor or `openStream()`:
+  - `sendCommand()` takes a free frame buffer from a preallocated pool (`CONFIG_UART_COMM_CMD_QUEUE_DEPTH` buffers), encodes into it and queues its index. The TX task drains the queue first. `ESP_ERR_NO_MEM` means the pool is empty.
+  - `sendData()` writes to a per-channel stream slot where only the latest value is sent. A channel must be opened once at setup with `openStream(channel, max_len)`, which allocates the slot (two buffers of `max_len`). `sendData()` never blocks or allocates: it try-locks the slot, copies into the buffer the TX task isn't sending, and returns `ESP_ERR_TIMEOUT` if the slot was busy (counted in `ErrorCounters::stream_skipped`). Call it freely from the control tick.
+  - `UartComm::stackHighWater()` reports the RX and TX tasks' free stack, for logging. The HIL test app logs it when idle.
 - RX either calls a callback registered for the MSG_TYPE, on the RX task, or pushes the frame to a queue read by `receive()`.
 - Message IDs and channels come from each component's Kconfig:
   - time_sync: `0x20` / `0x60`
@@ -143,7 +147,7 @@ Rules for them:
 Each protocol-facing manager defines its own messages on top of the `uart_comm` frame. All of them follow these rules:
 - **Version byte first.** Every payload starts with `kProtocolVersion`. Any change to the wire format bumps it. No backward compatibility is kept: the host and the firmware are updated together.
 - **Request correlation.** Configure commands carry a host-chosen `seq` byte right after the version, and the response echoes it. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for the subcommand and for the id fields. ESP-initiated requests carry their own id, like time_sync's `u16 request_id`.
-- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with the bounds-checked little-endian `uart_comm::wire::Reader` / `Writer` (`firmware/components/uart_comm/include/wire_codec.hpp`). Never `memcpy` a whole struct to or from the wire, and never write a component-local byte-order helper.
+- **Encoding.** All multi-byte fields are little-endian. Floats are IEEE-754 binary32. Encode and decode field by field with the bounds-checked little-endian `drivelink::protocol::wire::Reader` / `Writer` (`protocol/include/drivelink/protocol/wire_codec.hpp`). Never `memcpy` a whole struct to or from the wire, and never write a component-local byte-order helper.
 - **Exact lengths.** A fixed-size body must be exactly its size, or it is rejected. A variable-size body carries an explicit count, and `count × entry size` must equal the remaining length.
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
@@ -175,7 +179,7 @@ A change is done when all of the following are true:
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates this file, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
 - **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
-- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests in `firmware/test/host/`, and they pass.
+- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests (`firmware/test/host/`, or `protocol/test/` for the `protocol/` library), and they pass.
 
 ### Files not to edit
 

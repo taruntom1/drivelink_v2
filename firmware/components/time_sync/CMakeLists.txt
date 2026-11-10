@@ -4,5 +4,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
     REQUIRES uart_comm esp_timer
-    PRIV_REQUIRES rtos_util diag
+    PRIV_REQUIRES protocol rtos_util diag
 )

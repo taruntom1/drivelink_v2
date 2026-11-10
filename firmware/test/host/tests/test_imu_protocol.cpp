@@ -1,7 +1,7 @@
 #include "doctest.h"
 
 #include "imu_protocol.hpp"
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 #include <array>
 #include <vector>
@@ -211,7 +211,7 @@ TEST_CASE("Stream sample: header and field order")
     const size_t len = encodeStreamSample(s, mask, out.data(), out.size());
     REQUIRE(len == kStreamHeaderSize + 6 + 1 + 4);
 
-    uart_comm::wire::Reader r(out.data(), len);
+    drivelink::protocol::wire::Reader r(out.data(), len);
     CHECK(r.readU8() == kProtocolVersion);
     CHECK(r.readU16Le() == mask);
     CHECK(r.readU64Le() == s.timestamp_us);

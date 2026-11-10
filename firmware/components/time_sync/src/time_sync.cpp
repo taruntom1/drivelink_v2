@@ -239,7 +239,7 @@ esp_err_t TimeSync::triggerManualSync(bool wait_for_response, TickType_t timeout
             return ESP_ERR_INVALID_ARG;
         }
 
-        return m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, static_cast<uint8_t>(len));
+        return m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, len);
     }
 
     uint8_t failed_stage = sync_stage::kNone;
@@ -423,7 +423,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout, uint8_t& failed_stage, uint8
     while (xQueueReceive(m_impl->response_queue, &stale, 0) == pdTRUE) {
     }
 
-    esp_err_t send_ret = m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, static_cast<uint8_t>(len));
+    esp_err_t send_ret = m_impl->uart->sendCommand(m_impl->config.request_msg_type, payload, len);
     if (send_ret != ESP_OK) {
         xSemaphoreGive(m_impl->sync_mutex);
         failed_stage = sync_stage::kSend;

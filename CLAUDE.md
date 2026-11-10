@@ -11,12 +11,13 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 | Path | What | Rules |
 |---|---|---|
 | `firmware/` | The ESP-IDF project: `main/`, `components/`, `test/host` (pure-logic unit tests), `test/uart_comm` (hardware-in-the-loop tests) | [firmware/CLAUDE.md](firmware/CLAUDE.md), and [firmware/components/CLAUDE.md](firmware/components/CLAUDE.md) for components |
+| `protocol/` | The wire library shared by firmware and host: framing, CRC, frame scanner, `wire_codec`. Pure C++20 | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
 | `docs/protocol/` | The wire spec and the diag code table | Updated in the same commit as any wire change |
 | `tools/` | Generators and scripts (`gen_diag_codes.py`) | |
 | `plans/` | The overhaul plans and `overhaul-status.md` | |
 | `.github/workflows/` | CI | |
 
-`protocol/` and `host/` join the repo in later overhaul steps, each with its own `CLAUDE.md`.
+`host/` joins the repo in a later overhaul step, with its own `CLAUDE.md`.
 
 ## Cross-cutting rules
 

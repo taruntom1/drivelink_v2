@@ -62,7 +62,7 @@ private:
 	esp_err_t applyStreamEnabledLocked(bool enabled);
 
 	Result parseAndDispatchConfigure(ConfigureSubcommand subcommand,
-									 const uint8_t *body, uint8_t len,
+									 const uint8_t *body, size_t len,
 									 uint8_t &response_len, uint8_t *response_payload,
 									 size_t response_capacity);
 	/// Encode and queue a configure response. Non-blocking, so the RX task

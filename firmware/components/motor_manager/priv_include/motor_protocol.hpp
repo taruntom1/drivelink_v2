@@ -6,7 +6,7 @@
 /// dispatch and the state.
 
 #include "motor_manager_protocol.hpp"
-#include "wire_codec.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -110,7 +110,7 @@ public:
     uint8_t entryCount() const { return m_count; }
 
 private:
-    uart_comm::wire::Writer m_writer;
+    drivelink::protocol::wire::Writer m_writer;
     uint8_t m_count = 0;
 };
 

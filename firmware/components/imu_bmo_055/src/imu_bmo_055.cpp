@@ -42,6 +42,7 @@ constexpr uint32_t kConfigureCallback = 6;
 constexpr uint32_t kConfigTask = 7;
 constexpr uint32_t kStreamTask = 8;
 constexpr uint32_t kSamplingTimer = 9;
+constexpr uint32_t kStreamOpen = 10;
 } // namespace init_stage
 
 // imu.StreamReenableFailed arg0.
@@ -252,6 +253,16 @@ ImuBno055Manager::ImuBno055Manager(uart_comm::UartComm &uart, const ManagerConfi
     if (m_config_queue == nullptr) {
         DIAG_ERROR(codes::kInitFailed, ESP_ERR_NO_MEM, init_stage::kConfigQueue, 0,
                    "Failed to create config queue (depth=%u)", static_cast<unsigned>(m_config.config_queue_depth));
+        return;
+    }
+
+    // The stream slot is allocated here, once, so sendData() in the sampling
+    // loop never allocates or waits.
+    const esp_err_t stream_open_ret = m_uart.openStream(m_config.telemetry_stream_channel, kMaxStreamPayload);
+    if (stream_open_ret != ESP_OK) {
+        DIAG_ERROR(codes::kInitFailed, stream_open_ret, init_stage::kStreamOpen, 0,
+                   "Failed to open telemetry stream (ch=0x%02X): %s",
+                   m_config.telemetry_stream_channel, esp_err_to_name(stream_open_ret));
         return;
     }
 
@@ -625,7 +636,7 @@ void ImuBno055Manager::handleConfigureCommand(const uart_comm::RxFrame &frame)
 
 Result ImuBno055Manager::parseAndDispatchConfigure(ConfigureSubcommand subcommand,
                                                    const uint8_t *body,
-                                                   uint8_t len,
+                                                   size_t len,
                                                    uint8_t &response_len,
                                                    uint8_t *response_payload,
                                                    size_t response_capacity)
@@ -719,7 +730,7 @@ esp_err_t ImuBno055Manager::sendConfigureResponse(uint8_t seq,
         return ESP_ERR_INVALID_ARG;
     }
 
-    return m_uart.sendCommand(m_config.configure_response_msg_type, payload, static_cast<uint8_t>(len));
+    return m_uart.sendCommand(m_config.configure_response_msg_type, payload, len);
 }
 
 void ImuBno055Manager::stopTasks()
@@ -817,7 +828,7 @@ void ImuBno055Manager::streamTaskLoop()
 
             const size_t tx_len = protocol::encodeStreamSample(sample, field_mask, tx_payload, sizeof(tx_payload));
             if (tx_len > 0U) {
-                m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, static_cast<uint8_t>(tx_len));
+                m_uart.sendData(m_config.telemetry_stream_channel, tx_payload, tx_len);
             } else {
                 DIAG_COUNT(codes::kEncodeError);
             }
@@ -856,7 +867,7 @@ void ImuBno055Manager::configTaskLoop()
             rc = self->parseAndDispatchConfigure(
                 static_cast<ConfigureSubcommand>(header.subcommand),
                 body,
-                static_cast<uint8_t>(body_len),
+                body_len,
                 response_extra_len,
                 response_extra,
                 sizeof(response_extra));

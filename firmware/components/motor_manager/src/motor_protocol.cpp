@@ -7,8 +7,8 @@ namespace motor_manager::protocol {
 
 namespace {
 
-using uart_comm::wire::Reader;
-using uart_comm::wire::Writer;
+using drivelink::protocol::wire::Reader;
+using drivelink::protocol::wire::Writer;
 
 bool allFinite(std::initializer_list<float> values)
 {

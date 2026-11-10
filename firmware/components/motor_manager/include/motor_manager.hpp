@@ -97,7 +97,7 @@ private:
     void watchControlTimer(ControlTimerWatch &watch);
     void updateAllLocked(float dt_s);
     ResultCode encodeTelemetryLocked(uint8_t *out, size_t cap, uint8_t &out_len, uint64_t timestamp_us) const;
-    Result parseAndDispatchConfigure(const uint8_t *payload, uint8_t len);
+    Result parseAndDispatchConfigure(const uint8_t *payload, size_t len);
     ResultCode findSlotIndexById(uint8_t motor_id, size_t &index) const;
     /// Encode and queue a configure response. Non-blocking, so the RX task
     /// can use it too. Returns `result` (the command's own outcome).

@@ -6,5 +6,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
     REQUIRES esp_common freertos log
-    PRIV_REQUIRES uart_comm rtos_util esp_timer esp_system esp_app_format
+    PRIV_REQUIRES protocol uart_comm rtos_util esp_timer esp_system esp_app_format
 )

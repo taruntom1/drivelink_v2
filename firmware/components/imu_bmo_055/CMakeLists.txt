@@ -6,5 +6,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include" "vendor"
     REQUIRES uart_comm rtos_util driver freertos log esp_timer
-    PRIV_REQUIRES diag
+    PRIV_REQUIRES protocol diag
 )

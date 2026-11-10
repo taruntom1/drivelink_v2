@@ -79,7 +79,7 @@ inline constexpr ::diag::Code kQueryDropped{10, ::diag::Source::Diag, 0x0003, ::
 
 namespace motor_manager {
 /// MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
-/// arg0: stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task. arg1: unused.
+/// arg0: stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task, 9 telemetry stream slot. arg1: unused.
 inline constexpr ::diag::Code kInitFailed{11, ::diag::Source::MotorManager, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
 /// CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR.
 /// arg0: motor id. arg1: hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT).
@@ -115,7 +115,7 @@ inline constexpr ::diag::Code kBadResponseFrame{22, ::diag::Source::TimeSync, 0x
 
 namespace imu {
 /// The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
-/// arg0: stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer. arg1: unused.
+/// arg0: stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot. arg1: unused.
 inline constexpr ::diag::Code kInitFailed{23, ::diag::Source::Imu, 0x0001, ::diag::Severity::Error, ::diag::CodeKind::Record, false};
 /// The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
 /// arg0: I2C port. arg1: BNO055 I2C address.

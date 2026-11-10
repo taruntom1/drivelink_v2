@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include "esp_err.h"
@@ -11,7 +12,7 @@ namespace uart_comm {
 /// Received frame delivered to the application.
 struct RxFrame {
     uint8_t msg_type;
-    uint8_t len;
+    uint16_t len;
     uint8_t payload[CONFIG_UART_COMM_MAX_PAYLOAD];
 };
 
@@ -29,6 +30,14 @@ struct ErrorCounters {
     uint32_t overflows;       ///< RX hardware FIFO overflows or ring buffer full events
     uint32_t length_errors;   ///< Frame candidates rejected because LEN exceeded the max payload
     uint32_t discarded_bytes; ///< Received bytes that were not part of any valid frame
+    uint32_t stream_skipped;  ///< sendData() calls skipped because the stream slot was busy
+};
+
+/// Smallest amount of stack, in bytes, that has been free in each internal task
+/// since it started.
+struct StackHighWater {
+    uint32_t rx_free;
+    uint32_t tx_free;
 };
 
 /// Configuration for UartComm. All fields default to Kconfig values.
@@ -42,7 +51,7 @@ struct UartCommConfig {
 /// Structured UART communication component.
 ///
 /// Wraps a UART link in a lightweight binary protocol with CRC-16
-/// integrity checking and hardware-accelerated frame detection.
+/// integrity checking and software frame detection (see drivelink::protocol::Scanner).
 /// Carries two kinds of traffic on the same wire:
 ///   - Control packets (commands, responses, events) — queued FIFO, high priority
 ///   - Data streams (sensor/control) — latest-wins per channel, low priority
@@ -52,12 +61,13 @@ struct UartCommConfig {
 ///   if (!comm.isValid()) { /* handle error */ }
 ///   uart_comm::CallbackRegistration motor_cb;  // unregisters when destroyed
 ///   comm.registerCallback(0x81, [](const RxFrame& f) { /* motor cmd */ }, motor_cb);
+///   comm.openStream(0x80, sizeof(sensor_buf));  // once, at setup
 ///   comm.sendData(0x80, sensor_buf, sizeof(sensor_buf));
 ///
 class UartComm {
 public:
     /// Construct and initialize the UART communication component.
-    /// Configures UART hardware, enables pattern detection, and
+    /// Configures UART hardware and
     /// starts internal RX/TX tasks.
     /// @param config  UART configuration (defaults from Kconfig)
     explicit UartComm(const UartCommConfig& config);
@@ -79,23 +89,42 @@ public:
     /// @param msg_type  Message type byte
     /// @param payload   Payload data (may be nullptr if len == 0)
     /// @param len       Payload length (0 to CONFIG_UART_COMM_MAX_PAYLOAD)
+    ///
+    /// Never blocks: the frame is encoded into a preallocated buffer.
     /// @return ESP_OK on success, ESP_ERR_NO_MEM if queue full,
     ///         ESP_ERR_INVALID_STATE if not initialized,
     ///         ESP_ERR_INVALID_ARG if msg_type is a stream type or outside every
     ///         range (0x00, 0xFF), len is too large, or payload is null with len > 0
-    esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, uint8_t len);
+    esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len);
+
+    /// Allocate the slot of a data stream channel. Call it once per channel at
+    /// setup, before the first sendData() on that channel (it allocates).
+    /// @param channel  Stream channel (0x80–0xBF)
+    /// @param max_len  Largest payload that will be sent on this channel
+    ///                 (1 to CONFIG_UART_COMM_MAX_PAYLOAD)
+    /// @return ESP_OK, ESP_ERR_INVALID_STATE if not initialized or the channel
+    ///         is already open, ESP_ERR_INVALID_ARG if channel is not a stream
+    ///         channel or max_len is out of range, ESP_ERR_NO_MEM
+    esp_err_t openStream(uint8_t channel, size_t max_len);
 
     /// Update a data stream channel with the latest value.
     /// The payload overwrites any pending data for this channel.
     /// Fire-and-forget: there is no delivery confirmation.
-    /// @param channel  Stream channel (0x80–0xBF)
+    ///
+    /// Real-time safe: it never blocks and never allocates. The slot has two
+    /// buffers, so the TX task can send one while this writes the other. If
+    /// the slot's lock is busy (another writer, or the TX task swapping
+    /// buffers) the write is skipped and counted in
+    /// ErrorCounters::stream_skipped; the next call carries newer data anyway.
+    /// @param channel  Stream channel (0x80–0xBF), opened with openStream()
     /// @param payload  Payload data (may be nullptr if len == 0)
-    /// @param len      Payload length (0 to CONFIG_UART_COMM_MAX_PAYLOAD)
+    /// @param len      Payload length (0 to the max_len given to openStream())
     /// @return ESP_OK when the slot was updated,
-    ///         ESP_ERR_INVALID_STATE if not initialized,
+    ///         ESP_ERR_INVALID_STATE if not initialized or the channel was not opened,
+    ///         ESP_ERR_TIMEOUT if the write was skipped because the slot was busy,
     ///         ESP_ERR_INVALID_ARG if channel is not a stream channel, len is
     ///         too large, or payload is null with len > 0
-    esp_err_t sendData(uint8_t channel, const uint8_t* payload, uint8_t len);
+    esp_err_t sendData(uint8_t channel, const uint8_t* payload, size_t len);
 
     /// Register a callback for a specific MSG_TYPE.
     /// The callback fires from the RX task context. If a callback is
@@ -132,6 +161,9 @@ public:
     /// Get cumulative error counters.
     ErrorCounters getErrorCounters() const;
 
+    /// Stack headroom of the internal RX and TX tasks, for logging.
+    StackHighWater stackHighWater() const;
+
 private:
     friend class CallbackRegistration;
 
@@ -139,6 +171,7 @@ private:
 
     static void rxTaskBody(Impl* impl);
     static void txTaskBody(Impl* impl);
+    static void releaseResources(Impl* impl);
     static void unregisterCallback(Impl* impl, uint8_t msg_type);
 
     Impl* m_impl;
