@@ -112,7 +112,9 @@ arm_state u8 | flags u8 | active_error_count u8 | cpu_load[2] u8 |
 overruns[2] u32 | last_disarm_reason u8` (26 bytes).
 Epoch is 0. Counter wraps at 65536. The two overrun fields are control then
 sensor. Flags follow the architecture plan. Until F4b the device is disarmed
-and safety-only fields are zero. CPU utilization is 0xFF (unavailable), not an
-estimated percentage. Active errors come from instance-aware diag state.
+and safety-only fields are zero. CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
+It is 0xFF until the first interval, or when measurement is disabled or the
+runtime clock is not ESP timer. CORE_STATUS_CPU_LOAD defaults on and selects
+runtime statistics; reads take constant work without stack scans. Active errors come from instance-aware diag state.
 `system.status.rate_hz` defaults to 10 (1..100). UART streams use latest-wins
 slots; skips are reported by uart_comm.StreamSkipped.

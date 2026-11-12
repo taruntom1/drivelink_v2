@@ -1,5 +1,7 @@
 #include "core/core_link.hpp"
 #include "core/command_service.hpp"
+#include "core/cpu_load.hpp"
+#include "freertos/idf_additions.h"
 #include "core_os/boot_info.hpp"
 #include "core_os/clock.hpp"
 #include "core_os/periodic_task.hpp"
@@ -37,6 +39,7 @@ struct CoreLink::Impl {
     uart_comm::RxFrame frame{};
     std::array<uint8_t,CONFIG_UART_COMM_MAX_PAYLOAD> reply{};
     std::array<uint8_t,32> status{};
+    CpuLoadSampler cpu;
     uint16_t counter=0;
     int64_t next_status=0;
     bool valid=false;
@@ -72,7 +75,14 @@ struct CoreLink::Impl {
         w.appendU8(1);w.appendU8(0);w.appendU16Le(counter++);w.appendU64Le(static_cast<uint64_t>(now));
         w.appendU8(0); // disarmed until F4b
         w.appendU8((core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0));
-        w.appendU8(diag::activeErrorCount());w.appendU8(255);w.appendU8(255); // CPU load unavailable
+        w.appendU8(diag::activeErrorCount());
+        std::array<uint8_t,2> load{255,255};
+#if CONFIG_CORE_STATUS_CPU_LOAD && CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER && !CONFIG_FREERTOS_SMP && !CONFIG_FREERTOS_UNICORE
+        load=cpu.sample(static_cast<uint32_t>(now),{
+            static_cast<uint32_t>(ulTaskGetIdleRunTimeCounterForCore(0)),
+            static_cast<uint32_t>(ulTaskGetIdleRunTimeCounterForCore(1))});
+#endif
+        w.appendU8(load[0]);w.appendU8(load[1]);
         for(uint8_t i=0;i<kLoopCount;++i) { w.appendU32Le(core.loop(i).stats().overruns); }
         w.appendU8(0);
         const auto err=uart.sendData(msg::kStatusStream,status.data(),w.size());

@@ -15,7 +15,7 @@ enum class QueuedKind : uint8_t {
 };
 
 /// One item in the record queue. Latched when it is reported, so the
-/// timestamp and the time_synced flag are those of the report instant.
+/// timestamp is that of the report instant.
 struct QueuedEvent {
     uint64_t timestamp_us = 0;
     int32_t esp_err = 0;

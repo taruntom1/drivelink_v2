@@ -163,8 +163,7 @@ Choices made during implementation that the plans don't cover, or that change th
 - User chose one F3b PR unless a concrete blocker appears; separate current and
   pending layout views; deterministic dynamic mocks with actions; whole
   descriptors bounded by generator checks; test-only hardware crash injection.
-- Internal: status defaults to 10 Hz (1..100); CPU utilization is explicitly
-  unavailable (0xFF); diagnostic identities use 254 fixed sparse slots.
+- Internal: status defaults to 10 Hz (1..100); CPU utilization uses per-core idle runtime deltas (0xFF if unavailable); diagnostic identities use 254 fixed sparse slots.
 
 ## Hardware test results
 

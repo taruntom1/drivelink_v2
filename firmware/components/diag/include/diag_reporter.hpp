@@ -13,7 +13,7 @@ class UartComm;
 
 namespace diag {
 
-/// GetInfo / Boot `started_mask` bits: which managers app_main started.
+/// Legacy manager startup bits used by app_main; not part of diagnostic v3.
 constexpr uint8_t kStartedMotorManager = 0x01;
 constexpr uint8_t kStartedTimeSync = 0x02;
 constexpr uint8_t kStartedImu = 0x04;
@@ -44,7 +44,7 @@ struct ReporterConfig {
 /// lost except query responses (counted as diag.EventTxDropped).
 ///
 /// Construct it after the managers (so Boot carries the final
-/// started_mask); records reported before then wait in the queue.
+/// instance counts); records reported before then wait in the queue.
 /// Must not outlive the UartComm. Calls diag::init() itself.
 class Reporter {
 public:

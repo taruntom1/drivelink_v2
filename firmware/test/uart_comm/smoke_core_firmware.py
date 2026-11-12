@@ -60,6 +60,8 @@ def main():
     args=ap.parse_args();c=Client(args.port)
     try:
         original=c.connect();print("GET_INFO",original,flush=True)
+        if not args.safe_mode:
+            c.request(1,254,accepted=(1,)) # normal builds must reject crash injection
         total,_=c.page(1);assert total>=4
         for type_ in (0,112,113,114):c.page(2,bytes((type_,)))
         c.page(4);print("PASS discovery and complete descriptor paging",flush=True)

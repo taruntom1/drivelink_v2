@@ -1,5 +1,14 @@
 menu "DriveLink core"
 
+    config CORE_STATUS_CPU_LOAD
+        bool "Measure per-core CPU utilization in status"
+        default y
+        select FREERTOS_GENERATE_RUN_TIME_STATS
+        help
+            Samples idle runtime counters with constant work per core.
+            ESP timer must be the runtime stats clock. No stack scan is used.
+
+
     config CORE_MAX_INSTANCES
         int "Maximum module instances"
         default 16

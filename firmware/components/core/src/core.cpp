@@ -10,6 +10,7 @@
 #include "core/value.hpp"
 #include "core/wiring_order.hpp"
 #include "core_os/boot_info.hpp"
+#include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "drivelink/protocol/gen/diag_codes.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
@@ -636,10 +637,17 @@ Status Core::runAction(Ref ref, const ActionArgs &args, ActionOut &out)
     slot.values = args.values; slot.blob_size = args.blob.size(); slot.out = {};
     std::copy(args.blob.begin(),args.blob.end(),slot.blob.begin());
     slot.state.store(ActionState::Ready,std::memory_order_release);
-    slot.completed.wait(ParamService::stagingTimeoutUs(loop(record->loop).periodUs()));
-    ActionState expected = ActionState::Ready;
-    if (slot.state.compare_exchange_strong(expected,ActionState::Empty,std::memory_order_acq_rel)) {
-        return Status::fail(Result::Busy,Detail::Withdrawn);
+    const auto deadline=core_os::nowUs()+ParamService::stagingTimeoutUs(loop(record->loop).periodUs());
+    while(slot.state.load(std::memory_order_acquire)==ActionState::Ready) {
+        const auto remaining=deadline-core_os::nowUs();
+        if(remaining<=0) {
+            ActionState expected=ActionState::Ready;
+            if(slot.state.compare_exchange_strong(expected,ActionState::Empty,std::memory_order_acq_rel)) {
+                return Status::fail(Result::Busy,Detail::Withdrawn);
+            }
+            break;
+        }
+        slot.completed.wait(static_cast<uint32_t>(remaining));
     }
     // Once claimed, the action cannot be reported as unapplied. Bounded loop
     // actions finish before signalling; paused actions run here after the ack.

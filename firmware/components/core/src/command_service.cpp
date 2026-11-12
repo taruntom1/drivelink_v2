@@ -51,6 +51,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             return {};
         case defs::SystemOp::BenchCrash:
             if(!m_info.bench_crash) { return bad(Detail::Unsupported); }
+            if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
             m_after=AfterReply::Crash;return {};
         case defs::SystemOp::Save:return m_core.save();
         case defs::SystemOp::Revert:return m_core.revert();
@@ -58,6 +59,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             auto st=m_core.factoryReset();if(st.ok()) { m_after=AfterReply::Reboot; } return st;
         }
         case defs::SystemOp::ExitSafeMode: {
+            if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
             auto st=m_core.exitSafeMode();if(st.ok()) { m_after=AfterReply::Reboot; } return st;
         }
         case defs::SystemOp::Reboot:

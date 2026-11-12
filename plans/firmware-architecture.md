@@ -544,7 +544,7 @@ generator-enforced size limits rather than continuation; test-only BenchCrash
 for hardware safe-mode coverage. The concrete core v1 and diag v3 encodings
 are specified in docs/protocol/core.md and docs/protocol/diag.md.
 
-CPU load uses 0xFF for unavailable. Status rate defaults to 10 Hz (1..100).
+CPU load uses idle runtime deltas, with 0xFF for an unavailable sample. Status rate defaults to 10 Hz (1..100).
 The diagnostic runtime uses 254 fixed sparse slots, including generated
 non-instance slots; exhaustion is counted. Safety flag metadata is present,
 while arming/latching/DIAG_RAISE behavior stays in F4b.

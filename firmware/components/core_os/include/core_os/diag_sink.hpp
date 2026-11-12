@@ -16,6 +16,6 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t in
 
 /// Add `n` to a counter code, as `DIAG_COUNT_N` would. Real-time safe on the
 /// device.
-void countDiag(DiagCode code, uint32_t n);
+void countDiag(DiagCode code, uint32_t n, uint8_t instance = 255);
 
 } // namespace core_os

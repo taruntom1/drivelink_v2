@@ -101,9 +101,9 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t in
     diag::report(code, static_cast<esp_err_t>(err), arg0, arg1, instance);
 }
 
-void countDiag(DiagCode code, uint32_t n)
+void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
-    diag::count(code, n);
+    diag::count(code, n, instance);
 }
 
 } // namespace core_os
