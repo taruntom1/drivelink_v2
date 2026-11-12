@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G5 accepted; G6 built).
+Last updated: 2026-11-13 (G6 accepted; PR requested; G7 next).
 
 ## Where things stand
 
@@ -16,7 +16,7 @@ Last updated: 2026-11-13 (G5 accepted; G6 built).
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
 | G4 Layout | done | Accepted 2026-11-12. 11 frames on Screens – Local plus 2 kept check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
-| G6 Remote mode | in review | 16 frames on Screens – Remote plus 2 retained 1080p Light checks; awaiting acceptance |
+| G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | planned | |
 | G8 Prototype and handoff | planned | |
 
@@ -24,12 +24,12 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 
 ## Next step
 
-1. Ask the user to accept G6 on Screens – Remote (`2:6`), including the G2 LeaseChip, StatusBar Lease boolean, Dialog confirmation checkbox and responsive Remote live plot. Fix whatever they raise.
-2. After acceptance, discuss **G7 Custom panel**: the `imu.bno055` Calibration reference panel on Custom panels (`2:7`), using the G4 custom-panel slot (`85:4679`) and the firmware plan's IMU actions/calibration state. Settle the phase questions and scope before building.
+1. G6 was accepted 2026-11-13. Open the requested PR into `firmware_overhaul`.
+2. Start **G7 Custom panel** in this session: the `imu.bno055` Calibration reference panel on Custom panels (`2:7`), using the G4 custom-panel slot (`85:4679`) and the firmware plan's IMU actions/calibration state. Settle the phase questions and scope before building.
 
 ## Handoff note
 
-- **Branch:** `Codex/gui-design`, cut from `origin/firmware_overhaul` at `01a9a1e` on 2026-11-13. Design records and helpers carried from `origin/claude/gui-design` (`66d806a`); preserve the newer firmware/host work. Commit and push at the end of each phase or session. No PR yet: open one into `firmware_overhaul` only when the user asks.
+- **Branch:** `Codex/gui-design`, cut from `origin/firmware_overhaul` at `01a9a1e` on 2026-11-13. Design records and helpers carried from `origin/claude/gui-design` (`66d806a`); preserve the newer firmware/host work. Commit and push at the end of each phase or session. User requested a PR into `firmware_overhaul` after accepting G6, then G7 in this session.
 - **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [overhaul-status.md](overhaul-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
@@ -121,6 +121,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
 | 2026-11-13 | gui design 4 | G5 accepted, including Auto re-run default; created Codex/gui-design from current firmware_overhaul and carried prior design records forward; G6 decisions, four G2 extensions, 16 remote frames and two retained 1080p Light checks. Self-review fixed ARM without a lease, gain-range labels, no-device connection state and responsive history/plots. G6 awaiting acceptance |
 | 2026-11-11 | gui design 1 | Phases planned; G0 (FigJam flows, state inventory); G1 wireframes |
 | 2026-11-12 | gui design 1 | G1 decisions (any client may disarm; device-name to-do); G2 design system; tuning controls (sliders, steps, gain history, auto re-run, manual command Latch) in G2 and the G1 wireframes; this status file and the `gui-design-step` skill |
