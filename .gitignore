@@ -88,3 +88,6 @@ Desktop.ini
 
 # Extra idf.py build dirs (CI config variants, e.g. sdkconfig.ci.nolog)
 build_variant/
+
+# Bench-only safe-mode verification build
+build_bench/

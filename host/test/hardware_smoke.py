@@ -15,6 +15,7 @@ def main():
     ap.add_argument('--cli', required=True)
     ap.add_argument('--port', default='COM3')
     ap.add_argument('--report')
+    ap.add_argument('--stack-wait', type=float, default=0, help='Hold temporary loop layout for console stack sampling')
     args = ap.parse_args()
 
     def cli(*command, code=0):
@@ -76,6 +77,8 @@ def main():
         assert {e['loop_id'] for e in status['overruns']} == {l['id'] for l in info['loops']}
         diagnostics = cli('diag-info'); cli('diag-entries')
         cli('bench-crash', code=5)
+        if args.stack_wait:
+            time.sleep(args.stack_wait)
         print('PASS CLI serial discovery, descriptors, layout, typed params, SAVE/reboot/reload, actions, status and diag')
     finally:
         # Remove dependents before their providers, then restore system rates.

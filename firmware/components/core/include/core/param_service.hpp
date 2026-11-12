@@ -29,7 +29,7 @@ struct SetEntry {
     uint32_t bits;
 };
 
-/// Apply one system param on the caller (a loop rate restarts its timer).
+/// Apply one system or loop param on the caller (a loop rate restarts its timer).
 /// @return false on failure; the callee reports the diag code.
 using SystemApplyFn = bool (*)(void *ctx, const Ref &ref, uint32_t bits);
 

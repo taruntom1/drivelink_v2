@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F3d: configurable loops and the real-time flag. F4a follows it.
+- **Next step:** F4a: subscription and command groups, after the F3d PR is merged.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
 ## Keeping this file short
@@ -27,30 +27,33 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F3d
+## Handoff for F4a
 
-The design and the user's decisions are in `plans/firmware-architecture.md`, "Configurable loops, the real-time flag and sources". F3d builds the loops and the flag. F4c builds the sources.
+F3d replaces the fixed pair with built-in loop instances (type 0x05), core wire
+v2 and layout blob format 2. Module and loop capacities are separate. The
+factory layout has control 0 and sensor 1; max_loops=1 creates only control.
 
-- **Where the two loops are hard-coded today:**
-  - `core/loop.hpp`: `kControlLoop`, `kSensorLoop`, `kLoopCount`, `loopClassOf`
-  - `core/core.hpp`: `m_control`, `m_sensor`, the two `PeriodicTask`s, the `loop()` and `task()` ternaries
-  - `core.cpp`: the system instance's rate params, `applySystemParam`, REVERT's four lists, `loopStackHighWater`, the two start stages
-  - `param_service`: `ParamDomain::Control` / `Sensor` and the loop array
-  - `command_service.cpp`: ADD_INSTANCE's default loop and the GET_INFO loop list
-  - `idf/core_link.cpp`: `overruns[2]` in the status stream
-  - `CoreConfig::control` / `sensor` and their Kconfig options
-  - `firmware/main/main.cpp`: the task names in the stack log (`core_ctrl`, `core_sens`)
-  - `system.yaml` ids `0x0001` and `0x0002`
-  - `diag_codes.yaml`: `core.InitFailed` stages 2 and 3, `core.TimerRestartFailed` arg0
-  - `host/libdrivelink/src/client.cpp`: the JSON for loops
-  - docs that describe the two loops: `firmware/CLAUDE.md`, `firmware/main/CLAUDE.md` (the `core.InitFailed` stages), and "Loops and concurrency" and the Kconfig table in `firmware/components/core/README.md`
-- **The loop class has three uses:** the type check (`layout_validation.cpp`), the refusal of paused actions while armed (`Core::runAction`), and ADD_INSTANCE's default loop.
-- **A paused loop still counts its heartbeat** (`Loop::runTick`). Only the refusal in `Core::runAction` keeps a real-time loop from being paused while armed.
-- **`core.InitFailed` stage numbers are wire contract.** Keep 2 as "a loop task" with the loop id in arg1, and retire 3.
-- **The loop type id** must stay clear of the fixed diag sources (`0x01`–`0x04`, `0x10`–`0x12`). `reportStartFailed` in `core.cpp` treats type ids from `0x20` up as diag sources of their own.
-- **NVS namespaces.** Each distinct `t??i??` uses one of NVS's 254 namespace slots for good, even after an erase. Loop instances use them too.
-- **`CONFIG_CORE_BOOT_SELFTEST`** (main) flips `system.control.rate_hz`, which F3d retires. SAVE is on the wire now, so remove the self-test.
-- **It is a wire change (core v2).** Update `docs/protocol/core.md`, the host library, the CLI, the vdev, `smoke_core_firmware.py` and `host/test/hardware_smoke.py` in the same PR.
+- Iterate `Core::loopCapacity()` slots and skip null `loopAt(slot)` pointers;
+  a slot is not a loop id. Use `findLoop(id)` for host-supplied ids.
+- GET_INFO and status include only running loops. Safe mode has no loop task;
+  configured loops remain offline records and live param edits use shadows.
+- Module startup and tick ordering finish before Core::start releases task
+  gates. Task-start failure leaves that loop Failed and its modules
+  DependencyMissing; unrelated loops and the config link remain available.
+- Loop params share the system domain while running. Reboot-required params
+  use the pending layout. Groups must resolve their bound actual loop id.
+- Loop instance records have `loop=kNoLoop`, but their statistic signals belong
+  to their own loop id. Sample their bound plain storage on that owning loop;
+  config-task readers use Loop::stats() atomics. The independent review called
+  out this constraint for F4a.
+- The native real-time guard is automatic in tests; allocate fixture logs at
+  setup. Vdev counts guard violations and reports changes on stderr.
+- core.InitFailed stage 2 names a failed loop task in arg1; stage 3 is retired.
+  Loop task names are core_loop_<id>. Every real-time task joins the Task WDT.
+- A paused loop still counts its heartbeat. The refusal of paused actions on
+  any real-time loop while armed is the protection; retain it in F4b.
+- Before F4a starts, merge the F3d PR. Keep groups, arming/monitor and sources
+  in their existing F4a/F4b/F4c steps.
 
 ## Steps
 
@@ -67,7 +70,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3a-2 | Layout and pending copy, validation, NVS A/B, safe mode, boot in dependency order | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
 | F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | merged | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke | high | merged | [#37](https://github.com/taruntom1/drivelink_v2/pull/37) |
-| F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | in progress | |
+| F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | in review | |
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
 | F4c | Sources: source params, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | planned | |
@@ -123,15 +126,15 @@ Each note is deleted by the step that uses it.
   - `firmware/test/uart_comm/smoke_main_firmware.py`: the legacy managers. It creates no motor.
   - `firmware/test/uart_comm/smoke_core_firmware.py`: the core with mock instances, which it removes again. `--safe-mode` needs a `CONFIG_CORE_BENCH_CRASH=y` build; flash the normal firmware again afterwards.
   - `host/test/hardware_smoke.py`: the same through the CLI. It refuses to run with pending edits, and restores the layout and rates it found.
-- **Saved state on the board now:** a zero-instance layout and rates 1000 / 100 / 10 Hz (control, sensor, status).
+- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status). Normal firmware is flashed; BenchCrash is disabled.
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
-- **Latest stack marks** (F3c, bytes free; stacks are 4096 unless given): main 1304 (4608), uart_rx 3164, uart_tx 3096, motor_mgr_upd 1880, motor_mgr_cfg 3156 (5120), imu_cfg 2084, imu_stream 1996, time_sync_task 1792, diag 2048, esp_timer 3352, core_ctrl 3256, core_sens 3260, core_cfg 4352 (6144).
+- **Latest stack marks** (F3d, temporary third loop and mocks; bytes free; stacks 4096 unless given): main 1304 (4608), uart_rx 3004, uart_tx 3096, motor_mgr_upd 1880, motor_mgr_cfg 3156 (5120), imu_cfg 2084, imu_stream 1788, time_sync_task 2000, diag 1576, esp_timer 3320, core_loop_0 3172, core_loop_1 3260, core_loop_2 3256, core_cfg 4052 (6144).
 - **Never run on hardware so far:** a real BNO055, motors, an armed core, a host other than Windows.
 
 ## Other traps
 
 - **CI builds each IDF app from inside its directory.** With `-C` and `-B` together, the build dir resolves against the current directory but `SDKCONFIG` against the project dir, so the variant's paths split.
-- **`core.TimerRestartFailed`** (the rollback of a failed rate change) can't be triggered in the native tests.
+- **Native timer/task failures** are now injected through core_os/native_task.hpp, including rollback after a later loop rate restart fails.
 - **`reboot_required` system params are refused** (`Unsupported`): the system instance is not a layout entry and has no pending copy. None exist today.
 
 ## Models and effort
@@ -174,3 +177,4 @@ One row per run. The stack marks and what was never run are in "Hardware notes".
 | 2026-11-12 | F3a-2 | Blank-NVS boot; `CONFIG_CORE_BOOT_SELFTEST` save and reload over four resets (COM4 only) | Pass |
 | 2026-11-12 | F3b | HIL pytest (22 cases); core smoke with three mocks (layout, params, SAVE, reboot, reload, actions); legacy smoke; a `CORE_BENCH_CRASH` build: three panics, safe mode, EXIT_SAFE_MODE | Pass |
 | 2026-11-13 | F3c | CLI serial smoke (`host/test/hardware_smoke.py`); legacy smoke; console stack marks | Pass |
+| 2026-11-13 | F3d | CLI serial smoke: third loop and mock, SAVE/reboot/reload, live rate change, actions, status ids, restoration; all task stack marks above 1 KB. Bench build: three panics, safe mode with zero loops, EXIT_SAFE_MODE and cleanup; normal firmware restored; normal core and legacy smoke passed | Pass |

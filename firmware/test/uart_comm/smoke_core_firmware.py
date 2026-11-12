@@ -1,4 +1,4 @@
-"""F3b bare-board smoke. Main firmware, both USB connections, no hardware attached.
+"""F3d bare-board smoke. Main firmware, both USB connections, no hardware attached.
 Creates temporary mock instances, saves/reboots, runs actions and cleans them up.
 --safe-mode requires CONFIG_CORE_BENCH_CRASH=y; normal builds reject BenchCrash.
 """
@@ -30,7 +30,15 @@ class Client:
         for _ in range(2):
             n=struct.unpack_from("<H",p,offset)[0];offset+=2+n
         hash_,capacity,limit,count,flags=struct.unpack_from("<IIHBB",p,offset)
-        return dict(hash=hash_,limit=limit,count=count,flags=flags)
+        offset+=struct.calcsize("<IIHBB")
+        loop_count=p[offset];offset+=1;loops=[]
+        for _ in range(loop_count):
+            id_=p[offset];name_len=struct.unpack_from("<H",p,offset+1)[0];offset+=3
+            name=p[offset:offset+name_len].decode();offset+=name_len
+            rate,loop_flags=struct.unpack_from("<IB",p,offset);offset+=5
+            loops.append(dict(id=id_,name=name,rate_hz=rate,realtime=bool(loop_flags&1)))
+        assert offset==len(p)
+        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops)
     def connect(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
@@ -83,6 +91,7 @@ def main():
                 c.request(1,254);time.sleep(.7);info=c.connect()
             assert info["flags"]&8,info
             assert info["count"]==0
+            assert info["loops"]==[]
             c.request(1,9);time.sleep(.7);info=c.connect();assert not info["flags"]&8
             assert info["count"]==original["count"]+3
             print("PASS crash-loop safe mode and recovery",flush=True)
