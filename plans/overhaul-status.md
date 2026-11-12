@@ -87,7 +87,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
 | F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | in review | |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | in review | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
