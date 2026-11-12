@@ -1,7 +1,7 @@
 """Tests for tools/gen. Run: python -m unittest discover -s tools/gen/tests
 
 Stdlib only (the generator itself needs PyYAML). The golden fixtures are in
-tests/fixtures: a registry, a small diag file and two module types.
+tests/fixtures: a registry, a small diag file, a system type and two module types.
 """
 
 from __future__ import annotations
@@ -75,6 +75,7 @@ class GoldenOutput(TempCase):
             f"{GEN_DIR}/types.hpp",
             f"{GEN_DIR}/type_fixture_full.hpp",
             f"{GEN_DIR}/type_fixture_sensor.hpp",
+            f"{GEN_DIR}/type_system.hpp",
         ]
         for rel in names:
             raw = (self.out / rel).read_bytes()
@@ -159,10 +160,24 @@ class GoldenOutput(TempCase):
         self.assertIn("&fixture_full::kDesc,", t)
         self.assertIn("&fixture_sensor::kDesc,", t)
         self.assertIn("static_assert(typeIdsUnique(kTypeTable)", t)
+        # The system type comes first: the table is sorted by type id.
+        self.assertIn("std::array<const TypeDesc *, 3> kTypeTable{{\n    &system::kDesc,\n    &fixture_full::kDesc,", t)
+        self.assertIn('#include "type_system.hpp"', t)
+
+    def test_system_header(self) -> None:
+        t = self.read(f"{GEN_DIR}/type_system.hpp")
+        self.assertIn("namespace drivelink::protocol::defs::system {", t)
+        self.assertIn("inline constexpr uint8_t kTypeId = 0x00;", t)
+        self.assertIn("inline constexpr uint16_t kFxRateHz = 0x0001;", t)
+        self.assertIn("inline constexpr uint16_t kFxUptimeS = 0x0002;", t)
+        self.assertIn("// Retired ids, never reused: 0x0003 fx.old_rate", t)
+        self.assertIn(".loops = loopMask(),", t)
+        self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
 
     def test_empty_type_table(self) -> None:
         (self.defs / "fixture.full.yaml").unlink()
         (self.defs / "fixture.sensor.yaml").unlink()
+        (self.defs / "system.yaml").unlink()
         code, _, err = self.run_gen()
         self.assertEqual(code, 0, err)
         t = self.read(f"{GEN_DIR}/types.hpp")
@@ -186,6 +201,10 @@ class GoldenOutput(TempCase):
         self.assertIn("~~old_thing~~", doc)
         self.assertIn("## Actions", doc)
         self.assertTrue((self.out / "docs/protocol/types/fixture.sensor.md").exists())
+        system = self.read("docs/protocol/types/system.md")
+        self.assertIn("# system", system)
+        self.assertIn("Type id `0x00`. Loops: none", system)
+        self.assertIn("| 0x0001 | `fx.rate_hz` | u16 | Hz | 10 .. 100 | 50 |", system)
 
     def test_hand_written_doc_text_survives(self) -> None:
         path = self.out / "docs/protocol/registry.md"
@@ -283,6 +302,8 @@ class DescriptorHash(TempCase):
             ("fixture.full.yaml", "blob: out", "blob: both"),
             ("fixture.full.yaml", "name: old_thing", "name: older_thing"),
             ("fixture.full.yaml", "testgen: true", "testgen: false"),
+            ("system.yaml", "default: 50", "default: 60"),
+            ("system.yaml", "unit: s}", "unit: ms}"),
         ]
         seen = {base}
         for file, old, new in changes:
@@ -499,9 +520,57 @@ class TypeErrors(TempCase):
         self.mutate(self.FULL, "default: b_mode", "default: z_mode")
         self.assertSpecError("fixture.full.yaml", "item 0x0010 mode")
 
-    def test_unrelated_files_are_ignored(self) -> None:
-        (self.defs / "system.yaml").write_text("not: a type\n", encoding="utf-8")
-        model.load_defs(self.defs)
+
+
+class SystemType(TempCase):
+    SYS = "system.yaml"
+
+    def test_loads_as_type_zero_with_no_loops(self) -> None:
+        types = model.load_defs(self.defs)["types"]
+        self.assertEqual([t["type_id"] for t in types], [0x00, 0x01, 0x02])
+        system = types[0]
+        self.assertEqual(system["type"], "system")
+        self.assertEqual(system["ns"], "system")
+        self.assertEqual(system["loops"], [])
+        self.assertEqual([i["kind"] for i in system["items"] if not i["retired"]], ["param", "signal"])
+
+    def test_is_in_the_hash(self) -> None:
+        base = self.hash()
+        (self.defs / self.SYS).unlink()
+        self.assertNotEqual(self.hash(), base)
+
+    def test_is_optional(self) -> None:
+        (self.defs / self.SYS).unlink()
+        types = model.load_defs(self.defs)["types"]
+        self.assertEqual([t["type_id"] for t in types], [0x01, 0x02])
+        code, _, err = self.run_gen()
+        self.assertEqual(code, 0, err)
+        self.assertFalse((self.out / GEN_DIR / "type_system.hpp").exists())
+        self.assertNotIn("system::kDesc", self.read(f"{GEN_DIR}/types.hpp"))
+
+    def test_errors(self) -> None:
+        cases = [
+            ("wrong id", "type_id: 0x00", "type_id: 0x05", "type_id must be the system type id 0x00"),
+            ("loops key", "type_id: 0x00\n", "type_id: 0x00\nloops: [control]\n", "runs in no loop"),
+            ("input item", "kind: signal, name: fx.uptime_s, type: u32",
+             "kind: input, name: fx.uptime_s, type: u32", "kind input is not allowed here"),
+            ("action item", "kind: signal, name: fx.uptime_s, type: u32, unit: s}",
+             "kind: action, name: fx.uptime_s, runs_in: loop}", "kind action is not allowed here"),
+            ("wrong type name", "type: system", "type: sys", "type must be 'system'"),
+            ("unknown key", "description: Fixture system items.", "colour: red", "unknown key 'colour'"),
+            ("duplicate id", "{id: 0x0002, kind: signal", "{id: 0x0001, kind: signal", "id already used"),
+        ]
+        for label, old, new, expected in cases:
+            with self.subTest(label):
+                shutil.rmtree(self.defs)
+                shutil.copytree(FIXTURES, self.defs)
+                self.mutate(self.SYS, old, new)
+                self.assertSpecError(self.SYS, expected)
+
+    def test_module_type_cannot_be_named_system(self) -> None:
+        (self.defs / "system.yaml").unlink()
+        self.mutate("fixture.sensor.yaml", "type: fixture.sensor", "type: system")
+        self.assertSpecError("fixture.sensor.yaml", "reserved for system.yaml")
 
 
 class DiagErrors(TempCase):
@@ -563,6 +632,11 @@ class RealDefinitions(unittest.TestCase):
         self.assertEqual(values["imu_stream"], 0xBF)
         counts = {r["name"]: r["usable_count"] for r in reg["channel_ranges"]}
         self.assertEqual(counts, {"sub_groups": 31, "cmd_groups": 29})
+        system = defs["types"][0]
+        self.assertEqual(system["type_id"], 0x00)
+        rates = {i["name"]: (i["min"], i["max"], i["default"]) for i in system["items"] if not i["retired"]}
+        self.assertEqual(rates["control.rate_hz"], (100, 2000, 1000))
+        self.assertEqual(rates["sensor.rate_hz"], (10, 500, 100))
 
     def test_checked_in_outputs_are_current(self) -> None:
         out = io.StringIO()

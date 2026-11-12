@@ -27,22 +27,27 @@ idf.py -C firmware fullclean             # when target/config changes leave the 
 
 There are two kinds of automated tests.
 
-**Host unit tests** (`firmware/test/host/`) cover the pure logic: the `protocol/` library (CRC, framing, scanner, wire codec, the generated definitions; its tests live in `protocol/test/` and are compiled into this build), the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It builds `protocol/` as the host library `drivelink::protocol` and compiles the other firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`. The build also needs Python 3 with PyYAML: it runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the headers that `protocol/test/test_defs.cpp` includes.
+**Native unit tests** (`firmware/test/native/`) cover everything that builds without ESP-IDF:
+- the `protocol/` library (CRC, framing, scanner, wire codec, the generated definitions; its tests live in `protocol/test/` and are compiled into this build)
+- `core_os`'s native backend and the pure `core` (registry, bind API, values, loops, param batches, a threaded end-to-end run). The generator's fixture types (`fixture.full`, `fixture.sensor`) serve as test module types (`tests/core_test_modules.hpp`).
+- the legacy motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator
+
+It is a plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`). It builds `protocol/` as the host library `drivelink::protocol`, and compiles `core_os/backend/native`, the `core` sources (all but `src/idf/`) and the legacy sources directly with the host compiler. `firmware/test/native/shim/` stands in for the two IDF headers the legacy sources include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`); the core needs neither. No IDF export is needed; on this machine, Strawberry Perl ships `g++` (MinGW-w64, posix threads), `cmake` and `ninja`. The build also needs Python 3 with PyYAML: it runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the type headers the tests include.
 
 ```bash
-cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
-cmake --build firmware/test/host/build
-ctest --test-dir firmware/test/host/build --output-on-failure   # or run firmware/test/host/build/host_tests directly
-firmware/test/host/build/host_tests -tc="*SetTiming*"          # doctest filter
+cmake -S firmware/test/native -B firmware/test/native/build -G Ninja
+cmake --build firmware/test/native/build
+ctest --test-dir firmware/test/native/build --output-on-failure   # or run firmware/test/native/build/native_tests directly
+firmware/test/native/build/native_tests -tc="*SetTiming*"          # doctest filter
 ```
 
-A source can join the host build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `firmware/test/host/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `firmware/test/host/shim/sdkconfig.h`.
+A legacy source can join the native build only if it builds without ESP-IDF beyond those shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES` in `firmware/test/native/CMakeLists.txt`. If one reads a new `CONFIG_*` symbol, add it to `firmware/test/native/shim/sdkconfig.h`. A new `core` source goes in `CORE_SOURCES` there, and must not need the shims. Tests that use threads (the `core_os` timing and the threaded core run) keep loose timing bounds: a desktop scheduler can wake a thread 15 ms late.
 
 **CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main` and `firmware_overhaul`:
 - `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`.
-- On Ubuntu, `tools/gen/gen.py --check`, the generator's unit tests (`python3 -m unittest discover -s tools/gen/tests`) and the host tests.
+- On Ubuntu, `tools/gen/gen.py --check`, the generator's unit tests (`python3 -m unittest discover -s tools/gen/tests`) and the native tests.
 
-**Definitions** are in `protocol/defs/`: `registry.yaml` (MSG_TYPEs and stream channel ranges), `diag_codes.yaml` (the diag codes) and, from F3, one file per module type. After editing any of them, regenerate and commit the outputs; CI fails if they are stale. The generator needs PyYAML, which the IDF Python env and this machine's Python both have. The files and the schema are described in `docs/protocol/definitions.md`.
+**Definitions** are in `protocol/defs/`: `registry.yaml` (MSG_TYPEs and stream channel ranges), `diag_codes.yaml` (the diag codes), `system.yaml` (the system items, type `0x00`: the loop rates so far) and, from F3b, one file per module type. After editing any of them, regenerate and commit the outputs; CI fails if they are stale. The generator needs PyYAML, which the IDF Python env and this machine's Python both have. The files and the schema are described in `docs/protocol/definitions.md`.
 
 ```bash
 python tools/gen/gen.py            # regenerate
@@ -72,8 +77,9 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
 ## Architecture
 
 **Startup** (`firmware/main/main.cpp`):
-- The order is `diag::init()`, `UartComm`, then `MotorManager`, `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then `diag::Reporter`.
+- The order is `diag::init()`, `UartComm`, then `MotorManager`, `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then the core (`startCore()`), then `diag::Reporter`.
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
+- The core is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, empty until F3b; each desc is checked against `defs::kTypeTable`). It starts both loops with no instances. If it fails, main reports `core.InitFailed` (arg0 the stage: 1 registry, 2 control loop task, 3 sensor loop task) and continues without it. It logs `Core started: ...` with the instance count and the loop periods. NVS is not touched yet (F3a-2).
 - The Reporter comes last so its `Boot` event carries the final `started_mask`. Records from the startup wait in the diag queue until then.
 - `app_main` never returns. If `UartComm` fails, there is no link to report on: it logs to the console and idles.
 
@@ -81,9 +87,11 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is pure math.
 - `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
-- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `drivelink::protocol::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
+- `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `drivelink::protocol::wire::Reader` / `Writer`. The managers decode and encode only through these, so the native tests cover the wire format.
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) holds the pure wire library: CRC, framing, the frame `Scanner` and `wire_codec`, plus the generated registry, diag code table and descriptor format (`protocol/defs/` is their source). `uart_comm` and every protocol codec build on it. Its rules are in [protocol/CLAUDE.md](../protocol/CLAUDE.md).
-- `rtos_util` provides `StoppableTask`.
+- `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
+- `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, the diag sink) with an ESP-IDF backend (built on `rtos_util`) and a native one. The backend is picked by include dir, never by `#ifdef`. See `firmware/components/core_os/README.md`.
+- `core` is the new core (F3 onwards): the module registry, the instance bind API, the `control` and `sensor` loops and the param service. It is pure: it uses only `core_os`, `protocol/` and std, so it also builds natively. Kconfig reaches it through `CoreConfig`, filled by its one IDF-only source. See `firmware/components/core/README.md`. Until the legacy managers are ported, it runs beside them with empty loops.
 - `diag` reports errors to the host as codes. The `DIAG_*` macros latch a per-code slot and queue a record, and `diag::Reporter` sends events and answers queries over `uart_comm`. Only the managers and `main` report. The hardware layers return errors and don't depend on `diag`, and the reporter reads `uart_comm`'s link counters itself. Its codec and slot table are pure modules (`diag_protocol`, `diag_table`).
 
 **UART protocol** (`uart_comm`):
@@ -132,6 +140,11 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
   - The tick reads stream settings from atomics and only try-locks the `Bno055Device` mutex. A busy device skips the tick and counts it. Late, busy, read-error and encode-error counts are diag counters (`DIAG_COUNT`), and nothing is logged per tick.
   - The timer is stopped while the stream is disabled and during an operation-mode switch.
 - **Wake-up frames:** managers wake their config task with a dummy queue item on shutdown. The config task must re-check the stop flag before dispatching anything it receives.
+- **Core loops:**
+  - `control` (`core_ctrl`: core 1, priority 20, default 1 kHz) and `sensor` (`core_sens`: core 0, priority 10, default 100 Hz) each run on a `core_os::PeriodicTask`, a `TaskTimer`-woken `StoppableTask` on the device. The rates are the system params `control.rate_hz` and `sensor.rate_hz`; a change restarts the loop's timer from the caller of the param service.
+  - Each tick: heartbeat, then the staged param batch, then each instance's `tick()` with `dt = elapsed × period`, then the stats. Instances tick in insertion order until F3a-2 computes the dependency order.
+  - Param batches reach a loop only through its one staging slot, an atomic state (Empty → Filling → Ready → Applying → Applied) that the config task and the loop move with stores and compare-and-swaps. The config task waits on a `core_os::Event` for up to 3 periods plus 5 ms, then withdraws the batch (Ready → Empty). The loop never waits for the config task.
+  - The config task reads and returns param values from its own shadow copy, never from the storage the loop owns.
 
 ## Conventions
 
@@ -141,6 +154,7 @@ This file holds the firmware-wide conventions. Component rules (layout, Kconfig 
 
 These paths are real-time:
 - the motor control tick (`MotorManager::updateTaskLoop` work, `MotorController::update`, `PidController::compute`)
+- the core loop tick (`core::Loop::runTick`, every `Instance::tick` in the `control` loop), the staging swap inside it, and the params' `OnChange` hooks
 - `esp_timer` callbacks
 - ISRs and PCNT/MCPWM driver callbacks
 - code inside `portENTER_CRITICAL` or a spinlock
@@ -162,7 +176,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
 - **IDs from the registry.** MSG_TYPE values and stream channels come only from `protocol/defs/registry.yaml`, through the generated `gen/registry.hpp`. Never hard-code one, and never add a Kconfig option for one.
-- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section in the root `CLAUDE.md`): their wire format is their code and host tests, and the IMU also has `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
+- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section in the root `CLAUDE.md`): their wire format is their code and native tests, and the IMU also has `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
 
 ### Errors, failures and memory
 
@@ -184,12 +198,12 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated files are current (`python tools/gen/gen.py --check`), and the host tests and the generator's unit tests pass. CI checks all of them.
+- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated files are current (`python tools/gen/gen.py --check`), and the native tests and the generator's unit tests pass. CI checks all of them.
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates this file, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
 - **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
-- **Host tests for pure logic:** new or changed pure-logic code (PID, filters, estimators, protocol encode/decode) comes with host unit tests (`firmware/test/host/`, or `protocol/test/` for the `protocol/` library), and they pass.
+- **Native tests for pure logic:** new or changed pure-logic code (the core, PID, filters, estimators, protocol encode/decode) comes with native unit tests (`firmware/test/native/`, or `protocol/test/` for the `protocol/` library), and they pass.
 
 ### Files not to edit
 

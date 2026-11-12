@@ -1,7 +1,7 @@
 """Load and validate the definitions in protocol/defs/.
 
-load_defs() reads registry.yaml, diag_codes.yaml and one YAML file per module
-type. It returns plain dicts in a normalized form (every default filled in),
+load_defs() reads registry.yaml, diag_codes.yaml, the optional system.yaml (the
+system items, type 0x00) and one YAML file per module type. It returns plain dicts in a normalized form (every default filled in),
 which the emitters and the descriptor hash use. Every error is a SpecError
 whose message names the file and the item.
 """
@@ -19,8 +19,10 @@ import yaml
 
 REGISTRY_FILE = "registry.yaml"
 DIAG_FILE = "diag_codes.yaml"
-# system.yaml (F3a) is read by a later step, so the loader leaves it alone.
-RESERVED_FILES = {REGISTRY_FILE, DIAG_FILE, "system.yaml"}
+SYSTEM_FILE = "system.yaml"
+# Files that are not module types. system.yaml is the system type (0x00),
+# loaded by load_system().
+RESERVED_FILES = {REGISTRY_FILE, DIAG_FILE, SYSTEM_FILE}
 
 
 class SpecError(Exception):
@@ -531,6 +533,37 @@ def load_item(file: str, type_name: str, raw: Any) -> dict:
     return item
 
 
+def load_items(f: str, name: str, raw_items: Any, allowed_kinds: tuple[str, ...] = KIND_NAMES) -> list[dict]:
+    """Load the items of type `name` from file `f`, with the per-type id and name checks."""
+    where = f"{f}: type {name}"
+    if not isinstance(raw_items, list):
+        fail(where, "items must be a list")
+    items = [load_item(f, name, raw) for raw in raw_items]
+
+    seen_ids: dict[int, str] = {}
+    live_names: dict[str, int] = {}
+    live_consts: dict[str, str] = {}
+    for it in items:
+        iw = f"{f}: item 0x{it['id']:04X} {it['name']}"
+        if it["id"] in seen_ids:
+            fail(iw, f"id already used by '{seen_ids[it['id']]}' (retired ids count too)")
+        seen_ids[it["id"]] = it["name"]
+        if it["retired"]:
+            continue
+        if it["kind"] not in allowed_kinds:
+            fail(iw, f"kind {it['kind']} is not allowed here (allowed: {', '.join(allowed_kinds)})")
+        if it["name"] in live_names:
+            fail(iw, "name already used by another item of this type")
+        live_names[it["name"]] = it["id"]
+        const = "k" + pascal(it["name"])
+        if const in RESERVED_CONSTANTS:
+            fail(iw, f"name would generate the reserved constant {const}")
+        if const in live_consts:
+            fail(iw, f"name generates the constant {const}, which '{live_consts[const]}' already generates")
+        live_consts[const] = it["name"]
+    return items
+
+
 def load_type(path: Path, system_id: int) -> dict:
     f = path.name
     doc = load_yaml(path)
@@ -540,6 +573,8 @@ def load_type(path: Path, system_id: int) -> dict:
     name = doc["type"]
     if not isinstance(name, str) or not DOTTED.match(name):
         fail(f, "type must be snake_case segments joined by dots, such as controller.cascade_pid")
+    if name == SYSTEM_TYPE:
+        fail(f, f"type '{SYSTEM_TYPE}' is reserved for {SYSTEM_FILE}")
     if path.stem != name:
         fail(f, f"the file must be named '{name}.yaml'")
     where = f"{f}: type {name}"
@@ -558,29 +593,7 @@ def load_type(path: Path, system_id: int) -> dict:
     if len(set(loops)) != len(loops):
         fail(where, "loops lists a loop twice")
 
-    if not isinstance(doc["items"], list):
-        fail(where, "items must be a list")
-    items = [load_item(f, name, raw) for raw in doc["items"]]
-
-    seen_ids: dict[int, str] = {}
-    live_names: dict[str, int] = {}
-    live_consts: dict[str, str] = {}
-    for it in items:
-        iw = f"{f}: item 0x{it['id']:04X} {it['name']}"
-        if it["id"] in seen_ids:
-            fail(iw, f"id already used by '{seen_ids[it['id']]}' (retired ids count too)")
-        seen_ids[it["id"]] = it["name"]
-        if it["retired"]:
-            continue
-        if it["name"] in live_names:
-            fail(iw, "name already used by another item of this type")
-        live_names[it["name"]] = it["id"]
-        const = "k" + pascal(it["name"])
-        if const in RESERVED_CONSTANTS:
-            fail(iw, f"name would generate the reserved constant {const}")
-        if const in live_consts:
-            fail(iw, f"name generates the constant {const}, which '{live_consts[const]}' already generates")
-        live_consts[const] = it["name"]
+    items = load_items(f, name, doc["items"])
 
     return {
         "type": name,
@@ -588,6 +601,40 @@ def load_type(path: Path, system_id: int) -> dict:
         "type_id": tid,
         "description": opt_str(where, doc, "description"),
         "loops": [lp for lp in LOOP_CLASSES if lp in loops],
+        "items": items,
+    }
+
+
+SYSTEM_TYPE = "system"
+SYSTEM_KINDS = ("param", "signal")
+
+
+def load_system(path: Path, system_id: int) -> dict:
+    """system.yaml: the system items, type 0x00. Like a module type, but it
+    runs in no loop (the core applies its params on the config task) and has
+    only params and signals."""
+    f = path.name
+    doc = load_yaml(path)
+    if not isinstance(doc, dict):
+        fail(f, "must be a mapping")
+    if "loops" in doc:
+        fail(f, "the system type runs in no loop: remove 'loops'")
+    check_keys(f, doc, {"type", "type_id", "description", "items"}, {"type", "type_id", "items"})
+    if doc["type"] != SYSTEM_TYPE:
+        fail(f, f"type must be '{SYSTEM_TYPE}'")
+    where = f"{f}: type {SYSTEM_TYPE}"
+    tid = doc["type_id"]
+    if not is_int(tid) or tid != system_id:
+        fail(where, f"type_id must be the system type id 0x{system_id:02X}")
+
+    items = load_items(f, SYSTEM_TYPE, doc["items"], SYSTEM_KINDS)
+
+    return {
+        "type": SYSTEM_TYPE,
+        "ns": SYSTEM_TYPE,
+        "type_id": tid,
+        "description": opt_str(where, doc, "description"),
+        "loops": [],
         "items": items,
     }
 
@@ -603,6 +650,9 @@ def load_defs(defs_dir: Path) -> dict:
         if path.name in RESERVED_FILES:
             continue
         types.append(load_type(path, registry["system_type_id"]))
+    system_path = defs_dir / SYSTEM_FILE
+    if system_path.exists():  # optional: without it there is no system type
+        types.append(load_system(system_path, registry["system_type_id"]))
     seen: dict[int, str] = {}
     for t in types:
         if t["type_id"] in seen:

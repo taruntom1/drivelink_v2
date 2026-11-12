@@ -6,9 +6,10 @@
 |---|---|---|
 | `registry.yaml` | MSG_TYPEs and stream channel ranges | `gen/registry.hpp`, [registry.md](registry.md) |
 | `diag_codes.yaml` | diag sources and codes | `gen/diag_codes.hpp`, [diag-codes.md](diag-codes.md) |
+| `system.yaml` | the system items (type `0x00`) | `gen/types.hpp`, `gen/type_system.hpp`, [types/system.md](types/system.md) |
 | `<type>.yaml`, one per module type | the items a module type exposes | `gen/types.hpp`, `gen/type_<type>.hpp`, `types/<type>.md` |
 
-`system.yaml` (the system items, type `0x00`) joins in F3a. No module type ships yet: the type path is exercised by the generator's test fixtures.
+No module type ships yet: the type path is exercised by the generator's test fixtures, and the core's native tests use the fixture types as test modules.
 
 The headers are in `protocol/include/drivelink/protocol/gen/`, namespace `drivelink::protocol::defs`. Never edit them by hand.
 
@@ -97,6 +98,23 @@ A retired item has only `id`, `name` and `retired: true`. It keeps its id in the
 
 Every param, signal and input value is a 4-byte slot. Larger data goes through actions.
 
+## system.yaml
+
+The system items: device-wide settings that the core owns, addressed as type `0x00`, instance 0. The file has the shape of a module type file, with three differences:
+
+```yaml
+type: system
+type_id: 0x00
+items:
+  - {id: 0x0001, kind: param, name: control.rate_hz, type: u16, unit: Hz, min: 100, max: 2000, default: 1000, flags: [locked_while_armed]}
+```
+
+- `type` is `system` and `type_id` is `0x00` (the registry's `system_type_id`). No module type may be named `system`.
+- There is no `loops` key: the system type runs in no loop. The core applies its params on the config task (a loop rate change restarts that loop's timer), so `TypeDesc::loops` is 0.
+- Items are params and signals only. Inputs and actions are rejected.
+
+Everything else follows the module type rules above: ids, names, value types, limits, flags. The file is optional for the generator (its test fixtures can leave it out); the firmware needs it. The items are listed in [types/system.md](types/system.md). It holds only the items in use; later steps add theirs (the watchdog timeout, the status rate).
+
 ## The descriptor format
 
 `protocol/include/drivelink/protocol/defs.hpp` (hand-written) defines what the generated tables hold.
@@ -113,7 +131,7 @@ For each type, `gen/type_<type with . replaced by _>.hpp` holds, in namespace `d
 - `kItems` (the `ItemDesc` table) and `kDesc` (the `TypeDesc`)
 - a `static_assert` that the ids in `kItems` are unique
 
-`gen/types.hpp` holds `kTypeTable`, a table of pointers to every `kDesc`. It is empty today.
+`gen/types.hpp` holds `kTypeTable`, a table of pointers to every `kDesc`, sorted by type id, so the system type (`defs::system::kDesc`) comes first. Today it holds only the system type.
 
 ## The descriptor hash
 

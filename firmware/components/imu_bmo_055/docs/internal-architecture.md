@@ -19,7 +19,7 @@ This document describes the internal architecture of the `imu_bmo_055` ESP-IDF c
 - `include/imu_bmo_055_protocol.hpp`
   - Protocol constants, subcommand IDs, stream field IDs, result codes, calibration data structs (pure, no FreeRTOS)
 - `priv_include/imu_protocol.hpp`, `src/imu_protocol.cpp`
-  - Payload codec: configure header and body decoders, response, calibration blob and stream sample encoders, `ImuStreamSample`. Pure, so `firmware/test/host/` tests it
+  - Payload codec: configure header and body decoders, response, calibration blob and stream sample encoders, `ImuStreamSample`. Pure, so `firmware/test/native/` tests it
 - `priv_include/bno055_device.hpp`
   - Internal BNO055 device wrapper interface
 - `src/bno055_device.cpp`

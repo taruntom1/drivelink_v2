@@ -1,6 +1,6 @@
 # Framing (link layer)
 
-How every message between the host and the ESP32-S3 is put on the wire. The payloads inside the frames are defined by each protocol (the legacy managers' code and host tests until they are ported, then the core's families). The MSG_TYPE and stream channel assignments are in [registry.md](registry.md), generated from the definitions described in [definitions.md](definitions.md). The diag codes are in [diag-codes.md](diag-codes.md).
+How every message between the host and the ESP32-S3 is put on the wire. The payloads inside the frames are defined by each protocol (the legacy managers' code and native tests until they are ported, then the core's families). The MSG_TYPE and stream channel assignments are in [registry.md](registry.md), generated from the definitions described in [definitions.md](definitions.md). The diag codes are in [diag-codes.md](diag-codes.md).
 
 The C++ implementation is `protocol/` (`framing.hpp`, `crc.hpp`, `scanner.hpp`), shared by the firmware and the host. The Python reference used by the hardware tests is `firmware/test/uart_comm/protocol.py`. Both are tested against the golden frames below.
 

@@ -51,7 +51,7 @@ After approval, spawn one `general-purpose` agent with the step's build model an
   - `idf.py -C firmware/test/uart_comm build`
   - `python tools/gen/gen.py --check`
   - `python -m unittest discover -s tools/gen/tests`
-  - the host tests (`firmware/test/host`), plus any suites the step introduces
+  - the native tests (`cmake -S firmware/test/native -B firmware/test/native/build -G Ninja`, `cmake --build firmware/test/native/build`, `ctest --test-dir firmware/test/native/build --output-on-failure`), plus any suites the step introduces
 - Report: what changed, check results, internal choices to log, anything unfinished.
 
 Then:

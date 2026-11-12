@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 #   - Under ESP-IDF this directory is a component, added to the firmware
 #     through EXTRA_COMPONENT_DIRS.
 #   - Otherwise it is an ordinary static library, drivelink::protocol, for the
-#     host tests (and later the host software).
+#     native tests (and later the host software).
 
 set(DRIVELINK_PROTOCOL_SOURCES
     src/crc.cpp

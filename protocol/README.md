@@ -17,11 +17,11 @@ All headers are under `include/drivelink/protocol/`, namespace `drivelink::proto
 | `defs.hpp` | The descriptor format: `ItemDesc`, `TypeDesc`, the `ItemKind`, `ValueType`, `ItemFlag`, `LoopClass`, `ActionPlacement` and `BlobDir` enums, `findItem()`, `findType()` and `f32Bits()`. Header-only. |
 | `gen/registry.hpp` | **Generated.** Every MSG_TYPE (`defs::msg::k<Name>`), the stream channel ranges (`kSubGroupChannelFirst` / `Count`, `kCmdGroupChannelFirst` / `Count`), the system type id and `kDescriptorHash`, with `static_assert`s on uniqueness, class ranges and channel ranges. |
 | `gen/diag_codes.hpp` | **Generated.** The diag sources, codes and slot table, in `defs::diag`. |
-| `gen/types.hpp`, `gen/type_<type>.hpp` | **Generated.** The id constants and constexpr descriptor tables of each module type, and `kTypeTable`. No type is defined yet. |
+| `gen/types.hpp`, `gen/type_<type>.hpp` | **Generated.** The id constants and constexpr descriptor tables of the system type (`gen/type_system.hpp`, `defs::system`, type `0x00`) and of each module type, and `kTypeTable`. No module type is defined yet. |
 
 ## Definitions and generated headers
 
-`protocol/defs/` holds the YAML that the `gen/` headers and the generated docs come from: `registry.yaml`, `diag_codes.yaml` and, from F3, one file per module type. `python tools/gen/gen.py` regenerates them, and `--check` fails if they are stale (CI runs it). Never edit a file under `gen/` by hand. The schema, the descriptor format and the hash are described in [docs/protocol/definitions.md](../docs/protocol/definitions.md), and the generated tables are in [docs/protocol/registry.md](../docs/protocol/registry.md).
+`protocol/defs/` holds the YAML that the `gen/` headers and the generated docs come from: `registry.yaml`, `diag_codes.yaml`, `system.yaml` and, from F3b, one file per module type. `python tools/gen/gen.py` regenerates them, and `--check` fails if they are stale (CI runs it). Never edit a file under `gen/` by hand. The schema, the descriptor format and the hash are described in [docs/protocol/definitions.md](../docs/protocol/definitions.md), and the generated tables are in [docs/protocol/registry.md](../docs/protocol/registry.md).
 
 ```cpp
 #include "drivelink/protocol/gen/registry.hpp"
@@ -58,4 +58,4 @@ Rules:
 
 ## Tests
 
-`protocol/test/` holds the doctest cases for every hand-written header and for the generated registry and descriptor tables (`test_defs.cpp`; the type headers it uses are generated from the generator's test fixtures at build time). They are compiled into the firmware's host test build (`firmware/test/host`, using its vendored doctest) until `protocol/` gets its own test target.
+`protocol/test/` holds the doctest cases for every hand-written header and for the generated registry and descriptor tables (`test_defs.cpp`; the type headers it uses are generated from the generator's test fixtures at build time). They are compiled into the firmware's native test build (`firmware/test/native`, using its vendored doctest) until `protocol/` gets its own test target.

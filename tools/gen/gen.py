@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Generate the protocol's C++ headers and docs from protocol/defs/.
 
-Reads protocol/defs/registry.yaml, diag_codes.yaml and one YAML file per module
-type. Writes:
+Reads protocol/defs/registry.yaml, diag_codes.yaml, system.yaml (the system
+items, type 0x00) and one YAML file per module type. Writes:
 
   protocol/include/drivelink/protocol/gen/registry.hpp    MSG_TYPEs, channel ranges, descriptor hash
   protocol/include/drivelink/protocol/gen/diag_codes.hpp  the diag code table
   protocol/include/drivelink/protocol/gen/types.hpp       the type table
-  protocol/include/drivelink/protocol/gen/type_<type>.hpp one descriptor table per module type
+  protocol/include/drivelink/protocol/gen/type_<type>.hpp one descriptor table per type (type_system.hpp for 0x00)
   docs/protocol/registry.md                               the tables between marker comments
   docs/protocol/diag-codes.md                             the code table between marker comments
-  docs/protocol/types/<type>.md                           one page per module type
+  docs/protocol/types/<type>.md                           one page per type (system.md for 0x00)
 
 Usage:
   python tools/gen/gen.py           regenerate

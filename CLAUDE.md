@@ -10,9 +10,9 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 
 | Path | What | Rules |
 |---|---|---|
-| `firmware/` | The ESP-IDF project: `main/`, `components/`, `test/host` (pure-logic unit tests), `test/uart_comm` (hardware-in-the-loop tests) | [firmware/CLAUDE.md](firmware/CLAUDE.md), and [firmware/components/CLAUDE.md](firmware/components/CLAUDE.md) for components |
+| `firmware/` | The ESP-IDF project: `main/`, `components/`, `test/native` (native unit tests: `protocol/`, the core, pure logic), `test/uart_comm` (hardware-in-the-loop tests) | [firmware/CLAUDE.md](firmware/CLAUDE.md), and [firmware/components/CLAUDE.md](firmware/components/CLAUDE.md) for components |
 | `protocol/` | The wire library shared by firmware and host: framing, CRC, frame scanner, `wire_codec`, and the generated registry, diag codes and descriptor format. Pure C++20 | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
-| `protocol/defs/` | The definitions (YAML): `registry.yaml` (MSG_TYPEs, stream channel ranges), `diag_codes.yaml` and, from F3, one file per module type. The source of everything under `protocol/include/drivelink/protocol/gen/` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
+| `protocol/defs/` | The definitions (YAML): `registry.yaml` (MSG_TYPEs, stream channel ranges), `diag_codes.yaml`, `system.yaml` (the system items, type `0x00`) and, from F3b, one file per module type. The source of everything under `protocol/include/drivelink/protocol/gen/` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
 | `docs/protocol/` | The wire spec, the generated registry and diag code tables, and the definitions guide | Updated in the same commit as any wire change |
 | `tools/gen/` | The generator: `python tools/gen/gen.py [--check]` turns `protocol/defs/` into the generated headers and docs. Its tests: `python -m unittest discover -s tools/gen/tests` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
 | `plans/` | The overhaul plans and `overhaul-status.md` | |
@@ -23,7 +23,7 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 ## Cross-cutting rules
 
 - **Host and firmware change together.** There is no backward compatibility on the wire. Any protocol change updates the firmware, the host code that speaks it, and `docs/protocol/` in one change.
-- **Definition of done** is per area. For the firmware it is the list in `firmware/CLAUDE.md` ("Definition of done"): zero-warning builds, current generated files, passing host tests, docs in the same commit. CI checks it.
+- **Definition of done** is per area. For the firmware it is the list in `firmware/CLAUDE.md` ("Definition of done"): zero-warning builds, current generated files, passing native tests, docs in the same commit. CI checks it.
 - **Paths.** Paths in `firmware/CLAUDE.md` are relative to the repository root, and firmware commands run from the root with `-C firmware`.
 
 ## Firmware overhaul in progress (temporary, removed in F10)
@@ -45,7 +45,7 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
 - **Legacy code.**
   - `motor_manager`, `imu_bmo_055` and `time_sync` keep working until their phase ports them.
   - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
-  - Their wire format is defined by their code and host tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
+  - Their wire format is defined by their code and native tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
 - **Roles.** The session is the planning and review agent (Opus 5.5, high). The build is done by an implementation subagent that the session spawns with the step's model and effort. `/overhaul-step` has the details.
 - **Hardware.**
   - Checks that run on the bare bench board (nothing attached): the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.

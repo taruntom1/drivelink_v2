@@ -38,7 +38,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Param writes | Atomic batches. If any entry is invalid, nothing is applied, and the response names the failing index with result + detail. Live params in one batch must belong to a single loop. Each loop has **one staging slot**. The response is sent only after the loop has swapped the batch in, or after the batch was withdrawn. |
 | Layout | Structural params are flagged `reboot_required`. `ADD_INSTANCE` and `REMOVE_INSTANCE` are system ops. Layout changes are written to NVS and take effect at the next boot. Each instance has a 16-byte label, unique on the device. |
 | Persistence | Explicit `SAVE`, `REVERT` and `FACTORY_RESET`. NVS stores (id, value) pairs per instance, in A/B slots with a generation number. `SAVE` is refused while armed. |
-| Loops | A few named loops. `control` uses an esp_timer, runs on core 1, and follows the real-time rules. `sensor` runs on core 0 and allows bus I/O. Each module type declares which loop classes it may run in, the layout assigns each instance a loop, and loop rates are params. |
+| Loops | A few named loops. `control` uses an esp_timer, runs on core 1, and follows the real-time rules. `sensor` runs on core 0 and allows bus I/O. Each module type declares which loop classes it may run in, the layout assigns each instance a loop (stored in its layout entry), and loop rates are params: `system.control.rate_hz` (default 1 kHz, 100–2000 Hz) and `system.sensor.rate_hz` (default 100 Hz, 10–500 Hz), both `locked_while_armed`. |
 | Control | Motor control is split into **Actuator**, **Feedback** and **Controller** module types, wired together by the layout. Today's code becomes `actuator.pwm_dir`, `feedback.quadrature` and `controller.cascade_pid`. |
 | Mode changes | Allowed while armed, **bumpless**. They apply at a tick boundary. The new mode's setpoint starts from the current measurement, and its integrator is preset so that the output doesn't jump. |
 | Telemetry | **Subscription groups.** Each group is bound to one loop, runs at a divider of that loop's rate, and packs its values with no per-value ids. Each group has its own stream channel and a config epoch. |
@@ -95,7 +95,8 @@ Wiring between instances (which controller uses which actuator and feedback) use
 ```cpp
 namespace core {
 
-// One per module type, registered at startup (static registration table).
+// One per module type. main passes the list to the core explicitly (no static
+// self-registration, which the linker would drop).
 struct ModuleType {
     const defs::TypeDesc& desc;          // generated: items, loop classes, action placement
     Instance* (*create)(const InstanceConfig& cfg);   // called at boot only; may allocate
@@ -104,9 +105,10 @@ struct ModuleType {
 class Instance {
 public:
     virtual ~Instance() = default;
-    // Boot: read structural params from cfg, claim GPIOs through ctx, acquire hardware.
-    // Report failures through DIAG_*.
-    virtual esp_err_t start(const InstanceContext& ctx) = 0;
+    // Boot: bind params, signals and inputs, read structural params through ctx,
+    // claim GPIOs through ctx, acquire hardware. On failure call ctx.fail(stage, err)
+    // and return false; the core reports core.InstanceStartFailed.
+    virtual bool start(InstanceContext& ctx) = 0;
     // Loop tick (in the instance's loop). Real-time rules apply in `control`.
     virtual void tick(const TickContext& t) = 0;
     // Param, signal and input access is table-driven: the instance binds generated ids
@@ -243,7 +245,7 @@ The rules follow the protocol conventions:
 | Family | Ops |
 |---|---|
 | `0x01` system | `GET_INFO`, `ARM`, `DISARM`, `ACK_FAULT`, `SAVE`, `REVERT`, `FACTORY_RESET`, `REBOOT`, `EXIT_SAFE_MODE` |
-| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, label)`, `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
+| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, loop, label)` (the loop defaults to the type's first loop class), `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
 | `0x03` describe | `GET_TYPES` (paged), `GET_ITEMS(type, start)` (paged: every item with its kind and descriptor), `GET_ENUM(type, item)`, `GET_CODES(start)` (paged diag code descriptors: source, code, name, severity, kind, flags) |
 | `0x04` param | `GET(n × Ref)`, `SET(n × (Ref, value))` (atomic batch), `GET_PENDING` (staged `reboot_required` values) |
 | `0x05` group | `SUB_CONFIG(group, loop, divider, n × Ref)`, `SUB_ENABLE`, `SUB_CLEAR`, `CMD_CONFIG(group, loop, n × Ref)`, `CMD_CLEAR`, `LIST` |
@@ -373,7 +375,7 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 - One namespace per instance, `t<type>i<inst>`.
 - Each instance's params are stored as one blob of `n × (id u16, value u32)`, with a header: format version, generation u32, count and CRC32.
 - Each blob has two slots, A and B. `SAVE` writes the slot with the older generation. Loading takes the valid slot with the highest generation. A power loss during `SAVE` therefore leaves the previous configuration intact.
-- The `layout` blob (instances, with their type, id and label) uses the same A/B scheme. One `SAVE` gives every blob the same generation, and loading uses only blobs of the newest generation that is complete across the layout.
+- The `layout` blob (instances, with their type, id, loop and label) uses the same A/B scheme. One `SAVE` gives every blob the same generation, and loading uses only blobs of the newest generation that is complete across the layout.
 
 **Ids across firmware versions.** Unknown ids are ignored, and missing ids take their YAML default. Adding or removing params in a firmware update therefore needs no migration. A retired id is skipped.
 
@@ -529,5 +531,4 @@ Arming lands (F4) before any real motor is driven through the core (F5), so the 
 
 ## Open questions
 
-- `control` loop default rate: 1 kHz as today? And the `sensor` default: 100 Hz?
 - Safety monitor period: is 10 ms (worst case about 13 ms plus 3 control periods to stop the motors after a loop stall) fast enough for your robots?

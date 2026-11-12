@@ -1,0 +1,17 @@
+# The system items: type 0x00, instance 0. After editing, run
+#
+#   python tools/gen/gen.py
+#
+# and commit the regenerated files (gen/type_system.hpp, gen/types.hpp, the
+# descriptor hash and docs/protocol/types/system.md).
+#
+# Like a module type, but with no `loops`: the core applies system params on
+# the config task, not in a loop tick. Only params and signals. The schema is
+# in docs/protocol/definitions.md. Ids are never reused.
+type: system
+type_id: 0x00
+description: Device-wide settings owned by the core.
+items:
+  # loop rates (Hz); the loop period is 1e6 / rate, rounded to the nearest us
+  - {id: 0x0001, kind: param, name: control.rate_hz, type: u16, unit: Hz, min: 100, max: 2000, default: 1000, flags: [locked_while_armed], description: "Rate of the control loop."}
+  - {id: 0x0002, kind: param, name: sensor.rate_hz, type: u16, unit: Hz, min: 10, max: 500, default: 100, flags: [locked_while_armed], description: "Rate of the sensor loop."}

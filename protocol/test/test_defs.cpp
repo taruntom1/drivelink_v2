@@ -7,7 +7,7 @@
 #include "drivelink/protocol/gen/types.hpp"
 
 // Generated at build time from tools/gen/tests/fixtures (see
-// firmware/test/host/CMakeLists.txt): they prove that the generator's type
+// firmware/test/native/CMakeLists.txt): they prove that the generator's type
 // headers compile with -Werror and describe what the YAML says.
 #include "type_fixture_full.hpp"
 #include "type_fixture_sensor.hpp"
@@ -71,7 +71,36 @@ TEST_CASE("Descriptor hash is set, and the diag table comes through")
     CHECK(kDescriptorHash != 0);
     CHECK(diag::kCodeTable.size() == diag::kSlotCount);
     CHECK(diag::kSlotCount > 0);
-    CHECK(kTypeTable.size() == 0); // no module type ships yet
+    // Only the system type ships so far, and it comes first (by type id).
+    REQUIRE(kTypeTable.size() == 1);
+    CHECK(kTypeTable[0] == &system::kDesc);
+}
+
+TEST_CASE("System type: type 0x00, no loops, the loop rates")
+{
+    CHECK(system::kTypeId == kSystemTypeId);
+    CHECK(findType(kTypeTable, kSystemTypeId) == &system::kDesc);
+    CHECK(system::kDesc.loops == 0);
+    CHECK_FALSE(runsIn(system::kDesc, LoopClass::Control));
+
+    const ItemDesc *control = findItem(system::kDesc, system::kControlRateHz);
+    REQUIRE(control != nullptr);
+    CHECK(control->kind == ItemKind::Param);
+    CHECK(control->type == ValueType::U16);
+    CHECK(hasFlag(*control, ItemFlag::LockedWhileArmed));
+    CHECK(control->min_bits == 100);
+    CHECK(control->max_bits == 2000);
+    CHECK(control->default_bits == 1000);
+
+    const ItemDesc *sensor = findItem(system::kDesc, system::kSensorRateHz);
+    REQUIRE(sensor != nullptr);
+    CHECK(sensor->min_bits == 10);
+    CHECK(sensor->max_bits == 500);
+    CHECK(sensor->default_bits == 100);
+
+    for (const ItemDesc &item : system::kDesc.items) {
+        CHECK((item.kind == ItemKind::Param || item.kind == ItemKind::Signal));
+    }
 }
 
 TEST_CASE("f32 bits round trip")
