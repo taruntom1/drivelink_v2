@@ -11,9 +11,10 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 | Path | What | Rules |
 |---|---|---|
 | `firmware/` | The ESP-IDF project: `main/`, `components/`, `test/host` (pure-logic unit tests), `test/uart_comm` (hardware-in-the-loop tests) | [firmware/CLAUDE.md](firmware/CLAUDE.md), and [firmware/components/CLAUDE.md](firmware/components/CLAUDE.md) for components |
-| `protocol/` | The wire library shared by firmware and host: framing, CRC, frame scanner, `wire_codec`. Pure C++20 | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
-| `docs/protocol/` | The wire spec and the diag code table | Updated in the same commit as any wire change |
-| `tools/` | Generators and scripts (`gen_diag_codes.py`) | |
+| `protocol/` | The wire library shared by firmware and host: framing, CRC, frame scanner, `wire_codec`, and the generated registry, diag codes and descriptor format. Pure C++20 | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
+| `protocol/defs/` | The definitions (YAML): `registry.yaml` (MSG_TYPEs, stream channel ranges), `diag_codes.yaml` and, from F3, one file per module type. The source of everything under `protocol/include/drivelink/protocol/gen/` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
+| `docs/protocol/` | The wire spec, the generated registry and diag code tables, and the definitions guide | Updated in the same commit as any wire change |
+| `tools/gen/` | The generator: `python tools/gen/gen.py [--check]` turns `protocol/defs/` into the generated headers and docs. Its tests: `python -m unittest discover -s tools/gen/tests` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
 | `plans/` | The overhaul plans and `overhaul-status.md` | |
 | `.github/workflows/` | CI | |
 

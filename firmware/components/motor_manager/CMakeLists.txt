@@ -4,6 +4,6 @@ idf_component_register(
          "src/motor_protocol.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES motor_controller uart_comm rtos_util freertos log esp_timer
-    PRIV_REQUIRES protocol diag
+    REQUIRES motor_controller uart_comm rtos_util freertos log esp_timer protocol
+    PRIV_REQUIRES diag
 )

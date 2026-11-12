@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motor_controller.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
 #include "motor_manager_protocol.hpp"
 #include "sdkconfig.h"
 #include <cstddef>
@@ -17,10 +18,11 @@ constexpr bool kDefaultUseMockFeedback = true;
 constexpr bool kDefaultUseMockFeedback = false;
 #endif
 
-constexpr uint8_t kManagerMsgConfigure = CONFIG_MOTOR_MANAGER_CONFIGURE_MSG_TYPE;
-constexpr uint8_t kManagerMsgConfigureResp = CONFIG_MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE;
-constexpr uint8_t kManagerSetpointStreamChannel = CONFIG_MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL;
-constexpr uint8_t kManagerTelemetryStreamChannel = CONFIG_MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL;
+// MSG_TYPEs and stream channels come from the generated registry (protocol/defs/registry.yaml).
+constexpr uint8_t kManagerMsgConfigure = drivelink::protocol::defs::msg::kMotorConfigure;
+constexpr uint8_t kManagerMsgConfigureResp = drivelink::protocol::defs::msg::kMotorConfigureResponse;
+constexpr uint8_t kManagerSetpointStreamChannel = drivelink::protocol::defs::msg::kMotorSetpointStream;
+constexpr uint8_t kManagerTelemetryStreamChannel = drivelink::protocol::defs::msg::kMotorTelemetryStream;
 
 // Limits applied to the control and telemetry periods (constructor config and SetTiming).
 constexpr uint32_t kControlPeriodMinUs = 250;

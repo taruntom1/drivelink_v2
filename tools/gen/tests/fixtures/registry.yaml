@@ -1,0 +1,15 @@
+# Fixture registry for the generator tests.
+system_type_id: 0x00
+
+msg_types:
+  - {name: fx_command,   value: 0x01, direction: host_to_esp, description: "A command."}
+  - {name: fx_response,  value: 0x41, direction: esp_to_host}
+  - {name: fx_status,    value: 0x80, direction: esp_to_host, description: "Status | with a pipe."}
+  - {name: fx_event,     value: 0xC0, direction: esp_to_host}
+  - {name: fx_old_cmd,   value: 0x20, direction: both, legacy: F9}
+  - {name: fx_old_setpt, value: 0xBE, direction: host_to_esp, legacy: F9}
+  - {name: fx_old_telem, value: 0xBF, direction: esp_to_host, legacy: F9}
+
+channel_ranges:
+  - {name: fx_subs, symbol: FxSub, first: 0x81, last: 0x8F, direction: esp_to_host}
+  - {name: fx_cmds, symbol: FxCmd, first: 0xA0, last: 0xBF, direction: host_to_esp, description: "Legacy at the tail."}

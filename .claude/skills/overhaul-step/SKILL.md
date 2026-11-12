@@ -49,7 +49,8 @@ After approval, spawn one `general-purpose` agent with the step's build model an
   - `idf.py -C firmware build`
   - the nolog variant (from inside `firmware/`: `idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build`)
   - `idf.py -C firmware/test/uart_comm build`
-  - `python tools/gen_diag_codes.py --check`
+  - `python tools/gen/gen.py --check`
+  - `python -m unittest discover -s tools/gen/tests`
   - the host tests (`firmware/test/host`), plus any suites the step introduces
 - Report: what changed, check results, internal choices to log, anything unfinished.
 

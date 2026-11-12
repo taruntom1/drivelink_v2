@@ -3,7 +3,7 @@
 /// diag wire format (protocol v2; v2 changed no payload, it was bumped with the
 /// link framing in overhaul F1b): pure byte-in/byte-out codec with no
 /// ESP-IDF or FreeRTOS dependency, so the host unit tests cover it.
-/// README.md is the spec. MSG_TYPEs come from Kconfig (diag_reporter.hpp).
+/// README.md is the spec. MSG_TYPEs come from the generated registry (diag_reporter.hpp).
 
 #include <cstddef>
 #include <cstdint>

@@ -5,6 +5,6 @@ idf_component_register(
          "src/diag_table.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES esp_common freertos log
-    PRIV_REQUIRES protocol uart_comm rtos_util esp_timer esp_system esp_app_format
+    REQUIRES esp_common freertos log protocol
+    PRIV_REQUIRES uart_comm rtos_util esp_timer esp_system esp_app_format
 )

@@ -51,9 +51,9 @@ Result decode(const std::vector<uint8_t> &p, ConfigureRequest &req)
 
 } // namespace
 
-TEST_CASE("Wire sizes match the v5 spec")
+TEST_CASE("Wire sizes match the v6 spec")
 {
-    CHECK(kProtocolVersion == 5);
+    CHECK(kProtocolVersion == 6);
     CHECK(kConfigureResponseHeaderSize == 6);
     CHECK(kMotorConfigBodySize == 64);
     CHECK(kSetPidParamsBodySize == 17);

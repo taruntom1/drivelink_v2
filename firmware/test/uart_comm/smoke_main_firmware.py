@@ -10,8 +10,11 @@ the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
 It checks, each with the protocol version the firmware must speak:
   - diag      GetInfo (0x23) -> response on 0x63, diag v2
   - diag      GetEntries(0) -> response on 0x63 (the diag task's largest stack use)
-  - motor     SET_TIMING (0x21) -> response on 0x61, motor_manager v5, result Ok
-  - IMU       SetStreamEnabled(0) (0x22) -> response on 0x42, IMU v5, any result
+  - motor     SET_TIMING (0x21) -> response on 0x61, motor_manager v6, result Ok
+              (it creates no motor, so nothing can move)
+  - IMU       SetStreamEnabled(1) (0x22) -> response on 0x42, IMU v6, any result
+              then a stream frame on 0xBF whose first byte is the IMU version (v6),
+              then SetStreamEnabled(0) -> response on 0x42
               (skipped if diag reports the IMU manager did not start, e.g. no IMU fitted)
   - time_sync the ESP's periodic sync request on 0x20, time_sync v2 (every 5 s)
 
@@ -32,8 +35,9 @@ import serial
 from protocol import UartCommProto
 
 DIAG_QUERY, DIAG_RESPONSE, DIAG_VERSION = 0x23, 0x63, 0x02
-MOTOR_CONFIGURE, MOTOR_RESPONSE, MOTOR_VERSION = 0x21, 0x61, 0x05
-IMU_CONFIGURE, IMU_RESPONSE, IMU_VERSION = 0x22, 0x42, 0x05
+MOTOR_CONFIGURE, MOTOR_RESPONSE, MOTOR_VERSION = 0x21, 0x61, 0x06
+IMU_CONFIGURE, IMU_RESPONSE, IMU_VERSION = 0x22, 0x42, 0x06
+IMU_STREAM = 0xBF  # moved here from 0x82 in F2; the first payload byte is the IMU version
 TIME_SYNC_REQUEST, TIME_SYNC_VERSION = 0x20, 0x02
 
 STARTED_MOTOR, STARTED_TIME_SYNC, STARTED_IMU = 0x01, 0x02, 0x04
@@ -121,18 +125,33 @@ def main() -> int:
     else:
         results.append(check("motor SET_TIMING", False, "diag reports the motor manager did not start"))
 
-    # IMU SetStreamEnabled(0): version, seq, subcommand 0x01, enabled.
+    # IMU: enable the stream, wait for a frame on the stream channel, disable it again.
+    # SetStreamEnabled body: version, seq, subcommand 0x01, enabled.
     if started_mask & STARTED_IMU:
-        proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x33, 0x01, 0x00]))
+        proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x33, 0x01, 0x01]))
         try:
             p = wait_for(proto, IMU_RESPONSE, 0x33, 3.0)
             ok = len(p) >= 5 and p[0] == IMU_VERSION and p[2] == 0x01
-            results.append(check("IMU SetStreamEnabled", ok,
+            results.append(check("IMU SetStreamEnabled(1)", ok,
                                  f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}"))
         except TimeoutError as exc:
-            results.append(check("IMU SetStreamEnabled", False, str(exc)))
+            results.append(check("IMU SetStreamEnabled(1)", False, str(exc)))
+        try:
+            p = wait_for(proto, IMU_STREAM, None, 5.0)
+            ok = len(p) >= 1 and p[0] == IMU_VERSION
+            results.append(check("IMU stream on 0xBF", ok, f"version {p[0] if p else '?'}, {len(p)} bytes"))
+        except TimeoutError as exc:
+            results.append(check("IMU stream on 0xBF", False, str(exc)))
+        proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x34, 0x01, 0x00]))
+        try:
+            p = wait_for(proto, IMU_RESPONSE, 0x34, 3.0)
+            ok = len(p) >= 5 and p[0] == IMU_VERSION and p[2] == 0x01
+            results.append(check("IMU SetStreamEnabled(0)", ok,
+                                 f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}"))
+        except TimeoutError as exc:
+            results.append(check("IMU SetStreamEnabled(0)", False, str(exc)))
     else:
-        print("[SKIP] IMU SetStreamEnabled: diag reports the IMU manager did not start (no IMU fitted?)")
+        print("[SKIP] IMU stream check: diag reports the IMU manager did not start (no IMU fitted?)")
 
     # time_sync: the ESP sends a request every 5 s. version, reserved, request_id u16, client time i64.
     if started_mask & STARTED_TIME_SYNC:

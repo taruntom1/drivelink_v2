@@ -14,6 +14,20 @@ All headers are under `include/drivelink/protocol/`, namespace `drivelink::proto
 | `crc.hpp` | `crc16Ccitt()`: CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), and `crc8()`: CRC-8 (poly 0x07, init 0x00), both table-driven. |
 | `framing.hpp` | Frame constants (`kStartByte`, `kMaxPayload` = 1024, `kOverhead` = 9, ...), `frameSize()`, the MSG_TYPE ranges and `isCommand/isResponse/isStream/isEvent`, `encodeFrame()`, `headerPayloadLen()`, `headerCrcValid()`, `validateCrc()`. |
 | `scanner.hpp` | `Scanner`: finds frames in a byte stream and resyncs after noise. |
+| `defs.hpp` | The descriptor format: `ItemDesc`, `TypeDesc`, the `ItemKind`, `ValueType`, `ItemFlag`, `LoopClass`, `ActionPlacement` and `BlobDir` enums, `findItem()`, `findType()` and `f32Bits()`. Header-only. |
+| `gen/registry.hpp` | **Generated.** Every MSG_TYPE (`defs::msg::k<Name>`), the stream channel ranges (`kSubGroupChannelFirst` / `Count`, `kCmdGroupChannelFirst` / `Count`), the system type id and `kDescriptorHash`, with `static_assert`s on uniqueness, class ranges and channel ranges. |
+| `gen/diag_codes.hpp` | **Generated.** The diag sources, codes and slot table, in `defs::diag`. |
+| `gen/types.hpp`, `gen/type_<type>.hpp` | **Generated.** The id constants and constexpr descriptor tables of each module type, and `kTypeTable`. No type is defined yet. |
+
+## Definitions and generated headers
+
+`protocol/defs/` holds the YAML that the `gen/` headers and the generated docs come from: `registry.yaml`, `diag_codes.yaml` and, from F3, one file per module type. `python tools/gen/gen.py` regenerates them, and `--check` fails if they are stale (CI runs it). Never edit a file under `gen/` by hand. The schema, the descriptor format and the hash are described in [docs/protocol/definitions.md](../docs/protocol/definitions.md), and the generated tables are in [docs/protocol/registry.md](../docs/protocol/registry.md).
+
+```cpp
+#include "drivelink/protocol/gen/registry.hpp"
+
+constexpr uint8_t type = drivelink::protocol::defs::msg::kDiagQuery; // 0x23
+```
 
 ## Frame
 
@@ -44,4 +58,4 @@ Rules:
 
 ## Tests
 
-`protocol/test/` holds the doctest cases for every header. They are compiled into the firmware's host test build (`firmware/test/host`, using its vendored doctest) until `protocol/` gets its own test target.
+`protocol/test/` holds the doctest cases for every hand-written header and for the generated registry and descriptor tables (`test_defs.cpp`; the type headers it uses are generated from the generator's test fixtures at build time). They are compiled into the firmware's host test build (`firmware/test/host`, using its vendored doctest) until `protocol/` gets its own test target.

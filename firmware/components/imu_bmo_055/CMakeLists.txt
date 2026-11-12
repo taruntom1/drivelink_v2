@@ -5,6 +5,6 @@ idf_component_register(
          "src/imu_protocol.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include" "vendor"
-    REQUIRES uart_comm rtos_util driver freertos log esp_timer
-    PRIV_REQUIRES protocol diag
+    REQUIRES uart_comm rtos_util driver freertos log esp_timer protocol
+    PRIV_REQUIRES diag
 )

@@ -2,7 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include "sdkconfig.h"
+
+#include "drivelink/protocol/gen/registry.hpp"
 
 namespace imu_bmo_055 {
 
@@ -33,15 +34,17 @@ enum class StreamField : uint16_t {
 // exact length; the stream timestamp is wall-clock time.
 // v4: a detail byte follows result in configure responses.
 // v5: no payload change; bumped with the link framing (u16 LEN + HCRC, overhaul F1b).
+// v6: no payload change; the stream moved to channel 0xBF (overhaul F2).
 // The version covers every IMU payload, including the stream.
-constexpr uint8_t kProtocolVersion = 0x05;
+constexpr uint8_t kProtocolVersion = 0x06;
 // Sent as the subcommand in a configure response when the request header
 // could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 
-constexpr uint8_t kImuConfigureMsgType = CONFIG_IMU_BMO_055_CONFIGURE_MSG_TYPE;
-constexpr uint8_t kImuConfigureResponseMsgType = CONFIG_IMU_BMO_055_CONFIGURE_RESPONSE_MSG_TYPE;
-constexpr uint8_t kImuStreamChannel = CONFIG_IMU_BMO_055_STREAM_CHANNEL;
+// MSG_TYPEs and the stream channel come from the generated registry (protocol/defs/registry.yaml).
+constexpr uint8_t kImuConfigureMsgType = drivelink::protocol::defs::msg::kImuConfigure;
+constexpr uint8_t kImuConfigureResponseMsgType = drivelink::protocol::defs::msg::kImuConfigureResponse;
+constexpr uint8_t kImuStreamChannel = drivelink::protocol::defs::msg::kImuStream;
 
 enum class ResultCode : uint8_t {
     Ok = 0x00,
