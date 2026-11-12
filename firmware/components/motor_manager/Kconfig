@@ -93,7 +93,7 @@ menu "Motor Manager Configuration"
 
     config MOTOR_MANAGER_DEFAULT_CONFIG_TASK_STACK
         int "Default motor manager config task stack size"
-        default 4096
+        default 5120
         range 2048 16384
         help
             Stack size in bytes for the internal configuration command task.

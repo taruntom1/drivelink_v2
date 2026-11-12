@@ -8,12 +8,13 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 |---|---|---|---|---|---|---|---|---|
 | `system` (0x01) | 0x0001 | ManagerStartFailed | error | record | no | manager id (1 motor_manager, 2 time_sync, 3 imu) | unused | A manager failed to start. It is left out, and the rest of the firmware keeps running. |
 | `system` (0x01) | 0x0002 | PeriodicSyncStartFailed | error | record | no | unused | unused | time_sync started, but its periodic sync task did not. esp_err gives the reason. |
-| `uart_comm` (0x02) | 0x0001 | CrcError | warning | counter | no | - | - | A frame candidate was rejected for a CRC mismatch. |
+| `uart_comm` (0x02) | 0x0001 | CrcError | warning | counter | no | - | - | A frame candidate with a valid header was rejected for a CRC16 mismatch. |
 | `uart_comm` (0x02) | 0x0002 | PartialFrame | warning | counter | no | - | - | A partial frame was dropped because the sender stopped mid-frame. |
 | `uart_comm` (0x02) | 0x0003 | FrameOrParityError | warning | counter | no | - | - | The UART reported a framing or parity error. |
 | `uart_comm` (0x02) | 0x0004 | RxOverflow | warning | counter | no | - | - | The RX hardware FIFO overflowed or the ring buffer was full. |
-| `uart_comm` (0x02) | 0x0005 | LengthError | warning | counter | no | - | - | A frame candidate was rejected because LEN exceeded the maximum payload. |
+| `uart_comm` (0x02) | 0x0005 | LengthError | warning | counter | no | - | - | A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload. |
 | `uart_comm` (0x02) | 0x0006 | DiscardedBytes | warning | counter | no | - | - | Received bytes that were not part of any valid frame (counts bytes, not events). |
+| `uart_comm` (0x02) | 0x0007 | HeaderCrcError | warning | counter | no | - | - | A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise. |
 | `diag` (0x03) | 0x0001 | RecordDropped | warning | counter | no | - | - | A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet). |
 | `diag` (0x03) | 0x0002 | EventTxDropped | warning | counter | no | - | - | A diag query response could not be queued for UART transmission and was dropped. |
 | `diag` (0x03) | 0x0003 | QueryDropped | warning | counter | no | - | - | A diag query was dropped because the reporter's query queue was full. |

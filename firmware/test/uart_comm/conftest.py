@@ -31,9 +31,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption(
         "--baud",
-        default=115200,
+        default=921600,
         type=int,
-        help="Baud rate (default 115200)",
+        help="Baud rate (default 921600, the uart_comm Kconfig default)",
     )
 
 
@@ -45,9 +45,8 @@ def proto(request: pytest.FixtureRequest) -> Generator[UartCommProto, None, None
 
     ser = serial.Serial(port, baud, timeout=3.0)
     time.sleep(0.1)          # allow USB-UART adapter to settle
-    ser.reset_input_buffer()
-
     p = UartCommProto(ser)
+    p.reset_input()
 
     # Verify the firmware is alive with a lightweight ping before any test runs.
     try:
@@ -68,8 +67,8 @@ def proto(request: pytest.FixtureRequest) -> Generator[UartCommProto, None, None
 @pytest.fixture(autouse=True)
 def flush_between_tests(proto: UartCommProto) -> Generator[None, None, None]:
     """Discard any stale bytes in the RX buffer before each test."""
-    proto.ser.reset_input_buffer()
+    proto.reset_input()
     yield
     # Small drain after the test so residual bytes don't bleed into the next one.
     time.sleep(0.02)
-    proto.ser.reset_input_buffer()
+    proto.reset_input()

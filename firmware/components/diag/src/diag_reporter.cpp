@@ -1,5 +1,6 @@
 #include "diag_reporter.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 
@@ -28,8 +29,10 @@ static_assert(kMaxPayload >= protocol::kMaxInfoResponseSize,
               "CONFIG_UART_COMM_MAX_PAYLOAD is too small for the diag GetInfo response");
 static_assert(kSlotCount < protocol::kNoNextPage, "slot indices must stay below the GetEntries end marker");
 
-constexpr size_t kMaxCounterEntries = protocol::maxCounterEntries(kMaxPayload);
-constexpr size_t kMaxPageEntries = protocol::maxEntriesPerPage(kMaxPayload);
+// Never more entries than slots: with 1024-byte frames a page could list 127
+// entries, but only kSlotCount exist (and the arrays live on the task stack).
+constexpr size_t kMaxCounterEntries = std::min(protocol::maxCounterEntries(kMaxPayload), kSlotCount);
+constexpr size_t kMaxPageEntries = std::min(protocol::maxEntriesPerPage(kMaxPayload), kSlotCount);
 constexpr size_t kMaxResponseBody = kMaxPayload - protocol::kQueryResponseHeaderSize;
 
 /// After a failed event send (UART TX queue full), wait this long before
@@ -59,6 +62,13 @@ struct Reporter::Impl {
     int64_t tx_backoff_until_us = 0;
     std::array<uint32_t, kSlotCount> last_sent{};
     uart_comm::ErrorCounters uart_last{};
+
+    // Reporter-task buffers, each about MAX_PAYLOAD (1 KB). They live here,
+    // allocated once with the Impl, not on the task's stack. tx_buf holds one
+    // outgoing payload at a time (an event, or a query response).
+    uart_comm::RxFrame query_frame{};
+    std::array<uint8_t, kMaxResponseBody> resp_body{};
+    std::array<uint8_t, kMaxPayload> tx_buf{};
 
     void onQueryFrame(const uart_comm::RxFrame &frame);
     void taskLoop();
@@ -208,9 +218,8 @@ void Reporter::Impl::sendBoot()
     ev.reset_reason = static_cast<uint8_t>(esp_reset_reason());
     ev.started_mask = config.started_mask;
 
-    uint8_t buf[kMaxPayload];
-    const size_t len = protocol::encodeBootEvent(seq, detail::currentFlags(), ev, buf, sizeof(buf));
-    if (sendEvent(buf, len)) {
+    const size_t len = protocol::encodeBootEvent(seq, detail::currentFlags(), ev, tx_buf.data(), tx_buf.size());
+    if (sendEvent(tx_buf.data(), len)) {
         boot_pending = false;
     }
 }
@@ -229,7 +238,8 @@ void Reporter::Impl::drainEvents()
         }
         const Code &code = kCodeTable[ev.slot];
 
-        uint8_t buf[kMaxPayload];
+        uint8_t *buf = tx_buf.data();
+        const size_t cap = tx_buf.size();
         size_t len = 0;
         if (ev.kind == detail::QueuedKind::Record) {
             protocol::RecordEvent rec{};
@@ -240,13 +250,13 @@ void Reporter::Impl::drainEvents()
             rec.esp_err = ev.esp_err;
             rec.arg0 = ev.arg0;
             rec.arg1 = ev.arg1;
-            len = protocol::encodeRecordEvent(seq, ev.flags, rec, buf, sizeof(buf));
+            len = protocol::encodeRecordEvent(seq, ev.flags, rec, buf, cap);
         } else {
             protocol::ClearedEvent clr{};
             clr.timestamp_us = ev.timestamp_us;
             clr.source = static_cast<uint8_t>(code.source);
             clr.code = code.code;
-            len = protocol::encodeClearedEvent(seq, ev.flags, clr, buf, sizeof(buf));
+            len = protocol::encodeClearedEvent(seq, ev.flags, clr, buf, cap);
         }
 
         if (!sendEvent(buf, len)) {
@@ -259,11 +269,10 @@ void Reporter::Impl::drainEvents()
 void Reporter::Impl::handleQueries()
 {
     for (int i = 0; i < CONFIG_DIAG_QUERY_QUEUE_DEPTH; ++i) {
-        uart_comm::RxFrame frame{};
-        if (xQueueReceive(query_queue, &frame, 0) != pdTRUE) {
+        if (xQueueReceive(query_queue, &query_frame, 0) != pdTRUE) {
             return;
         }
-        handleQuery(frame);
+        handleQuery(query_frame);
     }
 }
 
@@ -273,21 +282,20 @@ void Reporter::Impl::handleQuery(const uart_comm::RxFrame &frame)
     const uint8_t *body = nullptr;
     size_t body_len = 0;
     protocol::ResultCode result = protocol::ResultCode::InvalidArgument;
-    uint8_t resp_body[kMaxResponseBody];
     size_t resp_body_len = 0;
 
     if (protocol::decodeQueryHeader(frame.payload, frame.len, header, body, body_len)) {
         switch (static_cast<protocol::QuerySubcommand>(header.subcommand)) {
             case protocol::QuerySubcommand::GetInfo:
                 if (protocol::decodeGetInfo(body, body_len)) {
-                    resp_body_len = encodeInfo(resp_body, sizeof(resp_body));
+                    resp_body_len = encodeInfo(resp_body.data(), resp_body.size());
                     result = protocol::ResultCode::Ok;
                 }
                 break;
             case protocol::QuerySubcommand::GetEntries: {
                 uint8_t start = 0;
                 if (protocol::decodeGetEntries(body, body_len, start)) {
-                    resp_body_len = encodeEntriesPage(start, resp_body, sizeof(resp_body));
+                    resp_body_len = encodeEntriesPage(start, resp_body.data(), resp_body.size());
                     result = protocol::ResultCode::Ok;
                 }
                 break;
@@ -306,9 +314,9 @@ void Reporter::Impl::handleQuery(const uart_comm::RxFrame &frame)
         }
     }
 
-    uint8_t out[kMaxPayload];
-    const size_t len = protocol::encodeQueryResponse(header, result, resp_body, resp_body_len, out, sizeof(out));
-    if (len == 0U || uart.sendCommand(config.query_response_msg_type, out, len) != ESP_OK) {
+    const size_t len = protocol::encodeQueryResponse(header, result, resp_body.data(), resp_body_len, tx_buf.data(),
+                                                     tx_buf.size());
+    if (len == 0U || uart.sendCommand(config.query_response_msg_type, tx_buf.data(), len) != ESP_OK) {
         DIAG_COUNT(codes::diag::kEventTxDropped);
     }
 }
@@ -375,6 +383,7 @@ void Reporter::Impl::foldUartCounters()
     fold(codes::uart_comm::kRxOverflow, now.overflows, uart_last.overflows);
     fold(codes::uart_comm::kLengthError, now.length_errors, uart_last.length_errors);
     fold(codes::uart_comm::kDiscardedBytes, now.discarded_bytes, uart_last.discarded_bytes);
+    fold(codes::uart_comm::kHeaderCrcError, now.header_crc_errors, uart_last.header_crc_errors);
 }
 
 void Reporter::Impl::sendCounterDeltas()
@@ -395,10 +404,9 @@ void Reporter::Impl::sendCounterDeltas()
             return;
         }
 
-        uint8_t buf[kMaxPayload];
         const size_t len = protocol::encodeCounterDeltaEvent(seq, detail::currentFlags(), detail::wallClockUs(),
-                                                             entries.data(), n, buf, sizeof(buf));
-        if (!sendEvent(buf, len)) {
+                                                             entries.data(), n, tx_buf.data(), tx_buf.size());
+        if (!sendEvent(tx_buf.data(), len)) {
             return; // retried at the next period, with the deltas accumulated
         }
         for (size_t i = 0; i < n; ++i) {

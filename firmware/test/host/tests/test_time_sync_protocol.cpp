@@ -6,7 +6,7 @@
 
 using namespace time_sync::protocol;
 
-TEST_CASE("time_sync request encodes to the v1 wire layout")
+TEST_CASE("time_sync request encodes to the v2 wire layout")
 {
     TimeSyncRequest req{};
     req.request_id = 0x1234;

@@ -18,7 +18,7 @@ Test map
 --------
 TC-01  test_ping_echo_single_byte            Basic round-trip sanity check
 TC-02  test_echo_multi_byte_payload          Echo with a known 8-byte pattern
-TC-03  test_echo_max_payload                 Echo at maximum payload size (128 bytes)
+TC-03  test_echo_max_payload                 Echo at maximum payload size (1024 bytes)
 TC-04  test_echo_empty_payload               Echo with zero-byte payload
 TC-05  test_crc_error_increments_counter     One corrupt frame -> crc_errors += 1
 TC-06  test_multiple_crc_errors_counted      Five corrupt frames -> crc_errors += 5
@@ -38,13 +38,22 @@ TC-15  test_stray_bytes_ignored_before_frame Garbage bytes before a valid frame
                                              must not confuse the parser
 TC-16  test_back_to_back_burst               8 frames in one write (payloads hold
                                              AA AA AA) -> 8 echoes, in order
-TC-17  test_oversized_len_does_not_flush     False preamble with LEN > max before a
+TC-17  test_oversized_len_does_not_flush     Valid header with LEN > max before a
                                              valid frame -> frame still delivered,
                                              length_errors += 1
 TC-18  test_truncated_frame_then_valid       Frame cut short, then a valid frame ->
                                              valid frame delivered, timeouts += 1
 TC-19  test_invalid_send_args_rejected       Reserved MSG_TYPEs and null payloads
                                              are rejected by the TX API
+TC-20  test_bad_hcrc_false_preamble          False header (bad HCRC, LEN 1000) before a
+                                             valid frame -> delivered at once,
+                                             header_crc_errors += 1, no timeout
+TC-21  test_back_to_back_max_frames          4 x 1024-byte echoes in one write -> all
+                                             echoed, no error or overflow counted
+TC-22  test_esp_sends_max_stream_frame       sendData() with 1024 bytes -> PC reads it
+
+Run at the firmware's baud rate (conftest.py defaults --baud to 921600). The
+idle log on the USB-Serial-JTAG console prints the RX/TX task stack marks.
 """
 
 import struct
@@ -52,7 +61,14 @@ import time
 
 import pytest
 
-from protocol import UartCommProto, encode_frame, crc16_ccitt
+from protocol import (
+    MAX_PAYLOAD,
+    UartCommProto,
+    crc16_ccitt,
+    encode_false_header,
+    encode_frame,
+    encode_header,
+)
 
 # -- MSG_TYPE assignments (must match test_uart_comm_main.cpp) --
 CMD_ECHO = 0x01
@@ -120,11 +136,12 @@ def test_echo_multi_byte_payload(proto: UartCommProto) -> None:
 
 def test_echo_max_payload(proto: UartCommProto) -> None:
     """
-    Echo exactly CONFIG_UART_COMM_MAX_PAYLOAD (128) bytes.
-    Verifies that large payloads are framed and transmitted intact.
+    Echo exactly CONFIG_UART_COMM_MAX_PAYLOAD (1024, the protocol limit) bytes.
+    Verifies that large payloads, with both LEN bytes in use, are framed and
+    transmitted intact.
     """
-    max_payload = 128
-    original = bytes(range(max_payload))
+    max_payload = MAX_PAYLOAD
+    original = bytes(i & 0xFF for i in range(max_payload))
     proto.send_command(CMD_ECHO, original)
     msg_type, payload = proto.read_frame(timeout=5.0)
 
@@ -192,6 +209,7 @@ def test_counter_delta_isolation(proto: UartCommProto) -> None:
     assert after["uart_errors"] - before["uart_errors"] == 0, "Unexpected uart_error increment"
     assert after["overflows"] - before["overflows"] == 0, "Unexpected overflow increment"
     assert after["length_errors"] - before["length_errors"] == 0, "Unexpected length_error increment"
+    assert after["header_crc_errors"] - before["header_crc_errors"] == 0, "Unexpected header CRC error"
 
 
 def test_stream_received_by_callback(proto: UartCommProto) -> None:
@@ -292,7 +310,8 @@ def test_stream_frame_crc_is_valid(proto: UartCommProto) -> None:
     assert STREAM_TEST in received, "Stream frame not received"
     sp = received[STREAM_TEST]
 
-    crc_data = bytes([STREAM_TEST, len(sp)]) + sp
+    # The CRC16 covers MSG_TYPE, LEN (u16 LE), HCRC and the payload.
+    crc_data = encode_header(STREAM_TEST, len(sp)) + sp
     expected_crc = crc16_ccitt(crc_data)
 
     encoded = encode_frame(STREAM_TEST, sp)
@@ -362,6 +381,7 @@ def test_stray_bytes_ignored_before_frame(proto: UartCommProto) -> None:
     assert after["crc_errors"] == before["crc_errors"], (
         "crc_errors incremented due to stray bytes - parser discarded them incorrectly"
     )
+    assert after["header_crc_errors"] == before["header_crc_errors"]
 
 
 def test_back_to_back_burst(proto: UartCommProto) -> None:
@@ -395,19 +415,20 @@ def test_back_to_back_burst(proto: UartCommProto) -> None:
         )
 
     after = get_counters(proto)
-    for key in ("crc_errors", "length_errors", "timeouts", "discarded_bytes"):
+    for key in ("crc_errors", "header_crc_errors", "length_errors", "timeouts", "discarded_bytes"):
         assert after[key] == before[key], f"{key} changed during a clean burst"
 
 
 def test_oversized_len_does_not_flush(proto: UartCommProto) -> None:
     """
-    A false preamble whose LEN exceeds the max payload, followed straight
-    away by a valid frame. The parser must skip the bad header and still
-    deliver the valid frame (the old parser flushed the whole RX buffer here).
+    A header with a valid HCRC whose LEN exceeds the max payload, followed
+    straight away by a valid frame. The parser must skip the bad header and
+    still deliver the valid frame (the old parser flushed the whole RX buffer
+    here).
     """
     before = get_counters(proto)
 
-    bad_header = b"\xAA\xAA\xAA" + bytes([CMD_ECHO, 0xFF])
+    bad_header = encode_false_header(CMD_ECHO, MAX_PAYLOAD + 1, good_hcrc=True)
     proto.ser.write(bad_header + encode_frame(CMD_ECHO, b"\x5A\x5B"))
 
     msg_type, payload = proto.read_frame(timeout=3.0)
@@ -417,17 +438,19 @@ def test_oversized_len_does_not_flush(proto: UartCommProto) -> None:
     assert payload == b"\x5A\x5B"
     assert after["length_errors"] - before["length_errors"] == 1
     assert after["crc_errors"] == before["crc_errors"], "Length error was counted as a CRC error"
+    assert after["header_crc_errors"] == before["header_crc_errors"], "Length error was counted as an HCRC error"
 
 
 def test_truncated_frame_then_valid(proto: UartCommProto) -> None:
     """
-    A frame that announces 64 payload bytes but stops after 10, then a valid
-    frame. Once the partial frame goes stale (about 100 ms) the parser must
-    drop it and deliver the valid frame that was hiding inside its length.
+    A frame with a valid header that announces 64 payload bytes but stops
+    after 10, then a valid frame. Once the partial frame goes stale (about
+    100 ms) the parser must drop it and deliver the valid frame that was
+    hiding inside its length.
     """
     before = get_counters(proto)
 
-    truncated = b"\xAA\xAA\xAA" + bytes([CMD_ECHO, 64]) + bytes(range(1, 11))
+    truncated = encode_false_header(CMD_ECHO, 64, good_hcrc=True) + bytes(range(1, 11))
     proto.ser.write(truncated + encode_frame(CMD_ECHO, b"\x77"))
 
     msg_type, payload = proto.read_frame(timeout=3.0)
@@ -450,3 +473,65 @@ def test_invalid_send_args_rejected(proto: UartCommProto) -> None:
     assert msg_type == RSP_SEND_INVALID, f"Expected 0x{RSP_SEND_INVALID:02X}, got 0x{msg_type:02X}"
     assert len(payload) == 1
     assert payload[0] == 0x0F, f"Rejected-call bitmask 0x{payload[0]:02X}, expected 0x0F"
+
+
+def test_bad_hcrc_false_preamble(proto: UartCommProto) -> None:
+    """
+    A false frame start whose header CRC is wrong and whose LEN announces
+    1000 bytes, then a valid frame. The parser rejects the false header on
+    its HCRC, without waiting for 1000 bytes, so the valid frame is delivered
+    at once: no stale-frame timeout is counted.
+    """
+    before = get_counters(proto)
+
+    false_header = encode_false_header(CMD_ECHO, 1000, good_hcrc=False)
+    proto.ser.write(false_header + encode_frame(CMD_ECHO, b"\x31\x32"))
+
+    msg_type, payload = proto.read_frame(timeout=3.0)
+    after = get_counters(proto)
+
+    assert msg_type == RSP_ECHO, f"Expected RSP_ECHO, got 0x{msg_type:02X}"
+    assert payload == b"\x31\x32"
+    assert after["header_crc_errors"] - before["header_crc_errors"] == 1
+    assert after["timeouts"] == before["timeouts"], "The false header held up RX until the stale timeout"
+    assert after["length_errors"] == before["length_errors"]
+    assert after["crc_errors"] == before["crc_errors"]
+
+
+def test_back_to_back_max_frames(proto: UartCommProto) -> None:
+    """
+    Four 1024-byte echo frames in one write (about 4.1 KB, 45 ms at 921600
+    baud). Every one is echoed intact and in order, and no error, overflow or
+    discarded byte is counted.
+    """
+    payloads = [bytes(((i * 7) + n) & 0xFF for i in range(MAX_PAYLOAD)) for n in range(4)]
+    before = get_counters(proto)
+
+    proto.ser.write(b"".join(encode_frame(CMD_ECHO, p) for p in payloads))
+
+    for i, expected in enumerate(payloads):
+        msg_type, payload = proto.read_frame(timeout=5.0)
+        assert msg_type == RSP_ECHO, f"Frame {i}: expected RSP_ECHO, got 0x{msg_type:02X}"
+        assert payload == expected, f"Frame {i}: payload corrupted"
+
+    after = get_counters(proto)
+    for key in ("crc_errors", "header_crc_errors", "length_errors", "timeouts",
+                "discarded_bytes", "overflows", "uart_errors"):
+        assert after[key] == before[key], f"{key} changed during a burst of max-size frames"
+
+
+def test_esp_sends_max_stream_frame(proto: UartCommProto) -> None:
+    """
+    CMD_TRIGGER_STREAM with a 1024-byte payload: the ESP sends it back on the
+    stream channel through sendData(), as one 1033-byte frame.
+    """
+    trigger_payload = bytes((i * 3) & 0xFF for i in range(MAX_PAYLOAD))
+    proto.send_command(CMD_TRIGGER_STREAM, trigger_payload)
+
+    frames = {
+        msg_type: payload
+        for msg_type, payload in proto.read_frames(2, timeout_per_frame=3.0)
+    }
+    assert RSP_TRIGGER_ACK in frames, f"RSP_TRIGGER_ACK not received; got {[hex(t) for t in frames]}"
+    assert STREAM_TEST in frames, f"Stream frame not received; got {[hex(t) for t in frames]}"
+    assert frames[STREAM_TEST] == trigger_payload, "Max-size stream payload corrupted"

@@ -38,3 +38,34 @@ TEST_CASE("crc16Ccitt changes with every byte")
         data[i] ^= 0x01U;
     }
 }
+
+using drivelink::protocol::crc8;
+
+TEST_CASE("crc8 matches the CRC-8/SMBUS check value")
+{
+    const std::array<uint8_t, 9> text = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    CHECK(crc8(text.data(), text.size()) == 0xF4);
+}
+
+TEST_CASE("crc8 of no data is the initial value, and known vectors")
+{
+    CHECK(crc8(nullptr, 0) == 0x00);
+    // Computed bit by bit in Python (the same values protocol.py gives).
+    const std::array<uint8_t, 1> zero = {0x00};
+    CHECK(crc8(zero.data(), zero.size()) == 0x00);
+    const std::array<uint8_t, 4> seq = {1, 2, 3, 4};
+    CHECK(crc8(seq.data(), seq.size()) == 0xE3);
+}
+
+TEST_CASE("crc8 catches every single-bit error in a 3-byte header")
+{
+    std::array<uint8_t, 3> header = {0x41, 0x03, 0x00};
+    const uint8_t base = crc8(header.data(), header.size());
+    for (size_t i = 0; i < header.size(); ++i) {
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            header[i] ^= static_cast<uint8_t>(1U << bit);
+            CHECK(crc8(header.data(), header.size()) != base);
+            header[i] ^= static_cast<uint8_t>(1U << bit);
+        }
+    }
+}

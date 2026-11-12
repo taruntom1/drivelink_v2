@@ -417,6 +417,8 @@ The device stays up in a degraded state, as in diag phase 1.
 
 ## diag v2
 
+"diag v2" is the name of this redesign. Its wire version byte is `0x03`: F1b already bumped diag's version to `0x02` with the new framing, without changing a payload.
+
 - **Timestamps are monotonic.** The `time_synced` flag and `diag::setTimeSynced()` are removed.
 - **`Boot` body:** `timestamp_us u64 | reset_reason u8 | instances_ok u8 | instances_failed u8 | safe_mode u8`. `started_mask` goes away; the instance details come from `LIST_INSTANCES`.
 - **Records gain an `instance u8`.** It comes after `source`, and is `0xFF` when the record isn't about one instance. That makes the Record body 25 bytes. `arg0` and `arg1` keep their current meaning per code, so nothing collides with codes that already use `arg1` (motor `InitFailed`, IMU `InitFailed`, `SyncFailed`).

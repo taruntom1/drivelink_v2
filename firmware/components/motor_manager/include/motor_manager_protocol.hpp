@@ -22,7 +22,7 @@ enum class ResultCode : uint8_t {
 };
 
 /// Why a configure command failed: the byte after `result` in every
-/// configure response (v4). None when the result is Ok. The numbers are part
+/// configure response (v4+). None when the result is Ok. The numbers are part
 /// of the wire format: never renumber.
 enum class ResultDetail : uint8_t {
     None = 0x00,
@@ -101,8 +101,9 @@ constexpr bool isValidSetpointKind(SetpointKind kind)
 // v3 removed sample_time_ms and the reserved floats, added filter cutoffs,
 // the SetTiming subcommand, response bodies and the telemetry output field.
 // v4 added the detail byte after result in configure responses.
+// v5: no payload change; bumped with the link framing (u16 LEN + HCRC, overhaul F1b).
 // The version covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x04;
+constexpr uint8_t kProtocolVersion = 0x05;
 // Sent as subcommand and motor_id in a configure response when the request
 // header could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;

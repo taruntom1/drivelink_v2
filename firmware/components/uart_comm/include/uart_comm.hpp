@@ -24,11 +24,12 @@ class CallbackRegistration;
 
 /// Cumulative error counters for diagnostics.
 struct ErrorCounters {
-    uint32_t crc_errors;      ///< Frame candidates rejected for a CRC mismatch
+    uint32_t crc_errors;      ///< Frame candidates rejected for a CRC16 mismatch
+    uint32_t header_crc_errors; ///< Frame candidates rejected for a header CRC (HCRC) mismatch
     uint32_t timeouts;        ///< Partial frames dropped because the sender stopped mid-frame
     uint32_t uart_errors;     ///< UART framing or parity errors
     uint32_t overflows;       ///< RX hardware FIFO overflows or ring buffer full events
-    uint32_t length_errors;   ///< Frame candidates rejected because LEN exceeded the max payload
+    uint32_t length_errors;   ///< Frame candidates with a valid header whose LEN exceeded the max payload
     uint32_t discarded_bytes; ///< Received bytes that were not part of any valid frame
     uint32_t stream_skipped;  ///< sendData() calls skipped because the stream slot was busy
 };
@@ -50,8 +51,9 @@ struct UartCommConfig {
 
 /// Structured UART communication component.
 ///
-/// Wraps a UART link in a lightweight binary protocol with CRC-16
-/// integrity checking and software frame detection (see drivelink::protocol::Scanner).
+/// Wraps a UART link in the DriveLink frame (docs/protocol/framing.md:
+/// u16 LEN, a header CRC-8 and a CRC-16) with software frame detection
+/// (see drivelink::protocol::Scanner).
 /// Carries two kinds of traffic on the same wire:
 ///   - Control packets (commands, responses, events) — queued FIFO, high priority
 ///   - Data streams (sensor/control) — latest-wins per channel, low priority

@@ -18,8 +18,9 @@ namespace detail {
 ///
 /// Bytes are pulled from the UART driver's ring buffer straight into the
 /// receive window of a `drivelink::protocol::Scanner`, which finds the frames
-/// (see scanner.hpp for the resync rules: a rejected candidate drops one byte,
-/// and valid frames already buffered are never flushed). This class adds what
+/// (see scanner.hpp for the resync rules: a candidate rejected on its HCRC,
+/// LEN or CRC16 drops one byte, and valid frames already buffered are never
+/// flushed). This class adds what
 /// the pure scanner leaves out: the driver reads, the stale-frame timer,
 /// driver error events, the counters other tasks read, and logging.
 ///
@@ -28,6 +29,7 @@ class Parser {
 public:
     struct Counters {
         uint32_t crc_errors;
+        uint32_t header_crc_errors;
         uint32_t timeouts;
         uint32_t uart_errors;
         uint32_t overflows;
@@ -69,6 +71,7 @@ private:
     // Each counter is atomic; a snapshot of all of them is not taken atomically.
     struct AtomicCounters {
         std::atomic<uint32_t> crc_errors;
+        std::atomic<uint32_t> header_crc_errors;
         std::atomic<uint32_t> timeouts;
         std::atomic<uint32_t> uart_errors;
         std::atomic<uint32_t> overflows;

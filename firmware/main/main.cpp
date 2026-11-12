@@ -5,6 +5,7 @@
 // destroyed and left out; the others keep running, so the host can still
 // connect and ask what went wrong. app_main never returns.
 
+#include <array>
 #include <optional>
 
 #include "diag.hpp"
@@ -20,11 +21,48 @@ static const char *const TAG = "main";
 
 namespace {
 
+#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0 && CONFIG_DIAG_CONSOLE_LOG
+#define DRIVELINK_LOG_STACKS 1
+
+// The firmware's tasks, by the names they are created with. A name with no
+// task (a manager that did not start) is skipped.
+// esp_timer runs the timer callbacks (the control and IMU sampling timers).
+constexpr std::array<const char *, 10> kLoggedTasks = {
+    "main",       "uart_rx",        "uart_tx", "motor_mgr_upd", "motor_mgr_cfg",
+    "imu_cfg",    "imu_stream",     "time_sync_task", "diag",   "esp_timer",
+};
+
+/// Log each task's stack high-water mark: the least free stack, in bytes,
+/// since the task started. Used to size the task stacks.
+/// uxTaskGetStackHighWaterMark() scans the stack without the kernel lock, and
+/// xTaskGetHandle() holds it only to walk the task lists, so this doesn't
+/// stall the control loop on the other core. (uxTaskGetSystemState() would
+/// scan every stack inside the kernel's critical section.)
+void logStackHighWater()
+{
+    for (const char *name : kLoggedTasks) {
+        TaskHandle_t handle = xTaskGetHandle(name);
+        if (handle != nullptr) {
+            ESP_LOGI(TAG, "Stack high-water: %-15s %5u bytes free", name,
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(handle)));
+        }
+    }
+}
+#endif
+
 [[noreturn]] void idleForever()
 {
+#if DRIVELINK_LOG_STACKS
+    constexpr TickType_t kPeriod = pdMS_TO_TICKS(CONFIG_DRIVELINK_STACK_LOG_PERIOD_S * 1000);
+    while (true) {
+        vTaskDelay(kPeriod);
+        logStackHighWater();
+    }
+#else
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
+#endif
 }
 
 } // namespace

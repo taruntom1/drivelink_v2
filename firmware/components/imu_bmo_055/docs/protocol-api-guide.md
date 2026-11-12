@@ -21,7 +21,7 @@ All multi-byte integers in IMU payloads are little-endian.
 
 ### 2.1 Protocol version
 
-- Current version: `0x04`
+- Current version: `0x05` (v5 changed no payload: it was bumped with the link framing, overhaul F1b)
 - All configure command and response payloads start with protocol version byte.
 - All stream payloads start with protocol version byte.
 - Commands with any other version are rejected (see section 4).
@@ -30,7 +30,7 @@ All multi-byte integers in IMU payloads are little-endian.
 
 - Every configure response carries a `detail` byte after the result code (section 2.3), so the response header is 5 bytes and response data starts at byte 5.
 - A command that arrives while the config queue is full is answered with `Busy` / `QueueFull` instead of being dropped silently.
-- The stream layout is unchanged; it carries version `0x04`.
+- The stream layout is unchanged; it carries version `0x05`.
 
 ### 2.2.1 Changes from v2 (in v3)
 
@@ -85,7 +85,7 @@ The detail byte says why a command failed (`ResultDetail` in `imu_bmo_055_protoc
 
 General shape:
 
-- Byte 0: `version` (`0x04`)
+- Byte 0: `version` (`0x05`)
 - Byte 1: `seq`, chosen by the host and echoed in the response
 - Byte 2: `subcommand`
 - Byte 3..N: subcommand body, exactly the length in the table above
@@ -173,7 +173,7 @@ No body. Total length: 3
 
 General shape:
 
-- Byte 0: version (`0x04`)
+- Byte 0: version (`0x05`)
 - Byte 1: `seq` echo
 - Byte 2: subcommand echo
 - Byte 3: result code
@@ -192,7 +192,7 @@ If the command header could not be parsed (payload shorter than 3 bytes, or wron
 
 ### 5.1 Base header (always present)
 
-- Byte 0: version (`0x04`)
+- Byte 0: version (`0x05`)
 - Byte 1..2: field_mask (`uint16` LE)
 - Byte 3..10: timestamp_us (`uint64` LE)
 
@@ -238,7 +238,7 @@ If a chosen mask could exceed transport max, firmware drops that packet and coun
 ## 6. Host Implementation Checklist
 
 1. Use matching message IDs/channels from firmware config.
-2. Always set version byte to `0x04` in configure commands, followed by a `seq` byte.
+2. Always set version byte to `0x05` in configure commands, followed by a `seq` byte.
 3. Send each body at its exact length (section 2.4).
 4. Parse response as `[version, seq, subcommand, result, detail, optional...]` and match it to its command by `seq`.
 5. Parse stream header first, then decode fields strictly by bitmask and fixed append order.

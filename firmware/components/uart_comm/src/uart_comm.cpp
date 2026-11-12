@@ -29,7 +29,7 @@ constexpr size_t kMaxPayload = CONFIG_UART_COMM_MAX_PAYLOAD;
 constexpr size_t kMaxFrameSize = protocol::frameSize(kMaxPayload);
 constexpr size_t kCmdPoolSize = CONFIG_UART_COMM_CMD_QUEUE_DEPTH;
 
-static_assert(kMaxPayload <= protocol::kMaxPayload, "CONFIG_UART_COMM_MAX_PAYLOAD is above the LEN field's range");
+static_assert(kMaxPayload <= protocol::kMaxPayload, "CONFIG_UART_COMM_MAX_PAYLOAD is above the protocol limit");
 static_assert(kCmdPoolSize <= 255U, "command buffers are identified by a uint8_t index");
 
 // The TX task waits at most this long for a stream slot's lock. Writers hold
@@ -654,6 +654,7 @@ ErrorCounters UartComm::getErrorCounters() const
     detail::Parser::Counters pc = m_impl->parser->getCounters();
     ErrorCounters out = {};
     out.crc_errors = pc.crc_errors;
+    out.header_crc_errors = pc.header_crc_errors;
     out.timeouts = pc.timeouts;
     out.uart_errors = pc.uart_errors;
     out.overflows = pc.overflows;

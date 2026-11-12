@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include "drivelink/protocol/crc.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/scanner.hpp"
 
@@ -16,6 +17,16 @@ std::vector<uint8_t> makeFrame(uint8_t type, const std::vector<uint8_t> &payload
     std::vector<uint8_t> out(frameSize(payload.size()));
     const size_t n = encodeFrame(out.data(), out.size(), type, payload.data(), payload.size());
     REQUIRE(n == out.size());
+    return out;
+}
+
+/// A frame header (preamble, MSG_TYPE, LEN, HCRC) with no payload behind it.
+std::vector<uint8_t> makeHeader(uint8_t type, size_t len, bool good_hcrc = true)
+{
+    std::vector<uint8_t> out = {0xAA, 0xAA, 0xAA, type, static_cast<uint8_t>(len & 0xFFU),
+                                static_cast<uint8_t>(len >> 8U)};
+    const uint8_t hcrc = crc8(&out[3], 3);
+    out.push_back(good_hcrc ? hcrc : static_cast<uint8_t>(hcrc ^ 0x5AU));
     return out;
 }
 
@@ -121,20 +132,23 @@ TEST_CASE("A bad CRC drops one byte, and the following frame is found")
 {
     Scanner s(32);
     auto bad = makeFrame(0x41, {1, 2, 3});
-    bad[6] ^= 0xFFU;
+    bad[8] ^= 0xFFU; // a payload byte: the header is valid, the CRC16 is not
     const auto bytes = concat({bad, makeFrame(0x42, {4})});
     const auto got = run(s, bytes, bytes.size());
     REQUIRE(got.size() == 1);
     CHECK(got[0].type == 0x42);
     CHECK(s.counters().crc_errors == 1);
+    CHECK(s.counters().header_crc_errors == 0);
     CHECK(s.counters().discarded_bytes == bad.size());
 }
 
 TEST_CASE("A frame hidden inside a corrupt candidate is still found")
 {
     Scanner s(32);
-    // A header claiming a 20-byte payload, but a real frame starts 4 bytes in.
-    std::vector<uint8_t> bytes = {0xAA, 0xAA, 0xAA, 0x41, 20};
+    // A valid header claiming a 20-byte payload, but a real frame starts
+    // right after it. The scanner waits for the 20 bytes, fails the CRC16,
+    // and then finds the real frame inside.
+    std::vector<uint8_t> bytes = makeHeader(0x41, 20);
     const auto real = makeFrame(0x42, {1, 2});
     bytes.insert(bytes.end(), real.begin(), real.end());
     bytes.resize(bytes.size() + 20, 0x00);
@@ -143,13 +157,93 @@ TEST_CASE("A frame hidden inside a corrupt candidate is still found")
     CHECK(got[0].type == 0x42);
 }
 
-TEST_CASE("LEN above the limit is a length error")
+TEST_CASE("A valid header with LEN above the limit is a length error")
 {
     Scanner s(8);
-    std::vector<uint8_t> bytes = {0xAA, 0xAA, 0xAA, 0x41, 9, 0x00};
+    std::vector<uint8_t> bytes = makeHeader(0x41, 9);
+    bytes.push_back(0x00);
     const auto got = run(s, bytes, bytes.size());
     CHECK(got.empty());
     CHECK(s.counters().length_errors == 1);
+    CHECK(s.counters().header_crc_errors == 0);
+}
+
+TEST_CASE("A bad HCRC is a header CRC error, even with LEN above the limit")
+{
+    Scanner s(8);
+    std::vector<uint8_t> bytes = makeHeader(0x41, 900, false);
+    bytes.push_back(0x00);
+    const auto got = run(s, bytes, bytes.size());
+    CHECK(got.empty());
+    CHECK(s.counters().header_crc_errors == 1);
+    CHECK(s.counters().length_errors == 0);
+}
+
+TEST_CASE("A false preamble with a bad HCRC does not hold up the frame behind it")
+{
+    // The false header announces 1000 bytes. Without the HCRC the scanner would
+    // wait for them; with it, the real frame right behind is found at once,
+    // without any of the 1000 bytes ever arriving.
+    Scanner s(1024);
+    const auto bytes = concat({makeHeader(0x41, 1000, false), makeFrame(0x42, {9, 8})});
+    const auto got = run(s, bytes, bytes.size());
+    REQUIRE(got.size() == 1);
+    CHECK(got[0].type == 0x42);
+    CHECK(got[0].payload == std::vector<uint8_t>{9, 8});
+    CHECK(s.counters().header_crc_errors == 1);
+    CHECK(s.counters().crc_errors == 0);
+    CHECK(s.buffered() == 0);
+}
+
+TEST_CASE("Every corrupted header byte is caught before the payload is awaited")
+{
+    for (size_t i = 3; i < 7; ++i) {
+        Scanner s(1024);
+        auto bad = makeFrame(0x41, std::vector<uint8_t>(600, 0x11));
+        bad[i] ^= 0x04U;
+        // Feed only the header: a rejected header leaves nothing to wait for.
+        const std::vector<uint8_t> header(bad.begin(), bad.begin() + 7);
+        const auto got = run(s, concat({header, makeFrame(0x43, {1})}), 64);
+        REQUIRE(got.size() == 1);
+        CHECK(got[0].type == 0x43);
+        CHECK(s.counters().header_crc_errors == 1);
+    }
+}
+
+TEST_CASE("A full-size window always makes progress past a false maximum-length header")
+{
+    // The worst case for the two-frame window: a valid header announcing the
+    // maximum length, with a real maximum-size frame starting right after
+    // it. The scanner waits for 1033 bytes, rejects the candidate on its
+    // CRC16, and must still have room to find the whole real frame.
+    std::vector<uint8_t> big(kMaxPayload);
+    for (size_t i = 0; i < big.size(); ++i) {
+        big[i] = static_cast<uint8_t>(i * 13U);
+    }
+    const auto bytes = concat({makeHeader(0x41, kMaxPayload), makeFrame(0x42, big), makeFrame(0x43, {1})});
+    for (size_t chunk : {1U, 64U, 1033U, 2066U}) {
+        Scanner sc(kMaxPayload);
+        const auto got = run(sc, bytes, chunk);
+        REQUIRE(got.size() == 2);
+        CHECK(got[0].type == 0x42);
+        CHECK(got[0].payload == big);
+        CHECK(got[1].type == 0x43);
+        CHECK(sc.counters().crc_errors == 1);
+    }
+}
+
+TEST_CASE("A long run of start bytes is resync and makes progress")
+{
+    Scanner s(64);
+    const auto bytes = concat({std::vector<uint8_t>(2000, 0xAA), makeFrame(0x41, {3})});
+    const auto got = run(s, bytes, 37);
+    REQUIRE(got.size() == 1);
+    CHECK(got[0].type == 0x41);
+    CHECK(got[0].payload == std::vector<uint8_t>{3});
+    CHECK(s.counters().discarded_bytes == 2000);
+    CHECK(s.counters().header_crc_errors == 0);
+    CHECK(s.counters().length_errors == 0);
+    CHECK(s.counters().crc_errors == 0);
 }
 
 TEST_CASE("A frame at exactly the limit is accepted")
@@ -161,7 +255,7 @@ TEST_CASE("A frame at exactly the limit is accepted")
     CHECK(got[0].payload.size() == 8);
 }
 
-TEST_CASE("The scanner limit is clamped to the LEN field")
+TEST_CASE("The scanner limit is clamped to kMaxPayload")
 {
     Scanner s(100000);
     CHECK(s.maxPayload() == kMaxPayload);
@@ -184,10 +278,9 @@ TEST_CASE("A run of start bytes before a preamble is resync, not an error")
 
 TEST_CASE("An ambiguous candidate that fails its CRC is resync, not a CRC error")
 {
-    // The firmware's default limit: a stray start byte before a real frame makes
-    // the first candidate `AA AA AA AA 41 ...` (MSG_TYPE 0xAA, LEN 0x41 = 65),
-    // which is within the limit, so the scanner waits for 71 bytes and then
-    // rejects it on its CRC. That must not be counted.
+    // A stray start byte before a real frame makes the first candidate
+    // `AA AA AA | AA 41 01 00 ...` (MSG_TYPE 0xAA). It fails its HCRC (or, by
+    // chance, its LEN or CRC16), which is resync and must not be counted.
     Scanner s(128);
     const auto bytes = concat({{0xAA}, makeFrame(0x41, {7}), std::vector<uint8_t>(80, 0x00)});
     const auto got = run(s, bytes, bytes.size());
@@ -195,6 +288,7 @@ TEST_CASE("An ambiguous candidate that fails its CRC is resync, not a CRC error"
     CHECK(got[0].type == 0x41);
     CHECK(got[0].payload == std::vector<uint8_t>{7});
     CHECK(s.counters().crc_errors == 0);
+    CHECK(s.counters().header_crc_errors == 0);
     CHECK(s.counters().length_errors == 0);
 }
 
@@ -332,7 +426,9 @@ TEST_CASE("A full window of noise always makes progress")
 
 TEST_CASE("Back-to-back frames fed in odd chunk sizes all arrive")
 {
-    for (size_t chunk : {1U, 2U, 3U, 5U, 7U, 13U}) {
+    // Scanner(40) has a 98-byte window: the large chunks fill it, so the
+    // unconsumed tail is moved to the front on every refill.
+    for (size_t chunk : {1U, 2U, 3U, 5U, 7U, 13U, 50U, 97U, 98U}) {
         Scanner s(40);
         std::vector<uint8_t> bytes;
         for (uint8_t i = 0; i < 20; ++i) {
