@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>drivelink</name><version>0.1.0</version>
+  <description>DriveLink C++ host session and core services.</description>
+  <maintainer email="taruntom1@users.noreply.github.com">DriveLink maintainers</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>cmake</buildtool_depend><depend>drivelink_protocol</depend>
+  <export><build_type>cmake</build_type></export>
+</package>

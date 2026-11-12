@@ -41,8 +41,8 @@ Native only, for the tests:
 **Native backend:**
 - `PeriodicTask` is a `std::thread` that sleeps until each deadline (a condition variable, so `stop` and `setPeriod` wake it), with the same catch-up count.
 - `Mutex` is a `std::mutex`, `Event` a mutex, condition variable and flag, and the clock `steady_clock`.
-- The diag sink records every call for the tests to inspect and reset.
-- `KvStore` is an in-memory map with fault injection (a file-backed store for the virtual device comes in F3c). `nvsInit()` does nothing.
+- The diag sink records calls for tests by default. `native::setDiagSinks` optionally installs the vdev's bounded record queue and fixed atomic counter table before starting tasks; detach only after all tasks are joined. No recording vector/map is used by the vdev's steady-state loop paths.
+- `KvStore` is an in-memory map with fault injection by default. F3c adds `native_file.hpp`: `openFileStore(store, directory)` attaches a durable, exclusively-owned directory before boot. Every blob is flushed and atomically replaced separately, so the real core A/B algorithm still handles incomplete generations. `nvsInit()` does nothing. `openBootFile` persists the reset marker/crash counter across vdev processes; the normal native tests do not attach either file backend.
 - `OneShotTimer` is a thread that waits on a condition variable; `cancel()` wakes and joins it.
 
 

@@ -13,6 +13,7 @@ These rules apply to every component under `firmware/components/`. They add to t
   - `README.md`: the component's purpose, API, Kconfig options and rules. The wire format lives in `docs/protocol/`, not here. During the overhaul, legacy components have no README, and new components add one when they land.
 - Third-party code lives untouched in a `vendor/` subfolder of the component that uses it. Wrap it; don't edit it.
 - `core_os` is the one exception to `src/`: its sources are in `backend/idf/src` and `backend/native/src`, and each backend has its own `include` dir for `core_os/detail/backend_types.hpp`. The build picks the backend by include dir and sources, never by `#ifdef`.
+- Native-only vdev helpers may select OS filesystem primitives inside the native backend (`native_file.cpp`). File storage is configure-time only. The default unit-test store remains in-memory. Optional diagnostic sinks are installed before starting tasks and detached after joining them; the vdev's loop counters use fixed atomic storage.
 
 ## The pure core
 

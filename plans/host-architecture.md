@@ -1,6 +1,8 @@
 # Plan: host software architecture and repo restructure
 
-Status: draft, 2026-11-10 (revised after review). Nothing here is built yet.
+Status: architecture target, 2026-11-10 (revised after review). F3c implements
+the first host slice (library, CLI, virtual device and superbuild); subsequent
+services, the full device/time models, GUI, agent and ROS remain planned.
 
 **Baseline.** The host is written against the firmware described in [firmware-architecture.md](firmware-architecture.md), after all its phases are done. A minimal slice of `libdrivelink` and `drivelink-cli` is built earlier, alongside firmware phases F3–F9, to drive and test them. That firmware is:
 - self-describing: module instances with params, signals, inputs, actions and diag codes

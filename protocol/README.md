@@ -58,4 +58,10 @@ Rules:
 
 ## Tests
 
+F3c adds installed CMake exports: configure/build/install this directory, then
+`find_package(drivelink_protocol REQUIRED)` and link `drivelink::protocol`.
+The exported include paths are relocatable. `package.xml` declares a plain
+CMake package for colcon. `host/test/install_smoke.py` checks the protocol and
+host exports together using an external consumer.
+
 `protocol/test/` holds the doctest cases for every hand-written header and for the generated registry and descriptor tables (`test_defs.cpp`; the type headers it uses are generated from the generator's test fixtures at build time). They are compiled into the firmware's native test build (`firmware/test/native`, using its vendored doctest) until `protocol/` gets its own test target.

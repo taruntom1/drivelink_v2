@@ -5,6 +5,7 @@
 #include <map>
 #include <utility>
 #include <tuple>
+#include <atomic>
 
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
@@ -22,12 +23,16 @@ constexpr Err kNativeError = -1;
 using Clock = std::chrono::steady_clock;
 
 const Clock::time_point s_epoch = Clock::now();
+std::atomic<int64_t> s_boot_offset{0};
 
 } // namespace
 
 int64_t nowUs()
 {
-    return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s_epoch).count();
+    return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s_epoch).count()-s_boot_offset.load();
+}
+namespace native {
+void resetBootClock() { s_boot_offset.store(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-s_epoch).count()); }
 }
 
 // -- Mutex ---------------------------------------------------------------------
@@ -199,6 +204,9 @@ struct DiagRecord {
     std::vector<native::RecordedReport> reports;
     std::map<std::tuple<uint8_t, uint16_t, uint8_t>, uint64_t> counters;
 };
+void *s_diag_ctx=nullptr;
+native::ReportSink s_report_sink=nullptr;
+native::CountSink s_count_sink=nullptr;
 
 DiagRecord &diagRecord()
 {
@@ -215,6 +223,7 @@ std::tuple<uint8_t, uint16_t, uint8_t> key(DiagCode code, uint8_t instance = 255
 
 void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
+    if(s_report_sink) { s_report_sink(s_diag_ctx,{code,err,arg0,arg1,instance});return; }
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
     r.reports.push_back({code, err, arg0, arg1, instance});
@@ -222,12 +231,15 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t in
 
 void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
+    if(s_count_sink) { s_count_sink(s_diag_ctx,code,n,instance);return; }
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
     r.counters[key(code,instance)] += n;
 }
 
 namespace native {
+
+void setDiagSinks(void *ctx,ReportSink report,CountSink count) { s_diag_ctx=ctx;s_report_sink=report;s_count_sink=count; }
 
 std::vector<RecordedReport> recordedReports()
 {

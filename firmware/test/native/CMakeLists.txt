@@ -36,6 +36,7 @@ target_compile_options(drivelink_protocol PRIVATE -Werror)
 set(CORE_SOURCES
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/kv_store_native.cpp
+    ${COMPONENTS_DIR}/core_os/backend/native/src/native_file.cpp
     ${COMPONENTS_DIR}/core/src/config_blob.cpp
     ${COMPONENTS_DIR}/core/src/command_service.cpp
     ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
