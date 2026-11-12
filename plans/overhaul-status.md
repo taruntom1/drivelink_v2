@@ -34,24 +34,24 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | Sonnet · medium | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
 | F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | Sonnet · high | high | merged | [#30](https://github.com/taruntom1/drivelink_v2/pull/30) |
 | F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | Opus · high | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
-| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | in review | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
+| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a | `core_os` (IDF and native), registry, loops, layout and NVS (A/B, validation, GPIO registry), safe mode, `firmware/test/native` | no | Opus · high | high | planned | |
 | F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | Sonnet · high | high | planned | |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | Sonnet · high | high | planned | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | Sonnet · high | high | planned | |
-| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | Opus · high | xhigh | planned | |
-| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | Opus · high | xhigh | planned | |
-| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | Sonnet · high | xhigh | planned | |
+| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | Opus · high | high | planned | |
+| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | Opus · high | high | planned | |
+| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | Sonnet · high | high | planned | |
 | F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | Sonnet · high | high | planned | |
 | F7a | Capture family, PSRAM (caps alloc only) | yes: capture | Sonnet · high | high | planned | |
 | F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | Sonnet · high | high | planned | |
 | F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | Sonnet · high | high | planned | |
-| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | Opus · high | xhigh | planned | |
+| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | Opus · high | high | planned | |
 | F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | Sonnet · medium | high | planned | |
 | H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | Opus · high | high | planned | |
 | H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | Sonnet · high | high | planned | |
-| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | Opus · high | xhigh | planned | |
-| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | Opus · high | xhigh | planned | |
+| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | Opus · high | high | planned | |
+| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | Opus · high | high | planned | |
 
 ## Models and effort
 
@@ -59,8 +59,7 @@ One session runs the whole step. It is the planning agent, on Opus 5.5 at high e
 
 - **Plan** every step with **Opus 5.5 at high effort** (the session itself), whatever the step's build model. The plan sets the direction.
 - **Build** in an **implementation subagent**, which the planning agent spawns after you approve the plan. It runs on the step's model and effort from the table. It commits locally and reports back; it doesn't push, open the PR or flash the board.
-- **Review** is done by the **planning agent** (Opus), on the diff, at the step's review effort. For `xhigh` the session's effort is raised to `xhigh` for the review. There is no separate review agent.
-  - `xhigh` is for steps where a bug can drive a motor or brick the board: framing (F1b), arming and the monitor (F4b), motors (F5a, F5b), OTA (F9), the agent (H3) and ROS (H4).
+- **Review** is done by the **planning agent** (Opus), on the diff, at the step's review effort.
 - **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the planning agent after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
