@@ -9,7 +9,7 @@
 | `system.yaml` | the system items (type `0x00`) | `gen/types.hpp`, `gen/type_system.hpp`, [types/system.md](types/system.md) |
 | `<type>.yaml`, one per module type | the items a module type exposes | `gen/types.hpp`, `gen/type_<type>.hpp`, `types/<type>.md` |
 
-No module type ships yet: the type path is exercised by the generator's test fixtures, and the core's native tests use the fixture types as test modules.
+The definitions include three mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
 
 The headers are in `protocol/include/drivelink/protocol/gen/`, namespace `drivelink::protocol::defs`. Never edit them by hand.
 
@@ -29,6 +29,7 @@ Every validation error names the file and the item. The exit code is 2 for an in
 
 ```yaml
 system_type_id: 0x00
+loop_type_id: 0x05
 msg_types:
   - {name: diag_query, value: 0x23, direction: host_to_esp, description: "..."}
   - {name: imu_stream, value: 0xBF, direction: esp_to_host, legacy: F6}
@@ -43,7 +44,7 @@ Rules:
 - A channel range lies inside the stream class (`0x80–0xBF`) and overlaps no other range.
 - A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 29 while the legacy streams live, and grows when they are removed.
 - `symbol` names the constants `k<symbol>ChannelFirst` and `k<symbol>ChannelCount`.
-- `system_type_id` is `0x00`. Module type ids are in each type's own file.
+- `system_type_id` is `0x00`; `loop_type_id` is `0x05`, clear of the fixed diagnostic sources. Both are reserved. Other type ids are in their own files.
 
 The header's `static_assert`s repeat the checks in C++: unique values, each value in its class range, ranges inside the stream class and clear of every entry.
 
@@ -55,7 +56,7 @@ One file per module type, named `<type>.yaml`. The shape follows the architectur
 type: controller.cascade_pid
 type_id: 0x20
 description: Optional text.
-loops: [control]
+realtime: required
 items:
   - {id: 0x0001, kind: param,  name: actuator, type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
   - {id: 0x0002, kind: param,  name: feedback, type: u32, flags: [reboot_required], ref: feedback}
@@ -115,7 +116,9 @@ The system items: device-wide settings that the core owns, addressed as type `0x
 type: system
 type_id: 0x00
 items:
-  - {id: 0x0001, kind: param, name: control.rate_hz, type: u16, unit: Hz, min: 100, max: 2000, default: 1000, flags: [locked_while_armed]}
+  - {id: 0x0001, name: control.rate_hz, retired: true}
+  - {id: 0x0002, name: sensor.rate_hz, retired: true}
+  - {id: 0x0003, kind: param, name: status.rate_hz, type: u16, unit: Hz, min: 1, max: 100, default: 10}
 ```
 
 - `type` is `system` and `type_id` is `0x00` (the registry's `system_type_id`). No module type may be named `system`.
@@ -162,3 +165,11 @@ The generator checks complete core descriptor response sizes, including
 headers/page metadata and UTF-8 byte lengths, against 1024 bytes. It emits
 kDescriptorMinPayload (at least 128); an IDF static assertion rejects a smaller
 build cap. Descriptor strings and records are never silently shortened.
+
+## Loop requirements (F3d)
+
+Module types declare `realtime: required | forbidden | any`; the old `loops`
+key is rejected. Generated loop-mask bits remain 0x01 (real-time) and 0x02
+(other loops). `loop.yaml` is a built-in type reserved by loop_type_id; it omits
+realtime because its instances run in no loop. Its settings and signals are
+ordinary discovered items. The factory layout assigns per-instance defaults.

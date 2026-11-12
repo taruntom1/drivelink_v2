@@ -13,8 +13,9 @@ namespace core {
 /// and final XOR 0xFFFFFFFF). Check value: "123456789" gives 0xCBF43926.
 uint32_t crc32(const uint8_t *data, size_t len);
 
-/// The format byte of both blobs. A blob with another one is invalid.
+/// Instance blob format; layouts have their own version from F3d.
 inline constexpr uint8_t kBlobFormat = 1;
+inline constexpr uint8_t kLayoutBlobFormat = 2;
 
 /// One stored param: its id and its 4-byte slot value.
 struct ParamPair {

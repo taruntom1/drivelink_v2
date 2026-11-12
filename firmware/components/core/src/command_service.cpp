@@ -44,9 +44,13 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             w.appendU16Le(m_info.max_payload);w.appendU8(static_cast<uint8_t>(m_core.instanceCount()));
             w.appendU8((m_core.pendingReboot()?1:0)|(m_core.layoutInvalid()?2:0)|
                 (m_core.configLoadedFromNvs()?4:0)|(m_core.safeMode()?8:0));
-            w.appendU8(kLoopCount);
-            for (uint8_t i=0;i<kLoopCount;++i) {
-                auto &l=m_core.loop(i);w.appendU8(i);cw::string(w,l.name());w.appendU32Le(1000000/l.periodUs());
+            w.appendU8(static_cast<uint8_t>(m_core.loopCount()));
+            for (size_t i=0;i<m_core.loopCapacity();++i) {
+                const auto *l=m_core.loopAt(i); if (!l) { continue; }
+                const Ref rate{defs::kLoopTypeId,l->id(),defs::loop::kRateHz};uint32_t hz=0;
+                const auto st=m_core.params().get({&rate,1},{&hz,1});if(!st.ok()) { return st; }
+                w.appendU8(l->id());cw::string(w,l->name());w.appendU32Le(hz);
+                w.appendU8(l->realtime()?1:0);
             }
             return {};
         case defs::SystemOp::BenchCrash:
@@ -98,7 +102,6 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             if(!label(r,name)) { return bad(Detail::BadLabel); }
             const auto *t=m_core.registry().find(type);
             if(!t) { return bad(Detail::UnknownType); }
-            if(loop==0xFF) { loop=defs::runsIn(t->desc,defs::LoopClass::Control)?kControlLoop:kSensorLoop; }
             if(w.remaining()<1) { return bad(Detail::BufferTooSmall); }
             uint8_t instance=0;auto st=m_core.addInstance(type,loop,name,instance);
             if(st.accepted()) { w.appendU8(instance); } return st;

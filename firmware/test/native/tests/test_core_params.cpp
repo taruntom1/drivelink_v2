@@ -11,6 +11,7 @@
 #include "core_os/clock.hpp"
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 using namespace testmod;
 using core::Detail;
@@ -19,6 +20,7 @@ using core::Result;
 namespace {
 
 namespace sys = drivelink::protocol::defs::system;
+namespace lp = drivelink::protocol::defs::loop;
 
 constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
 
@@ -28,17 +30,17 @@ struct Rig {
     {
         reset();
         bootWith(core, store,
-                 {{fx::kTypeId, 0, core::kControlLoop, "ctl"},
-                  {fx::kTypeId, 1, core::kSensorLoop, "sen"},
-                  {fxs::kTypeId, 0, core::kSensorLoop, "s"}});
+                 {{fx::kTypeId, 0, core::kFactoryControlLoop, "ctl"},
+                  {fx::kTypeId, 1, core::kFactorySensorLoop, "sen"},
+                  {fxs::kTypeId, 0, core::kFactorySensorLoop, "s"}});
         REQUIRE(world().created.size() == 2);
         ctl = world().created[0];
         sen = world().created[1];
     }
 
     core::ParamService &params() { return core.params(); }
-    core::Loop &control() { return core.loop(core::kControlLoop); }
-    core::Loop &sensor() { return core.loop(core::kSensorLoop); }
+    core::Loop &control() { return core.loop(core::kFactoryControlLoop); }
+    core::Loop &sensor() { return core.loop(core::kFactorySensorLoop); }
 
     /// stage + one control tick + complete(0).
     core::Status setNow(std::span<const core::SetEntry> entries, std::span<uint32_t> applied)
@@ -171,7 +173,7 @@ TEST_CASE("Param set: each validation rule")
     CHECK(st.result == Result::Armed);
     CHECK(st.detail == Detail::LockedWhileArmed);
     CHECK(one(entry(fx::kTypeId, 0, fx::kGain, f(3.0f))).ok()); // not locked
-    st = one(entry(kSys, 0, sys::kControlRateHz, 500));
+    st = one(entry(defs::kLoopTypeId, 0, lp::kRateHz, 500));
     CHECK(st.result == Result::Armed);
     rig.params().setArmed(false);
     CHECK(rig.ctl->mode_value == FxMode::C);
@@ -215,7 +217,7 @@ TEST_CASE("Param set: a batch must not span loops or mix system and loop params"
     CHECK(st.detail == Detail::CrossLoopBatch);
     CHECK(st.index == 1);
 
-    const std::array<core::SetEntry, 2> mixed{entry(kSys, 0, sys::kSensorRateHz, 50),
+    const std::array<core::SetEntry, 2> mixed{entry(defs::kLoopTypeId, 1, lp::kRateHz, 50),
                                               entry(fx::kTypeId, 1, fx::kGain, f(2.0f))};
     st = rig.setNow(mixed, applied);
     CHECK(st.detail == Detail::CrossLoopBatch);
@@ -321,28 +323,28 @@ TEST_CASE("Param set: system params apply on the caller and set the loop periods
     Rig rig;
     CHECK(rig.control().periodUs() == 1000); // 1000 Hz default
     CHECK(rig.sensor().periodUs() == 10000); // 100 Hz default
-    CHECK(rig.get(kSys, 0, sys::kControlRateHz) == 1000);
+    CHECK(rig.get(defs::kLoopTypeId, 0, lp::kRateHz) == 1000);
 
     std::array<uint32_t, 2> applied{};
-    const std::array<core::SetEntry, 2> batch{entry(kSys, 0, sys::kControlRateHz, 500),
-                                              entry(kSys, 0, sys::kSensorRateHz, 1000)}; // clamped to 500
+    const std::array<core::SetEntry, 2> batch{entry(defs::kLoopTypeId, 0, lp::kRateHz, 500),
+                                              entry(defs::kLoopTypeId, 1, lp::kRateHz, 1000)}; // clamped to 500
     core::PendingSet p;
     REQUIRE(rig.params().stage(batch, applied, p).ok());
     CHECK_FALSE(p.active()); // done already
     CHECK(applied[0] == 500);
-    CHECK(applied[1] == 500);
+    CHECK(applied[1] == 1000);
     CHECK(rig.control().periodUs() == 2000);
-    CHECK(rig.sensor().periodUs() == 2000);
-    CHECK(rig.get(kSys, 0, sys::kControlRateHz) == 500);
-    CHECK(rig.get(kSys, 0, sys::kSensorRateHz) == 500);
+    CHECK(rig.sensor().periodUs() == 1000);
+    CHECK(rig.get(defs::kLoopTypeId, 0, lp::kRateHz) == 500);
+    CHECK(rig.get(defs::kLoopTypeId, 1, lp::kRateHz) == 1000);
 
-    const core::SetEntry low = entry(kSys, 0, sys::kControlRateHz, 1);
+    const core::SetEntry low = entry(defs::kLoopTypeId, 0, lp::kRateHz, 1);
     REQUIRE(rig.params().set({&low, 1}, applied).ok());
-    CHECK(applied[0] == 100);
-    CHECK(rig.control().periodUs() == 10000);
+    CHECK(applied[0] == 1);
+    CHECK(rig.control().periodUs() == 1000000);
 
     // The system instance is not in any loop's list.
-    CHECK(rig.core.instanceCount() == 3);
+    CHECK(rig.core.instanceCount() == 5);
     CHECK(core::periodUsFromHz(3) == 333333);
     CHECK(core::periodUsFromHz(0) == 0);
 }
@@ -351,7 +353,7 @@ TEST_CASE("Param get: params only, from the shadow")
 {
     Rig rig;
     const std::array<core::Ref, 3> refs{ref(fx::kTypeId, 0, fx::kLevel), ref(fx::kTypeId, 1, fx::kMode),
-                                        ref(kSys, 0, sys::kSensorRateHz)};
+                                        ref(defs::kLoopTypeId, 1, lp::kRateHz)};
     std::array<uint32_t, 3> values{};
     REQUIRE(rig.params().get(refs, values).ok());
     CHECK(values[0] == 3);

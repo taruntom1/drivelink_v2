@@ -1,4 +1,5 @@
 #include "core/registry.hpp"
+#include "core/loop_instance.hpp"
 
 #include "drivelink/protocol/gen/registry.hpp"
 
@@ -13,7 +14,8 @@ Status Registry::init(std::span<const ModuleType *const> types)
         if (type == nullptr) {
             return Status::fail(Result::InvalidArgument, Detail::UnknownType, index);
         }
-        if (type->desc.type_id == drivelink::protocol::defs::kSystemTypeId) {
+        if (type->desc.type_id == drivelink::protocol::defs::kSystemTypeId ||
+            type->desc.type_id == drivelink::protocol::defs::kLoopTypeId) {
             return Status::fail(Result::InvalidArgument, Detail::ReservedType, index);
         }
         if (type->create == nullptr) {
@@ -31,6 +33,7 @@ Status Registry::init(std::span<const ModuleType *const> types)
 
 const ModuleType *Registry::find(uint8_t type_id) const
 {
+    if (type_id == drivelink::protocol::defs::kLoopTypeId) { return &loopType(); }
     for (const ModuleType *type : m_types) {
         if (type->desc.type_id == type_id) {
             return type;

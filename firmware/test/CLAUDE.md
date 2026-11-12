@@ -54,3 +54,9 @@ Runs on every pull request and on pushes to `main` and `firmware_overhaul`.
 - `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`. Each app is built from inside its own directory.
 - On Ubuntu: `tools/gen/gen.py --check`, the generator's unit tests, `protocol.py` and the native tests.
 - The host Linux job builds `host/superbuild`, and also checks the installed CMake packages and the Linux PTY serial path.
+
+F3d adds configurable-loop coverage (one through eight loops, sparse ids, empty
+saved layouts, factory fallback, task failures, live rate rollback and the native
+real-time guard). The guard fails unexpected violations automatically; deliberate
+violation tests explicitly suppress its failure sink. Native and vdev link the
+C allocator wrappers alongside the C++ allocation overrides.

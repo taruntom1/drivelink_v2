@@ -6,6 +6,8 @@
 #include <utility>
 #include <tuple>
 #include <atomic>
+#include <array>
+#include "core_os/native_task.hpp"
 
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
@@ -13,6 +15,7 @@
 #include "core_os/mutex.hpp"
 #include "core_os/native_diag.hpp"
 #include "core_os/periodic_task.hpp"
+#include "core_os/realtime.hpp"
 
 namespace core_os {
 
@@ -24,6 +27,8 @@ using Clock = std::chrono::steady_clock;
 
 const Clock::time_point s_epoch = Clock::now();
 std::atomic<int64_t> s_boot_offset{0};
+std::atomic<int32_t> s_start_after{-1};
+std::atomic<int32_t> s_period_after{-1};
 
 } // namespace
 
@@ -32,6 +37,9 @@ int64_t nowUs()
     return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s_epoch).count()-s_boot_offset.load();
 }
 namespace native {
+void failPeriodicStartAfter(int32_t successes) { s_start_after.store(successes); }
+void failNextPeriodChange() { s_period_after.store(0); }
+void failPeriodChangeAfter(int32_t successes) { s_period_after.store(successes); }
 void resetBootClock() { s_boot_offset.store(std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-s_epoch).count()); }
 }
 
@@ -42,6 +50,7 @@ Mutex::~Mutex() = default;
 
 void Mutex::lock()
 {
+    recordRealtimeViolation();
     m_state.mutex.lock();
 }
 
@@ -73,6 +82,7 @@ void Event::signal()
 
 bool Event::wait(uint32_t timeout_us)
 {
+    recordRealtimeViolation();
     std::unique_lock<std::mutex> lock(m_state.mutex);
     if (!m_state.set && timeout_us > 0U) {
         (void)m_state.cv.wait_for(lock, std::chrono::microseconds(timeout_us), [this] { return m_state.set; });
@@ -98,8 +108,11 @@ PeriodicTask::~PeriodicTask()
 }
 
 Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority, int8_t core, uint32_t period_us,
-                        TickFn fn, void *ctx)
+                        TickFn fn, void *ctx, bool realtime)
 {
+    (void)realtime;
+    if (s_start_after.load() == 0) { s_start_after.store(-1); return kNativeError; }
+    if (s_start_after.load() > 0) { --s_start_after; }
     (void)name;
     (void)stack_bytes;
     (void)priority;
@@ -152,6 +165,8 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
 
 Err PeriodicTask::setPeriod(uint32_t period_us)
 {
+    if (s_period_after.load() == 0) { s_period_after.store(-1); return kNativeError; }
+    if (s_period_after.load() > 0) { --s_period_after; }
     if (period_us == 0U) {
         return kNativeError;
     }
@@ -202,7 +217,8 @@ namespace {
 struct DiagRecord {
     std::mutex mutex;
     std::vector<native::RecordedReport> reports;
-    std::map<std::tuple<uint8_t, uint16_t, uint8_t>, uint64_t> counters;
+    struct Counter { std::atomic<uint32_t> identity{0}; std::atomic<uint64_t> value{0}; };
+    std::array<Counter, 2048> counters{};
 };
 void *s_diag_ctx=nullptr;
 native::ReportSink s_report_sink=nullptr;
@@ -214,9 +230,9 @@ DiagRecord &diagRecord()
     return record;
 }
 
-std::tuple<uint8_t, uint16_t, uint8_t> key(DiagCode code, uint8_t instance = 255)
+uint32_t key(DiagCode code, uint8_t instance = 255)
 {
-    return {static_cast<uint8_t>(code.source), code.code, instance};
+    return (static_cast<uint32_t>(code.source) << 24U) | (static_cast<uint32_t>(code.code) << 8U) | instance;
 }
 
 } // namespace
@@ -233,8 +249,14 @@ void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
     if(s_count_sink) { s_count_sink(s_diag_ctx,code,n,instance);return; }
     DiagRecord &r = diagRecord();
-    std::lock_guard<std::mutex> lock(r.mutex);
-    r.counters[key(code,instance)] += n;
+    const uint32_t identity = key(code, instance);
+    for (auto &counter : r.counters) {
+        uint32_t expected = 0;
+        if (counter.identity.load(std::memory_order_relaxed) == identity ||
+            counter.identity.compare_exchange_strong(expected, identity, std::memory_order_relaxed) || expected == identity) {
+            counter.value.fetch_add(n, std::memory_order_relaxed); return;
+        }
+    }
 }
 
 namespace native {
@@ -264,9 +286,10 @@ size_t reportCount(DiagCode code)
 uint64_t counterTotal(DiagCode code, uint8_t instance)
 {
     DiagRecord &r = diagRecord();
-    std::lock_guard<std::mutex> lock(r.mutex);
-    const auto it = r.counters.find(key(code,instance));
-    return (it == r.counters.end()) ? 0U : it->second;
+    for (const auto &counter : r.counters) {
+        if (counter.identity.load() == key(code, instance)) { return counter.value.load(); }
+    }
+    return 0;
 }
 
 void resetRecordedDiag()
@@ -274,7 +297,7 @@ void resetRecordedDiag()
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
     r.reports.clear();
-    r.counters.clear();
+    for (auto &counter : r.counters) { counter.value.store(0); counter.identity.store(0); }
 }
 
 } // namespace native

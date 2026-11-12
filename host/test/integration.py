@@ -56,17 +56,17 @@ def main():
             for type_ in ('0', '112', '113', '114'):
                 assert cli('items', type_)
             assert cli('codes')
-            assert cli('instances') == []
+            assert len(cli('instances')) == 2
             motor = cli('add', '112', 'motor')['instance']
             encoder = cli('add', '113', 'encoder')['instance']
             imu = cli('add', '114', 'imu')['instance']
-            assert len(cli('instances', 'pending')) == 3
+            assert len(cli('instances', 'pending')) == 5
             wiring = (112 << 8) | motor
             assert cli('set', f'113:{encoder}:1={wiring}')['pending_reboot']
             cli('save'); cli('reboot')
-            assert len(cli('instances')) == 3
-            assert cli('get', '0:0:1')['typed_values'] == [1000]
-            assert cli('set', '0:0:1=500')['typed_values'] == [500]
+            assert len(cli('instances')) == 5
+            assert cli('get', '5:0:1')['typed_values'] == [1000]
+            assert cli('set', '5:0:1=500')['typed_values'] == [500]
             cli('save')
             result = cli('action', f'112:{motor}:768', '0.5')
             time.sleep(.1)
@@ -74,32 +74,34 @@ def main():
             assert cli('action', f'112:{motor}:769', '--blob', '616263')['blob_hex'] == '616263'
             assert cli('status')['msg_type'] == 128
             cli('diag-info'); cli('diag-entries'); cli('diag-clear')
-            cli('set', '0:0:1=NaN', code=2)
+            cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 1' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 2' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
-            assert len(cli('instances')) == 3
-            assert cli('get', '0:0:1')['typed_values'] == [500]
+            assert len(cli('instances')) == 5
+            assert cli('get', '5:0:1')['typed_values'] == [500]
             kill()
             # Commit one new-generation instance blob, then interrupt SAVE.
             # Reopening must still load the previous complete generation.
             url = start('--fail-writes-after', '1')
-            cli('set', '0:0:1=600'); cli('save', code=5)
+            cli('set', '5:0:1=600'); cli('save', code=5)
             kill()
             # Three consecutive unclean exits enter safe mode. Nothing is created.
             url = start()
             assert cli('info')['flags'] & 8
             assert cli('info')['running_instances'] == 0
-            assert len(cli('instances')) == 3
-            assert cli('get', '0:0:1')['typed_values'] == [500]
+            assert cli('info')['loops'] == []
+            assert cli('status')['overruns'] == []
+            assert len(cli('instances')) == 5
+            assert cli('get', '5:0:1')['typed_values'] == [500]
             cli('exit-safe-mode')
-            assert cli('info')['running_instances'] == 3
+            assert cli('info')['running_instances'] == 5
             assert not cli('info')['flags'] & 8
             cli('remove', '113', str(encoder)); cli('remove', '112', str(motor)); cli('remove', '114', str(imu))
-            cli('save'); cli('reboot'); assert cli('instances') == []
+            cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A second process cannot share the persistent state directory.
             other = subprocess.run([args.vdev, '--state', state, '--port', '0'], capture_output=True, text=True, timeout=10)
             assert other.returncode != 0 and 'already in use' in other.stderr
@@ -109,7 +111,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 1
+                assert cli('info')['protocol_version'] == 2
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
                 # More than the PTY's kernel buffer: no external reader must
@@ -118,7 +120,7 @@ def main():
                 # Submit REBOOT without draining the filled slave. Its reply
                 # deadline must cancel the effect and recover the same PTY,
                 # rather than close the published path or run a stale handler.
-                payload = bytes((1, 201, 1, 8))
+                payload = bytes((2, 201, 1, 8))
                 header = bytes((1, len(payload), 0))
                 crc = 0
                 for byte in header:
@@ -133,9 +135,25 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 1
+                assert cli('info')['protocol_version'] == 2
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
-                cli('save'); cli('reboot'); assert cli('instances') == []
+                cli('save'); cli('reboot'); assert len(cli('instances')) == 2
+            # A loop is an ordinary instance; its id is preserved on the wire
+            # and across both protocol reboots and external process restarts.
+            extra = cli('add', '5', 'third')['instance']
+            assert cli('set', f'5:{extra}:2=true', f'5:{extra}:3=1')['pending_reboot']
+            assert cli('set', f'5:{extra}:1=250')['pending_reboot']
+            motor = cli('add', '112', 'third_motor', str(extra))['instance']
+            cli('remove', '5', str(extra), code=5)
+            cli('save'); cli('reboot')
+            loops = cli('info')['loops']
+            assert len(loops) == 3 and next(l for l in loops if l['id'] == extra)['realtime']
+            assert {e['loop_id'] for e in cli('status')['overruns']} == {0, 1, extra}
+            assert cli('get', f'5:{extra}:1')['typed_values'] == [250]
+            cli('set', f'5:{extra}:1=400'); cli('save'); cli('reboot')
+            assert cli('get', f'5:{extra}:1')['typed_values'] == [400]
+            cli('remove', '112', str(motor)); cli('remove', '5', str(extra))
+            cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             print('PASS CLI discovery, typed params, actions, status, diag, persistence, failed SAVE, crash recovery, locking and transports')
         finally:
             kill()

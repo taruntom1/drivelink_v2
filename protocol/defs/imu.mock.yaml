@@ -1,6 +1,6 @@
 type: imu.mock
 type_id: 114
-loops: [sensor]
+realtime: forbidden
 items:
   - {id: 1, kind: param, name: rate, type: f32, unit: rad/s, min: -100, max: 100, default: 0.1}
   - {id: 256, kind: signal, name: yaw, type: f32, unit: rad}

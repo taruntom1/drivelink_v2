@@ -1,6 +1,6 @@
 set(COMPONENTS ${CMAKE_CURRENT_LIST_DIR}/../../firmware/components)
 set(CORE_SOURCES
-  config_blob command_service core crc32 instance layout_validation loop
+  config_blob command_service core crc32 instance layout_validation loop loop_instance
   param_service pending_layout persistence registry value wiring_order)
 set(SOURCES)
 foreach(source IN LISTS CORE_SOURCES)
@@ -8,7 +8,8 @@ foreach(source IN LISTS CORE_SOURCES)
 endforeach()
 add_library(drivelink_native_core STATIC ${SOURCES}
   ${COMPONENTS}/mod_mock/src/modules.cpp
-  ${COMPONENTS}/core_os/backend/native/src/core_os_native.cpp
+  ${COMPONENTS}/core_os/backend/native/src/realtime_native.cpp
+    ${COMPONENTS}/core_os/backend/native/src/core_os_native.cpp
   ${COMPONENTS}/core_os/backend/native/src/kv_store_native.cpp
   ${COMPONENTS}/core_os/backend/native/src/native_file.cpp
   ${COMPONENTS}/diag/src/diag_protocol.cpp
@@ -24,6 +25,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(drivelink_native_core PUBLIC -Wno-unused-parameter -Wno-sign-compare)
 endif()
 add_executable(drivelink-vdev src/main.cpp)
+target_link_options(drivelink_native_core INTERFACE -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
 target_link_libraries(drivelink-vdev PRIVATE drivelink_native_core drivelink_asio drivelink)
 set(DRIVELINK_VDEV_BUILD_ID "" CACHE STRING "Override vdev's 16-hex source build id")
 set(BUILD_ID ${DRIVELINK_VDEV_BUILD_ID})

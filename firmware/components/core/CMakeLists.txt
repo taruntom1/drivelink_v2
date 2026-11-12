@@ -11,6 +11,7 @@ idf_component_register(
          "src/instance.cpp"
          "src/layout_validation.cpp"
          "src/loop.cpp"
+         "src/loop_instance.cpp"
          "src/param_service.cpp"
          "src/pending_layout.cpp"
          "src/persistence.cpp"

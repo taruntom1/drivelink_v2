@@ -1,0 +1,13 @@
+type: loop
+type_id: 0x05
+description: A built-in periodic loop, configured through the layout.
+items:
+  - {id: 0x0001, kind: param, name: rate_hz, type: u16, unit: Hz, min: 1, max: 2000, default: 100, flags: [locked_while_armed]}
+  - {id: 0x0002, kind: param, name: realtime, type: bool, default: false, flags: [reboot_required]}
+  - {id: 0x0003, kind: param, name: core, type: u8, min: 0, max: 1, default: 0, flags: [reboot_required]}
+  - {id: 0x0004, kind: param, name: priority, type: u8, min: 1, max: 20, default: 10, flags: [reboot_required]}
+  - {id: 0x0005, kind: param, name: stack_bytes, type: u16, unit: bytes, min: 3072, max: 16384, default: 4096, flags: [reboot_required]}
+  - {id: 0x0100, kind: signal, name: ticks, type: u32}
+  - {id: 0x0101, kind: signal, name: overruns, type: u32}
+  - {id: 0x0102, kind: signal, name: last_run_us, type: u32, unit: us}
+  - {id: 0x0103, kind: signal, name: max_run_us, type: u32, unit: us}

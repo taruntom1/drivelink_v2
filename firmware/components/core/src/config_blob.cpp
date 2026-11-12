@@ -96,7 +96,7 @@ std::vector<uint8_t> encodeLayoutBlob(uint32_t gen, std::span<const LayoutRecord
     }
     std::vector<uint8_t> out(layoutBlobSize(records.size()));
     wire::Writer w(out.data(), out.size());
-    w.appendU8(kBlobFormat);
+    w.appendU8(kLayoutBlobFormat);
     w.appendU32Le(gen);
     w.appendU8(static_cast<uint8_t>(records.size()));
     for (const LayoutRecord &rec : records) {
@@ -121,7 +121,7 @@ bool decodeLayoutBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vector<
     const uint8_t fmt = r.readU8();
     const uint32_t g = r.readU32Le();
     const uint8_t count = r.readU8();
-    if (!r.ok() || fmt != kBlobFormat || blob.size() != layoutBlobSize(count)) {
+    if (!r.ok() || fmt != kLayoutBlobFormat || blob.size() != layoutBlobSize(count)) {
         return false;
     }
     records.reserve(count);

@@ -10,6 +10,7 @@
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/gen/diag_codes.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 using namespace testmod;
 using core::Detail;
@@ -19,10 +20,11 @@ using core::Result;
 namespace {
 
 namespace sys = drivelink::protocol::defs::system;
+namespace lp = drivelink::protocol::defs::loop;
 namespace codes = drivelink::protocol::defs::diag::codes;
 constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
-constexpr uint8_t kCtl = core::kControlLoop;
-constexpr uint8_t kSen = core::kSensorLoop;
+constexpr uint8_t kCtl = core::kFactoryControlLoop;
+constexpr uint8_t kSen = core::kFactorySensorLoop;
 
 /// Reports of `code`, in order.
 std::vector<core_os::native::RecordedReport> reportsOf(const drivelink::protocol::defs::diag::Code &code)
@@ -60,7 +62,7 @@ TEST_CASE("Boot: creation is dependencies first, the tick order feedback, contro
     core_os::KvStore store;
     core::Core c(testConfig());
     bootWith(c, store, controllerLayout());
-    CHECK(c.instanceCount() == 6);
+    CHECK(c.instanceCount() == 8);
     CHECK(c.instancesFailed() == 0);
     CHECK_FALSE(c.layoutInvalid());
     CHECK(core_os::native::recordedReports().empty());
@@ -108,7 +110,7 @@ TEST_CASE("Boot: a failed instance leaves what is wired to it out, transitively,
         CHECK(stateOf(c, wd::kTypeId, 0) == InstanceState::DependencyMissing);
         CHECK(stateOf(c, wd::kTypeId, 2) == InstanceState::DependencyMissing);
         CHECK(stateOf(c, act::kTypeId, 0) == InstanceState::Running); // a dependency, not a dependent
-        CHECK(c.instanceCount() == 4);
+        CHECK(c.instanceCount() == 6);
         CHECK(c.instancesFailed() == 3);
         CHECK_FALSE(c.layoutInvalid());
 
@@ -131,7 +133,7 @@ TEST_CASE("Boot: a failed instance leaves what is wired to it out, transitively,
     reset();
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
-    CHECK(c.instanceCount() == 7);
+    CHECK(c.instanceCount() == 9);
     CHECK(getParam(c, wd::kTypeId, 2, wd::kGain) == f(7.0f));
     CHECK(getParam(c, fb::kTypeId, 0, fb::kPin) == 5);
     auto *w2 = static_cast<WiredModule *>(world().objects.at(key(wd::kTypeId, 2)));
@@ -155,7 +157,7 @@ TEST_CASE("Boot: an invalid layout entry is left out and sets layout_invalid")
     CHECK(stateOf(c, act::kTypeId, 0) == InstanceState::Invalid);
     CHECK(stateOf(c, wd::kTypeId, 0) == InstanceState::DependencyMissing);
     CHECK(stateOf(c, fb::kTypeId, 0) == InstanceState::Running);
-    CHECK(c.instanceCount() == 1);
+    CHECK(c.instanceCount() == 3);
     CHECK(c.instancesFailed() == 3);
     CHECK(world().create_log == std::vector<int>{key(fb::kTypeId, 0)});
 
@@ -176,8 +178,8 @@ TEST_CASE("Boot: labels are unique, and the system params load before the loops 
 {
     reset();
     core_os::KvStore store;
-    writeLayout(store, {{fx::kTypeId, 0, kCtl, "same"}, {fx::kTypeId, 1, kCtl, "same"}, {fx::kTypeId, 2, kCtl, ""}},
-                1, {{sys::kSensorRateHz, 50}});
+    writeLayout(store, {{fx::kTypeId, 0, kCtl, "same"}, {fx::kTypeId, 1, kCtl, "same"}, {fx::kTypeId, 2, kCtl, ""},
+                        {defs::kLoopTypeId, 1, core::kNoLoop, "sensor", {{lp::kRateHz, 50}}}});
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
     CHECK(stateOf(c, fx::kTypeId, 1) == InstanceState::Invalid);
@@ -217,7 +219,7 @@ TEST_CASE("Boot: a param set on an instance that isn't running goes to its shado
 
         // Not with a system param, and the rules still apply.
         const std::array<core::SetEntry, 2> mixed{entry(fx::kTypeId, 0, fx::kGain, f(1.0f)),
-                                                  entry(kSys, 0, sys::kSensorRateHz, 50)};
+                                                  entry(defs::kLoopTypeId, 1, lp::kRateHz, 50)};
         CHECK(c.params().set(mixed, applied).detail == Detail::CrossLoopBatch);
         const core::SetEntry ro = entry(fx::kTypeId, 0, fx::kCount, 1);
         CHECK(c.params().set({&ro, 1}, applied).detail == Detail::ReadOnly);
@@ -230,7 +232,7 @@ TEST_CASE("Boot: a param set on an instance that isn't running goes to its shado
     reset();
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
-    CHECK(c.instanceCount() == 2);
+    CHECK(c.instanceCount() == 4);
     CHECK(world().created[0]->gain == 1000.0f);
     CHECK(world().created[1]->level == 9);
 }

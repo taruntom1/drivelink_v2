@@ -8,6 +8,7 @@
 // out. app_main never returns.
 
 #include <array>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <span>
@@ -41,9 +42,9 @@ namespace {
 // The firmware's tasks, by the names they are created with. A name with no
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the control and IMU sampling timers).
-constexpr std::array<const char *, 13> kLoggedTasks = {
+constexpr std::array<const char *, 11> kLoggedTasks = {
     "main",       "uart_rx",    "uart_tx",        "motor_mgr_upd", "motor_mgr_cfg", "imu_cfg",
-    "imu_stream", "time_sync_task", "diag",       "esp_timer",     "core_ctrl",     "core_sens", "core_cfg",
+    "imu_stream", "time_sync_task", "diag",       "esp_timer", "core_cfg",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -52,13 +53,21 @@ constexpr std::array<const char *, 13> kLoggedTasks = {
 /// xTaskGetHandle() holds it only to walk the task lists, so this doesn't
 /// stall the control loop on the other core. (uxTaskGetSystemState() would
 /// scan every stack inside the kernel's critical section.)
-void logStackHighWater()
+void logStackHighWater(const core::Core *core = nullptr)
 {
     for (const char *name : kLoggedTasks) {
         TaskHandle_t handle = xTaskGetHandle(name);
         if (handle != nullptr) {
             ESP_LOGI(TAG, "Stack high-water: %-15s %5u bytes free", name,
                      static_cast<unsigned>(uxTaskGetStackHighWaterMark(handle)));
+        }
+    }
+    if (core) {
+        for (size_t i = 0; i < core->loopCapacity(); ++i) {
+            const auto *loop = core->loopAt(i); if (!loop) { continue; }
+            char name[16]; std::snprintf(name, sizeof(name), "core_loop_%u", loop->id());
+            ESP_LOGI(TAG, "Stack high-water: %-15s %5u bytes free", name,
+                     static_cast<unsigned>(core->loopStackHighWater(loop->id())));
         }
     }
 }
@@ -98,43 +107,9 @@ void initNvs()
     }
 }
 
-#if CONFIG_CORE_BOOT_SELFTEST
-/// BENCH CHECK ONLY (CONFIG_CORE_BOOT_SELFTEST, default off; never commit it
-/// on). Proves SAVE and the reload on hardware before F3b puts them on the
-/// wire: each boot flips control.rate_hz between 1000 and 500 and SAVEs, so
-/// the boot after a 1000 → 500 SAVE logs "reloaded 500 from NVS".
-void bootSelftest(core::Core &c)
-{
-    namespace sys = drivelink::protocol::defs::system;
-    const core::Ref rate{drivelink::protocol::defs::kSystemTypeId, 0, sys::kControlRateHz};
-    uint32_t value = 0;
-    if (!c.params().get({&rate, 1}, {&value, 1}).ok()) {
-        ESP_LOGE(TAG, "selftest: cannot read control.rate_hz");
-        return;
-    }
-    uint32_t next = 500;
-    if (value == 500U) {
-        ESP_LOGI(TAG, "selftest: reloaded 500 from NVS (control period %u us); restoring 1000",
-                 static_cast<unsigned>(c.loop(core::kControlLoop).periodUs()));
-        next = 1000;
-    } else {
-        ESP_LOGI(TAG, "selftest: control.rate_hz is %u; setting 500", static_cast<unsigned>(value));
-    }
-    const core::SetEntry set{rate, next};
-    uint32_t applied = 0;
-    core::Status st = c.params().set({&set, 1}, {&applied, 1});
-    if (st.ok()) {
-        st = c.save();
-    }
-    ESP_LOGI(TAG, "selftest: control.rate_hz %u and SAVE: result %u, detail %u; control period %u us",
-             static_cast<unsigned>(applied), static_cast<unsigned>(st.result), static_cast<unsigned>(st.detail),
-             static_cast<unsigned>(c.loop(core::kControlLoop).periodUs()));
-}
-#endif
-
 /// Build, boot and start the core: the registry, the layout and params from
 /// NVS (or the defaults), the instances (none until F3b brings module types)
-/// and both loops. The Core lives on the heap: app_main's stack is small. On
+/// and the configured loops. The Core lives on the heap: app_main's stack is small. On
 /// failure it reports core.InitFailed and returns nullptr; the rest of the
 /// firmware keeps running.
 std::unique_ptr<core::Core> startCore()
@@ -166,33 +141,31 @@ std::unique_ptr<core::Core> startCore()
     }
     st = c->start();
     if (!st.ok()) {
-        const esp_err_t err = static_cast<esp_err_t>(c->startError());
-        DIAG_ERROR(diag::codes::core::kInitFailed, err, c->startStage(), 0,
-                   "Core: loop task failed to start (stage %u): %s", static_cast<unsigned>(c->startStage()),
-                   esp_err_to_name(err));
+        DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_STATE, core::kInitStageBoot, 0,
+                   "Core: start refused (result %u, detail %u)", static_cast<unsigned>(st.result),
+                   static_cast<unsigned>(st.detail));
         return nullptr;
     }
-    ESP_LOGI(TAG,
-             "Core started: %u instances (%u failed, %u configured); safe mode %s; config %s; loops control %u us, "
-             "sensor %u us",
+    ESP_LOGI(TAG, "Core started: %u instances (%u failed, %u configured); safe mode %s; config %s; %u loops",
              static_cast<unsigned>(c->instanceCount()), static_cast<unsigned>(c->instancesFailed()),
              static_cast<unsigned>(c->configuredCount()), c->safeMode() ? "ON" : "off",
-             c->configLoadedFromNvs() ? "loaded from NVS" : "defaults",
-             static_cast<unsigned>(c->loop(core::kControlLoop).periodUs()),
-             static_cast<unsigned>(c->loop(core::kSensorLoop).periodUs()));
-#if CONFIG_CORE_BOOT_SELFTEST
-    bootSelftest(*c);
-#endif
+             c->configLoadedFromNvs() ? "loaded from NVS" : "factory", static_cast<unsigned>(c->loopCount()));
+    for (size_t i = 0; i < c->loopCapacity(); ++i) {
+        const auto *loop = c->loopAt(i); if (!loop) { continue; }
+        ESP_LOGI(TAG, "Loop %u (%s): %u us, realtime %u", loop->id(), loop->name(),
+                 static_cast<unsigned>(loop->periodUs()), loop->realtime());
+    }
     return c;
 }
 
-[[noreturn]] void idleForever()
+[[noreturn]] void idleForever(const core::Core *core = nullptr)
 {
+    (void)core;
 #if DRIVELINK_LOG_STACKS
     constexpr TickType_t kPeriod = pdMS_TO_TICKS(CONFIG_DRIVELINK_STACK_LOG_PERIOD_S * 1000);
     while (true) {
         vTaskDelay(kPeriod);
-        logStackHighWater();
+        logStackHighWater(core);
     }
 #else
     while (true) {
@@ -297,5 +270,5 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "diag reporter failed to start; errors are on the console only");
     }
 
-    idleForever();
+    idleForever(core_obj.get());
 }

@@ -42,10 +42,10 @@ enum class ItemFlag : uint8_t {
     RefTicksAfter = 0x40, ///< a wiring param whose target ticks after this instance (YAML `ref_order: after`)
 };
 
-/// Bits of `TypeDesc::loops`: the loop classes a type may run in.
+/// Bits of `TypeDesc::loops`: the real-time requirements a type allows.
 enum class LoopClass : uint8_t {
-    Control = 0x01,
-    Sensor = 0x02,
+    Realtime = 0x01,
+    NonRealtime = 0x02,
 };
 
 /// Where an action runs.

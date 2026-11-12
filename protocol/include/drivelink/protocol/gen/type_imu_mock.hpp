@@ -116,7 +116,7 @@ inline constexpr std::array<ItemDesc, 4> kItems{{
 inline constexpr TypeDesc kDesc{
     .name = "imu.mock",
     .type_id = kTypeId,
-    .loops = loopMask(LoopClass::Sensor),
+    .loops = loopMask(LoopClass::NonRealtime),
     .items = kItems,
 };
 

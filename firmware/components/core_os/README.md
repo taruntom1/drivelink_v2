@@ -19,11 +19,11 @@ The API headers in `include/core_os/` are common to both. Each backend has its o
 | `clock.hpp` | `nowUs()`: monotonic µs since boot (`esp_timer_get_time` / `steady_clock`) |
 | `mutex.hpp` | `Mutex` (`lock`, `tryLock`, `unlock`) and `LockGuard`. Static storage. |
 | `event.hpp` | `Event`: a binary signal. `signal()` never blocks and is safe from a loop tick; `wait(timeout_us)` takes it or times out (at least `timeout_us`); `clear()` |
-| `periodic_task.hpp` | `PeriodicTask`: `start(name, stack, prio, core, period_us, fn, ctx)` calls `fn(ctx, elapsed_periods)` once per period; `setPeriod`, `stop`, `stackHighWaterMark` |
+| `periodic_task.hpp` | `PeriodicTask`: `start(name, stack, prio, core, period_us, fn, ctx, realtime=false)` calls `fn(ctx, elapsed_periods)` once per period; `setPeriod`, `stop`, `stackHighWaterMark` |
 | `diag_sink.hpp` | `reportDiag(code, err, arg0, arg1)` and `countDiag(code, n)` |
 | `kv_store.hpp` | `KvStore`: `get(ns, key, buf, len)` (a null `buf` gives the size), `set` (commits), `eraseNamespace`, `listNamespaces(fn, ctx)`; `nvsInit()` |
 | `boot_info.hpp` | `resetWasCrash()`, `loadCrashCount()` / `storeCrashCount()` (RTC no-init), `reboot()` |
-| `one_shot.hpp` | `OneShotTimer`: `start(name, delay_us, fn, ctx)` calls `fn(ctx)` once; `cancel()` |
+| `one_shot.hpp` | `OneShotTimer`: `start(name, delay_us, fn, ctx, realtime=false)` calls `fn(ctx)` once; `cancel()` |
 
 Native only, for the tests:
 - `core_os/native_diag.hpp`: what the diag sink recorded (`recordedReports()`, `reportCount()`, `counterTotal()`, `resetRecordedDiag()`).
@@ -54,3 +54,17 @@ Native only, for the tests:
 - `PeriodicTask` is not thread-safe: its owner serializes `start`, `setPeriod` and `stop`.
 - `core_os` has no Kconfig of its own: the task parameters come from its callers (the core's `CoreConfig`).
 - The IDF backend checks every IDF return and returns it as `Err`; it never aborts.
+
+F3d: PeriodicTask subscribes real-time tasks to the ESP Task WDT before starting
+the timer, resets the WDT after each callback (including paused/gated ticks),
+and removes the subscription on cooperative stop. Setup waits at most one
+second for the registration result. The native backend accepts the same flag.
+
+`realtime.hpp` supplies RealtimeScope and the cumulative violation count. IDF
+uses a no-op implementation. Native instruments C++ allocation and project C
+malloc/calloc/realloc calls (GNU linker wrappers), Mutex::lock, Event::wait and
+all KvStore operations. Native tests install a failure sink with
+native_realtime.hpp; vdev leaves it unset and reports counter changes on stderr.
+The default native diagnostic counters use fixed atomic storage, without a
+mutex or an allocation in countDiag. Event::signal is still allowed in ticks.
+`native_task.hpp` supplies one-shot task-start and timer-restart fault injection.

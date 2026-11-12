@@ -15,12 +15,12 @@ class Client:
         self.seq=0
     def request(self,family,op,body=b"",accepted=(0,)):
         self.seq=(self.seq+1)&255
-        self.proto.send_command(0x01,bytes((1,self.seq,family,op))+body)
+        self.proto.send_command(0x01,bytes((2,self.seq,family,op))+body)
         deadline=time.monotonic()+4
         while time.monotonic()<deadline:
             kind,p=self.proto.read_frame(timeout=max(.01,deadline-time.monotonic()))
             if kind==0x41 and len(p)>=6 and p[1]==self.seq:
-                assert p[:4]==bytes((1,self.seq,family,op)),p
+                assert p[:4]==bytes((2,self.seq,family,op)),p
                 assert p[4] in accepted, (family,op,p.hex())
                 return p[6:]
         raise TimeoutError("core response")
@@ -92,7 +92,7 @@ def main():
         deadline=time.monotonic()+3
         while True:
             kind,p=c.proto.read_frame(timeout=max(.01,deadline-time.monotonic()))
-            if kind==0x80:assert len(p)==26 and p[0]==1;break
+            if kind==0x80:assert len(p)==19+5*p[17] and p[0]==2;break
             assert time.monotonic()<deadline
         print("PASS cleanup and status stream",flush=True)
     finally:c.serial.close()

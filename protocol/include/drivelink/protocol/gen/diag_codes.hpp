@@ -89,16 +89,16 @@ inline constexpr Code kQueryDropped{11, Source::Diag, 0x0003, Severity::Warning,
 } // namespace diag
 
 namespace core {
-/// The core failed to start. main reports it and leaves the core out; the legacy managers keep running. esp_err gives the reason for a loop task.
-/// arg0: stage (1 registry, 2 control loop task, 3 sensor loop task, 4 boot - Core::boot refused, which is a programming error in main). arg1: for stage 1, the index of the rejected module type in main's list; else unused.
+/// Core startup failed. Stage 2 leaves the named loop Failed and its modules DependencyMissing; other loops and the config link stay available. Other stages leave the core out; legacy managers keep running. esp_err gives the loop task error.
+/// arg0: stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main). arg1: for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused.
 inline constexpr Code kInitFailed{12, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
 /// arg0: type id << 8 | instance id. arg1: stage (the instance's own stage from fail(), or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound).
 inline constexpr Code kInstanceStartFailed{13, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false, "InstanceStartFailed", false, false};
 /// A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
-/// arg0: loop id (0 control, 1 sensor). arg1: the period that failed, in us.
+/// arg0: loop instance id. arg1: the period that failed, in us.
 inline constexpr Code kTimerRestartFailed{14, Source::Core, 0x0003, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
-/// The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; the loops run empty. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
+/// The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; no loop task starts. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
 /// arg0: the crash counter (consecutive boots after a panic or a watchdog reset). arg1: unused.
 inline constexpr Code kSafeModeEntered{15, Source::Core, 0x0004, Severity::Error, CodeKind::Record, false, "SafeModeEntered", false, false};
 /// A layout entry loaded from NVS failed validation at boot and was left out. layout_invalid is set. Instances wired to it are left out too (core.DependencyMissing).
@@ -107,7 +107,7 @@ inline constexpr Code kLayoutInvalid{16, Source::Core, 0x0005, Severity::Error, 
 /// An instance was left out at boot because an instance it is wired to (a ref param) is invalid, failed to start or is itself missing a dependency. Its configuration is kept.
 /// arg0: type id << 8 | instance id of the instance left out. arg1: type id << 8 | instance id of the instance it is wired to, which is not running.
 inline constexpr Code kDependencyMissing{17, Source::Core, 0x0006, Severity::Error, CodeKind::Record, false, "DependencyMissing", false, false};
-/// NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the defaults and no instances. config_loaded_from_nvs is false. Not reported on a blank NVS.
+/// NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the factory layout. config_loaded_from_nvs is false. Not reported on a blank NVS.
 /// arg0: the newest layout generation that passed its checks (0 when none did). arg1: cause (1 no layout blob passed its checks, 2 no generation had every instance blob).
 inline constexpr Code kConfigLoadFailed{18, Source::Core, 0x0007, Severity::Error, CodeKind::Record, false, "ConfigLoadFailed", false, false};
 /// An NVS write or erase failed during SAVE or FACTORY_RESET. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
@@ -120,6 +120,8 @@ inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, 
 inline constexpr Code kCommandDropped{50, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
 /// A core reply could not be queued for transmission.
 inline constexpr Code kResponseDropped{51, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
+/// A loop tick took longer than its period; instance identifies the loop.
+inline constexpr Code kLoopOverBudget{53, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
 } // namespace core
 
 namespace motor_manager {
@@ -217,7 +219,7 @@ inline constexpr Code kInitFailed{49, Source::ImuMock, 0x0001, Severity::Error, 
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 53;
+inline constexpr size_t kSlotCount = 54;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -274,6 +276,7 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::core::kCommandDropped,
     codes::core::kResponseDropped,
     codes::uart_comm::kStreamSkipped,
+    codes::core::kLoopOverBudget,
 }};
 
 } // namespace drivelink::protocol::defs::diag

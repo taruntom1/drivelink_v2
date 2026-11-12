@@ -1,15 +1,11 @@
-# Core protocol v1 (F3b)
+# Core protocol v2 (F3d)
 
-F3c adds `libdrivelink`, `drivelink-cli` and `drivelink-vdev` as consumers of
-this same contract, with no wire-format change. The CLI supports readable and
-JSON output, generic descriptors and typed scalar values; see `host/README.md`.
-Vdev has no ESP CPU-load sampler (status loads are 0xFF) and models crash resets
-through its persistent running marker. Its build id is the source commit's first
-16 hex characters, or 16 zeros when Git metadata is unavailable; an explicit
-`DRIVELINK_VDEV_BUILD_ID` CMake override is available for source archives.
+F3d makes loops built-in layout instances, adds the real-time flag to discovery,
+and carries explicit loop IDs in status. Firmware, host library, CLI and vdev
+use v2 together; a v1 peer is incompatible. Diagnostic framing remains v3.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 1.
+`core_response` (0x41). All integers are little-endian. Version is 2.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -29,7 +25,10 @@ All requests have empty bodies. GET_INFO (1) answers:
 `protocol_version u8 | firmware_version string | build_id string |
 descriptor_hash u32 | capture_capacity u32 | max_payload u16 |
 running_instances u8 | flags u8 | loop_count u8`, followed by
-`loop_id u8 | name string | rate_hz u32` per loop.
+`loop_id u8 | name string | rate_hz u32 | loop_flags u8` per running loop.
+Loop flags: bit 0 `realtime`; the other bits are reserved and zero. A loop id
+can have gaps and is not its position in this list. Safe mode has zero running loops.
+`running_instances` includes running loop instances, excluding the system.
 The build id is the first 8 ELF SHA-256 bytes as 16 hex characters.
 Flags: pending_reboot 1, layout_invalid 2, config_loaded_from_nvs 4,
 safe_mode 8. Capture capacity is 0 until F7.
@@ -47,7 +46,9 @@ explicit `CONFIG_CORE_BENCH_CRASH=y` test build. Normal builds reject it.
   including failed/offline records; view 1 is the pending layout, falling
   back to configured records when no pending copy exists.
 - ADD_INSTANCE (2): `type u8 | loop u8 | label_length u8 | label bytes`.
-  Loop 0xFF selects the type's first loop (control before sensor).
+  For modules, loop 0xFF selects the lowest-numbered compatible loop in the
+  effective pending layout; no match returns LoopMismatch. For the built-in
+  `loop` type (0x05), loop must be 0xFF: the loop's instance id is its loop id.
   Reply: allocated instance u8. No instance is created until SAVE/reboot.
 - REMOVE_INSTANCE (3): `type u8 | instance u8`.
 - SET_LABEL (4): `type u8 | instance u8 | label_length u8 | label bytes`.
@@ -80,6 +81,9 @@ No descriptor is truncated or split. Names/descriptions use UTF-8 byte lengths.
 - GET_CODES (4): `start u16`. Entry: `source u8 | code u16 | severity u8 |
   kind u8 | flags u8 | name string`. Flags: clears 1, blocks_arm 2, disarms 4.
 
+GET_TYPES loop_mask bit 0 allows real-time loops, bit 1 allows other loops;
+system and loop have mask zero because they run in no loop.
+
 Kinds/types, loop masks, action placements and item flags use the explicit
 values in `defs.hpp`, including GPIO 0x20 and RefTicksAfter 0x40.
 Retired definitions are absent. Module diag source IDs are resolved from
@@ -93,7 +97,9 @@ SET (2): `count u8 | count * (Ref, value u32)`.
 Accepted responses: `count u8 | count * applied_value u32` in request order.
 At most 64 entries. GET reads configured parameter shadows; GET_PENDING
 reads the effective pending layout. SET applies the existing atomic batch
-and domain rules. Pending writes answer PendingReboot. Values outside numeric
+and domain rules. Live system and loop params share the config-task domain;
+module batches must name a single actual loop ID. Reboot-required params and
+pending-only instances use the pending domain. Pending writes answer PendingReboot. Values outside numeric
 limits are clamped and returned; invalid types, NaN/Inf, enums and wiring
 are rejected. A response must fit before any SET is attempted.
 
@@ -109,7 +115,7 @@ actions with BufferTooSmall. Inputs and outputs are preallocated.
 Loop actions run after the staged parameter batch at the tick boundary.
 Paused actions obtain a loop acknowledgement, execute on the config task,
 and release the pause. A ready action can be withdrawn on timeout; once
-claimed the caller waits for definite completion. Paused control-loop actions
+claimed the caller waits for definite completion. Paused actions in any real-time loop
 are refused while armed. Modules must keep loop actions bounded and avoid
 allocation, blocking and logging.
 
@@ -117,12 +123,32 @@ allocation, blocking and logging.
 
 `version u8 | epoch u8 | counter u16 | monotonic_timestamp_us u64 |
 arm_state u8 | flags u8 | active_error_count u8 | cpu_load[2] u8 |
-overruns[2] u32 | last_disarm_reason u8` (26 bytes).
-Epoch is 0. Counter wraps at 65536. The two overrun fields are control then
-sensor. Flags follow the architecture plan. Until F4b the device is disarmed
+loop_count u8 | loop_count * (loop_id u8, overruns u32) | last_disarm_reason u8`
+(19 + 5 * loop_count bytes, at most 59).
+Epoch is 0. Counter wraps at 65536. Only running loops are included; safe mode
+has loop_count zero. Loop IDs may have gaps. Flags follow the architecture plan. Until F4b the device is disarmed
 and safety-only fields are zero. CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
 It is 0xFF until the first interval, or when measurement is disabled or the
 runtime clock is not ESP timer. CORE_STATUS_CPU_LOAD defaults on and selects
 runtime statistics; reads take constant work without stack scans. Active errors come from instance-aware diag state.
 `system.status.rate_hz` defaults to 10 (1..100). UART streams use latest-wins
 slots; skips are reported by uart_comm.StreamSkipped.
+
+## Built-in loop and factory layout
+
+Type 0x05 is registered by the core. Its [items](types/loop.md) are discovered
+normally. It uses ADD_INSTANCE, REMOVE_INSTANCE, params, SAVE and reboot; removal
+is Refused with Referenced while another layout entry runs in it. rate_hz is live,
+locked while armed, and applies on the config task with rollback on timer failure.
+The other settings require reboot. A running real-time loop refuses paused actions
+while armed and subscribes to the Task WDT. A stall of any loop still disarms in F4b.
+
+A blank store, factory reset or incompatible old layout creates control (id 0,
+1000 Hz, real-time, core 1, priority 20) and sensor (id 1, 100 Hz, non-real-time,
+core 0, priority 10), both with 4096-byte stacks. CORE_MAX_LOOPS=1 creates only
+control. A valid saved layout can contain zero loops. CORE_MAX_LOOPS bounds loop
+instances separately from CORE_MAX_INSTANCES, which bounds module instances.
+The layout blob format is 2; instance blobs retain format 1. Pre-F3d layouts
+are discarded in favor of the factory layout, without migrating their modules.
+Loop task startup failure leaves that loop Failed and dependent modules
+DependencyMissing; unrelated loops and the config link stay available.

@@ -3,9 +3,9 @@
 # `peer` and `follower` point at other `fixture.*` instances, so the tests can
 # build cycles in the ref graph and in the tick graph.
 type: fixture.wired
-type_id: 0x05
+type_id: 0x06
 description: Fixture controller.
-loops: [control, sensor]
+realtime: any
 items:
   - {id: 0x0001, kind: param, name: feedback, type: u32, flags: [reboot_required], ref: feedback}
   - {id: 0x0002, kind: param, name: actuator, type: u32, flags: [reboot_required], ref: actuator, ref_order: after}

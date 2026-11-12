@@ -74,23 +74,23 @@ TEST_CASE("Boot: entries are checked for type, loop, uniqueness and capacity")
     reset();
     core_os::KvStore store;
     writeLayout(store, {
-                           {0x55, 0, core::kControlLoop, "x"},             // unknown type
-                           {fxs::kTypeId, 0, core::kControlLoop, "s"},     // sensor-only type
-                           {fx::kTypeId, 0, core::kControlLoop, "ok"},     // fine
-                           {fx::kTypeId, 0, core::kSensorLoop, "again"},   // (type, inst) twice
-                           {fx::kTypeId, 1, core::kSensorLoop, "full"},    // beyond the capacity
+                           {0x55, 0, core::kFactoryControlLoop, "x"},             // unknown type
+                           {fxs::kTypeId, 0, core::kFactoryControlLoop, "s"},     // sensor-only type
+                           {fx::kTypeId, 0, core::kFactoryControlLoop, "ok"},     // fine
+                           {fx::kTypeId, 0, core::kFactorySensorLoop, "again"},   // (type, inst) twice
+                           {fx::kTypeId, 1, core::kFactorySensorLoop, "full"},    // beyond the capacity
                            {fx::kTypeId, 2, 7, "bad loop"},                // also beyond it
                        });
     core::Core c(testConfig(4));
     REQUIRE(bootCore(c, store).ok());
-    CHECK(c.instanceCount() == 1);
-    CHECK(c.configuredCount() == 2); // ok and the sensor-only one: the others have no record
+    CHECK(c.instanceCount() == 3);
+    CHECK(c.configuredCount() == 4); // ok and the sensor-only one: the others have no record
     CHECK(c.instancesFailed() == 5);
     CHECK(c.layoutInvalid());
     CHECK(stateOf(c, fx::kTypeId, 0) == core::InstanceState::Running);
     CHECK(stateOf(c, fxs::kTypeId, 0) == core::InstanceState::Invalid);
-    CHECK(c.loop(core::kControlLoop).instanceCount() == 1);
-    CHECK(c.loop(core::kSensorLoop).instanceCount() == 0);
+    CHECK(c.loop(core::kFactoryControlLoop).instanceCount() == 1);
+    CHECK(c.loop(core::kFactorySensorLoop).instanceCount() == 0);
 
     namespace codes = drivelink::protocol::defs::diag::codes;
     std::vector<uint32_t> details;
@@ -113,6 +113,8 @@ TEST_CASE("Core::boot runs once, before start")
     {
         core::Core c(testConfig());
         REQUIRE(c.init(kTypes).ok());
+        CHECK(c.start().detail == Detail::NotAtBoot);
+        REQUIRE(c.boot(store).ok());
         REQUIRE(c.start().ok());
         CHECK(c.isRunning());
         const core::Status st = c.boot(store);

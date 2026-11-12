@@ -16,57 +16,15 @@ namespace drivelink::protocol::defs::system {
 /// Module type id of system.
 inline constexpr uint8_t kTypeId = 0x00;
 
-/// param control.rate_hz: Rate of the control loop.
-inline constexpr uint16_t kControlRateHz = 0x0001;
-/// param sensor.rate_hz: Rate of the sensor loop.
-inline constexpr uint16_t kSensorRateHz = 0x0002;
 /// param status.rate_hz
 inline constexpr uint16_t kStatusRateHz = 0x0003;
+
+// Retired ids, never reused: 0x0001 control.rate_hz, 0x0002 sensor.rate_hz
 
 namespace detail {
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 3> kItems{{
-    ItemDesc{
-        .id = 0x0001,
-        .kind = ItemKind::Param,
-        .type = ValueType::U16,
-        .flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),
-        .name = "control.rate_hz",
-        .unit = "Hz",
-        .description = "Rate of the control loop.",
-        .min_bits = 0x00000064,
-        .max_bits = 0x000007D0,
-        .default_bits = 0x000003E8,
-        .has_min = true,
-        .has_max = true,
-        .enum_values = {},
-        .ref = nullptr,
-        .runs_in = ActionPlacement::None,
-        .args = {},
-        .results = {},
-        .blob = BlobDir::None,
-    },
-    ItemDesc{
-        .id = 0x0002,
-        .kind = ItemKind::Param,
-        .type = ValueType::U16,
-        .flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),
-        .name = "sensor.rate_hz",
-        .unit = "Hz",
-        .description = "Rate of the sensor loop.",
-        .min_bits = 0x0000000A,
-        .max_bits = 0x000001F4,
-        .default_bits = 0x00000064,
-        .has_min = true,
-        .has_max = true,
-        .enum_values = {},
-        .ref = nullptr,
-        .runs_in = ActionPlacement::None,
-        .args = {},
-        .results = {},
-        .blob = BlobDir::None,
-    },
+inline constexpr std::array<ItemDesc, 1> kItems{{
     ItemDesc{
         .id = 0x0003,
         .kind = ItemKind::Param,

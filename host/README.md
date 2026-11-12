@@ -60,5 +60,5 @@ python host/test/hardware_smoke.py --cli host/superbuild/build/windows-mingw/cli
 This requires a bare ESP32-S3 with UART0 on COM3 and console on COM4. It refuses
 pending edits, dirty configuration, invalid layout or safe mode, creates temporary
 mock instances, checks persistence/actions/status/diag and restores the original
-layout and system rates. It never sends the legacy motor commands. Do not use
+layout, loop rates and system status rate. It never sends the legacy motor commands. Do not use
 this smoke script with motors or sensors attached.

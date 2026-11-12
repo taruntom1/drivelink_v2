@@ -15,9 +15,10 @@ namespace drivelink::protocol::defs {
 
 /// Type id reserved for the system items.
 inline constexpr uint8_t kSystemTypeId = 0x00;
+inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xDADE3AA8;
+inline constexpr uint32_t kDescriptorHash = 0xE9775805;
 
 enum class Result : uint8_t {
     Ok = 0,

@@ -16,7 +16,7 @@ A failed PTY drain cancels/drops queued replies and effects, retaining the maste
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v1, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v2, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock
@@ -46,3 +46,7 @@ Malformed boot metadata fails startup explicitly.
 for save/recovery integration tests. Neither option affects hardware firmware.
 The native in-memory unit-test store retains its deterministic failed/torn-write
 injection and remains the default unless a file directory is attached.
+
+Loop instances, the factory layout and safe mode use the same core as firmware.
+Native real-time guard violations are counted and reported on stderr; safe mode
+starts no loop threads. Old layout blobs fall back to the factory loops.

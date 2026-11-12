@@ -21,7 +21,7 @@ FLAG_ENUM = {
     "gpio": "Gpio",
     "ref_ticks_after": "RefTicksAfter",
 }
-LOOP_ENUM = {"control": "Control", "sensor": "Sensor"}
+LOOP_ENUM = {"realtime": "Realtime", "non_realtime": "NonRealtime"}
 PLACEMENT_ENUM = {None: "None", "loop": "Loop", "paused": "Paused"}
 BLOB_ENUM = {"none": "None", "in": "In", "out": "Out", "both": "Both"}
 
@@ -65,6 +65,7 @@ def gen_registry(defs: dict, hash_value: int) -> str:
     w("")
     w("/// Type id reserved for the system items.")
     w(f"inline constexpr uint8_t kSystemTypeId = 0x{reg['system_type_id']:02X};")
+    w(f"inline constexpr uint8_t kLoopTypeId = 0x{reg['loop_type_id']:02X};")
     w("")
     w("/// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.")
     w(f"inline constexpr uint32_t kDescriptorHash = 0x{hash_value:08X};")

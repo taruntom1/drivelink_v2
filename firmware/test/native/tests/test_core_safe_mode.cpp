@@ -48,7 +48,7 @@ TEST_CASE("Safe mode: three crash boots in a row; editing and SAVE keep the layo
 {
     reset();
     core_os::KvStore store;
-    writeLayout(store, {{fx::kTypeId, 0, core::kControlLoop, "a", {{fx::kGain, f(2.0f)}}}});
+    writeLayout(store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a", {{fx::kGain, f(2.0f)}}}});
     core_os::native::setResetWasCrash(true);
     for (uint32_t boot = 1; boot <= 2; ++boot) {
         CAPTURE(boot);
@@ -56,7 +56,7 @@ TEST_CASE("Safe mode: three crash boots in a row; editing and SAVE keep the layo
         REQUIRE(bootCore(c, store).ok());
         CHECK_FALSE(c.safeMode());
         CHECK(core_os::loadCrashCount() == boot);
-        CHECK(c.instanceCount() == 1);
+        CHECK(c.instanceCount() == 3);
     } // destroyed long before 30 s: the counter stays
     {
         world().created.clear();
@@ -68,12 +68,12 @@ TEST_CASE("Safe mode: three crash boots in a row; editing and SAVE keep the layo
         CHECK(c.instanceCount() == 0);
         CHECK(c.instancesFailed() == 0);
         CHECK(world().created.empty());
-        CHECK(c.loop(core::kControlLoop).instanceCount() == 0);
+        CHECK(c.loopCount() == 0);
         REQUIRE(core_os::native::reportCount(codes::core::kSafeModeEntered) == 1);
         CHECK(core_os::native::recordedReports().back().arg0 == 3);
         CHECK(c.configLoadedFromNvs());
 
-        // The loops still run, empty.
+        // The configuration service starts, with no loop tasks.
         REQUIRE(c.start().ok());
         // Params can be read and edited, and SAVE keeps the layout.
         CHECK(getParam(c, fx::kTypeId, 0, fx::kGain) == f(2.0f));

@@ -16,6 +16,7 @@
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/gen/diag_codes.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 using namespace testmod;
 using core::Detail;
@@ -24,6 +25,7 @@ using core::Result;
 namespace {
 
 namespace sys = drivelink::protocol::defs::system;
+namespace lp = drivelink::protocol::defs::loop;
 namespace codes = drivelink::protocol::defs::diag::codes;
 constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
 
@@ -59,7 +61,7 @@ void baseline(core_os::KvStore &store)
 {
     reset();
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}, {fx::kTypeId, 1, core::kSensorLoop, "b"}});
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}, {fx::kTypeId, 1, core::kFactorySensorLoop, "b"}});
     REQUIRE(setNow(c, {entry(fx::kTypeId, 0, fx::kGain, f(2.0f))}).ok());
     REQUIRE(c.save().ok());
 }
@@ -84,13 +86,13 @@ TEST_CASE("Persistence: SAVE, then a reboot loads the same values")
     core_os::KvStore store;
     {
         core::Core c(testConfig());
-        bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}, {fx::kTypeId, 1, core::kSensorLoop, "b"}});
+        bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}, {fx::kTypeId, 1, core::kFactorySensorLoop, "b"}});
         CHECK(c.configLoadedFromNvs());
         CHECK_FALSE(c.nvsDirty());
         REQUIRE(setNow(c, {entry(fx::kTypeId, 0, fx::kGain, f(7.5f)), entry(fx::kTypeId, 0, fx::kOffset, 42)}).ok());
         CHECK(c.nvsDirty());
         REQUIRE(setNow(c, {entry(fx::kTypeId, 1, fx::kMode, 2)}).ok());
-        REQUIRE(setNow(c, {entry(kSys, 0, sys::kControlRateHz, 500)}).ok());
+        REQUIRE(setNow(c, {entry(defs::kLoopTypeId, 0, lp::kRateHz, 500)}).ok());
         REQUIRE(c.save().ok());
         CHECK_FALSE(c.nvsDirty());
     }
@@ -98,17 +100,17 @@ TEST_CASE("Persistence: SAVE, then a reboot loads the same values")
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
     CHECK(c.configLoadedFromNvs());
-    CHECK(c.instanceCount() == 2);
+    CHECK(c.instanceCount() == 4);
     CHECK(getParam(c, fx::kTypeId, 0, fx::kGain) == f(7.5f));
     CHECK(getParam(c, fx::kTypeId, 0, fx::kOffset) == 42);
     CHECK(getParam(c, fx::kTypeId, 1, fx::kMode) == 2);
-    CHECK(getParam(c, kSys, 0, sys::kControlRateHz) == 500);
-    CHECK(c.loop(core::kControlLoop).periodUs() == 2000);
+    CHECK(getParam(c, defs::kLoopTypeId, 0, lp::kRateHz) == 500);
+    CHECK(c.loop(core::kFactoryControlLoop).periodUs() == 2000);
     // The storage starts at the loaded values too.
     REQUIRE(world().created.size() == 2);
     CHECK(world().created[0]->gain == 7.5f);
     CHECK(world().created[1]->mode_value == FxMode::C);
-    CHECK(c.findRecord(fx::kTypeId, 1)->loop == core::kSensorLoop);
+    CHECK(c.findRecord(fx::kTypeId, 1)->loop == core::kFactorySensorLoop);
     CHECK(std::string(c.findRecord(fx::kTypeId, 1)->label) == "b");
     CHECK(core_os::native::recordedReports().empty());
 }
@@ -118,7 +120,7 @@ TEST_CASE("Persistence: generations alternate between the slots")
     reset();
     core_os::KvStore store;
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}}); // gen 1, slot b
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}}); // gen 1, slot b
     CHECK(layoutGen(store, 1) == 1);
     CHECK(layoutGen(store, 0) == 0);
     REQUIRE(c.save().ok()); // gen 2
@@ -146,7 +148,7 @@ TEST_CASE("Persistence: a power loss after any number of writes leaves the previ
         REQUIRE(c.save().ok());
         writes = core_os::native::writeCount(store) - before;
     }
-    CHECK(writes == 4); // two instances, the system, the layout
+    CHECK(writes == 6); // two instances, the system, the layout
 
     for (uint32_t k = 0; k <= writes; ++k) {
         CAPTURE(k);
@@ -182,7 +184,7 @@ TEST_CASE("Persistence: after an incomplete newer generation, SAVE never overwri
     // layout but loses an instance blob, so a boot loads gen 2. The next SAVE
     // must go to slot b (gen 5), not slot a (gen 4): a power loss in it must
     // still leave gen 2.
-    for (uint32_t k = 0; k <= 4U; ++k) { // 4 writes: two instances, the system, the layout
+    for (uint32_t k = 0; k <= 6U; ++k) { // 4 writes: two instances, the system, the layout
         CAPTURE(k);
         core_os::KvStore store;
         baseline(store);
@@ -202,12 +204,12 @@ TEST_CASE("Persistence: after an incomplete newer generation, SAVE never overwri
             REQUIRE(setNow(c, {entry(fx::kTypeId, 0, fx::kGain, f(4.0f))}).ok());
             core_os::native::failWritesAfter(store, k);
             const core::Status st = c.save();
-            CHECK(st.ok() == (k == 4U));
+            CHECK(st.ok() == (k == 6U));
             core_os::native::clearFaults(store);
             CHECK(layoutGen(store, 0) == 2); // slot a untouched
         }
         bool loaded = false;
-        CHECK(bootedGain(store, &loaded) == f(k == 4U ? 4.0f : 2.0f));
+        CHECK(bootedGain(store, &loaded) == f(k == 6U ? 4.0f : 2.0f));
         CHECK(loaded);
     }
 }
@@ -215,7 +217,7 @@ TEST_CASE("Persistence: after an incomplete newer generation, SAVE never overwri
 TEST_CASE("Persistence: a torn layout blob or a torn instance blob falls back to the previous generation")
 {
     for (const auto mode : {core_os::native::Tear::Truncate, core_os::native::Tear::Corrupt}) {
-        for (const uint32_t torn : {0U, 1U, 2U, 3U}) { // fx 0, fx 1, the system, the layout
+        for (const uint32_t torn : {0U, 1U, 2U, 3U, 4U, 5U}) { // fx 0, fx 1, the system, the layout
             CAPTURE(torn);
             CAPTURE(static_cast<int>(mode));
             core_os::KvStore store;
@@ -241,12 +243,12 @@ TEST_CASE("Persistence: with no complete generation the device boots with the de
     {
         reset();
         core_os::KvStore store;
-        writeLayout(store, {{fx::kTypeId, 0, core::kControlLoop, "a"}}, 1);
+        writeLayout(store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}}, 1);
         core_os::native::removeKey(store, "t01i00", "p_b");
         core::Core c(testConfig());
         REQUIRE(bootCore(c, store).ok());
         CHECK_FALSE(c.configLoadedFromNvs());
-        CHECK(c.configuredCount() == 0);
+        CHECK(c.configuredCount() == 2);
         const auto reports = core_os::native::recordedReports();
         REQUIRE(reports.size() == 1);
         CHECK(reports[0].code.code == codes::core::kConfigLoadFailed.code);
@@ -278,7 +280,7 @@ TEST_CASE("Persistence: with no complete generation the device boots with the de
         REQUIRE(bootCore(c, store).ok());
         CHECK_FALSE(c.configLoadedFromNvs());
         CHECK(core_os::native::recordedReports().empty());
-        CHECK(getParam(c, kSys, 0, sys::kControlRateHz) == 1000);
+        CHECK(getParam(c, defs::kLoopTypeId, 0, lp::kRateHz) == 1000);
     }
 }
 
@@ -286,7 +288,7 @@ TEST_CASE("Persistence: unknown, retired and non-persist ids are ignored; bad va
 {
     reset();
     core_os::KvStore store;
-    writeLayout(store, {{fx::kTypeId, 0, core::kControlLoop, "a",
+    writeLayout(store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a",
                          {{0x7777, 5},                 // unknown
                           {0x0400, 9},                 // retired (old_thing)
                           {fx::kEnabled, 0},           // persist: false
@@ -294,8 +296,9 @@ TEST_CASE("Persistence: unknown, retired and non-persist ids are ignored; bad va
                           {fx::kPosition, f(1.0f)},    // a signal
                           {fx::kLevel, 200},           // clamped to 10
                           {fx::kMode, 9},              // not an enum value: default
-                          {fx::kGain, f(2.5f)}}}},     // fine
-                1, {{sys::kControlRateHz, 5000}, {sys::kSensorRateHz, 70000}}); // clamp; not a u16: default
+                          {fx::kGain, f(2.5f)}}},
+                        {defs::kLoopTypeId, 0, core::kNoLoop, "control", {{lp::kRateHz, 5000}, {lp::kRealtime, 1}}},
+                        {defs::kLoopTypeId, 1, core::kNoLoop, "sensor", {{lp::kRateHz, 70000}}}});
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
     CHECK(c.configLoadedFromNvs());
@@ -305,9 +308,9 @@ TEST_CASE("Persistence: unknown, retired and non-persist ids are ignored; bad va
     CHECK(getParam(c, fx::kTypeId, 0, fx::kCount) == 0);
     CHECK(getParam(c, fx::kTypeId, 0, fx::kGain) == f(2.5f));
     CHECK(getParam(c, fx::kTypeId, 0, fx::kOffset) == static_cast<uint32_t>(-5)); // missing: default
-    CHECK(getParam(c, kSys, 0, sys::kControlRateHz) == 2000);
-    CHECK(getParam(c, kSys, 0, sys::kSensorRateHz) == 100);
-    CHECK(c.loop(core::kControlLoop).periodUs() == 500);
+    CHECK(getParam(c, defs::kLoopTypeId, 0, lp::kRateHz) == 2000);
+    CHECK(getParam(c, defs::kLoopTypeId, 1, lp::kRateHz) == 100);
+    CHECK(c.loop(core::kFactoryControlLoop).periodUs() == 500);
 }
 
 TEST_CASE("Persistence: SAVE is refused while armed, and a write failure answers Fault")
@@ -315,7 +318,7 @@ TEST_CASE("Persistence: SAVE is refused while armed, and a write failure answers
     reset();
     core_os::KvStore store;
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}});
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}});
     c.params().setArmed(true);
     CHECK(c.save().result == Result::Armed);
     CHECK(c.factoryReset().result == Result::Armed);
@@ -344,21 +347,21 @@ TEST_CASE("Persistence: SAVE erases the namespaces of removed instances")
     reset();
     core_os::KvStore store;
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}, {fx::kTypeId, 1, core::kControlLoop, "b"}});
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}, {fx::kTypeId, 1, core::kFactoryControlLoop, "b"}});
     CHECK(core_os::native::hasKey(store, "t01i01", "p_b"));
     REQUIRE(c.removeInstance(fx::kTypeId, 1).ok());
     REQUIRE(c.save().ok());
     CHECK_FALSE(core_os::native::hasKey(store, "t01i01", "p_b"));
     CHECK(core_os::native::hasKey(store, "t01i00", "p_a"));
     CHECK(core_os::native::hasKey(store, "t00i00", "p_a"));
-    CHECK(core_os::native::namespaceCount(store) == 3); // core, t00i00, t01i00
+    CHECK(core_os::native::namespaceCount(store) == 5); // core, t00i00, t01i00
 
     // The running device still has it until the reboot; after it, it's gone.
-    CHECK(c.instanceCount() == 2);
+    CHECK(c.instanceCount() == 4);
     reset();
     core::Core next(testConfig());
     REQUIRE(bootCore(next, store).ok());
-    CHECK(next.configuredCount() == 1);
+    CHECK(next.configuredCount() == 3);
     CHECK(next.findRecord(fx::kTypeId, 1) == nullptr);
 }
 
@@ -370,7 +373,7 @@ TEST_CASE("Persistence: FACTORY_RESET erases every core namespace")
     REQUIRE(store.set("wifi", "ssid", &other, 1) == core_os::kOk); // not ours
     {
         core::Core c(testConfig());
-        bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "a"}});
+        bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a"}});
         REQUIRE(c.save().ok());
         REQUIRE(c.factoryReset().ok());
         CHECK(core_os::native::rebootCount() == 0); // the caller's job
@@ -380,7 +383,7 @@ TEST_CASE("Persistence: FACTORY_RESET erases every core namespace")
     reset();
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
-    CHECK(c.configuredCount() == 0);
+    CHECK(c.configuredCount() == 2);
     CHECK_FALSE(c.configLoadedFromNvs());
     CHECK(core_os::native::recordedReports().empty()); // blank, not broken
 
@@ -400,9 +403,9 @@ TEST_CASE("Persistence: REVERT reloads the live params through the staged path")
     core_os::KvStore store;
     core::Core c(testConfig());
     // 100 Hz loops: the staging timeout (35 ms) is above a desktop scheduler's lateness.
-    writeLayout(store, {{fx::kTypeId, 0, core::kControlLoop, "a", {{fx::kGain, f(2.0f)}}},
-                        {fx::kTypeId, 1, core::kSensorLoop, "b", {{fx::kLevel, 4}}}},
-                1, {{sys::kControlRateHz, 100}, {sys::kSensorRateHz, 100}});
+    writeLayout(store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "a", {{fx::kGain, f(2.0f)}}},
+                        {fx::kTypeId, 1, core::kFactorySensorLoop, "b", {{fx::kLevel, 4}}},
+                        {defs::kLoopTypeId, 0, core::kNoLoop, "control", {{lp::kRateHz, 100}, {lp::kRealtime, 1}}}});
     REQUIRE(bootCore(c, store).ok());
     REQUIRE(c.start().ok());
     std::array<uint32_t, 2> applied{};
@@ -410,7 +413,7 @@ TEST_CASE("Persistence: REVERT reloads the live params through the staged path")
     REQUIRE(c.params().set({&gain, 1}, applied).ok());
     const core::SetEntry level = entry(fx::kTypeId, 1, fx::kLevel, 9);
     REQUIRE(c.params().set({&level, 1}, applied).ok());
-    const core::SetEntry rate = entry(kSys, 0, sys::kSensorRateHz, 50);
+    const core::SetEntry rate = entry(defs::kLoopTypeId, 1, lp::kRateHz, 50);
     REQUIRE(c.params().set({&rate, 1}, applied).ok());
     CHECK(c.nvsDirty());
 
@@ -418,8 +421,8 @@ TEST_CASE("Persistence: REVERT reloads the live params through the staged path")
     CHECK_FALSE(c.nvsDirty());
     CHECK(getParam(c, fx::kTypeId, 0, fx::kGain) == f(2.0f));
     CHECK(getParam(c, fx::kTypeId, 1, fx::kLevel) == 4);
-    CHECK(getParam(c, kSys, 0, sys::kSensorRateHz) == 100);
-    CHECK(c.loop(core::kSensorLoop).periodUs() == 10000);
+    CHECK(getParam(c, defs::kLoopTypeId, 1, lp::kRateHz) == 100);
+    CHECK(c.loop(core::kFactorySensorLoop).periodUs() == 10000);
     c.stop();
     CHECK(world().created[0]->gain == 2.0f); // the loop's storage too
     CHECK(world().created[1]->level == 4);

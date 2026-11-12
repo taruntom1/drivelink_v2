@@ -1,6 +1,6 @@
 type: actuator.mock
 type_id: 112
-loops: [control]
+realtime: required
 items:
   - {id: 1, kind: param, name: tau_s, type: f32, unit: s, min: 0.001, max: 10, default: 0.1}
   - {id: 2, kind: param, name: gain, type: f32, min: 0, max: 1000, default: 10}

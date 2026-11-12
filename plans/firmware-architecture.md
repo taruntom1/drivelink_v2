@@ -434,7 +434,7 @@ Decided by the user on 2026-11-13, after F3c. F3d builds the loops and the flag;
 
 ### Loops are instances (F3d)
 
-- **The type.** `protocol/defs/loop.yaml` defines the built-in type `loop`. Its type id is reserved in `registry.yaml` beside `system_type_id`, clear of the diag source ids. The core registers it itself, like `system`; it is not in main's module list.
+- **The type.** `protocol/defs/loop.yaml` defines the built-in type `loop`. Its type id is reserved in `registry.yaml` beside `system_type_id`, clear of the diag source ids. The core registers it itself, like `system`; it is not in main's module list. The reserved type id is 0x05.
 - **Identity.** A loop's instance id is its loop id, used wherever a loop is named: a layout entry's `loop`, `ADD_INSTANCE`, group and capture configuration, the status stream. Its label is its name. A loop instance itself runs in no loop (`kNoLoop`).
 - **Items:**
 
@@ -449,8 +449,8 @@ Decided by the user on 2026-11-13, after F3c. F3d builds the loops and the flag;
 
 - **Managing loops.** A loop is added and removed with `ADD_INSTANCE` and `REMOVE_INSTANCE` of type `loop`, through the pending layout, `SAVE` and a reboot, like any instance. `REMOVE_INSTANCE` is refused while a layout entry still runs in the loop (`Referenced`). A loop's params are in the system domain of a param batch.
 - **Limits.** `CORE_MAX_LOOPS` (Kconfig, default 4, range 1–8). A loop costs about 7 KB of RAM: its stack, one staging slot and one action slot. The Kconfig options for the control and sensor task stack, priority and core go away.
-- **The factory layout.** With no saved layout (first boot, factory reset) the device has `control` (id 0: 1000 Hz, real-time, core 1, priority 20) and `sensor` (id 1: 100 Hz, not real-time, core 0, priority 10), and no module instance. A saved layout may hold any set of loops.
-- **Boot.** Loops are created before the module instances. If a loop's task can't be created, the loop is `Failed` and its instances are `DependencyMissing`. In safe mode no loop task is started.
+- **The factory layout.** With no saved layout (first boot, factory reset) the device has `control` (id 0: 1000 Hz, real-time, core 1, priority 20) and `sensor` (id 1: 100 Hz, not real-time, core 0, priority 10), and no module instance. With CORE_MAX_LOOPS=1 the factory layout contains only control (user decision for F3d). A saved layout may hold any set of loops, including none. Loop capacity is separate from the module capacity CORE_MAX_INSTANCES.
+- **Boot.** Loops are created before the module instances. If a loop's task can't be created, the loop is `Failed` and its instances are `DependencyMissing`. Loop tasks start with their callbacks gated until module creation and tick lists are complete; Core::start releases the gates. In safe mode no loop task is started.
 - **Defaults.** `ADD_INSTANCE` with loop `0xFF` picks the lowest-numbered loop the type may run in (`LoopMismatch` if there is none).
 - **Persistence.** Loops are ordinary layout entries with their own param blobs. The layout blob's format version is bumped, so a layout saved before F3d is dropped and the factory layout is used. `system.control.rate_hz` (`0x0001`) and `system.sensor.rate_hz` (`0x0002`) are retired.
 - **RX priority.** The UART RX task (priority 5) stays below the loops, as it is below `sensor` today. A loop that starves it stops the command frames, and the watchdog disarms.
@@ -629,7 +629,7 @@ Arming lands (F4) before any real motor is driven through the core (F5), so the 
 User-approved: one F3b PR; separate current/pending layout views; deterministic
 first-order motor and IMU mocks with actions; complete descriptors with
 generator-enforced size limits rather than continuation; test-only BenchCrash
-for hardware safe-mode coverage. The concrete core v1 and diag v3 encodings
+for hardware safe-mode coverage. The concrete core v2 and diag v3 encodings
 are specified in docs/protocol/core.md and docs/protocol/diag.md.
 
 CPU load uses idle runtime deltas, with 0xFF for an unavailable sample. Status rate defaults to 10 Hz (1..100).

@@ -8,6 +8,8 @@
 
 #include "core/instance.hpp"
 #include "core/loop.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
 
 namespace core {
 
@@ -136,22 +138,42 @@ size_t validateLayout(std::span<const LayoutEntry> entries, const ValidationConf
 {
     const size_t n = entries.size();
     uint64_t claimed = 0;
+    size_t loops = 0, modules = 0;
 
     // 1. Each entry on its own and against the earlier ones.
     for (size_t i = 0; i < n; ++i) {
         const LayoutEntry &e = entries[i];
+        const bool is_loop = e.type_id == defs::kLoopTypeId;
+        const size_t ordinal = is_loop ? loops++ : modules++;
         Status st = Status::success();
         if (e.desc == nullptr) {
             st = Status::fail(Result::NotFound, Detail::UnknownType);
-        } else if (i >= config.max_instances) {
+        } else if (ordinal >= (is_loop ? config.max_loops : config.max_instances)) {
             st = Status::fail(Result::NoMemory, Detail::Capacity);
         } else if (findEntry(entries.first(i), e.type_id, e.instance) != kNoEntry) {
             st = Status::fail(Result::Exists, Detail::None);
-        } else if (e.loop >= kLoopCount || !defs::runsIn(*e.desc, loopClassOf(e.loop))) {
-            st = invalid(Detail::LoopMismatch);
-        } else if (!labelValid(e.label)) {
-            st = invalid(Detail::BadLabel);
+        } else if (e.instance == 0xFF) {
+            st = invalid(Detail::BadValue);
+        } else if (is_loop) {
+            if (e.loop != kNoLoop) { st = invalid(Detail::LoopMismatch); }
         } else {
+            const size_t owner = findEntry(entries, defs::kLoopTypeId, e.loop);
+            if (owner == kNoEntry || !entries[owner].desc || entries[owner].loop != kNoLoop) {
+                st = invalid(Detail::LoopMismatch);
+            } else {
+                const auto &lp = entries[owner];
+                bool realtime = false;
+                for (size_t k = 0; k < lp.desc->items.size(); ++k) {
+                    if (lp.desc->items[k].id == defs::loop::kRealtime) { realtime = lp.values[k] != 0; }
+                }
+                if (!defs::runsIn(*e.desc, realtime ? defs::LoopClass::Realtime : defs::LoopClass::NonRealtime)) {
+                    st = invalid(Detail::LoopMismatch);
+                }
+            }
+        }
+        if (st.ok() && !labelValid(e.label)) {
+            st = invalid(Detail::BadLabel);
+        } else if (st.ok()) {
             for (size_t j = 0; j < i; ++j) {
                 if (std::strcmp(entries[j].label, e.label) == 0) {
                     st = invalid(Detail::LabelInUse);
@@ -208,6 +230,14 @@ size_t validateLayout(std::span<const LayoutEntry> entries, const ValidationConf
         for (size_t i = 0; i < n; ++i) {
             if (!out[i].ok()) {
                 continue;
+            }
+            if (entries[i].type_id != defs::kLoopTypeId) {
+                const size_t owner = findEntry(entries, defs::kLoopTypeId, entries[i].loop);
+                if (owner != kNoEntry && !out[owner].ok()) {
+                    out[i] = invalid(Detail::DependencyMissing);
+                    changed = true;
+                    continue;
+                }
             }
             for (const RefLink &link : refLinks(entries, i)) {
                 if (!out[link.target].ok()) {

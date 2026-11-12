@@ -130,9 +130,9 @@ codes:
     severity: error
     kind: record
     clears: false
-    arg0: stage (1 registry, 2 control loop task, 3 sensor loop task, 4 boot - Core::boot refused, which is a programming error in main)
-    arg1: for stage 1, the index of the rejected module type in main's list; else unused
-    description: The core failed to start. main reports it and leaves the core out; the legacy managers keep running. esp_err gives the reason for a loop task.
+    arg0: stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main)
+    arg1: for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused
+    description: Core startup failed. Stage 2 leaves the named loop Failed and its modules DependencyMissing; other loops and the config link stay available. Other stages leave the core out; legacy managers keep running. esp_err gives the loop task error.
 
   - source: core
     code: 0x0002
@@ -150,7 +150,7 @@ codes:
     severity: error
     kind: record
     clears: false
-    arg0: loop id (0 control, 1 sensor)
+    arg0: loop instance id
     arg1: the period that failed, in us
     description: A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
 
@@ -162,7 +162,7 @@ codes:
     clears: false
     arg0: the crash counter (consecutive boots after a panic or a watchdog reset)
     arg1: unused
-    description: The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; the loops run empty. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
+    description: The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; no loop task starts. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
 
   - source: core
     code: 0x0005
@@ -192,7 +192,7 @@ codes:
     clears: false
     arg0: the newest layout generation that passed its checks (0 when none did)
     arg1: cause (1 no layout blob passed its checks, 2 no generation had every instance blob)
-    description: NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the defaults and no instances. config_loaded_from_nvs is false. Not reported on a blank NVS.
+    description: NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the factory layout. config_loaded_from_nvs is false. Not reported on a blank NVS.
 
   - source: core
     code: 0x0008
@@ -476,3 +476,5 @@ codes:
   - {source: core, code: 257, name: ResponseDropped, severity: warning, kind: counter, description: "A core reply could not be queued for transmission."}
 
   - {source: uart_comm, code: 8, name: StreamSkipped, severity: warning, kind: counter, description: "A stream write was skipped because its slot was busy."}
+
+  - {source: core, code: 258, name: LoopOverBudget, severity: warning, kind: counter, description: "A loop tick took longer than its period; instance identifies the loop."}
