@@ -7,6 +7,8 @@ description: Run one step of the DriveLink firmware overhaul (S1, F1a ... F10, H
 
 One session runs one step and ends with one PR into `firmware_overhaul`. Follow these stages in order, and don't skip the approval points.
 
+**Roles.** The session is the planning agent (Opus 5.5, high). It plans, delegates the build to an implementation subagent, reviews the result itself and runs bare-board hardware checks. There is no separate review agent.
+
 ## 1. Orient
 
 1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, named `claude/overhaul-<step id>` (for example `claude/overhaul-f1a`). If the session already sits on a branch with unrelated work, stop and tell the user.
@@ -18,16 +20,16 @@ One session runs one step and ends with one PR into `firmware_overhaul`. Follow 
    - the argument, if one was given
    - otherwise the first step in the table whose state is `planned`, provided every step it depends on is `merged`
    - If a step it depends on isn't merged, stop and tell the user.
-4. Read the step's row for **Build model · effort** and **Review effort**, and the "Models and effort" rules in the status file. Planning runs on Opus 5.5 at high effort. If the session runs on a different model or effort, tell the user to switch before planning (in the app's model picker), then continue.
+4. Read the step's row for **Build model · effort** and **Review effort**, and the "Models and effort" rules in the status file. The session must run on Opus 5.5 at high effort. If it doesn't, tell the user to switch before planning, then continue.
 5. Read the code the step will change before planning. For wide searches, use an `Explore` agent with `model: "haiku"`. Search agents only read; they never write code.
 
 ## 2. Plan (approval point)
 
-Enter plan mode and write a short step plan:
+Enter plan mode and write a short step plan that the implementation agent can follow on its own:
 - **Scope:** what this PR does, and what it leaves for later steps. If the step is too big for one reviewable PR, propose splitting it into rows such as `F3a-1` and `F3a-2`.
 - **Changes:** the files and components touched.
 - **Tests:** which existing tests change, and which new ones are added (host or native tests for every piece of pure logic).
-- **Hardware check:** needed or not. If it is, say what the user will be asked to run.
+- **Hardware check:** none, bare board (you run it) or attached hardware (the user runs it), and what counts as a pass.
 - **Plan deviations:**
   - Internal choices you will make and log.
   - Anything that changes the wire protocol, a safety rule or a later phase. These need the user's decision now.
@@ -35,41 +37,40 @@ Enter plan mode and write a short step plan:
 
 Wait for the user's approval. Answer any deviation questions before you build.
 
-After approval, if the step's build model or effort differs from planning (Opus, high), tell the user which model and effort to switch to (for example "switch to Sonnet 5.5, medium"), and wait until they say it's done.
+## 3. Build (implementation subagent)
 
-## 3. Build
+After approval, spawn one `general-purpose` agent with the step's build model and effort. Its prompt carries the approved plan, the relevant plan sections and the rules below.
 
 - Follow the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
 - Don't improve legacy code that a later phase deletes, unless it blocks this step.
-- Before moving on, all of these must pass with zero warnings:
+- Commit locally. Don't push, open the PR, edit the status file or touch the board.
+- If the plan turns out wrong or the step needs a change the plan doesn't cover, stop and report.
+- Before reporting, all of these must pass with zero warnings (the PowerShell recipe for exporting IDF is in `firmware/CLAUDE.md`):
   - `idf.py -C firmware build`
   - the nolog variant (from inside `firmware/`: `idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build`)
   - `idf.py -C firmware/test/uart_comm build`
   - `python tools/gen_diag_codes.py --check`
-  - the host tests (`firmware/test/host`)
+  - the host tests (`firmware/test/host`), plus any suites the step introduces
+- Report: what changed, check results, internal choices to log, anything unfinished.
 
-  The PowerShell recipe for exporting IDF on this machine is in `firmware/CLAUDE.md`. Add any test suites the step introduces (native tests, vdev, host superbuild).
-- If something in the plans turns out wrong while building:
-  - A small internal choice: decide, and log it in the decision log.
-  - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user, then update the plan document in this PR.
+Then:
+- Check the report against the plan and the commits.
+- Decide small internal choices and log them. Wire protocol, safety rule or later-phase changes go to the user, and the plan is updated in this PR.
+- Send rework to the same agent with `SendMessage`.
 
-## 4. Review
+## 4. Review (planning agent)
 
-Spawn an independent review agent (`general-purpose`) on `git diff origin/firmware_overhaul...HEAD`. Always pass `model: "opus"`, and pass `effort` set to the step's **Review effort** from the status table (`high` or `xhigh`). This skill is the instruction that sets that effort. Give the agent:
-- the step plan and the relevant plan sections
-- the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
-- a brief to find correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans
+Review `git diff origin/firmware_overhaul...HEAD` yourself at the step's **Review effort**. If it is `xhigh`, raise the session effort for the review. Look for correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, mismatches with the plans, and scope creep.
 
-Verify each finding against the code. Fix the ones that hold up, rerun the checks, and note any you rejected, with the reason, for the PR description.
+Fix what holds up (small fixes yourself, larger ones through the implementation agent), rerun the checks, and note any findings you rejected, with the reason, for the PR description.
 
 ## 5. Hardware check (only if the step needs one)
 
-Don't flash the board yourself. Stop and give the user a short script:
-- what to build and flash, with exact commands
-- what to run
-- what output or behavior means pass or fail
+Run it after the review. Record it in the status file's hardware table, with the date, the step, the board, what was run and the result. Fix and repeat if it fails.
 
-Wait for their result. Record it in the status file's hardware table, with the date, the step, the board, what was run and the result. Fix and repeat if it fails.
+- **Bare board:** build, flash and run it yourself, using the ports in the status file's hardware notes. If a port is missing or the board doesn't respond, stop and tell the user.
+- **Attached hardware** (motors, real IMU, robot, Pi): don't flash. Set the state to `waiting on hardware` and give the user a short script: what to build and flash, what to run, and what means pass or fail. Wait for their result.
+- Never run anything that could move an actuator. If you can't tell what is attached, treat it as attached hardware.
 
 ## 6. Finish
 

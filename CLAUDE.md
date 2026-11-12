@@ -45,4 +45,8 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
   - `motor_manager`, `imu_bmo_055` and `time_sync` keep working until their phase ports them.
   - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
   - Their wire format is defined by their code and host tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
-- **Hardware.** Sessions don't flash the board. A step that needs a hardware check stops before its PR and gives the user a short test script: what to flash, what to run, what to look for.
+- **Roles.** The session is the planning and review agent (Opus 5.5, high). The build is done by an implementation subagent that the session spawns with the step's model and effort. `/overhaul-step` has the details.
+- **Hardware.**
+  - Checks that run on the bare bench board (nothing attached): the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.
+  - Checks that need motors, a real IMU, the robot or other equipment: the session doesn't flash. It stops before its PR and gives the user a short test script (what to flash, what to run, what to look for).
+  - Implementation subagents never flash the board.
