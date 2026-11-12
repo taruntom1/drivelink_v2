@@ -119,7 +119,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 - Uses the current Qt 6 LTS with Qt's MinGW kit on Windows. On Linux it uses the Qt from Ubuntu 26.04.
 - **C++ backend:**
   - A device connection, either local (serial) or remote (agent), behind one interface.
-  - Its own command group, set up at connect with every input it can command at hold values, with keepalives, so `ARM` is never refused for a missing command group ([gui-design.md](gui-design.md)).
+  - Its own command group, with every input it can command at hold values and keepalives, so `ARM` is never refused for a missing command group ([gui-design.md](gui-design.md)). A direct serial connection sets it up at connect. A remote connection starts as an observer and sets it up only after receiving the control lease, following the agent's command-group ownership rule.
   - Models built from the device model:
     - an instance tree (type, label, health)
     - a param table per instance (typed editors, units, ranges, enums, a pending-reboot marker, a dirty marker)

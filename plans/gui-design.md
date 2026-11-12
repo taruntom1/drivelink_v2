@@ -67,6 +67,9 @@ Read with [host-architecture.md](host-architecture.md), section "`drivelink-gui`
 | Add flow | The Add instance dialog asks for the type, the label and (when there is a choice) the loop. Add stages it and selects the new instance; its pins and wiring are then edited in the detail pane, with unset wiring marked until it is filled. G4. |
 | G4 accepted | The Layout screens and the G2 additions (Banner buttons 2 and 3, MenuItem detail) were accepted by the user on 2026-11-12, before G5 started. |
 | G5 accepted | The user accepted Tune and Monitor, the size/theme checks and the Slider Drag start variant on 2026-11-13. Auto re-run remains on by default and activates only after the first manual Run in the connection. The documented 1920×1080 issues remain open for handoff. |
+| Remote lease placement | The lease chip sits beside the device identity, opens lease details and navigates to the Clients and lease card on Device; the arm state stays centred. G6, user decision 2026-11-13. |
+| Remote live edits | Live gains remain editable while another client holds the lease. Confirm the first edit, offering Don't ask again for this connection, and keep a persistent warning banner. Run and manual commands require the lease. G6, user decision 2026-11-13. |
+| Clients and lease | A card on Device holds the client list and Take / Release lease controls; the status-bar lease chip navigates there. G6, user decision 2026-11-13. |
 | Tune and Monitor frames | G5 covers Tune: run results (armed, a gain being dragged, runs overlaid, metrics, gain history), disarmed, run in progress and a run stopped by a disarm, A/B compare, plant identification; Monitor: live plots with the manual command, paused with cursors, link budget full. G5. |
 | Gain of 0 | The slider and the % steps are disabled with a hint to type a value first; once the gain is non-zero the log window works. G5. |
 | Negative gains | When a gain's descriptor allows min < 0, the log slider and the % steps act on the magnitude and keep the sign; crossing zero is only by typing. The cascade_pid gains are >= 0, so no frame shows it. G5. |
@@ -146,7 +149,7 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G3 Shell, Connect and Device | Hi-fi shell (status bar, nav rail), the Connect screen (serial; the agent tab is finished in G6), and the Device screen with faults, arming, save/revert, reboot, OTA and safe mode. Checked at 1920×1080 and in light. | Screens page | done |
 | G4 Layout | Hi-fi Layout screen: instance tree by loop, add and remove instances, labels, wiring with `Ref` pickers, GPIO and validation errors, the pending-reboot banner and discard. The param table for an instance, and the custom panel slot. | Screens page | done |
 | G5 Tune and Monitor | Hi-fi Tune screen: pick a controller, live gains, test signal and capture set-up, run, overlay runs, the session file (name, save, open, export CSV), plant identification and suggested gains, save or revert. Hi-fi Monitor screen: free-form live plots of any signals, subscription set-up, pause and cursors. | Screens page | done |
-| G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens page | planned |
+| G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | in review |
 | G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Screens page | planned |
 | G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
 
@@ -262,6 +265,28 @@ On the page "Screens – Local", below the G4 rows: a "G5 · Tune and Monitor" h
 | Monitor | Live plots and manual command, Paused with cursors, Link budget full | the signal browser, rates, link 12 %, groups 2 of 8; one input dragging and one Latched; Resume, the A–B cursors through every plot and the readout table; 16 signals at 1 kHz (97 %), the refused add "would take the link to 101 %" with "Plot control at 500 Hz (53 %)" |
 | Checks | Tune · Run results at 1920×1080, Monitor · Live plots in Light | the kept record; the other frames were checked in Light, and frames 3, 5, 7 and 8 at 1920×1080, with the copies deleted |
 
+## G6 Remote mode
+
+On "Screens – Remote" (`2:6`): 16 hi-fi frames at 2560×1440 in Dark, arranged in four rows, plus two retained 1920×1080 Light checks. Built from the G2 shell, controls, tables and plots; the G5 controller/gain and Monitor layouts are reused.
+
+**Added to G2:**
+- `LeaseChip` (`133:984`), six variants: Available, Mine, ROS, Other, Requesting, Revoked. Uses existing variables and Lucide icons. QML `DLLeaseChip` / `AbstractButton`; the mapping row is `133:1036` and the instance preview is `133:1045`. Ownership colours remain separate from arm state.
+- `StatusBar` has an optional `Lease` boolean, off by default. Its chip sits beside the device identity; activating it navigates to Device > Clients and lease. Existing local screens keep their original shell.
+- `Dialog` has an optional `Confirmation` checkbox, off by default, used for takeover consent and the connection-scoped live-edit warning. The existing Dialog mapping row documents it.
+- `PlotFrame` has a responsive `Remote live` variant (`140:978`), with scaling plot geometry and a filling header/plot area. The PlotFrame mapping row documents it.
+
+| Row | Frames | Covers |
+|---|---|---|
+| Agent connect (y 0) | Agent `137:978`, Unreachable `137:1115`, Version mismatch `137:1255`, No device `137:1406` | Agent tab, endpoint, recent agent with device name/id; connection refusal and retry; incompatible agent versions; agent reachable but serial device unavailable, with ARM/DISARM unavailable |
+| ROS and consent (y 1640) | Device · ROS lease `138:10168`, Tune · ROS holds lease `140:1715`, Confirm live edit `140:2397`, Take from ROS `138:11284` | Device client card, persistent driving warning, live gains and telemetry; Run/manual commands unavailable; Apply live with Don't ask again for this connection; explicit safe-to-stop checkbox before takeover, primary action disabled until checked |
+| Lease transitions (y 3280) | Requesting `138:11399`, Lease granted/disarmed `140:2506`, Release confirmation `140:3097`, Revoked by another GUI `140:3201` | Wait for agent grant, stay disarmed after grant, explicit ARM before Run; release disarms without automatically restarting ROS; revocation identifies bench-laptop, stops test signals/auto re-run and leaves observation available |
+| History and observers (y 4920) | Agent history `138:10938`, Lease available `138:10582`, Monitor observer `141:12188`, Another GUI holds lease `141:12737` | Faults/arm-history drawer with pre-connect Agent history labels versus This connection; nobody/another-GUI ownership; shared live plots with manual commands disabled |
+| Checks (y 6560) | Tune/ROS `143:3437`, Monitor observer `143:4234` | Both 1920×1080 and Light. Every other G6 frame was also checked at 1920×1080 in Light; its temporary copy was removed |
+
+**Control rules represented:** a remote connection starts as an observer. It creates its command group only after the lease grant, as required by the host plan's lease rule. ARM is disabled with "ARM needs lease" when this GUI is not the holder; DISARM stays enabled whenever the device link exists, above modal scrims. Taking/releasing a lease never arms automatically. Live edits while another client drives require the agreed warning; opting out lasts only for this connection. Captures and other exclusive operations retain the host plan's disarmed/no-holder exception, rather than treating an observer as a lease holder.
+
+**Responsive checks:** at 1080p the remote Tune gain-history card becomes a compact View history entry, preserving visible gain controls and the live plot. Monitor's three plots share the available height, legends wrap, and plot geometry/axis labels are fitted to the new bounds. This applies to G6; the previously accepted G5 issues below remain open. All G6 frames contain editable layers and G2 instances; the final audit found no image-filled UI nodes and only Inter / JetBrains Mono text. G8 wires the full clickable prototype, including the compact history entry.
+
 ## Open issues
 
 - **Rename and the firmware to-do:** the Rename dialog assumes `SET_NAME` applies at once and sets `nvs_dirty`, so SAVE writes it (one of the open questions in [todo-device-name.md](todo-device-name.md)).
@@ -276,3 +301,4 @@ On the page "Screens – Local", below the G4 rows: a "G5 · Tune and Monitor" h
 - Tabular numerals can't be set through Figma's plugin API, so the numeric styles only say so in their descriptions; QML sets `font.features: { "tnum": 1 }`.
 - **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. To settle in H2 (for example gain history as a tab, or one column of gains with scrolling).
 - **G5 notes for H2:** slider ticks in the Figma frames are only approximate (marker positions inside an instance can't be moved); in QML each tick sits at its value on the log scale. CheckItem has no warning state; Plant identification shows its open-loop caution with a neutral icon and "warning".
+- **G6 notes for H3:** reset the live-edit warning opt-out on reconnect; while confirmation is open, keep the proposed gain local and send nothing until Apply live. A lease-revoked event cancels auto re-run and any pending command/test start. The takeover checkbox is unchecked by default. Agent history is an illustrative recent-event sample; its retention limit and transport details remain part of H3. The full prototype and lease-chip navigation are connected in G8.

@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G5 accepted; G6 discussion pending).
+Last updated: 2026-11-13 (G5 accepted; G6 built).
 
 ## Where things stand
 
@@ -12,11 +12,11 @@ Last updated: 2026-11-13 (G5 accepted; G6 discussion pending).
 |---|---|---|
 | G0 Foundations | done | FigJam screen map and flows 1–11; state inventory in gui-design.md |
 | G1 Wireframes | done | 21 frames. Tune (12) and Monitor (14) updated after G2 with the tuning controls |
-| G2 Design system | done | Accepted 2026-11-12. Extended in G3: StatusBar, CheckItem, ArmButton Disarm disabled, ProgressBar value by padding, scrim and Unsaved-contrast variables. Extended in G4: Banner Button 2 and 3, MenuItem detail line. Extended in G5: Slider Log Drag start |
+| G2 Design system | done | Accepted 2026-11-12. Extended in G3–G5 (details below). G6 adds LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live; reviewed with G6 |
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
 | G4 Layout | done | Accepted 2026-11-12. 11 frames on Screens – Local plus 2 kept check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
-| G6 Remote mode | planned | next |
+| G6 Remote mode | in review | 16 frames on Screens – Remote plus 2 retained 1080p Light checks; awaiting acceptance |
 | G7 Custom panel | planned | |
 | G8 Prototype and handoff | planned | |
 
@@ -24,10 +24,8 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 
 ## Next step
 
-1. Settle the G6 questions and scope with the user before building.
-2. Start **G6 Remote mode** on the page "Screens – Remote" (`2:6`): agent connect (the Connect card's Agent tab), the lease chip and its states, take and release the lease, lease revoked, the client list, Tune while ROS holds the lease (the live-param warning, test signals and captures refused without the lease), diag history on connect. G1 frames 18–21 are the wireframes (`17:1180` is Tune while ROS holds the lease).
-   - reuse the shell: clone a G5 Tune frame (`99:6359`) or the G3 base `67:1154`; the StatusBar needs a lease zone, so check first whether StatusBar gets a lease boolean or variant (a G2 change).
-   - settle the G6 questions first in a short round (lease chip place and states, what is refused without the lease and how it looks, where the client list lives).
+1. Ask the user to accept G6 on Screens – Remote (`2:6`), including the G2 LeaseChip, StatusBar Lease boolean, Dialog confirmation checkbox and responsive Remote live plot. Fix whatever they raise.
+2. After acceptance, discuss **G7 Custom panel**: the `imu.bno055` Calibration reference panel on Custom panels (`2:7`), using the G4 custom-panel slot (`85:4679`) and the firmware plan's IMU actions/calibration state. Settle the phase questions and scope before building.
 
 ## Handoff note
 
@@ -40,6 +38,8 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 - **G3 rules to keep:** the scrim of a modal starts under the status bar (DISARM stays live); DISARM is enabled whenever there is a link; refused-while-armed buttons are disabled with a Tooltip saying why.
 - **Rename** assumes `SET_NAME` applies at once and sets `nvs_dirty` (an open question in todo-device-name.md; not yet put to the firmware side).
 - **G5 accepted:** gain of 0 and negative gains follow the Decisions table; Auto re-run on by default was explicitly accepted 2026-11-13. Keep the documented 1080p issues open for handoff.
+- **G6 rules:** remote connections observe first and create their command group only after a lease grant (host plan clarified). Lease ownership is separate from arm state. ARM needs the lease; DISARM stays available with a device link, above every scrim. A grant leaves the board disarmed; revocation stops auto re-run/test starts. Live edits confirm before sending while another client drives; opt-out lasts one connection. Device holds the Clients and lease card; the chip navigates there in G8.
+- **G6 at 1080p:** Tune gain history uses a compact View history entry. Monitor legends wrap, its three plots share height, and the axes are fitted without shrinking the text. These fixes are scoped to G6; G5's accepted 1080p issues remain open. All 16 G6 frames checked at 1920×1080 in Light; only Tune/ROS and Monitor/observer copies kept.
 - **Naming:** the manual-command toggle is **Latch**, not Hold, because "hold" already means an input left at its hold value (Remove, Hold all).
 
 ## Figma reference
@@ -67,6 +67,10 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 **G2 changes in G5:** Slider `42:776` variant `Scale=Log, State=Drag start` (`97:6372`); Tuning controls section `42:690` widened to 1880; mapping row `44:807` (Slider) extended.
 
+**G6 frames** (page `2:6`, Screens – Remote): header `137:1561`, note `137:1562`. Each row is four frames, 2760 px apart. Row y 0: Agent `137:978`, Unreachable `137:1115`, Version mismatch `137:1255`, No device `137:1406`. Row y 1640: Device/ROS `138:10168`, Tune/ROS `140:1715`, Confirm live edit `140:2397`, Take from ROS `138:11284`. Row y 3280: Requesting `138:11399`, Lease granted/disarmed `140:2506`, Release `140:3097`, Revoked `140:3201`. Row y 4920: Agent history `138:10938` (drawer `141:13084`), Lease available `138:10582`, Monitor observer `141:12188`, Other GUI `141:12737`. Checks y 6560: Tune/ROS 1920 Light `143:3437`, Monitor observer 1920 Light `143:4234`.
+
+**G2 changes in G6:** LeaseChip set `133:984` (Available `133:958`, Mine `133:963`, ROS `133:968`, Other `133:973`, Requesting `133:978`, Revoked `133:983`), mapping `133:1036`, instance preview `133:1045` in Shell `63:1180`. StatusBar `63:1182` optional Lease boolean. Dialog `37:390` optional Confirmation checkbox (mapping `40:937`). PlotFrame `38:417` variant State=Remote live `140:978` (mapping `40:982`). No new variables.
+
 **G2 changes in G4:** Banner `37:359` booleans `Button 2`, `Button 3`; MenuItem `31:154` boolean `Show detail` and a Detail text; mapping rows `40:928` (Banner) and `40:820` (Menu / MenuItem) extended.
 
 **Cover:** G0 `2:20`, G1 `2:25`, G2 `2:30`, G3 `2:35`, G4 `2:40`, G5 `2:45`, G6 `2:50`, G7 `2:55`, G8 `2:60` (state texts).
@@ -87,7 +91,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Check visually with `return await node.screenshot({scale: …})` inside `use_figma` after each section.
 - The Plugin API cannot resize a child of an instance (`resize()` is ignored silently). ProgressBar takes its value through the Track's `paddingRight`; recompute it after the bar's width changes (for example in a 1920 copy).
 - KV rows are named by their key, so a key can clash with a card name ("Configuration", "Faults"). Find cards by name whose parent is a "Column N" frame.
-- A failed `use_figma` call rolls back completely; nothing half-built is left.
+- On a failed `use_figma` call, follow `safeToRetryWithoutCanvasRead` when supplied. Otherwise inspect the canvas before retrying; a transport error may follow a successful mutation.
 - `findOne(TEXT)` inside a row that holds an instance can return the instance's own text: pick the row's direct TEXT child (`row.children.find(...)`). `instance.resetOverrides()` undoes such a mistake.
 - The ProgressBar Indeterminate variant has a single label text.
 - Absolutely positioned overlays (drawer, dialogs, tooltips, toast) keep their 2560 coordinates in a resized copy; move them for 1920 checks.
@@ -107,12 +111,17 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - A second `node.screenshot()` in the same call can return the first image again: one screenshot per call.
 - An instance resized wider (GainControl) does not stretch its Slider or Buttons; nested `layoutSizingHorizontal = "FILL"` widens only the frame.
 - `swapComponent` on a nested instance keeps its text overrides. A SignalChip hugs its name when Value and Unit are hidden.
+- PlotFrame Live is a fixed-coordinate component: its Plot area cannot take FILL while the main component has layout NONE. Use G6's Remote live variant, whose root is vertical auto-layout.
+- Reusing the G5 Tune gains and swapping GainControl Dragging to Default resets nested Slider tick-label overrides: restore the range labels to match the number field (for example 0.21 / 0.85 / 3.40).
+- Monitor's copied plot areas are initially fixed-size. At smaller widths, set plot areas to fill both axes, wrap legends, scale vector geometry and explicitly refit axis text. SCALE constraints can narrow text enough to wrap; restore WIDTH_AND_HEIGHT and place labels within bounds. Parse negative values from the node name or normalise the Unicode minus.
+- A Figma transport error can occur after a mutation was applied. Read the canvas and find exact returned/named check frames before retrying; do not assume every failed call rolled back.
+- Growing the QML mapping table can make its section overlap Icons. G6 moved the mapping section below the other sections in its column; check section bounds after adding mapping rows.
 
 ## Session log
 
 | Date | Session | Work |
 |---|---|---|
-| 2026-11-13 | gui design 4 | G5 accepted, including Auto re-run default; created Codex/gui-design from current firmware_overhaul and carried prior design records forward; G6 discussion pending |
+| 2026-11-13 | gui design 4 | G5 accepted, including Auto re-run default; created Codex/gui-design from current firmware_overhaul and carried prior design records forward; G6 decisions, four G2 extensions, 16 remote frames and two retained 1080p Light checks. Self-review fixed ARM without a lease, gain-range labels, no-device connection state and responsive history/plots. G6 awaiting acceptance |
 | 2026-11-11 | gui design 1 | Phases planned; G0 (FigJam flows, state inventory); G1 wireframes |
 | 2026-11-12 | gui design 1 | G1 decisions (any client may disarm; device-name to-do); G2 design system; tuning controls (sliders, steps, gain history, auto re-run, manual command Latch) in G2 and the G1 wireframes; this status file and the `gui-design-step` skill |
 | 2026-11-12 | gui design 2 | G2 accepted; G3 decisions (status bar zones, inline Save/Revert, loops and core bars, checks kept, Connect card, Rename dialog, OTA frames, link-lost modal); G2 additions (StatusBar, CheckItem, Disarm disabled, scrim, Unsaved contrast); 15 G3 frames and 4 check copies |
