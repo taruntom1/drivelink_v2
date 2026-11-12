@@ -52,41 +52,40 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 
 States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. A step session may split its step further. Then it adds rows here, for example F3a-1 and F3a-2.
 
-| Step | Content | Hardware check | Build model · effort | Review effort | State | PR |
-|---|---|---|---|---|---|---|
-| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | Sonnet · medium | high | merged | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
-| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | Sonnet · medium | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
-| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | Sonnet · high | high | merged | [#30](https://github.com/taruntom1/drivelink_v2/pull/30) |
-| F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | Opus · high | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
-| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
-| F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | Opus · high | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
-| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | Opus · high | high | in review | |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | Opus · high | high | planned | |
-| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | Opus · high | high | planned | |
-| F4a | Subscription and command groups (preallocated, epochs) | no | Opus · high | high | planned | |
-| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | Opus · high | high | planned | |
-| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | Opus · high | high | planned | |
-| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | Sonnet · high | high | planned | |
-| F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | Sonnet · high | high | planned | |
-| F7a | Capture family, PSRAM (caps alloc only) | yes: capture | Sonnet · high | high | planned | |
-| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | Sonnet · high | high | planned | |
-| F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | Sonnet · high | high | planned | |
-| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | Opus · high | high | planned | |
-| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | Sonnet · medium | high | planned | |
-| H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | Opus · high | high | planned | |
-| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | Sonnet · high | high | planned | |
-| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | Opus · high | high | planned | |
-| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | Opus · high | high | planned | |
+| Step | Content | Hardware check | Review effort | State | PR |
+|---|---|---|---|---|---|
+| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | high | merged | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
+| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
+| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | high | merged | [#30](https://github.com/taruntom1/drivelink_v2/pull/30) |
+| F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
+| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
+| F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
+| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | in review | |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | high | planned | |
+| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
+| F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
+| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
+| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
+| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | high | planned | |
+| F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | high | planned | |
+| F7a | Capture family, PSRAM (caps alloc only) | yes: capture | high | planned | |
+| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | high | planned | |
+| F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | high | planned | |
+| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | high | planned | |
+| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | high | planned | |
+| H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | high | planned | |
+| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | high | planned | |
+| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | high | planned | |
+| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | high | planned | |
 
 ## Models and effort
 
-- **Plan** every step with **Opus 5.5 at high effort**, whatever the step's build model. The plan sets the direction.
-- **Build** with the step's model and effort from the table. After you approve the plan, switch the session model if the build model differs.
-- **Review** always runs on **Opus**, at the step's review effort. `/overhaul-step` launches the review agent with that model and effort. Review can be skipped if not necessary.
-- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the planning agent after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
+- **Plan and build** every step in one session on **Opus 5.5 at high effort**. The session that wrote the plan writes the code; there is no implementation subagent and no model switch after the plan is approved.
+- **Review.** The session reviews its own diff. It also spawns an independent review agent, always on **Opus** at the step's review effort, when the step needs one (wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff). The PR says which was done and why.
+- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the session after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
-- **Changing a step's tier.** If a step turns out harder (or easier) than its tier, change its row in the same PR and log the reason.
+- **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
 
 ## Decision log
 
@@ -155,6 +154,7 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3a-2 | Per-type `<source>.InitFailed` waits for the diag v2 sources (F3b); `core.InstanceStartFailed` covers instance failures until then. New core codes: `SafeModeEntered`, `LayoutInvalid`, `DependencyMissing`, `ConfigLoadFailed`, `NvsWriteFailed`, `NvsInitFailed`; `core.InitFailed` stage 4 is boot | Sources become module types only with diag v2 | n/a |
 | 2026-11-12 | F3a-2 | NVS is initialised by main (`core_os::nvsInit()`); a full partition or a newer NVS version is erased and initialised again and reported (`core.NvsInitFailed` arg0 1); the core boots either way | The standard IDF recovery; losing the config is better than not booting | n/a |
 | 2026-11-12 | F3a-2 | `CONFIG_CORE_BOOT_SELFTEST` (main, default off) flips `control.rate_hz` 1000 ↔ 500 and SAVEs on every boot, for the bench save/reload check before SAVE is on the wire | F3a-2 has no wire ops; the check needs to run on the board | n/a |
+| 2026-11-12 | F3a-2 | Workflow change: the session that plans a step also builds it (Opus 5.5, high; no implementation subagent, no model switch) and reviews its own diff; an independent review agent (Opus, at the step's review effort) is spawned only when the step needs one. The table's "Build model · effort" column is removed | The planner already holds the plan and its decisions, which a second agent has to re-derive; the review agent stays for the risky steps (user decision) | n/a (status file, root `CLAUDE.md`, `/overhaul-step`) |
 
 ## Hardware test results
 
