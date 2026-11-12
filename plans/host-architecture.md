@@ -249,7 +249,7 @@ Each directory is created by the phase that first puts something in it. No empty
 - **ROS:** `colcon build` from the repo root. `firmware/`, `host/superbuild/`, `host/gui/`, `host/vdev/`, `host/cli/` and `host/agent/` carry `COLCON_IGNORE`. colcon finds `protocol/`, `host/libdrivelink/` and `host/ros/*` through their `package.xml`.
 - **MinGW notes:**
   - Never mix compilers. Qt, libdrivelink, vdev and the GUI all build with Qt's MinGW kit.
-  - Strawberry Perl puts a different `g++` on `PATH` (the firmware host tests use it today). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
+  - Strawberry Perl puts a different `g++` on `PATH` (the firmware native tests use it today). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
   - Asio on MinGW needs `ws2_32` and `mswsock`, and `_WIN32_WINNT` defined.
 - **Dependencies:** keep them few and mostly header-only. Use standalone Asio and the vendored doctest, pulled in with CPM/FetchContent or vendored. No vcpkg, because its MinGW support is community-only. The generator needs Python 3 and PyYAML.
 

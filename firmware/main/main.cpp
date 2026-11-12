@@ -1,15 +1,24 @@
 // main.cpp - DriveLink v2 entry point.
 //
-// Startup order: diag, UartComm, the managers, then the diag Reporter.
-// A manager that fails to start is reported (system.ManagerStartFailed),
-// destroyed and left out; the others keep running, so the host can still
-// connect and ask what went wrong. app_main never returns.
+// Startup order: diag, UartComm, the managers, the core, then the diag
+// Reporter. A manager that fails to start is reported
+// (system.ManagerStartFailed), destroyed and left out; the others keep
+// running, so the host can still connect and ask what went wrong. The core
+// is the same: if it fails it is reported (core.InitFailed) and left out.
+// app_main never returns.
 
 #include <array>
+#include <memory>
 #include <optional>
+#include <span>
 
+#include "core/core.hpp"
+#include "core/core_config.hpp"
+#include "core/module_type.hpp"
+#include "core/registry.hpp"
 #include "diag.hpp"
 #include "diag_reporter.hpp"
+#include "drivelink/protocol/gen/types.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu_bmo_055.hpp"
@@ -27,9 +36,9 @@ namespace {
 // The firmware's tasks, by the names they are created with. A name with no
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the control and IMU sampling timers).
-constexpr std::array<const char *, 10> kLoggedTasks = {
-    "main",       "uart_rx",        "uart_tx", "motor_mgr_upd", "motor_mgr_cfg",
-    "imu_cfg",    "imu_stream",     "time_sync_task", "diag",   "esp_timer",
+constexpr std::array<const char *, 12> kLoggedTasks = {
+    "main",       "uart_rx",    "uart_tx",        "motor_mgr_upd", "motor_mgr_cfg", "imu_cfg",
+    "imu_stream", "time_sync_task", "diag",       "esp_timer",     "core_ctrl",     "core_sens",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -49,6 +58,49 @@ void logStackHighWater()
     }
 }
 #endif
+
+/// The module types the core can instantiate. F3b adds the first ones. Each
+/// desc must be its generated kTypeTable entry (checked in startCore()).
+constexpr std::array<const core::ModuleType *, 0> kModuleTypes{};
+
+/// Build and start the core: the registry, the system params and both loops,
+/// with no instances yet (the layout comes in F3a-2). The Core lives on the
+/// heap: app_main's stack is small. On failure it reports core.InitFailed and
+/// returns nullptr; the rest of the firmware keeps running.
+std::unique_ptr<core::Core> startCore()
+{
+    const std::span<const core::ModuleType *const> types(kModuleTypes);
+    for (size_t i = 0; i < types.size(); ++i) {
+        if (!core::descIsInTable(*types[i], drivelink::protocol::defs::kTypeTable)) {
+            DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_ARG, core::kInitStageRegistry, i,
+                       "Core: module type %u (list index %u) is not its generated table entry",
+                       static_cast<unsigned>(types[i]->desc.type_id), static_cast<unsigned>(i));
+            return nullptr;
+        }
+    }
+
+    auto c = std::make_unique<core::Core>(core::coreConfigFromKconfig());
+    core::Status st = c->init(types);
+    if (!st.ok()) {
+        DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_ARG, core::kInitStageRegistry, st.index,
+                   "Core: module registry rejected list index %u (detail %u)", static_cast<unsigned>(st.index),
+                   static_cast<unsigned>(st.detail));
+        return nullptr;
+    }
+    st = c->start();
+    if (!st.ok()) {
+        const esp_err_t err = static_cast<esp_err_t>(c->startError());
+        DIAG_ERROR(diag::codes::core::kInitFailed, err, c->startStage(), 0,
+                   "Core: loop task failed to start (stage %u): %s", static_cast<unsigned>(c->startStage()),
+                   esp_err_to_name(err));
+        return nullptr;
+    }
+    ESP_LOGI(TAG, "Core started: %u instances; loops control %u us, sensor %u us",
+             static_cast<unsigned>(c->instanceCount()),
+             static_cast<unsigned>(c->loop(core::kControlLoop).periodUs()),
+             static_cast<unsigned>(c->loop(core::kSensorLoop).periodUs()));
+    return c;
+}
 
 [[noreturn]] void idleForever()
 {
@@ -137,6 +189,11 @@ extern "C" void app_main(void)
                        "Periodic time sync not started: %s", esp_err_to_name(ret));
         }
     }
+
+    // After the legacy managers: they keep running whether or not it starts.
+    // Never destroyed (app_main never returns).
+    std::unique_ptr<core::Core> core_obj = startCore();
+    (void)core_obj;
 
     // Last, so Boot carries the final started_mask. Records from above are
     // waiting in the diag queue and go out right after Boot.

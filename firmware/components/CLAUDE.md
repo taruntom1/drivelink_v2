@@ -12,6 +12,14 @@ These rules apply to every component under `firmware/components/`. They add to t
   - `CMakeLists.txt`: `idf_component_register` with explicit `SRCS`, `INCLUDE_DIRS`, `PRIV_INCLUDE_DIRS` and `REQUIRES`.
   - `README.md`: the component's purpose, API, Kconfig options and rules. The wire format lives in `docs/protocol/`, not here. During the overhaul, legacy components have no README, and new components add one when they land.
 - Third-party code lives untouched in a `vendor/` subfolder of the component that uses it. Wrap it; don't edit it.
+- `core_os` is the one exception to `src/`: its sources are in `backend/idf/src` and `backend/native/src`, and each backend has its own `include` dir for `core_os/detail/backend_types.hpp`. The build picks the backend by include dir and sources, never by `#ifdef`.
+
+## The pure core
+
+- `core` (and, later, the pure parts of the module components) uses only `core_os`, `protocol/` and the C++ standard library. No ESP-IDF or FreeRTOS header, no `sdkconfig.h`, no `CONFIG_` symbol and no `esp_err_t`, so it builds natively (`firmware/test/native`, later the virtual device).
+- Kconfig reaches it through `CoreConfig`, which only `firmware/components/core/src/idf/core_config_idf.cpp` fills. Native builds fill it directly.
+- It has no logging. It reports through the `core_os` diag sink (`reportDiag`, `countDiag`), which calls diag on the device and records the calls natively.
+- Errors cross `core_os` as `core_os::Err` (an `esp_err_t` value on the device, 0 for success).
 
 ## Kconfig scope
 
@@ -48,7 +56,7 @@ These rules apply to every component under `firmware/components/`. They add to t
 
 - Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`. The `DIAG_*` macros log with it.
 - Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `protocol/defs/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
-- Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports. A type whose construction can fail keeps the reason for its caller (`initError()`, `MotorController::hardwareFailure()`), so the report carries the real `esp_err` and stage.
+- Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports. A type whose construction can fail keeps the reason for its caller (`initError()`, `MotorController::hardwareFailure()`), so the report carries the real `esp_err` and stage. The pure `core` doesn't depend on `diag` either: it reports through the `core_os` diag sink.
 - Stage and cause numbers passed as diag args are part of the wire contract: define them as named constants next to the report, document them in `protocol/defs/diag_codes.yaml`, and never renumber them.
 - Make logs actionable: include GPIOs, channels, operator or slot IDs, and the config values involved.
 - Fail early, and leave the object in a consistent state after any failure. For example, release the DIR GPIO if MCPWM allocation fails afterwards.
