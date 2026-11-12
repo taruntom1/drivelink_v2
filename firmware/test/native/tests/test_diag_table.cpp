@@ -184,3 +184,18 @@ TEST_CASE("collectCounterDeltas picks changed counters only")
                              out.size());
     CHECK(n == 0);
 }
+#include <thread>
+
+TEST_CASE("Instance diag slots keep identities separate and survive clears") {
+    diag::detail::SlotTable table;
+    const auto first=table.resolve(0,7), second=table.resolve(0,8);
+    REQUIRE(first!=second);
+    CHECK(table.codeSlot(first)==0);CHECK(table.instance(first)==7);
+    table.raise(first,true);table.raise(second,true);table.clearActive(first);
+    CHECK((table.read(first).state & diag::protocol::kStateActive)==0);
+    CHECK((table.read(second).state & diag::protocol::kStateActive)!=0);
+    table.clearOccurred();table.resetCounts();CHECK(table.resolve(0,7)==first);
+    size_t a=0,b=0;
+    std::thread ta([&] { a=table.resolve(1,9); });
+    std::thread tb([&] { b=table.resolve(1,9); });ta.join();tb.join();CHECK(a==b);
+}

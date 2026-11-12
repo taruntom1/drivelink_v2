@@ -124,6 +124,7 @@ public:
     /// Clear the crash counter, so the next boot is a normal one. The reboot
     /// is the caller's job.
     Status exitSafeMode();
+    Status runAction(Ref ref, const ActionArgs &args, ActionOut &out);
 
     // -- state ------------------------------------------------------------------
 
@@ -147,6 +148,9 @@ public:
     size_t instanceCount() const;
     /// Configured module instances: the records, running or not.
     size_t configuredCount() const { return m_table.size() - 1U; }
+    const detail::InstanceRecord *recordAt(size_t index) const {
+        return index < configuredCount() ? &m_table.at(index+1) : nullptr;
+    }
     /// Layout entries that are not running for a reason other than safe mode:
     /// Failed, Invalid, DependencyMissing, and entries left without a record.
     size_t instancesFailed() const;

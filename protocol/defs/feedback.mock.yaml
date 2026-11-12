@@ -1,0 +1,8 @@
+type: feedback.mock
+type_id: 113
+loops: [control]
+items:
+  - {id: 1, kind: param, name: actuator, type: u32, ref: actuator, ref_order: after, flags: [reboot_required]}
+  - {id: 256, kind: signal, name: velocity, type: f32, unit: rad/s}
+  - {id: 257, kind: signal, name: position, type: f32, unit: rad}
+  - {id: 768, kind: action, name: sample, runs_in: loop, results: [{name: velocity, type: f32}, {name: position, type: f32}]}

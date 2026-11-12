@@ -1,7 +1,7 @@
 #include "diag.hpp"
 
 #include <atomic>
-#include <sys/time.h>
+#include "esp_timer.h"
 
 #include "diag_internal.hpp"
 #include "freertos/queue.h"
@@ -16,7 +16,7 @@ StaticQueue_t s_queue_storage;
 uint8_t s_queue_buffer[CONFIG_DIAG_RECORD_QUEUE_DEPTH * sizeof(detail::QueuedEvent)];
 std::atomic<QueueHandle_t> s_queue{nullptr};
 
-std::atomic<bool> s_time_synced{false};
+
 
 void enqueue(const detail::QueuedEvent &ev)
 {
@@ -37,47 +37,51 @@ void init()
     s_queue.store(queue, std::memory_order_release);
 }
 
-void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1)
+void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
-    s_table.raise(code.slot, code.clears);
+    const auto slot=s_table.resolve(code.slot,instance);
+    if(slot>=detail::kRuntimeSlots) { s_table.add(codes::diag::kRecordDropped.slot,1);return; }
+    s_table.raise(slot, code.clears);
 
     detail::QueuedEvent ev{};
     ev.timestamp_us = detail::wallClockUs();
     ev.esp_err = static_cast<int32_t>(err);
     ev.arg0 = arg0;
     ev.arg1 = arg1;
-    ev.slot = code.slot;
+    ev.slot = static_cast<uint8_t>(slot);
     ev.kind = detail::QueuedKind::Record;
     ev.flags = detail::currentFlags();
     enqueue(ev);
 }
 
-void count(Code code, uint32_t n)
+void count(Code code, uint32_t n, uint8_t instance)
 {
-    s_table.add(code.slot, n);
+    const auto slot=s_table.resolve(code.slot,instance);
+    if(slot>=detail::kRuntimeSlots) { s_table.add(codes::diag::kRecordDropped.slot,1);return; }
+    s_table.add(slot, n);
 }
 
-void clear(Code code)
+void clear(Code code, uint8_t instance)
 {
-    if (!s_table.clearActive(code.slot)) {
+    const auto slot=s_table.resolve(code.slot,instance);
+    if (!s_table.clearActive(slot)) {
         return;
     }
     detail::QueuedEvent ev{};
     ev.timestamp_us = detail::wallClockUs();
-    ev.slot = code.slot;
+    ev.slot = static_cast<uint8_t>(slot);
     ev.kind = detail::QueuedKind::Cleared;
     ev.flags = detail::currentFlags();
     enqueue(ev);
 }
 
-void setTimeSynced()
-{
-    s_time_synced.store(true, std::memory_order_relaxed);
-}
-
-bool isTimeSynced()
-{
-    return s_time_synced.load(std::memory_order_relaxed);
+uint8_t activeErrorCount() {
+    uint32_t n=0;
+    for(size_t i=0;i<detail::kRuntimeSlots;++i) {
+        if(s_table.allocated(i) && (s_table.read(i).state & protocol::kStateActive) &&
+            kCodeTable[s_table.codeSlot(i)].severity==Severity::Error) { ++n; }
+    }
+    return static_cast<uint8_t>(n);
 }
 
 namespace detail {
@@ -104,14 +108,12 @@ void popEvent()
 
 uint64_t wallClockUs()
 {
-    timeval now{};
-    gettimeofday(&now, nullptr);
-    return (static_cast<uint64_t>(now.tv_sec) * 1000000ULL) + static_cast<uint64_t>(now.tv_usec);
+    return static_cast<uint64_t>(esp_timer_get_time());
 }
 
 uint8_t currentFlags()
 {
-    return isTimeSynced() ? protocol::kFlagTimeSynced : 0U;
+    return 0U;
 }
 
 } // namespace detail

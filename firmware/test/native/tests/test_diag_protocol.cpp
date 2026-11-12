@@ -19,14 +19,14 @@ std::vector<uint8_t> bytes(const uint8_t *data, size_t len)
 
 TEST_CASE("diag page sizes")
 {
-    CHECK(maxCounterEntries(128) == 10);  // (128 - 14) / 11
-    CHECK(maxEntriesPerPage(128) == 15);  // (128 - 7) / 8
+    CHECK(maxCounterEntries(128) == 9);  // (128 - 14) / 12
+    CHECK(maxEntriesPerPage(128) == 13);  // (128 - 7) / 9
     CHECK(maxCounterEntries(14) == 0);
     CHECK(maxEntriesPerPage(7) == 0);
     CHECK(maxCounterEntries(0) == 0);
     CHECK(maxCounterEntries(100000) == 255);
-    CHECK(kMaxFixedEventSize == 29);
-    CHECK(kMaxInfoResponseSize == 56);
+    CHECK(kMaxFixedEventSize == 30);
+    CHECK(kMaxInfoResponseSize == 58);
 }
 
 TEST_CASE("diag Record event")
@@ -41,12 +41,12 @@ TEST_CASE("diag Record event")
     ev.arg1 = 0xDEADBEEF;
 
     std::array<uint8_t, 64> buf{};
-    const size_t len = encodeRecordEvent(0x1234, kFlagTimeSynced, ev, buf.data(), buf.size());
+    const size_t len = encodeRecordEvent(0x1234, kReservedFlags, ev, buf.data(), buf.size());
     REQUIRE(len == kEventHeaderSize + kRecordBodySize);
     const std::vector<uint8_t> expected = {
-        kProtocolVersion, 0x34, 0x12, 0x01, 0x01,             // header: seq LE, kind Record, flags
+        kProtocolVersion, 0x34, 0x12, 0x01, 0x00,             // header: seq LE, kind Record, flags
         0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,       // timestamp
-        0x01, 0x10, 0xB2, 0xA1,                               // severity, source, code
+        0x01, 0x10, 0xFF, 0xB2, 0xA1,                               // severity, source, code
         0xFF, 0xFF, 0xFF, 0xFF,                               // esp_err -1
         0x44, 0x33, 0x22, 0x11,                               // arg0
         0xEF, 0xBE, 0xAD, 0xDE,                               // arg1
@@ -68,13 +68,14 @@ TEST_CASE("diag Cleared and Boot events")
     REQUIRE(len == kEventHeaderSize + kClearedBodySize);
     CHECK(buf[3] == static_cast<uint8_t>(EventKind::Cleared));
     CHECK(buf[13] == 0x12);
-    CHECK(buf[14] == 0x02);
-    CHECK(buf[15] == 0x01);
+    CHECK(buf[14] == 0xFF);
+    CHECK(buf[15] == 0x02);
+    CHECK(buf[16] == 0x01);
 
     BootEvent boot{};
     boot.timestamp_us = 1;
     boot.reset_reason = 9;
-    boot.started_mask = 0x05;
+    boot.instances_ok = 0x05;
     len = encodeBootEvent(0xFFFF, 0, boot, buf.data(), buf.size());
     REQUIRE(len == kEventHeaderSize + kBootBodySize);
     CHECK(buf[1] == 0xFF);
@@ -104,7 +105,7 @@ TEST_CASE("diag CounterDelta event")
         const size_t len = encodeCounterDeltaEvent(2, 0, 0, entries.data(), entries.size(), buf.data(), buf.size());
         REQUIRE(len == kEventHeaderSize + kCounterDeltaFixedSize + 2 * kCounterEntrySize);
         CHECK(buf[13] == 2);
-        const std::vector<uint8_t> second = {0x10, 0xEF, 0xBE, 0x04, 0x03, 0x02, 0x01, 0xFF, 0xFF, 0xFF, 0xFF};
+        const std::vector<uint8_t> second = {0x10, 0xFF, 0xEF, 0xBE, 0x04, 0x03, 0x02, 0x01, 0xFF, 0xFF, 0xFF, 0xFF};
         CHECK(bytes(&buf[14 + kCounterEntrySize], kCounterEntrySize) == second);
     }
     SUBCASE("does not fit")
@@ -184,10 +185,10 @@ TEST_CASE("diag GetInfo body")
 {
     std::array<uint8_t, 128> buf{};
     InfoBody info{};
-    info.flags = kFlagTimeSynced;
+    info.flags = kReservedFlags;
     info.uptime_us = 0x0A0B;
     info.reset_reason = 4;
-    info.started_mask = 0x07;
+    info.instances_ok = 0x07;
     info.records_dropped = 2;
     info.events_tx_dropped = 3;
 
@@ -197,15 +198,15 @@ TEST_CASE("diag GetInfo body")
         info.version_len = 4;
         const size_t len = encodeInfoBody(info, buf.data(), buf.size());
         REQUIRE(len == kInfoFixedSize + 4);
-        CHECK(buf[0] == kFlagTimeSynced);
+        CHECK(buf[0] == kReservedFlags);
         CHECK(buf[1] == 0x0B);
         CHECK(buf[2] == 0x0A);
         CHECK(buf[9] == 4);
         CHECK(buf[10] == 0x07);
-        CHECK(buf[11] == 2);
-        CHECK(buf[15] == 3);
-        CHECK(buf[19] == 4);
-        CHECK(std::memcmp(&buf[20], "v1.2", 4) == 0);
+        CHECK(buf[13] == 2);
+        CHECK(buf[17] == 3);
+        CHECK(buf[21] == 4);
+        CHECK(std::memcmp(&buf[22], "v1.2", 4) == 0);
     }
     SUBCASE("long version is truncated")
     {
@@ -214,7 +215,7 @@ TEST_CASE("diag GetInfo body")
         info.version_len = sizeof(long_version) - 1;
         const size_t len = encodeInfoBody(info, buf.data(), buf.size());
         REQUIRE(len == kInfoFixedSize + kMaxVersionLen);
-        CHECK(buf[19] == kMaxVersionLen);
+        CHECK(buf[21] == kMaxVersionLen);
     }
     SUBCASE("no version")
     {
@@ -234,8 +235,8 @@ TEST_CASE("diag GetEntries body and response framing")
     REQUIRE(body_len == kEntriesFixedSize + 2 * kEntrySize);
     const std::vector<uint8_t> expected = {
         5, 9, 2,
-        0x01, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00,
-        0x12, 0x03, 0x02, 0x03, 0x00, 0x00, 0x00, 0x01,
+        0x01, 0xFF, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00,
+        0x12, 0xFF, 0x03, 0x02, 0x03, 0x00, 0x00, 0x00, 0x01,
     };
     CHECK(bytes(body.data(), body_len) == expected);
 

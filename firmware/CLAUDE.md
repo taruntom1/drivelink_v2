@@ -215,3 +215,14 @@ A change is done when all of the following are true:
 - **Vendor code:**
   - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
+
+## F3b additions
+
+The core registers mod_mock types and CoreLink's core_cfg task. The command
+service, current/pending layout views, descriptors and actions follow
+`docs/protocol/core.md`. Diagnostics use monotonic wire v3 and sparse per-instance
+slots (`docs/protocol/diag.md`); started_mask and time_synced are removed.
+`system.status.rate_hz` controls the status stream. CoreLink's large buffers live
+in Impl; its task joins stack high-water logging. BenchCrash is compiled out
+unless CORE_BENCH_CRASH is enabled explicitly. The main-firmware smoke tests are
+smoke_main_firmware.py and smoke_core_firmware.py (the latter configures mocks).

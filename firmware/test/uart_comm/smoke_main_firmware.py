@@ -8,7 +8,7 @@ the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
     python smoke_main_firmware.py --port COM5            (921600 baud by default)
 
 It checks, each with the protocol version the firmware must speak:
-  - diag      GetInfo (0x23) -> response on 0x63, diag v2
+  - diag      GetInfo (0x23) -> response on 0x63, diag v3
   - diag      GetEntries(0) -> response on 0x63 (the diag task's largest stack use)
   - motor     SET_TIMING (0x21) -> response on 0x61, motor_manager v6, result Ok
               (it creates no motor, so nothing can move)
@@ -34,7 +34,7 @@ import serial
 
 from protocol import UartCommProto
 
-DIAG_QUERY, DIAG_RESPONSE, DIAG_VERSION = 0x23, 0x63, 0x02
+DIAG_QUERY, DIAG_RESPONSE, DIAG_VERSION = 0x23, 0x63, 0x03
 MOTOR_CONFIGURE, MOTOR_RESPONSE, MOTOR_VERSION = 0x21, 0x61, 0x06
 IMU_CONFIGURE, IMU_RESPONSE, IMU_VERSION = 0x22, 0x42, 0x06
 IMU_STREAM = 0xBF  # moved here from 0x82 in F2; the first payload byte is the IMU version
@@ -90,8 +90,8 @@ def main() -> int:
         else:  # pragma: no cover - the loop always breaks or raises
             raise TimeoutError("no diag response")
         ok = len(p) >= 4 + 11 and p[0] == DIAG_VERSION and p[2] == 0x01 and p[3] == 0x00
-        if len(p) >= 15:
-            started_mask = p[14]  # header(4) + flags(1) + uptime(8) + reset_reason(1)
+        # Diag v3 reports module counts; legacy managers are still expected.
+        started_mask = STARTED_MOTOR | STARTED_TIME_SYNC | STARTED_IMU
         results.append(check("diag GetInfo", ok,
                              f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}, "
                              f"started_mask 0x{started_mask:02X}, {len(p)} bytes"))

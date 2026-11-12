@@ -3,14 +3,14 @@
 namespace diag::detail {
 
 size_t collectEntries(const Code *codes, const SlotSnapshot *snaps, size_t n, uint8_t start,
-                      protocol::EntryState *out, size_t max, uint8_t &total, uint8_t &next)
+                      protocol::EntryState *out, size_t max, uint8_t &total, uint8_t &next, const SlotTable *table)
 {
     size_t listed = 0;
     size_t written = 0;
     next = protocol::kNoNextPage;
 
     for (size_t slot = 0; slot < n; ++slot) {
-        if (!isListed(snaps[slot])) {
+        if ((table && !table->allocated(slot)) || !isListed(snaps[slot])) {
             continue;
         }
         ++listed;
@@ -19,8 +19,9 @@ size_t collectEntries(const Code *codes, const SlotSnapshot *snaps, size_t n, ui
         }
         if (written < max) {
             protocol::EntryState &e = out[written++];
-            e.source = static_cast<uint8_t>(codes[slot].source);
-            e.code = codes[slot].code;
+            e.source = static_cast<uint8_t>(codes[table?table->codeSlot(slot):slot].source);
+            e.instance=table?table->instance(slot):255;
+            e.code = codes[table?table->codeSlot(slot):slot].code;
             e.state = snaps[slot].state;
             e.count = snaps[slot].count;
         } else if (next == protocol::kNoNextPage) {
@@ -33,17 +34,18 @@ size_t collectEntries(const Code *codes, const SlotSnapshot *snaps, size_t n, ui
 }
 
 size_t collectCounterDeltas(const Code *codes, const uint32_t *now, const uint32_t *last, size_t n,
-                            size_t &cursor, protocol::CounterEntry *out, uint8_t *out_slots, size_t max)
+                            size_t &cursor, protocol::CounterEntry *out, uint8_t *out_slots, size_t max, const SlotTable *table)
 {
     size_t written = 0;
     while (cursor < n && written < max) {
         const size_t slot = cursor++;
-        if (codes[slot].kind != CodeKind::Counter || now[slot] == last[slot]) {
+        if ((table && !table->allocated(slot)) || codes[table?table->codeSlot(slot):slot].kind != CodeKind::Counter || now[slot] == last[slot]) {
             continue;
         }
         protocol::CounterEntry &e = out[written];
-        e.source = static_cast<uint8_t>(codes[slot].source);
-        e.code = codes[slot].code;
+        e.source = static_cast<uint8_t>(codes[table?table->codeSlot(slot):slot].source);
+        e.code = codes[table?table->codeSlot(slot):slot].code;
+        e.instance=table?table->instance(slot):255;
         e.delta = now[slot] - last[slot];
         e.total = now[slot];
         out_slots[written] = static_cast<uint8_t>(slot);

@@ -118,6 +118,7 @@ public:
     StagingState stagingState() const { return m_state.load(std::memory_order_acquire); }
     /// Signalled by the loop after it applied a batch.
     core_os::Event &appliedEvent() { return m_applied; }
+    ActionSlot &actionSlot() { return m_action; }
 
 private:
     void applyStaged();
@@ -134,6 +135,7 @@ private:
     size_t m_staged_count = 0;
     std::atomic<StagingState> m_state{StagingState::Empty};
     core_os::Event m_applied;
+    ActionSlot m_action;
 
     std::atomic<uint32_t> m_heartbeat{0};
     std::atomic<uint32_t> m_period_us;

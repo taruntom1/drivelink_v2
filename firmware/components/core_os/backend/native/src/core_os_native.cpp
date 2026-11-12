@@ -212,11 +212,11 @@ std::pair<uint8_t, uint16_t> key(DiagCode code)
 
 } // namespace
 
-void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1)
+void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
-    r.reports.push_back({code, err, arg0, arg1});
+    r.reports.push_back({code, err, arg0, arg1, instance});
 }
 
 void countDiag(DiagCode code, uint32_t n)

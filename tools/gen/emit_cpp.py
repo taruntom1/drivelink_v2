@@ -5,7 +5,7 @@ Each function returns the text of one file. All text uses "\\n" line ends.
 
 from __future__ import annotations
 
-from model import KINDS, SEVERITIES, pascal
+from model import KINDS, SEVERITIES, pascal, descriptor_min_payload
 
 GEN_DIR = "protocol/include/drivelink/protocol/gen"
 
@@ -69,6 +69,13 @@ def gen_registry(defs: dict, hash_value: int) -> str:
     w("/// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.")
     w(f"inline constexpr uint32_t kDescriptorHash = 0x{hash_value:08X};")
     w("")
+    for name, values in reg["wire_enums"].items():
+        w(f"enum class {name} : uint8_t {{")
+        for key, value in values.items():
+            w(f"    {key} = {value},")
+        w("};")
+        w("")
+    w(f"inline constexpr size_t kDescriptorMinPayload = {descriptor_min_payload(defs)};")
     w("namespace msg {")
     for m in msgs:
         legacy = f" Legacy, removed in {m['legacy']}." if m["legacy"] else ""
@@ -175,6 +182,9 @@ def gen_diag(defs: dict) -> str:
     w("    Severity severity;")
     w("    CodeKind kind;")
     w("    bool clears;        ///< Has an `active` bit cleared by DIAG_CLEAR on recovery")
+    w("    const char *name = nullptr;")
+    w("    bool blocks_arm = false;")
+    w("    bool disarms = false;")
     w("};")
     w("")
     w("namespace codes {")
@@ -197,7 +207,7 @@ def gen_diag(defs: dict) -> str:
             clears = "true" if c["clears"] else "false"
             w(
                 f"inline constexpr Code k{c['name']}{{{slot}, Source::{pascal(src)}, "
-                f"0x{c['code']:04X}, Severity::{sev}, CodeKind::{kind}, {clears}}};"
+                f"0x{c['code']:04X}, Severity::{sev}, CodeKind::{kind}, {clears}, {cpp_string(c['name'])}, {str(c['blocks_arm']).lower()}, {str(c['disarms']).lower()}}};"
             )
         w(f"}} // namespace {src}")
     w("")

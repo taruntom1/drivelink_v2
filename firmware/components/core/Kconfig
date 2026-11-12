@@ -56,4 +56,16 @@ menu "DriveLink core"
         help
             Core the sensor loop task is pinned to.
 
+    config CORE_COMMAND_QUEUE_DEPTH
+        int "Core command queue depth"
+        default 8
+        range 1 32
+    config CORE_COMMAND_TASK_STACK
+        int "Core config task stack bytes"
+        default 6144
+        range 4096 16384
+    config CORE_COMMAND_TASK_PRIO
+        int "Core config task priority"
+        default 5
+        range 1 19
 endmenu

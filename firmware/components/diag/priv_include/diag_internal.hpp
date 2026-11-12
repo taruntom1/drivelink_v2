@@ -23,7 +23,7 @@ struct QueuedEvent {
     uint32_t arg1 = 0;
     uint8_t slot = 0;
     QueuedKind kind = QueuedKind::Record;
-    uint8_t flags = 0; ///< protocol::kFlagTimeSynced
+    uint8_t flags = 0; ///< reserved
 };
 
 /// The one slot table.
@@ -36,10 +36,10 @@ bool peekEvent(QueuedEvent &out);
 /// Remove the oldest queued event (after peekEvent() returned it).
 void popEvent();
 
-/// Wall-clock µs (gettimeofday, stepped by time_sync).
+/// Monotonic microseconds from boot.
 uint64_t wallClockUs();
 
-/// protocol::kFlagTimeSynced when synchronized, else 0.
+/// Reserved flags, always zero.
 uint8_t currentFlags();
 
 } // namespace diag::detail

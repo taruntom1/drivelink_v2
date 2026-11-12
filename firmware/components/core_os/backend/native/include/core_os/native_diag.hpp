@@ -15,6 +15,7 @@ struct RecordedReport {
     Err err;
     uint32_t arg0;
     uint32_t arg1;
+    uint8_t instance = 255;
 };
 
 /// Every `reportDiag` call since the last reset, in order.

@@ -535,3 +535,16 @@ Arming lands (F4) before any real motor is driven through the core (F5), so the 
 ## Open questions
 
 - Safety monitor period: is 10 ms (worst case about 13 ms plus 3 control periods to stop the motors after a loop stall) fast enough for your robots?
+
+## F3b implementation decisions (2026-11-12)
+
+User-approved: one F3b PR; separate current/pending layout views; deterministic
+first-order motor and IMU mocks with actions; complete descriptors with
+generator-enforced size limits rather than continuation; test-only BenchCrash
+for hardware safe-mode coverage. The concrete core v1 and diag v3 encodings
+are specified in docs/protocol/core.md and docs/protocol/diag.md.
+
+CPU load uses 0xFF for unavailable. Status rate defaults to 10 Hz (1..100).
+The diagnostic runtime uses 254 fixed sparse slots, including generated
+non-instance slots; exhaustion is counted. Safety flag metadata is present,
+while arming/latching/DIAG_RAISE behavior stays in F4b.

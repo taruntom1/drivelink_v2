@@ -27,7 +27,9 @@ struct ReporterConfig {
     uint8_t event_msg_type = drivelink::protocol::defs::msg::kDiagEvent;                   ///< 0xC0–0xFE
     uint8_t query_msg_type = drivelink::protocol::defs::msg::kDiagQuery;                   ///< 0x01–0x3F
     uint8_t query_response_msg_type = drivelink::protocol::defs::msg::kDiagQueryResponse; ///< 0x40–0x7F
-    uint8_t started_mask = 0;                                                              ///< kStarted* bits
+    uint8_t instances_ok = 0;
+    uint8_t instances_failed = 0;
+    uint8_t safe_mode = 0;                                                              ///< kStarted* bits
     uint32_t task_stack_size = CONFIG_DIAG_TASK_STACK;
     UBaseType_t task_priority = CONFIG_DIAG_TASK_PRIO;
 };

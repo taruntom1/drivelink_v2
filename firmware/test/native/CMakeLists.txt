@@ -37,6 +37,8 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/kv_store_native.cpp
     ${COMPONENTS_DIR}/core/src/config_blob.cpp
+    ${COMPONENTS_DIR}/core/src/command_service.cpp
+    ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
     ${COMPONENTS_DIR}/core/src/crc32.cpp
     ${COMPONENTS_DIR}/core/src/instance.cpp
@@ -97,6 +99,7 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_scanner.cpp
     ${PROTOCOL_DIR}/test/test_wire_codec.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
+    tests/test_core_commands.cpp
     tests/test_core_os.cpp
     tests/test_core_registry.cpp
     tests/test_core_bind.cpp
@@ -127,6 +130,7 @@ target_include_directories(native_tests PRIVATE
     ${COMPONENTS_DIR}/core_os/include
     ${COMPONENTS_DIR}/core_os/backend/native/include
     ${COMPONENTS_DIR}/core/include
+    ${COMPONENTS_DIR}/mod_mock/include
     ${COMPONENTS_DIR}/pid/include
     ${COMPONENTS_DIR}/motor_controller/include
     ${COMPONENTS_DIR}/motor_manager/include

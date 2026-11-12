@@ -36,22 +36,16 @@ void init();
 /// Latch a record and queue it for the host. Use DIAG_ERROR / DIAG_WARN.
 /// Task context only: it reads the wall clock and posts to a queue (no
 /// waiting). Not for ISRs, critical sections, or while holding m_mutex.
-void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1);
+void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t instance = 255);
 
 /// Add `n` to a counter code. Use DIAG_COUNT / DIAG_COUNT_N.
 /// Real-time safe: two relaxed atomic operations, from any context.
-void count(Code code, uint32_t n);
+void count(Code code, uint32_t n, uint8_t instance = 255);
 
 /// Clear a code's active bit and, if it was set, queue a Cleared event.
 /// Use DIAG_CLEAR. Task context only.
-void clear(Code code);
-
-/// Mark the wall clock as synchronized with the host. Events and GetInfo
-/// then carry the time_synced flag. Sticky. Any context.
-void setTimeSynced();
-
-/// True once setTimeSynced() was called.
-bool isTimeSynced();
+void clear(Code code, uint8_t instance = 255);
+uint8_t activeErrorCount();
 
 namespace detail {
 

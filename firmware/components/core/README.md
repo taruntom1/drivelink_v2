@@ -94,3 +94,15 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 - **Flash stalls both cores.** SAVE and FACTORY_RESET write NVS, which is why they are refused while armed.
 - **No logging.** The core reports through the `core_os` diag sink; `main` logs the startup summary.
 - Diag args are wire contract: the stages and causes (`kInitStage*`, `kStartStage*`, `persist::kNvsOp*`, `persist::kLoad*`) are documented in `protocol/defs/diag_codes.yaml` and never renumbered. `core.LayoutInvalid` carries a `Detail`, which F3b numbers.
+
+## F3b command and action services
+
+`CommandService` is pure and config-task-owned, with fixed scratch storage.
+`CoreLink` is its IDF UART adapter: a preallocated command queue and core_cfg
+worker, bounded RX callback, and latest-wins status stream. Its Kconfig settings
+are CORE_COMMAND_QUEUE_DEPTH (8), CORE_COMMAND_TASK_STACK (6144) and
+CORE_COMMAND_TASK_PRIO (5). See docs/protocol/core.md for the wire contract.
+
+`Core::runAction` validates metadata and transfers ownership through a fixed
+per-loop action slot. A paused action waits for acknowledgement before touching
+module state. All core configuration calls require one caller at a time.

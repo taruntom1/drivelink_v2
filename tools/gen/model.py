@@ -98,7 +98,7 @@ def load_registry(path: Path) -> dict:
     doc = load_yaml(path)
     if not isinstance(doc, dict):
         fail(f, "must be a mapping")
-    check_keys(f, doc, {"system_type_id", "msg_types", "channel_ranges"}, {"system_type_id", "msg_types", "channel_ranges"})
+    check_keys(f, doc, {"system_type_id", "msg_types", "channel_ranges", "wire_enums"}, {"system_type_id", "msg_types", "channel_ranges"})
 
     system_id = doc["system_type_id"]
     if not is_int(system_id) or system_id != 0:
@@ -205,7 +205,18 @@ def load_registry(path: Path) -> dict:
             fail(where, "legacy entries leave no usable channel")
         r["usable_count"] = usable
 
-    return {"system_type_id": system_id, "msg_types": msgs, "channel_ranges": ranges}
+    wire_enums = doc.get("wire_enums", {})
+    if not isinstance(wire_enums, dict):
+        fail(f, "wire_enums must be a mapping")
+    for name, values in wire_enums.items():
+        if not isinstance(name, str) or not PASCAL_IDENT.fullmatch(name) or not isinstance(values, dict):
+            fail(f, "wire enum needs a PascalCase name and mapping")
+        seen = set()
+        for key, value in values.items():
+            if not isinstance(key, str) or not PASCAL_IDENT.fullmatch(key) or not is_int(value) or not 0 <= value <= 254 or value in seen:
+                fail(f, f"invalid or duplicate wire enum {name}.{key}")
+            seen.add(value)
+    return {"system_type_id": system_id, "msg_types": msgs, "channel_ranges": ranges, "wire_enums": wire_enums}
 
 
 # -- diag codes ----------------------------------------------------------------
@@ -215,12 +226,16 @@ KINDS = {"record": "Record", "counter": "Counter"}
 MAX_SLOTS = 254  # 0xFF is the "no next page" marker in GetEntries
 
 
-def load_diag(path: Path) -> dict:
+def load_diag(path: Path, module_sources: dict | None = None) -> dict:
     f = path.name
     doc = load_yaml(path)
     if not isinstance(doc, dict) or "sources" not in doc or "codes" not in doc:
         fail(f, "needs top-level 'sources' and 'codes'")
 
+    doc["sources"] = dict(doc["sources"])
+    for name, value in (module_sources or {}).items():
+        if any(c.get("source") == name for c in doc["codes"] or []):
+            doc["sources"][name] = value
     sources: list[dict] = []
     seen_ids: dict[int, str] = {}
     for name, sid in doc["sources"].items():
@@ -252,6 +267,9 @@ def load_diag(path: Path) -> dict:
             fail(where, f"severity must be one of {sorted(SEVERITIES)}")
         if c["kind"] not in KINDS:
             fail(where, f"kind must be one of {sorted(KINDS)}")
+        for flag in ("blocks_arm", "disarms"):
+            if not isinstance(c.get(flag, False), bool):
+                fail(where, f"{flag} must be true/false")
         clears = c.get("clears", False)
         retired = c.get("retired", False)
         if not isinstance(clears, bool) or not isinstance(retired, bool):
@@ -281,6 +299,8 @@ def load_diag(path: Path) -> dict:
                 "severity": c["severity"],
                 "kind": c["kind"],
                 "clears": clears,
+                "blocks_arm": c.get("blocks_arm", False),
+                "disarms": c.get("disarms", False),
                 "retired": retired,
                 "arg0": c.get("arg0"),
                 "arg1": c.get("arg1"),
@@ -666,7 +686,7 @@ def load_system(path: Path, system_id: int) -> dict:
 
 def load_defs(defs_dir: Path) -> dict:
     registry = load_registry(defs_dir / REGISTRY_FILE)
-    diag = load_diag(defs_dir / DIAG_FILE)
+
     types: list[dict] = []
     for path in sorted(defs_dir.glob("*.yaml")):
         if path.name in RESERVED_FILES:
@@ -681,4 +701,33 @@ def load_defs(defs_dir: Path) -> dict:
             fail(f"{t['type']}.yaml", f"type_id 0x{t['type_id']:02X} already used by '{seen[t['type_id']]}'")
         seen[t["type_id"]] = t["type"]
     types.sort(key=lambda t: t["type_id"])
-    return {"registry": registry, "diag": diag, "types": types}
+    diag = load_diag(defs_dir / DIAG_FILE, {t["ns"]:t["type_id"] for t in types if t["type_id"] != 0})
+    result = {"registry": registry, "diag": diag, "types": types}
+    descriptor_min_payload(result)  # validate complete descriptor responses
+    return result
+
+
+def descriptor_min_payload(defs: dict) -> int:
+    """Complete core descriptor response sizes, including header and page fields."""
+    largest = 128
+    def text(s):
+        n = len((s or "").encode("utf-8"))
+        if n > 65535:
+            fail("descriptors", "string exceeds u16 length")
+        return n
+    for t in defs["types"]:
+        largest = max(largest, 6 + 5 + 4 + text(t["type"]))
+        for item in t["items"]:
+            if item.get("retired"):
+                continue
+            n = 30 + sum(text(item.get(k)) for k in ("name", "unit", "description", "ref"))
+            for a in item.get("args", []) + item.get("results", []):
+                n += 5 + text(a["name"]) + text(a["unit"])
+            largest = max(largest, 6 + 5 + n)
+            for e in item.get("values", []):
+                largest = max(largest, 6 + 5 + 3 + text(e["name"]))
+    for code in defs["diag"]["codes"]:
+        largest = max(largest, 6 + 5 + 8 + text(code["name"]))
+    if largest > 1024:
+        fail("descriptors", f"complete response needs {largest} bytes, limit 1024")
+    return largest

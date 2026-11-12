@@ -1,23 +1,22 @@
 #pragma once
 
-/// diag wire format (protocol v2; v2 changed no payload, it was bumped with the
-/// link framing in overhaul F1b): pure byte-in/byte-out codec with no
+/// Diagnostic wire v3: pure byte-in/byte-out codec with no
 /// ESP-IDF or FreeRTOS dependency, so the host unit tests cover it.
-/// README.md is the spec. MSG_TYPEs come from the generated registry (diag_reporter.hpp).
+/// docs/protocol/diag.md is the spec. MSG_TYPEs come from the generated registry (diag_reporter.hpp).
 
 #include <cstddef>
 #include <cstdint>
 
 namespace diag::protocol {
 
-constexpr uint8_t kProtocolVersion = 0x02;
+constexpr uint8_t kProtocolVersion = 0x03;
 /// Echoed as the subcommand when a query header could not be parsed.
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;
 /// GetEntries `next` value when no listed slot remains.
 constexpr uint8_t kNoNextPage = 0xFF;
 
 /// Event header `flags` bits.
-constexpr uint8_t kFlagTimeSynced = 0x01;
+constexpr uint8_t kReservedFlags = 0;
 
 /// Entry `state` bits (GetEntries).
 constexpr uint8_t kStateOccurred = 0x01;
@@ -49,19 +48,19 @@ enum class ResultCode : uint8_t {
 
 // ── Sizes ───────────────────────────────────────────────────────────────
 constexpr size_t kEventHeaderSize = 5;          // version, seq u16, kind, flags
-constexpr size_t kRecordBodySize = 24;
-constexpr size_t kClearedBodySize = 11;
-constexpr size_t kBootBodySize = 10;
+constexpr size_t kRecordBodySize = 25;
+constexpr size_t kClearedBodySize = 12;
+constexpr size_t kBootBodySize = 12;
 constexpr size_t kCounterDeltaFixedSize = 9;    // timestamp u64, n u8
-constexpr size_t kCounterEntrySize = 11;        // source, code u16, delta u32, total u32
+constexpr size_t kCounterEntrySize = 12;        // source, code u16, delta u32, total u32
 
 constexpr size_t kQueryRequestHeaderSize = 3;   // version, seq, subcommand
 constexpr size_t kQueryResponseHeaderSize = 4;  // version, seq, subcommand, result
 constexpr size_t kGetEntriesRequestSize = 1;
 constexpr size_t kClearRequestSize = 1;
 constexpr size_t kEntriesFixedSize = 3;         // total, next, n
-constexpr size_t kEntrySize = 8;                // source, code u16, state, count u32
-constexpr size_t kInfoFixedSize = 20;           // everything in GetInfo but the version bytes
+constexpr size_t kEntrySize = 9;                // source, code u16, state, count u32
+constexpr size_t kInfoFixedSize = 22;           // everything in GetInfo but the version bytes
 constexpr size_t kMaxVersionLen = 32;
 
 /// Largest fixed-size event payload (Record).
@@ -97,6 +96,7 @@ struct RecordEvent {
     uint64_t timestamp_us = 0;
     uint8_t severity = 0;
     uint8_t source = 0;
+    uint8_t instance = 255;
     uint16_t code = 0;
     int32_t esp_err = 0;
     uint32_t arg0 = 0;
@@ -108,18 +108,22 @@ struct CounterEntry {
     uint16_t code = 0;
     uint32_t delta = 0;
     uint32_t total = 0;
+    uint8_t instance = 255;
 };
 
 struct ClearedEvent {
     uint64_t timestamp_us = 0;
     uint8_t source = 0;
+    uint8_t instance = 255;
     uint16_t code = 0;
 };
 
 struct BootEvent {
     uint64_t timestamp_us = 0;
     uint8_t reset_reason = 0;
-    uint8_t started_mask = 0;
+    uint8_t instances_ok = 0;
+    uint8_t instances_failed = 0;
+    uint8_t safe_mode = 0;
 };
 
 // Each encoder sets the header kind itself and returns the payload length,
@@ -158,7 +162,9 @@ struct InfoBody {
     uint8_t flags = 0;
     uint64_t uptime_us = 0;
     uint8_t reset_reason = 0;
-    uint8_t started_mask = 0;
+    uint8_t instances_ok = 0;
+    uint8_t instances_failed = 0;
+    uint8_t safe_mode = 0;
     uint32_t records_dropped = 0;
     uint32_t events_tx_dropped = 0;
     const char *version = nullptr; ///< Need not be NUL-terminated; see version_len
@@ -170,6 +176,7 @@ struct EntryState {
     uint16_t code = 0;
     uint8_t state = 0;
     uint32_t count = 0;
+    uint8_t instance = 255;
 };
 
 /// @return The body length, or 0 if it does not fit in `cap`.

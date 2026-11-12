@@ -666,6 +666,19 @@ ErrorCounters UartComm::getErrorCounters() const
 
 // ── stackHighWater ──────────────────────────────────────────────────────
 
+esp_err_t UartComm::waitTxIdle(uint32_t timeout_ms)
+{
+    if(!m_impl || !m_impl->valid) { return ESP_ERR_INVALID_STATE; }
+    const TickType_t start=xTaskGetTickCount();
+    const TickType_t timeout=pdMS_TO_TICKS(timeout_ms);
+    while(uxQueueMessagesWaiting(m_impl->cmd_free)<kCmdPoolSize) {
+        if(xTaskGetTickCount()-start>=timeout) { return ESP_ERR_TIMEOUT; }
+        vTaskDelay(1);
+    }
+    const TickType_t elapsed=xTaskGetTickCount()-start;
+    return uart_wait_tx_done(m_impl->port,elapsed<timeout?timeout-elapsed:0);
+}
+
 StackHighWater UartComm::stackHighWater() const
 {
     if (!m_impl || !m_impl->valid) {

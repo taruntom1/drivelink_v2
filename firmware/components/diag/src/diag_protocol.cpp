@@ -31,6 +31,7 @@ size_t encodeRecordEvent(uint16_t seq, uint8_t flags, const RecordEvent &ev, uin
     w.appendU64Le(ev.timestamp_us);
     w.appendU8(ev.severity);
     w.appendU8(ev.source);
+    w.appendU8(ev.instance);
     w.appendU16Le(ev.code);
     w.appendI32Le(ev.esp_err);
     w.appendU32Le(ev.arg0);
@@ -44,6 +45,7 @@ size_t encodeClearedEvent(uint16_t seq, uint8_t flags, const ClearedEvent &ev, u
     appendEventHeader(w, seq, EventKind::Cleared, flags);
     w.appendU64Le(ev.timestamp_us);
     w.appendU8(ev.source);
+    w.appendU8(ev.instance);
     w.appendU16Le(ev.code);
     return finish(w);
 }
@@ -54,7 +56,9 @@ size_t encodeBootEvent(uint16_t seq, uint8_t flags, const BootEvent &ev, uint8_t
     appendEventHeader(w, seq, EventKind::Boot, flags);
     w.appendU64Le(ev.timestamp_us);
     w.appendU8(ev.reset_reason);
-    w.appendU8(ev.started_mask);
+    w.appendU8(ev.instances_ok);
+    w.appendU8(ev.instances_failed);
+    w.appendU8(ev.safe_mode);
     return finish(w);
 }
 
@@ -70,6 +74,7 @@ size_t encodeCounterDeltaEvent(uint16_t seq, uint8_t flags, uint64_t timestamp_u
     w.appendU8(static_cast<uint8_t>(n));
     for (size_t i = 0; i < n; ++i) {
         w.appendU8(entries[i].source);
+        w.appendU8(entries[i].instance);
         w.appendU16Le(entries[i].code);
         w.appendU32Le(entries[i].delta);
         w.appendU32Le(entries[i].total);
@@ -145,7 +150,9 @@ size_t encodeInfoBody(const InfoBody &info, uint8_t *out, size_t cap)
     w.appendU8(info.flags);
     w.appendU64Le(info.uptime_us);
     w.appendU8(info.reset_reason);
-    w.appendU8(info.started_mask);
+    w.appendU8(info.instances_ok);
+    w.appendU8(info.instances_failed);
+    w.appendU8(info.safe_mode);
     w.appendU32Le(info.records_dropped);
     w.appendU32Le(info.events_tx_dropped);
     w.appendU8(static_cast<uint8_t>(version_len));
@@ -165,6 +172,7 @@ size_t encodeEntriesBody(uint8_t total, uint8_t next, const EntryState *entries,
     w.appendU8(static_cast<uint8_t>(n));
     for (size_t i = 0; i < n; ++i) {
         w.appendU8(entries[i].source);
+        w.appendU8(entries[i].instance);
         w.appendU16Le(entries[i].code);
         w.appendU8(entries[i].state);
         w.appendU32Le(entries[i].count);

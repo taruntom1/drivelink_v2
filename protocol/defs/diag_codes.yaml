@@ -440,3 +440,39 @@ codes:
     severity: warning
     kind: counter
     description: A configure response could not be queued for UART transmission and was dropped.
+
+  - source: actuator_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - source: feedback_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - source: imu_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - {source: core, code: 256, name: CommandDropped, severity: warning, kind: counter, description: "The core command queue was full."}
+
+  - {source: core, code: 257, name: ResponseDropped, severity: warning, kind: counter, description: "A core reply could not be queued for transmission."}
+
+  - {source: uart_comm, code: 8, name: StreamSkipped, severity: warning, kind: counter, description: "A stream write was skipped because its slot was busy."}

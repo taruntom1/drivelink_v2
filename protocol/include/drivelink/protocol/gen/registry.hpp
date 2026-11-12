@@ -17,8 +17,113 @@ namespace drivelink::protocol::defs {
 inline constexpr uint8_t kSystemTypeId = 0x00;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xD793364C;
+inline constexpr uint32_t kDescriptorHash = 0xDADE3AA8;
 
+enum class Result : uint8_t {
+    Ok = 0,
+    InvalidArgument = 1,
+    NotFound = 2,
+    Exists = 3,
+    NoMemory = 4,
+    Busy = 5,
+    Armed = 6,
+    NotArmed = 7,
+    PendingReboot = 8,
+    Fault = 9,
+};
+
+enum class Detail : uint8_t {
+    None = 0,
+    UnknownRef = 1,
+    UnknownType = 2,
+    WrongKind = 3,
+    WrongType = 4,
+    AlreadyBound = 5,
+    NullStorage = 6,
+    ReadOnly = 7,
+    LockedWhileArmed = 8,
+    Unsupported = 9,
+    BadValue = 10,
+    BadEnum = 11,
+    NonFiniteFloat = 12,
+    CrossLoopBatch = 13,
+    StagingBusy = 14,
+    Withdrawn = 15,
+    BatchTooLarge = 16,
+    DuplicateRef = 17,
+    BufferTooSmall = 18,
+    TimerFailed = 19,
+    LoopMismatch = 20,
+    LabelInUse = 21,
+    BadLabel = 22,
+    GpioConflict = 23,
+    GpioNotAllowed = 24,
+    BadRef = 25,
+    WiringCycle = 26,
+    Referenced = 27,
+    DependencyMissing = 28,
+    SafeMode = 29,
+    Capacity = 30,
+    NotAtBoot = 31,
+    StartFailed = 32,
+    NoSavedConfig = 33,
+    StorageFailed = 34,
+    ReservedType = 35,
+    DuplicateType = 36,
+    NoFactory = 37,
+};
+
+enum class Family : uint8_t {
+    System = 1,
+    Layout = 2,
+    Describe = 3,
+    Param = 4,
+    Group = 5,
+    Capture = 6,
+    Testgen = 7,
+    Action = 8,
+    Ota = 9,
+};
+
+enum class SystemOp : uint8_t {
+    GetInfo = 1,
+    Arm = 2,
+    Disarm = 3,
+    AckFault = 4,
+    Save = 5,
+    Revert = 6,
+    FactoryReset = 7,
+    Reboot = 8,
+    ExitSafeMode = 9,
+    BenchCrash = 254,
+};
+
+enum class LayoutOp : uint8_t {
+    ListInstances = 1,
+    AddInstance = 2,
+    RemoveInstance = 3,
+    SetLabel = 4,
+    DiscardPending = 5,
+};
+
+enum class DescribeOp : uint8_t {
+    GetTypes = 1,
+    GetItems = 2,
+    GetEnum = 3,
+    GetCodes = 4,
+};
+
+enum class ParamOp : uint8_t {
+    Get = 1,
+    Set = 2,
+    GetPending = 3,
+};
+
+enum class ActionOp : uint8_t {
+    Run = 1,
+};
+
+inline constexpr size_t kDescriptorMinPayload = 128;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
 inline constexpr uint8_t kCoreCommand = 0x01;

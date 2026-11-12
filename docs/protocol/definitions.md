@@ -148,3 +148,17 @@ For each type, `gen/type_<type with . replaced by _>.hpp` holds, in namespace `d
 `kDescriptorHash` in `gen/registry.hpp` is a CRC-32 (IEEE, `zlib.crc32`) over the canonical JSON of the normalized registry, diag codes and module types: sorted keys, no whitespace, every default filled in. The generator computes it. It changes when a definition changes, including a description, and does not change for a comment or for the order of keys in the YAML. Msg types are sorted by value and types by type id before hashing. Diag codes, items and enum values keep their YAML order, which is part of their meaning.
 
 `GET_INFO` (F3b) reports the hash, so the host can tell that the firmware's definitions changed.
+
+## F3b wire metadata
+
+`registry.yaml` also defines `wire_enums`: PascalCase enum names mapping
+PascalCase entries to unique integers 0..254. These are generated into
+registry.hpp and included in the descriptor hash. Diagnostic codes carry
+optional boolean blocks_arm/disarms (default false) and generated names.
+Module diagnostic sources referenced by codes are resolved from the module
+YAML namespace and type_id; reserved and legacy sources remain explicit.
+
+The generator checks complete core descriptor response sizes, including
+headers/page metadata and UTF-8 byte lengths, against 1024 bytes. It emits
+kDescriptorMinPayload (at least 128); an IDF static assertion rejects a smaller
+build cap. Descriptor strings and records are never silently shortened.

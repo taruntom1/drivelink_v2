@@ -60,8 +60,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
-| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | in review | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | high | planned | |
+| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | in progress | |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
@@ -155,6 +155,16 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3a-2 | NVS is initialised by main (`core_os::nvsInit()`); a full partition or a newer NVS version is erased and initialised again and reported (`core.NvsInitFailed` arg0 1); the core boots either way | The standard IDF recovery; losing the config is better than not booting | n/a |
 | 2026-11-12 | F3a-2 | `CONFIG_CORE_BOOT_SELFTEST` (main, default off) flips `control.rate_hz` 1000 ↔ 500 and SAVEs on every boot, for the bench save/reload check before SAVE is on the wire | F3a-2 has no wire ops; the check needs to run on the board | n/a |
 | 2026-11-12 | F3a-2 | Workflow change: the session that plans a step also builds it (Opus 5.5, high; no implementation subagent, no model switch) and reviews its own diff; an independent review agent (Opus, at the step's review effort) is spawned only when the step needs one. The table's "Build model · effort" column is removed | The planner already holds the plan and its decisions, which a second agent has to re-derive; the review agent stays for the risky steps (user decision) | n/a (status file, root `CLAUDE.md`, `/overhaul-step`) |
+
+### F3b decisions
+
+- User approved this Codex session and an available independent Codex reviewer
+  in place of the Opus-specific workflow. The planning session implements it.
+- User chose one F3b PR unless a concrete blocker appears; separate current and
+  pending layout views; deterministic dynamic mocks with actions; whole
+  descriptors bounded by generator checks; test-only hardware crash injection.
+- Internal: status defaults to 10 Hz (1..100); CPU utilization is explicitly
+  unavailable (0xFF); diagnostic identities use 254 fixed sparse slots.
 
 ## Hardware test results
 
