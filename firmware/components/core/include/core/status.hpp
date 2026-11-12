@@ -16,7 +16,7 @@ enum class Result : uint8_t {
     Busy,
     Armed,         ///< not allowed while armed
     NotArmed,      ///< only allowed while armed
-    PendingReboot, ///< takes effect at the next boot
+    PendingReboot, ///< accepted into the pending layout: takes effect after SAVE and a reboot
     Fault,         ///< an internal failure (see the diag record)
 };
 
@@ -34,11 +34,11 @@ enum class Detail : uint8_t {
     // Param writes
     ReadOnly,
     LockedWhileArmed,
-    Unsupported, ///< not supported yet (reboot_required writes until F3a-2)
+    Unsupported, ///< not supported (a reboot_required system param)
     BadValue,    ///< not a value of the item's type (a bool of 2, a u8 of 300)
     BadEnum,     ///< not one of the enum's listed values
     NonFiniteFloat,
-    CrossLoopBatch, ///< a batch spans loops, or mixes system and loop params
+    CrossLoopBatch, ///< a batch spans domains: loops, system, offline instances or the pending layout
     StagingBusy,    ///< the loop's staging slot holds another batch
     Withdrawn,      ///< the loop did not take the batch in time; nothing was applied
     BatchTooLarge,
@@ -49,11 +49,19 @@ enum class Detail : uint8_t {
     LoopMismatch, ///< the type may not run in that loop
     LabelInUse,
     BadLabel,
-    GpioConflict,
+    GpioConflict,   ///< a pin is used twice on the device
+    GpioNotAllowed, ///< a pin the device does not allow (CoreConfig::gpio_allowed_mask)
+    BadRef,         ///< a wiring value that is malformed, names no instance, or one of the wrong category
+    WiringCycle,    ///< the ref graph or the tick graph has a cycle through this instance
+    Referenced,     ///< the instance is wired to by another one
+    DependencyMissing, ///< an instance this one is wired to is invalid
     SafeMode,
     Capacity, ///< CORE_MAX_INSTANCES reached
     NotAtBoot, ///< a boot-only operation after the loops started
     StartFailed,
+    // Persistence
+    NoSavedConfig, ///< NVS holds no complete configuration
+    StorageFailed, ///< an NVS write or erase failed (see core.NvsWriteFailed)
     // Registry
     ReservedType,  ///< type id 0x00 belongs to the system
     DuplicateType,
@@ -68,6 +76,9 @@ struct Status {
     uint16_t index = 0;
 
     constexpr bool ok() const { return result == Result::Ok; }
+    /// Ok, or PendingReboot: the operation was accepted (a pending one takes
+    /// effect after SAVE and a reboot).
+    constexpr bool accepted() const { return result == Result::Ok || result == Result::PendingReboot; }
 
     static constexpr Status success() { return Status{}; }
     static constexpr Status fail(Result result, Detail detail, uint16_t index = 0)

@@ -27,10 +27,10 @@ struct Rig {
     Rig() : core(testConfig())
     {
         reset();
-        REQUIRE(core.init(kTypes).ok());
-        REQUIRE(core.createInstance(fx::kTypeId, 0, core::kControlLoop, "ctl").ok());
-        REQUIRE(core.createInstance(fx::kTypeId, 1, core::kSensorLoop, "sen").ok());
-        REQUIRE(core.createInstance(fxs::kTypeId, 0, core::kSensorLoop, "s").ok());
+        bootWith(core, store,
+                 {{fx::kTypeId, 0, core::kControlLoop, "ctl"},
+                  {fx::kTypeId, 1, core::kSensorLoop, "sen"},
+                  {fxs::kTypeId, 0, core::kSensorLoop, "s"}});
         REQUIRE(world().created.size() == 2);
         ctl = world().created[0];
         sen = world().created[1];
@@ -60,6 +60,7 @@ struct Rig {
         return v;
     }
 
+    core_os::KvStore store;
     core::Core core;
     FullModule *ctl = nullptr;
     FullModule *sen = nullptr;
@@ -154,9 +155,14 @@ TEST_CASE("Param set: each validation rule")
     CHECK(st.result == Result::InvalidArgument);
     CHECK(st.detail == Detail::ReadOnly);
 
+    // reboot_required: the pending layout (test_core_layout.cpp). 0x0101 names
+    // fixture.full 1, which is not an actuator.
     st = one(entry(fx::kTypeId, 0, fx::kActuator, 0x0101));
+    CHECK(st.result == Result::InvalidArgument);
+    CHECK(st.detail == Detail::BadRef);
+    st = one(entry(fx::kTypeId, 0, fx::kActuator, 0));
     CHECK(st.result == Result::PendingReboot);
-    CHECK(st.detail == Detail::Unsupported);
+    CHECK(st.accepted());
 
     CHECK(one(entry(fx::kTypeId, 0, fx::kMode, 2)).ok()); // disarmed: fine
     CHECK(rig.ctl->mode_value == FxMode::C);

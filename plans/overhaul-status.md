@@ -5,18 +5,32 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F3a-2: layout and the pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, and boot with dependency order. Start it after F3a-1 is merged.
-- **Handoff (F3a-1):**
+- **Next step:** F3b: the system, layout, describe, param and action families; the status stream; `GET_INFO`; diag v2; `mod_mock`. Start it after F3a-2 is merged.
+- **Handoff (F3a-2):**
+  - **The C++ API F3b wraps** (all on `core::Core`, config-task side):
+    - ADD_INSTANCE is `addInstance(type, loop, label, &inst)`. The device picks the lowest free instance id (0..254). The default loop (the type's first loop class) belongs in the F3b handler.
+    - REMOVE_INSTANCE is `removeInstance`; it is refused while another entry refs it (`Referenced`). SET_LABEL is `setLabel`, DISCARD_PENDING is `discardPending`, GET_PENDING is `getPending`.
+    - SAVE is `save`, REVERT is `revert`, FACTORY_RESET is `factoryReset`, EXIT_SAFE_MODE is `exitSafeMode`. After FACTORY_RESET and EXIT_SAFE_MODE the handler reboots (`core_os::reboot()`).
+    - LIST_INSTANCES uses `findRecord` and the record states (`Running`, `Failed`, `Invalid`, `DependencyMissing`, `Offline`).
+    - GET_INFO uses `safeMode`, `layoutInvalid`, `configLoadedFromNvs`, `pendingReboot`, `nvsDirty`, `instanceCount` (running), `configuredCount` and `instancesFailed`.
+    - Layout ops answer `Ok`, are refused while armed, and need a booted core.
+  - **Param SET answers `PendingReboot`** for a batch of `reboot_required` params, or for params of instances that exist only in the pending layout. Callers test `Status::accepted()`, not `ok()`. A batch has one domain: system, one loop, offline (an instance that isn't running: written to its shadow) or pending. Otherwise the answer is `CrossLoopBatch`.
+  - **Boot** is `init()`, then `boot(store)`, then `start()`. `createInstance` is gone; instances come only from the NVS layout. Native tests write a layout with `writeLayout`, then boot (`bootWith` / `bootCore`); a reboot is a new `Core` on the same native `KvStore`.
+  - **NVS:**
+    - Namespaces are `core` (`layout_a` / `layout_b`) and `t<type>i<inst>` (`p_a` / `p_b`). The system params are in `t00i00`.
+    - A SAVE writes generation `gen` into slot `gen & 1`, the instance blobs first and the layout blob last (the commit record). It never writes the slot of the complete generation it loaded or last saved.
+    - Each distinct `t??i??` uses one of NVS's 254 namespace slots for good, even after an erase.
+  - **Result / Detail** grew: `GpioNotAllowed`, `BadRef`, `WiringCycle`, `Referenced`, `DependencyMissing`, `NoSavedConfig`, `StorageFailed`. F3b numbers them in `registry.yaml`. `core.LayoutInvalid` arg1 carries the raw `Detail`, so F3b's numbering fixes its meaning.
+  - **The wiring and pin helpers** are in `defs.hpp`: `kNoGpio`, `kUnwired`, `wiringRef`, `isWiringRef`, `wiringRefType`, `wiringRefInstance`, `inCategory`. F3b's describe must send the new flag bits (`Gpio` 0x20, `RefTicksAfter` 0x40).
+  - **`core_config_idf.cpp`** reads `CONFIG_UART_COMM_TX_PIN` / `RX_PIN` for the GPIO policy, so an app that builds `core` needs `uart_comm` in its config.
+  - **`CONFIG_CORE_BOOT_SELFTEST`** (main's Kconfig) is a bench-only check: every boot flips `control.rate_hz` between 1000 and 500 and SAVEs. Never commit it on. F3b can drop it once SAVE is on the wire.
+  - **Still not run:** the F2 smoke (`smoke_main_firmware.py`) needs the CH343 adapter (COM3), which was not connected in F3a-1 or F3a-2. Safe mode on the board needs forced crashes and has no hook yet; the native tests cover it.
+- **Still true from F3a-1:**
   - **The core** is `firmware/components/core` (namespace `core`). It is pure and builds natively; it uses only `core_os`, `protocol/` and std, and reports through the `core_os` diag sink. Kconfig reaches it only through `CoreConfig` (`src/idf/core_config_idf.cpp`). Its READMEs: `firmware/components/core/README.md`, `firmware/components/core_os/README.md`.
-  - **`core_os`** has the clock, `Mutex`, `Event`, `PeriodicTask` and the diag sink. The backend is picked by include dir (`backend/{idf,native}/include/core_os/detail/backend_types.hpp`). F3a-2 adds the KV store (NVS / a native file or in-memory store with torn-write injection), the boot and reset info (RTC no-init counter, `esp_reset_reason`) and reboot.
-  - **Instances** are created and started inside `Core::createInstance(type, inst, loop, label)`, boot only (`NotAtBoot` after `start()`). A failed instance never enters a loop list. `start()` must bind **every** param (structural ones included), signal and input, or it fails (`core.InstanceStartFailed`, arg1 the stage: below 0x100 from the instance, 0x100–0x103 from the core). Boot values sit in the per-instance **shadow**, which `makeRecord` fills with the YAML defaults; F3a-2 fills it from NVS before `start` instead.
-  - **Param service:** `reboot_required` entries are refused (`PendingReboot` / `Unsupported`). F3a-2 replaces that with the pending copy. Batches are all system (applied on the caller) or all one loop. Loops tick their instances in insertion order; F3a-2 sorts them by wiring at boot.
-  - **Result / Detail** are C++ enums in `core/status.hpp` with no wire numbers. F3b moves them into `registry.yaml` and numbers them (the list grew beyond the plan's: see the decision log).
-  - **Layout entries** carry the loop: F3b's `ADD_INSTANCE(type, loop, label)` (`plans/firmware-architecture.md` is updated).
-  - **Tests** moved to `firmware/test/native` (target `native_tests`; CI job `native-tests`). Core tests use the generator fixtures (`fixture.full`, `fixture.sensor`) as module types (`tests/core_test_modules.hpp`). Thread tests keep loose timing bounds (MinGW wakes up to ~15 ms late).
-  - **Untested path:** the system-param rollback on a failed timer restart (`core.TimerRestartFailed`) can't be triggered natively; the code exists.
-  - **Main firmware** starts the core after the legacy managers with no module types (`kModuleTypes` is empty), on the heap. On the bench it logs `Core started: 0 instances; loops control 1000 us, sensor 10000 us`; stack marks in the hardware table.
-  - **Still not run:** the F2 smoke (`smoke_main_firmware.py`) needs the CH343 adapter (COM3), which was not connected in F3a-1. Run it at the start of F3a-2 if the adapter is there. The F3a-1 boot check flashed over the native USB port (COM4) instead.
+  - **`core_os`** has the clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` (NVS; native: in-memory with fault injection) and the boot info (reset reason, RTC crash counter, reboot). The backend is picked by include dir.
+  - **Instances** must bind **every** param (structural ones included), signal and input in `start()`, or they fail (`core.InstanceStartFailed`, arg1 the stage: below 0x100 from the instance, 0x100–0x103 from the core). Boot values come from the shadow, filled from NVS.
+  - **Thread tests** keep loose timing bounds (MinGW wakes up to ~15 ms late). The system-param rollback on a failed timer restart (`core.TimerRestartFailed`) can't be triggered natively.
+  - **Main firmware** has no module types yet (`kModuleTypes` is empty), so the core runs with empty loops beside the legacy managers.
 - **Still true from F2:**
   - **Definitions** live in `protocol/defs/` (`registry.yaml`, `diag_codes.yaml`, `system.yaml`, later one YAML per module type). `python tools/gen/gen.py` writes `protocol/include/drivelink/protocol/gen/*.hpp` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`). `--check` is what CI runs; the generator's own tests are `python -m unittest discover -s tools/gen/tests`. The YAML schema, the descriptor format and the hash are specified in [docs/protocol/definitions.md](../docs/protocol/definitions.md).
   - **`system.yaml`** is type `0x00` (namespace `defs::system`, first in `kTypeTable`): no loops, params and signals only. It holds the loop rates; F3b and F4b add the status rate and `watchdog_ms` when they use them.
@@ -38,41 +52,40 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 
 States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. A step session may split its step further. Then it adds rows here, for example F3a-1 and F3a-2.
 
-| Step | Content | Hardware check | Build model · effort | Review effort | State | PR |
-|---|---|---|---|---|---|---|
-| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | Sonnet · medium | high | merged | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
-| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | Sonnet · medium | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
-| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | Sonnet · high | high | merged | [#30](https://github.com/taruntom1/drivelink_v2/pull/30) |
-| F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | Opus · high | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
-| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
-| F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | Opus · high | high | in review | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
-| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | Opus · high | high | planned | |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | Opus · high | high | planned | |
-| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | Opus · high | high | planned | |
-| F4a | Subscription and command groups (preallocated, epochs) | no | Opus · high | high | planned | |
-| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | Opus · high | high | planned | |
-| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | Opus · high | high | planned | |
-| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | Sonnet · high | high | planned | |
-| F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | Sonnet · high | high | planned | |
-| F7a | Capture family, PSRAM (caps alloc only) | yes: capture | Sonnet · high | high | planned | |
-| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | Sonnet · high | high | planned | |
-| F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | Sonnet · high | high | planned | |
-| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | Opus · high | high | planned | |
-| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | Sonnet · medium | high | planned | |
-| H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | Opus · high | high | planned | |
-| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | Sonnet · high | high | planned | |
-| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | Opus · high | high | planned | |
-| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | Opus · high | high | planned | |
+| Step | Content | Hardware check | Review effort | State | PR |
+|---|---|---|---|---|---|
+| S0 | Workflow: this file, the temporary `CLAUDE.md` section, CI on `firmware_overhaul`, the `/overhaul-step` skill, plan updates for the cleanup, the diag code table moved to `docs/protocol/` | no | high | merged | [#28](https://github.com/taruntom1/drivelink_v2/pull/28) |
+| S1 | Repo restructure: firmware into `firmware/` (host plan, "S1: restructure in detail") | no | high | merged | [#29](https://github.com/taruntom1/drivelink_v2/pull/29) |
+| F1a | Extract framing, CRC, scanner and `wire_codec` into `protocol/` with the wire format unchanged; `uart_comm` fixes for big frames (buffers in `Impl`, stack checks, non-blocking `sendData`) | no | high | merged | [#30](https://github.com/taruntom1/drivelink_v2/pull/30) |
+| F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
+| F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
+| F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
+| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | in review | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | high | planned | |
+| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
+| F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
+| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
+| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
+| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | high | planned | |
+| F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | high | planned | |
+| F7a | Capture family, PSRAM (caps alloc only) | yes: capture | high | planned | |
+| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | high | planned | |
+| F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | high | planned | |
+| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | high | planned | |
+| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | high | planned | |
+| H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | high | planned | |
+| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | high | planned | |
+| H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | high | planned | |
+| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | high | planned | |
 
 ## Models and effort
 
-- **Plan** every step with **Opus 5.5 at high effort**, whatever the step's build model. The plan sets the direction.
-- **Build** with the step's model and effort from the table. After you approve the plan, switch the session model if the build model differs.
-- **Review** always runs on **Opus**, at the step's review effort. `/overhaul-step` launches the review agent with that model and effort. Review can be skipped if not necessary.
-- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the planning agent after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
+- **Plan and build** every step in one session on **Opus 5.5 at high effort**. The session that wrote the plan writes the code; there is no implementation subagent and no model switch after the plan is approved.
+- **Review.** The session reviews its own diff. It also spawns an independent review agent, always on **Opus** at the step's review effort, when the step needs one (wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff). The PR says which was done and why.
+- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the session after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
-- **Changing a step's tier.** If a step turns out harder (or easier) than its tier, change its row in the same PR and log the reason.
+- **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
 
 ## Decision log
 
@@ -123,6 +136,25 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3a-1 | The core runs in the main firmware beside the legacy managers, with empty loops (control on core 1 at priority 20, sensor on core 0 at priority 10) | Boots the new code on the device from the first step; the empty ticks cost almost nothing | n/a |
 | 2026-11-12 | F3a-1 | No loop-overrun diag counter: loop stats (ticks, overruns, last and max run time) go out in F3b's status stream | The plan reports overruns per loop in the status stream | n/a |
 | 2026-11-12 | F3a-1 | `firmware/test/host` became `firmware/test/native` (target `native_tests`, CI job `native-tests`) | The plan's F3 rename; it now builds the core against the native backend | n/a |
+| 2026-11-12 | F3a-2 | GPIO params are marked `gpio: true` in the YAML (`ItemFlag::Gpio` 0x20): `u8`, `reboot_required`, no min/max/default; the value `0xFF` (`kNoGpio`) means no pin and is the default | The core's GPIO registry needs to know which params are pins; a default pin would make two new instances conflict (user decision) | yes |
+| 2026-11-12 | F3a-2 | Wiring refs may say `ref_order: after` (`ItemFlag::RefTicksAfter` 0x40, default `before`). Creation is always dependencies-first; the tick order follows the flag (feedback → controller → actuator) | The controller refs both a producer (feedback) and a consumer (actuator); the ref alone can't say which ticks first (user decision) | yes (controller YAML example) |
+| 2026-11-12 | F3a-2 | A wiring value is `type << 8 \| instance` in the low 16 bits (upper 16 zero); 0 means unwired, which validation allows (the module's `start()` decides). A ref's category matches the type name before the dot | Same packing as diag's arg0; a new controller can be added before it is wired (user decision) | yes |
+| 2026-11-12 | F3a-2 | A param batch is all pending (`reboot_required` params, or params of instances that exist only in the pending layout) or all live; an accepted pending batch answers `Result::PendingReboot`. `Status::accepted()` is `Ok` or `PendingReboot` | The answer tells the host the value is staged, not applied (user decision) | yes |
+| 2026-11-12 | F3a-2 | Every configured instance has a record, running or not (`Running`, `Failed`, `Invalid`, `DependencyMissing`, `Offline`). A SET on an instance that isn't running writes its shadow on the caller (the offline domain) | A SAVE must never drop the config of an instance that failed to start, and safe mode must still read and edit params | n/a |
+| 2026-11-12 | F3a-2 | NVS layout entries with an unregistered type, a duplicate (type, inst) or past `max_instances` get no record and are dropped (namespace erased) by the next SAVE | The firmware can't decode their params, so it can't keep them consistently | n/a |
+| 2026-11-12 | F3a-2 | Layout ops are refused only if they make a previously valid entry invalid, or the entry they touch is invalid | An entry that was already invalid (say a pin the policy dropped) would otherwise block every op, including its own fix | n/a |
+| 2026-11-12 | F3a-2 | Layout ops (add, remove, label, discard) answer `Ok` and are refused while armed; REMOVE_INSTANCE is refused while another entry refs the instance (`Referenced`); the device picks the lowest free instance id (0..254, 0xFF stays the wire's unparsed marker) | The plan's ADD_INSTANCE has no id; removal must not leave dangling wiring | yes |
+| 2026-11-12 | F3a-2 | `reboot_required` system params are refused (`Unsupported`): the system is not a layout entry. None exist today | No pending copy for the system yet; added when one is needed | n/a |
+| 2026-11-12 | F3a-2 | The pending copy keeps only `reboot_required` values for copied instances; their live params come from the record shadow at SAVE and GET_PENDING. It stays after SAVE; `pendingReboot` = copy active or the last SAVE wrote it | A live SET after a pending op must not be lost by SAVE; NVS holds the pending layout until the reboot | n/a |
+| 2026-11-12 | F3a-2 | NVS: generation `gen` goes to slot `gen & 1`; instance blobs first, the layout blob last as the commit record; a layout blob in the wrong slot for its parity is invalid; the system blob (`t00i00`) is part of every generation. SAVE never writes the slot of the complete generation it loaded or last saved | A torn SAVE always leaves a complete generation. The last rule was found in review: after an incomplete newer generation, `newest + 1` landed on the only complete one | yes |
+| 2026-11-12 | F3a-2 | SAVE erases the namespaces of dropped instances right after the layout commit, not at the next boot | The new layout no longer references them, and stale blobs of older generations are ignored anyway | yes |
+| 2026-11-12 | F3a-2 | REVERT reloads every live, persisted, writable param (system, running and offline instances) from the complete saved generation through the normal paths, in batches of up to 64 per domain; it is not atomic across batches. No saved config → `NotFound` / `NoSavedConfig` | The staging slot holds 64 entries; one batch per loop could overflow it | n/a |
+| 2026-11-12 | F3a-2 | The native `KvStore` is in memory with fault injection (power loss after n writes, a failing write, a torn write); a file-backed store waits for the vdev (F3c) | The tests need deterministic faults; only the vdev needs persistence across processes | n/a |
+| 2026-11-12 | F3a-2 | Safe mode: the crash counter is cleared by a `OneShotTimer` 30 s after a normal boot, not in safe mode; any non-crash reset (a REBOOT) clears it too. In safe mode validation still runs and reports `LayoutInvalid` | The device stays safe while the crash loop goes on, and a host REBOOT is enough to leave | n/a |
+| 2026-11-12 | F3a-2 | Per-type `<source>.InitFailed` waits for the diag v2 sources (F3b); `core.InstanceStartFailed` covers instance failures until then. New core codes: `SafeModeEntered`, `LayoutInvalid`, `DependencyMissing`, `ConfigLoadFailed`, `NvsWriteFailed`, `NvsInitFailed`; `core.InitFailed` stage 4 is boot | Sources become module types only with diag v2 | n/a |
+| 2026-11-12 | F3a-2 | NVS is initialised by main (`core_os::nvsInit()`); a full partition or a newer NVS version is erased and initialised again and reported (`core.NvsInitFailed` arg0 1); the core boots either way | The standard IDF recovery; losing the config is better than not booting | n/a |
+| 2026-11-12 | F3a-2 | `CONFIG_CORE_BOOT_SELFTEST` (main, default off) flips `control.rate_hz` 1000 ↔ 500 and SAVEs on every boot, for the bench save/reload check before SAVE is on the wire | F3a-2 has no wire ops; the check needs to run on the board | n/a |
+| 2026-11-12 | F3a-2 | Workflow change: the session that plans a step also builds it (Opus 5.5, high; no implementation subagent, no model switch) and reviews its own diff; an independent review agent (Opus, at the step's review effort) is spawned only when the step needs one. The table's "Build model · effort" column is removed | The planner already holds the plan and its decisions, which a second agent has to re-derive; the review agent stays for the risky steps (user decision) | n/a (status file, root `CLAUDE.md`, `/overhaul-step`) |
 
 ## Hardware test results
 
@@ -130,6 +162,7 @@ Choices made during implementation that the plans don't cover, or that change th
 |---|---|---|---|---|
 | 2026-11-12 | F1b | ESP32-S3 (QFN56 rev 0.2, 8 MB PSRAM) on the bench; CH343 adapter on UART0 (GPIO43/44), native USB console | HIL test app: `pytest pytest_uart_comm.py --port COM3` at 921600 baud. Main firmware: `smoke_main_firmware.py`, three runs, with the console read for the stack marks | HIL: 22 of 22 passed (including TC-20 false header, TC-21 four 1024-byte echoes, TC-22 1024-byte stream). Smoke: diag GetInfo and GetEntries (v2), motor SET_TIMING (v5, Ok), IMU SetStreamEnabled (v5, mock IMU), time_sync request (v2) all passed. Stack marks in the handoff note. Not covered: a real BNO055, motors under load, other hosts than Windows. |
 | 2026-11-12 | F3a-1 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4; console read for 65 s after a reset | Pass: one boot, no panic or reset loop; `Core started: 0 instances; loops control 1000 us, sensor 10000 us`; legacy managers started as before (IMU in mock mode, time_sync times out with no host). Stack marks at 30 s and 60 s, bytes free: core_ctrl 3256, core_sens 3252 (stacks 4096), main 1248, uart_rx 3196, uart_tx 3096, motor_mgr_upd 2088, motor_mgr_cfg 3156, imu_cfg 2092, imu_stream 2008, time_sync 2000, diag 2796, esp_timer 3352. Not covered: anything over UART0 (no adapter). |
+| 2026-11-12 | F3a-2 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4 on a blank NVS; then a `CONFIG_CORE_BOOT_SELFTEST` build (save/reload) over four resets; then the normal firmware again. Console read after each reset | Pass. Blank NVS: `Core started: 0 instances (0 failed, 0 configured); safe mode off; config defaults; loops control 1000 us`, no NVS error. Self-test: boot 1 set 500 Hz and SAVEd (gen 1); boot 2 logged `config loaded from NVS`, control 2000 us, `reloaded 500 from NVS`, restored 1000 and SAVEd (gen 2); boots 3 and 4 repeated it (gens 3, 4). Normal firmware after it: `config loaded from NVS`, control 1000 us. Stack marks at 30 s, bytes free: main 1256, core_ctrl 3252, core_sens 3248, others as in F3a-1. Not covered: anything over UART0 (no adapter), safe mode on the board (no crash hook). |
 
 ## Notes
 

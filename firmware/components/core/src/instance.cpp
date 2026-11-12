@@ -1,5 +1,7 @@
 #include "core/instance.hpp"
 
+#include "core/instance_table.hpp"
+
 namespace core {
 
 namespace detail {
@@ -62,6 +64,25 @@ uint32_t InstanceContext::param(uint16_t id) const
         return 0U;
     }
     return m_record.shadow[index];
+}
+
+Instance *InstanceContext::ref(uint16_t id) const
+{
+    const size_t index = m_record.itemIndex(id);
+    if (m_table == nullptr || index == detail::kNoItem) {
+        return nullptr;
+    }
+    const defs::ItemDesc &item = m_record.desc->items[index];
+    if (item.kind != defs::ItemKind::Param || item.ref == nullptr) {
+        return nullptr;
+    }
+    const uint32_t value = m_record.shadow[index];
+    if (value == defs::kUnwired || !defs::isWiringRef(value)) {
+        return nullptr;
+    }
+    const detail::InstanceRecord *target =
+        m_table->find(defs::wiringRefType(value), defs::wiringRefInstance(value));
+    return (target != nullptr) ? target->object.get() : nullptr;
 }
 
 void InstanceContext::fail(uint32_t stage, int32_t err)

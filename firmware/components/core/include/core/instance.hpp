@@ -40,6 +40,18 @@ using OnChange = void (*)(void *instance, uint16_t id);
 
 class InstanceContext;
 
+/// The state of a configured instance (a record). Every layout entry the
+/// core can hold has a record, running or not; one that isn't running has no
+/// object, keeps its shadow (the values loaded from NVS) and takes param
+/// writes into the shadow ("offline").
+enum class InstanceState : uint8_t {
+    Running,           ///< created and started; it ticks in its loop
+    Failed,            ///< create() or start() failed (core.InstanceStartFailed)
+    Invalid,           ///< the entry failed layout validation at boot (core.LayoutInvalid)
+    DependencyMissing, ///< an instance it is wired to is not running (core.DependencyMissing)
+    Offline,           ///< safe mode: nothing was created
+};
+
 /// A module instance. The core creates it at boot through its
 /// `ModuleType::create`, calls `start()` once, and then `tick()`s it in its
 /// loop.
@@ -71,18 +83,23 @@ struct Binding {
     bool bound = false;
 };
 
-/// The core's record of one instance. Allocated at boot.
+class InstanceTable;
+
+/// The core's record of one configured instance. Allocated at boot.
 struct InstanceRecord {
     const defs::TypeDesc *desc = nullptr;
     uint8_t type_id = 0;
     uint8_t instance = 0;
     uint8_t loop = kNoLoop;
     char label[kLabelBytes + 1] = {};
+    InstanceState state = InstanceState::Running;
+    /// Null unless `state` is Running.
     std::unique_ptr<Instance> object;
     /// One per item of `desc`, by index.
     std::unique_ptr<Binding[]> bindings;
     /// The value bits of each param, by item index (0 for other kinds): what
-    /// the config task last applied. The loop never touches it.
+    /// the config task last applied, or the boot value. The loop never
+    /// touches it.
     std::unique_ptr<uint32_t[]> shadow;
 
     /// Index of item `id` in `desc->items`, or `kNoItem`.
@@ -93,7 +110,7 @@ inline constexpr size_t kNoItem = static_cast<size_t>(-1);
 
 } // namespace detail
 
-/// What an instance gets in `start()`: binds and boot values.
+/// What an instance gets in `start()`: binds, boot values and its wiring.
 ///
 /// Each bind is checked against the descriptor: the id exists, it is of the
 /// right kind, the C++ type matches the value type, and it is not bound yet.
@@ -102,7 +119,11 @@ inline constexpr size_t kNoItem = static_cast<size_t>(-1);
 /// bound. `bindParam` writes the param's boot value into the storage.
 class InstanceContext {
 public:
-    explicit InstanceContext(detail::InstanceRecord &record) : m_record(record) {}
+    /// `table` resolves `ref()`; without it every ref reads as unwired.
+    explicit InstanceContext(detail::InstanceRecord &record, const detail::InstanceTable *table = nullptr)
+        : m_record(record), m_table(table)
+    {
+    }
 
     InstanceContext(const InstanceContext &) = delete;
     InstanceContext &operator=(const InstanceContext &) = delete;
@@ -130,6 +151,14 @@ public:
     /// `id` is not a param.
     uint32_t param(uint16_t id) const;
 
+    /// The instance that wiring param `id` (a `ref` param) points at, or
+    /// nullptr when it is unwired (0) or `id` is not a wiring param. The core
+    /// creates dependencies first, so a wired instance exists and is running
+    /// (an instance whose dependency is missing is never created). The
+    /// pointer stays valid while the core lives; the module casts it to the
+    /// type it expects for the ref's category.
+    Instance *ref(uint16_t id) const;
+
     /// Record why `start()` failed. `stage` is the instance's own (below
     /// 0x100) and goes into `core.InstanceStartFailed` arg1; `err` is its
     /// esp_err. The first call wins.
@@ -151,6 +180,7 @@ private:
     bool bind(uint16_t id, defs::ItemKind kind, defs::ValueType type, void *storage, OnChange hook);
 
     detail::InstanceRecord &m_record;
+    const detail::InstanceTable *m_table;
     bool m_failed = false;
     uint32_t m_fail_stage = 0;
     int32_t m_fail_err = 0;

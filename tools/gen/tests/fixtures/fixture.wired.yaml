@@ -1,0 +1,17 @@
+# A wired type: refs in both tick directions and two GPIO params. `feedback`
+# ticks before it (the default), `actuator` after it (ref_order: after).
+# `peer` and `follower` point at other `fixture.*` instances, so the tests can
+# build cycles in the ref graph and in the tick graph.
+type: fixture.wired
+type_id: 0x05
+description: Fixture controller.
+loops: [control, sensor]
+items:
+  - {id: 0x0001, kind: param, name: feedback, type: u32, flags: [reboot_required], ref: feedback}
+  - {id: 0x0002, kind: param, name: actuator, type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
+  - {id: 0x0003, kind: param, name: peer, type: u32, flags: [reboot_required], ref: fixture, ref_order: before}
+  - {id: 0x0004, kind: param, name: follower, type: u32, flags: [reboot_required], ref: fixture, ref_order: after}
+  - {id: 0x0010, kind: param, name: pin_a, type: u8, flags: [reboot_required], gpio: true}
+  - {id: 0x0011, kind: param, name: pin_b, type: u8, flags: [reboot_required, locked_while_armed], gpio: true}
+  - {id: 0x0020, kind: param, name: gain, type: f32, min: 0, max: 100, default: 1}
+  - {id: 0x0100, kind: signal, name: output, type: f32}

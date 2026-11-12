@@ -18,6 +18,12 @@ inline constexpr uint8_t kControlLoop = 0;
 inline constexpr uint8_t kSensorLoop = 1;
 inline constexpr size_t kLoopCount = 2;
 
+/// The loop class of loop `id` (the loop a type must allow to run there).
+constexpr defs::LoopClass loopClassOf(uint8_t id)
+{
+    return (id == kSensorLoop) ? defs::LoopClass::Sensor : defs::LoopClass::Control;
+}
+
 /// The most params one batch can stage.
 inline constexpr size_t kMaxBatchEntries = 64;
 
@@ -69,7 +75,8 @@ public:
     const char *name() const { return m_name; }
     defs::LoopClass loopClass() const { return m_class; }
 
-    /// Append an instance. Boot only. @return false when the list is full.
+    /// Append an instance. Boot only: the core adds them in tick order.
+    /// @return false when the list is full.
     bool addInstance(Instance *instance);
     size_t instanceCount() const { return m_count; }
 
@@ -77,7 +84,8 @@ public:
     ///   1. increment the heartbeat
     ///   3. swap in a staged batch (Ready → Applying, copy, hooks, Applied,
     ///      signal the config task)
-    ///   7. tick() each instance in insertion order
+    ///   7. tick() each instance in list order (the wiring's tick order, fixed at
+///      boot)
     ///   9. update the statistics
     /// Real-time: no lock, no logging, no allocation, no blocking, and the
     /// work is bounded (kMaxBatchEntries copies plus the instances).

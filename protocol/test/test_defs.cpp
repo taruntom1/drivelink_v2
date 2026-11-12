@@ -11,6 +11,7 @@
 // headers compile with -Werror and describe what the YAML says.
 #include "type_fixture_full.hpp"
 #include "type_fixture_sensor.hpp"
+#include "type_fixture_wired.hpp"
 
 #include <array>
 #include <cstring>
@@ -290,4 +291,35 @@ TEST_CASE("Flag and loop helpers")
     CHECK(flagBits() == 0);
     CHECK(flagBits(ItemFlag::RebootRequired, ItemFlag::Persist) == 0x03);
     CHECK(loopMask(LoopClass::Control, LoopClass::Sensor) == 0x03);
+}
+
+TEST_CASE("Defs: gpio and ref_order flags, wiring values and categories")
+{
+    using namespace drivelink::protocol::defs;
+    namespace wd = fixture_wired;
+    CHECK(static_cast<uint8_t>(ItemFlag::Gpio) == 0x20);
+    CHECK(static_cast<uint8_t>(ItemFlag::RefTicksAfter) == 0x40);
+    const ItemDesc *pin = findItem(wd::kDesc, wd::kPinA);
+    REQUIRE(pin != nullptr);
+    CHECK(hasFlag(*pin, ItemFlag::Gpio));
+    CHECK(hasFlag(*pin, ItemFlag::RebootRequired));
+    CHECK(pin->default_bits == kNoGpio);
+    CHECK_FALSE(pin->has_max);
+    CHECK(hasFlag(*findItem(wd::kDesc, wd::kActuator), ItemFlag::RefTicksAfter));
+    CHECK_FALSE(hasFlag(*findItem(wd::kDesc, wd::kFeedback), ItemFlag::RefTicksAfter));
+
+    CHECK(wiringRef(0x20, 3) == 0x2003);
+    CHECK(wiringRefType(0x2003) == 0x20);
+    CHECK(wiringRefInstance(0x2003) == 3);
+    CHECK(isWiringRef(0xFFFF));
+    CHECK_FALSE(isWiringRef(0x10000));
+    CHECK(kUnwired == 0);
+
+    CHECK(inCategory("actuator.pwm_dir", "actuator"));
+    CHECK_FALSE(inCategory("actuator", "actuator"));
+    CHECK_FALSE(inCategory("actuators.x", "actuator"));
+    CHECK_FALSE(inCategory("act.x", "actuator"));
+    CHECK_FALSE(inCategory("system", "system"));
+    CHECK_FALSE(inCategory("a.b", ""));
+    CHECK_FALSE(inCategory(nullptr, "a"));
 }

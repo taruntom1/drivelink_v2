@@ -4,8 +4,9 @@
 # (backend/native/) is built by firmware/test/native/CMakeLists.txt.
 idf_component_register(
     SRCS "backend/idf/src/core_os_idf.cpp"
+         "backend/idf/src/kv_store_idf.cpp"
          "backend/idf/src/periodic_task_idf.cpp"
     INCLUDE_DIRS "include" "backend/idf/include"
-    REQUIRES freertos rtos_util protocol
-    PRIV_REQUIRES diag esp_timer log
+    REQUIRES freertos rtos_util protocol esp_timer
+    PRIV_REQUIRES diag log nvs_flash esp_system
 )

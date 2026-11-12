@@ -57,7 +57,8 @@ type_id: 0x20
 description: Optional text.
 loops: [control]
 items:
-  - {id: 0x0001, kind: param,  name: actuator, type: u32, flags: [reboot_required], ref: actuator}
+  - {id: 0x0001, kind: param,  name: actuator, type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
+  - {id: 0x0002, kind: param,  name: feedback, type: u32, flags: [reboot_required], ref: feedback}
   - {id: 0x0010, kind: param,  name: mode, type: enum, values: {open_loop: 0, velocity: 1}, default: open_loop}
   - {id: 0x0020, kind: param,  name: vel.kp, type: f32, unit: "1/(rad/s)", min: 0, max: 1000, default: 0}
   - {id: 0x0100, kind: signal, name: position, type: f32, unit: rad}
@@ -90,13 +91,21 @@ A retired item has only `id`, `name` and `retired: true`. It keeps its id in the
 | `values` | enum items | a mapping of name to `0–255`, unique values |
 | `flags` | param | `reboot_required`, `read_only`, `locked_while_armed` |
 | `persist` | param | `false` keeps the param out of NVS. Otherwise it persists, unless it is `read_only`. |
-| `ref` | u32 param with `reboot_required` | the category of a wiring param, such as `actuator` |
+| `ref` | u32 param with `reboot_required` | the category of a wiring param, such as `actuator` (see "Wiring and pins" below) |
+| `ref_order` | a `ref` param | `before` (default): the referenced instance ticks before this one. `after`: it ticks after this one (`ItemFlag::RefTicksAfter`) |
+| `gpio` | u8 param with `reboot_required` | `true` marks a pin (`ItemFlag::Gpio`). It takes no `min`, `max` or `default`: the default is `0xFF`, no pin |
 | `testgen` | input | `true` lets a test signal drive it |
 | `runs_in` | action (required) | `loop` or `paused` |
 | `args`, `results` | action | up to 4 scalars each: `{name, type, unit}` with a scalar type (no enum) |
 | `blob` | action | `none` (default), `in`, `out` or `both` |
 
 Every param, signal and input value is a 4-byte slot. Larger data goes through actions.
+
+### Wiring and pins
+
+- **A wiring param** (`ref`) holds `type << 8 | instance` in the low 16 bits, with the upper 16 bits zero (`defs::wiringRef()`). `0` means unwired: layout validation allows it, and the module's `start()` decides whether it needs the ref. The value must name an existing instance whose type is in the category, which is the part of the type name before the dot (`actuator` holds `actuator.pwm_dir`; `defs::inCategory()`), in the same loop.
+- **Creation** is always dependencies first. **The tick order** follows `ref_order`: with the default `before` the referenced instance ticks first; with `after` it ticks after the instance that holds the ref. A controller has `feedback` (before) and `actuator` (`ref_order: after`), so a loop ticks feedback, controller, actuator. Neither the ref graph nor the tick graph may have a cycle.
+- **A pin param** (`gpio: true`) is a `u8` flagged `reboot_required`. `0xFF` (`defs::kNoGpio`) means no pin; it is the default and claims nothing. Any other value must be a pin the device allows, and no pin may be used twice on the device.
 
 ## system.yaml
 
@@ -119,10 +128,11 @@ Everything else follows the module type rules above: ids, names, value types, li
 
 `protocol/include/drivelink/protocol/defs.hpp` (hand-written) defines what the generated tables hold.
 
-- Enums: `ItemKind`, `ValueType`, `ItemFlag` (bits `RebootRequired`, `Persist`, `ReadOnly`, `LockedWhileArmed`, `Testgen`), `LoopClass` (bits `Control`, `Sensor`), `ActionPlacement` and `BlobDir`. Their numeric values are not a wire encoding yet. The describe protocol (F3) fixes that.
+- Enums: `ItemKind`, `ValueType`, `ItemFlag` (bits `RebootRequired` 0x01, `Persist` 0x02, `ReadOnly` 0x04, `LockedWhileArmed` 0x08, `Testgen` 0x10, `Gpio` 0x20, `RefTicksAfter` 0x40), `LoopClass` (bits `Control`, `Sensor`), `ActionPlacement` and `BlobDir`. Their numeric values are not a wire encoding yet. The describe protocol (F3) fixes that.
 - `ItemDesc`: `id`, `kind`, `type`, `flags`, `name`, `unit`, `description`, `min_bits`, `max_bits`, `default_bits`, `has_min`, `has_max`, `enum_values`, `ref`, `runs_in`, `args`, `results` and `blob`.
 - `TypeDesc`: `name`, `type_id`, `loops` and `items`.
 - `findItem(type, id)`, `findType(table, type_id)`, `hasFlag`, `runsIn`, `f32Bits` and `f32FromBits`.
+- Wiring and pins: `kNoGpio` (0xFF), `kUnwired` (0), `wiringRef(type, inst)`, `isWiringRef`, `wiringRefType`, `wiringRefInstance` and `inCategory(type_name, category)`.
 
 `min_bits`, `max_bits` and `default_bits` are the raw slot bits, read according to `type`: a bool is 0 or 1, an unsigned integer is its value, an i32 is its two's complement, an f32 is its IEEE-754 bits and an enum is the value of the named entry. A limit that the YAML leaves out has its `has_*` flag false and its bits 0. The generator writes f32 values as hex bits taken from `struct.pack`, with the decimal in a comment.
 

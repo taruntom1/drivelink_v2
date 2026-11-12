@@ -128,6 +128,8 @@ def value_text(item: dict, key: str) -> str:
         return f"{v:.9g}"
     if isinstance(v, bool):
         return "true" if v else "false"
+    if key == "default" and "gpio" in item["flags"]:
+        return "0xFF (no pin)"
     return str(v)
 
 

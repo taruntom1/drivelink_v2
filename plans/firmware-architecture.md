@@ -72,7 +72,9 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Group | A subscription group (signals or inputs, ESP → host) or a command group (inputs, host → ESP). Each is bound to one loop. |
 | `Ref` | `type u8 \| instance u8 \| id u16`, 4 bytes on the wire. The id alone says which kind of item it is. |
 
-Wiring between instances (which controller uses which actuator and feedback) uses `Ref`-typed params. These are `u32` params flagged `reboot_required`, which hold a packed type and instance. **Wired instances must run in the same loop**, and layout validation enforces that.
+Wiring between instances (which controller uses which actuator and feedback) uses `Ref`-typed params. These are `u32` params flagged `reboot_required`, which hold `type << 8 | instance` in the low 16 bits with the upper 16 bits 0; `0` means unwired, which validation allows (the module's `start()` decides whether it needs the ref). A ref's `ref:` key names a category, the part of the type name before the dot (`actuator` holds `actuator.pwm_dir`). **Wired instances must run in the same loop**, and layout validation enforces that. Creation is always dependencies first; the tick order follows each ref's `ref_order` (`before`, the default: the target ticks first; `after`: it ticks after), so a controller's `actuator` ref is `ref_order: after`.
+
+A pin is a `u8` param flagged `reboot_required` with `gpio: true` (`ItemFlag::Gpio`). `0xFF` means no pin; it is the default and claims nothing.
 
 ## Firmware structure
 
@@ -166,7 +168,7 @@ type_id: 0x20
 loops: [control]
 items:
   # params
-  - {id: 0x0001, kind: param,  name: actuator,      type: u32, flags: [reboot_required], ref: actuator}
+  - {id: 0x0001, kind: param,  name: actuator,      type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
   - {id: 0x0002, kind: param,  name: feedback,      type: u32, flags: [reboot_required], ref: feedback}
   - {id: 0x0010, kind: param,  name: mode,          type: enum, values: {open_loop: 0, velocity: 1, position: 2}, default: open_loop}
   - {id: 0x0020, kind: param,  name: vel.kp,        type: f32, unit: "1/(rad/s)", min: 0, max: 1000, default: 0}
@@ -245,7 +247,7 @@ The rules follow the protocol conventions:
 | Family | Ops |
 |---|---|
 | `0x01` system | `GET_INFO`, `ARM`, `DISARM`, `ACK_FAULT`, `SAVE`, `REVERT`, `FACTORY_RESET`, `REBOOT`, `EXIT_SAFE_MODE` |
-| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, loop, label)` (the loop defaults to the type's first loop class), `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
+| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, loop, label)` (the loop defaults to the type's first loop class; the device picks the lowest free instance id of the type and returns it), `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
 | `0x03` describe | `GET_TYPES` (paged), `GET_ITEMS(type, start)` (paged: every item with its kind and descriptor), `GET_ENUM(type, item)`, `GET_CODES(start)` (paged diag code descriptors: source, code, name, severity, kind, flags) |
 | `0x04` param | `GET(n × Ref)`, `SET(n × (Ref, value))` (atomic batch), `GET_PENDING` (staged `reboot_required` values) |
 | `0x05` group | `SUB_CONFIG(group, loop, divider, n × Ref)`, `SUB_ENABLE`, `SUB_CLEAR`, `CMD_CONFIG(group, loop, n × Ref)`, `CMD_CLEAR`, `LIST` |
@@ -262,7 +264,8 @@ The rules follow the protocol conventions:
   - an instance count and flags: `pending_reboot`, `layout_invalid`, `config_loaded_from_nvs` and `safe_mode`
 - **Param `SET`**
   - **Staging rules:**
-    - `reboot_required` params go to the pending layout.
+    - `reboot_required` params go to the pending layout, and so does any param of an instance that exists only there. Such a batch must be all pending (else `CrossLoopBatch`); accepted, it answers `PendingReboot` with the applied values.
+    - Params of an instance that isn't running (failed, invalid, missing a dependency, or safe mode) are validated and written to its stored values on the config task; a batch can't mix them with system or loop params.
     - Live params must all belong to instances in one loop, or the batch is rejected (`CrossLoopBatch`).
     - If that loop's staging slot is taken, the batch is rejected (`Busy`, `StagingBusy`).
     - Params flagged `locked_while_armed` are refused while armed: loop rates, `system.watchdog_ms`, and wiring.
@@ -374,8 +377,8 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 **NVS layout:**
 - One namespace per instance, `t<type>i<inst>`.
 - Each instance's params are stored as one blob of `n × (id u16, value u32)`, with a header: format version, generation u32, count and CRC32.
-- Each blob has two slots, A and B. `SAVE` writes the slot with the older generation. Loading takes the valid slot with the highest generation. A power loss during `SAVE` therefore leaves the previous configuration intact.
-- The `layout` blob (instances, with their type, id, loop and label) uses the same A/B scheme. One `SAVE` gives every blob the same generation, and loading uses only blobs of the newest generation that is complete across the layout.
+- Each blob has two slots, A and B (keys `p_a` / `p_b`). `SAVE` writes generation `newest + 1` to slot `gen & 1`, which is the slot with the older generation. Loading takes the valid slot with the highest generation. A power loss during `SAVE` therefore leaves the previous configuration intact.
+- The `layout` blob (instances, with their type, id, loop and label; namespace `core`, keys `layout_a` / `layout_b`) uses the same A/B scheme and is written last, as the commit record. One `SAVE` gives every blob the same generation, and loading uses only blobs of the newest generation that is complete across the layout.
 
 **Ids across firmware versions.** Unknown ids are ignored, and missing ids take their YAML default. Adding or removing params in a firmware update therefore needs no migration. A retired id is skipped.
 
@@ -383,13 +386,13 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 - `SAVE` writes every `persist` param of every instance, plus the layout, then clears `nvs_dirty`.
 - `REVERT` reloads the live (non-structural) params from NVS through the normal staged path, one batch per loop.
 - `FACTORY_RESET` erases the namespaces and reboots.
-- `REMOVE_INSTANCE`, once applied at reboot, erases that instance's namespace. A later `ADD_INSTANCE` that reuses the id starts from the YAML defaults.
+- `SAVE` erases the namespace of every instance that is not in the layout it wrote (after the commit), so a removed instance's params go then. A later `ADD_INSTANCE` that reuses the id starts from the YAML defaults.
 
 **Pending changes.** A `reboot_required` param write or a layout op goes to a pending copy. Device info and the status stream show `pending_reboot`. The change takes effect after `SAVE` and `REBOOT`. `DISCARD_PENDING` drops it.
 
 **Layout validation** runs when a layout op or a `reboot_required` write is staged, and again at boot:
-- **GPIOs:** the core keeps a GPIO registry. Every pin param is checked against the ESP32-S3 pin policy that `motor_manager` uses today (no USB pins, no flash/PSRAM pins 26–37, no uart_comm pins). It is also checked against every other instance's pins (`GpioConflict`).
-- **Wiring:** a `Ref` param must point to an existing instance of the right type, in the same loop (`LoopMismatch`).
+- **GPIOs:** every pin param (`gpio: true`, other than `0xFF`) is checked against the ESP32-S3 pin policy that `motor_manager` uses today (no USB pins, no flash/PSRAM pins 26–37, no uart_comm pins; `GpioNotAllowed`). It is also checked against every other pin on the device (`GpioConflict`).
+- **Wiring:** a `Ref` param must be 0 or point to an existing instance of its category (`BadRef`), in the same loop (`LoopMismatch`). Neither the ref graph nor the tick graph may have a cycle (`WiringCycle`). An instance that another one is wired to can't be removed (`Referenced`).
 - **Labels:** must be unique on the device (`LabelInUse`) and non-empty.
 
 **Flash stalls the loops.**

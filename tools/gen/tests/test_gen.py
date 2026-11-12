@@ -1,7 +1,9 @@
 """Tests for tools/gen. Run: python -m unittest discover -s tools/gen/tests
 
 Stdlib only (the generator itself needs PyYAML). The golden fixtures are in
-tests/fixtures: a registry, a small diag file, a system type and two module types.
+tests/fixtures: a registry, a small diag file, a system type and the module types
+(fixture.full, fixture.sensor, and the wiring set actuator.fixture,
+feedback.fixture and fixture.wired).
 """
 
 from __future__ import annotations
@@ -76,6 +78,9 @@ class GoldenOutput(TempCase):
             f"{GEN_DIR}/type_fixture_full.hpp",
             f"{GEN_DIR}/type_fixture_sensor.hpp",
             f"{GEN_DIR}/type_system.hpp",
+            f"{GEN_DIR}/type_actuator_fixture.hpp",
+            f"{GEN_DIR}/type_feedback_fixture.hpp",
+            f"{GEN_DIR}/type_fixture_wired.hpp",
         ]
         for rel in names:
             raw = (self.out / rel).read_bytes()
@@ -161,7 +166,7 @@ class GoldenOutput(TempCase):
         self.assertIn("&fixture_sensor::kDesc,", t)
         self.assertIn("static_assert(typeIdsUnique(kTypeTable)", t)
         # The system type comes first: the table is sorted by type id.
-        self.assertIn("std::array<const TypeDesc *, 3> kTypeTable{{\n    &system::kDesc,\n    &fixture_full::kDesc,", t)
+        self.assertIn("std::array<const TypeDesc *, 6> kTypeTable{{\n    &system::kDesc,\n    &fixture_full::kDesc,", t)
         self.assertIn('#include "type_system.hpp"', t)
 
     def test_system_header(self) -> None:
@@ -175,9 +180,9 @@ class GoldenOutput(TempCase):
         self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
 
     def test_empty_type_table(self) -> None:
-        (self.defs / "fixture.full.yaml").unlink()
-        (self.defs / "fixture.sensor.yaml").unlink()
-        (self.defs / "system.yaml").unlink()
+        for path in self.defs.glob("*.yaml"):
+            if path.name not in ("registry.yaml", "diag_codes.yaml"):
+                path.unlink()
         code, _, err = self.run_gen()
         self.assertEqual(code, 0, err)
         t = self.read(f"{GEN_DIR}/types.hpp")
@@ -289,7 +294,7 @@ class DescriptorHash(TempCase):
             ("diag_codes.yaml", "name: Broken", "name: Broken2"),
             ("diag_codes.yaml", "description: Something was dropped.", "description: Something got dropped."),
             ("fixture.sensor.yaml", "unit: m", "unit: cm"),
-            ("fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x03"),
+            ("fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x06"),
             ("fixture.sensor.yaml", "loops: [sensor]", "loops: [sensor, control]"),
             ("fixture.full.yaml", "default: 1.5", "default: 1.25"),
             ("fixture.full.yaml", "min: -100", "min: -101"),
@@ -303,6 +308,9 @@ class DescriptorHash(TempCase):
             ("fixture.full.yaml", "name: old_thing", "name: older_thing"),
             ("fixture.full.yaml", "testgen: true", "testgen: false"),
             ("system.yaml", "default: 50", "default: 60"),
+            ("fixture.wired.yaml", "ref: actuator, ref_order: after", "ref: actuator"),
+            ("fixture.wired.yaml", "name: pin_a, type: u8, flags: [reboot_required], gpio: true",
+             "name: pin_a, type: u8, flags: [reboot_required]"),
             ("system.yaml", "unit: s}", "unit: ms}"),
         ]
         seen = {base}
@@ -522,12 +530,73 @@ class TypeErrors(TempCase):
 
 
 
+class GpioAndRefOrder(TempCase):
+    WIRED = "fixture.wired.yaml"
+
+    def wired_items(self) -> dict:
+        types = {t["type"]: t for t in model.load_defs(self.defs)["types"]}
+        return {i["name"]: i for i in types["fixture.wired"]["items"]}
+
+    def test_accepted(self) -> None:
+        items = self.wired_items()
+        self.assertEqual(items["pin_a"]["flags"], ["reboot_required", "persist", "gpio"])
+        self.assertEqual(items["pin_a"]["default_bits"], 0xFF)  # no pin
+        self.assertEqual(items["pin_b"]["flags"], ["reboot_required", "persist", "locked_while_armed", "gpio"])
+        self.assertEqual(items["actuator"]["flags"], ["reboot_required", "persist", "ref_ticks_after"])
+        self.assertEqual(items["feedback"]["flags"], ["reboot_required", "persist"])  # before is the default
+        self.assertEqual(items["peer"]["flags"], ["reboot_required", "persist"])  # ref_order: before, said out loud
+        self.assertEqual(items["actuator"]["ref"], "actuator")
+
+    def test_gpio_false_is_a_plain_param(self) -> None:
+        self.mutate(self.WIRED, "name: pin_a, type: u8, flags: [reboot_required], gpio: true",
+                    "name: pin_a, type: u8, flags: [reboot_required], gpio: false, max: 40")
+        self.assertEqual(self.wired_items()["pin_a"]["flags"], ["reboot_required", "persist"])
+
+    def test_generated(self) -> None:
+        code, _, err = self.run_gen()
+        self.assertEqual(code, 0, err)
+        t = self.read(f"{GEN_DIR}/type_fixture_wired.hpp")
+        self.assertIn(".flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist, ItemFlag::Gpio),", t)
+        self.assertIn(".flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist, ItemFlag::RefTicksAfter),", t)
+        self.assertIn(".default_bits = 0x000000FF,", t)
+        doc = self.read("docs/protocol/types/fixture.wired.md")
+        self.assertIn("| 0x0010 | `pin_a` | u8 |  |  | 0xFF (no pin) | reboot_required, persist, gpio |", doc)
+        self.assertIn("ref_ticks_after, ref:actuator", doc)
+
+    def test_rejected(self) -> None:
+        w = self.WIRED
+        pin = "name: pin_a, type: u8, flags: [reboot_required], gpio: true"
+        cases = [
+            ("gpio on a u16", w, pin, "name: pin_a, type: u16, flags: [reboot_required], gpio: true",
+             "'gpio' is only for a u8 param flagged reboot_required"),
+            ("gpio without reboot_required", w, pin, "name: pin_a, type: u8, gpio: true", "flagged reboot_required"),
+            ("gpio with a max", w, pin, pin + ", max: 40", "'max' is not allowed on a gpio param"),
+            ("gpio with a min", w, pin, pin + ", min: 1", "'min' is not allowed on a gpio param"),
+            ("gpio with a default", w, pin, pin + ", default: 5", "'default' is not allowed on a gpio param"),
+            ("gpio not a bool", w, "gpio: true}", "gpio: yes please}", "'gpio' must be true/false"),
+            ("gpio on a signal", w, "name: output, type: f32}", "name: output, type: u8, gpio: true}",
+             "unknown key 'gpio'"),
+            ("ref_order without ref", w, "name: gain, type: f32,", "name: gain, type: f32, ref_order: after,",
+             "'ref_order' is only for a 'ref' param"),
+            ("bad ref_order", w, "ref_order: after}\n  - {id: 0x0003", "ref_order: later}\n  - {id: 0x0003",
+             "ref_order must be one of before, after"),
+            ("ref_order on a signal", w, "name: output, type: f32}", "name: output, type: f32, ref_order: after}",
+             "unknown key 'ref_order'"),
+        ]
+        for label, file, old, new, expected in cases:
+            with self.subTest(label):
+                shutil.rmtree(self.defs)
+                shutil.copytree(FIXTURES, self.defs)
+                self.mutate(file, old, new)
+                self.assertSpecError(file, expected)
+
+
 class SystemType(TempCase):
     SYS = "system.yaml"
 
     def test_loads_as_type_zero_with_no_loops(self) -> None:
         types = model.load_defs(self.defs)["types"]
-        self.assertEqual([t["type_id"] for t in types], [0x00, 0x01, 0x02])
+        self.assertEqual([t["type_id"] for t in types], [0x00, 0x01, 0x02, 0x03, 0x04, 0x05])
         system = types[0]
         self.assertEqual(system["type"], "system")
         self.assertEqual(system["ns"], "system")
@@ -542,7 +611,7 @@ class SystemType(TempCase):
     def test_is_optional(self) -> None:
         (self.defs / self.SYS).unlink()
         types = model.load_defs(self.defs)["types"]
-        self.assertEqual([t["type_id"] for t in types], [0x01, 0x02])
+        self.assertEqual([t["type_id"] for t in types], [0x01, 0x02, 0x03, 0x04, 0x05])
         code, _, err = self.run_gen()
         self.assertEqual(code, 0, err)
         self.assertFalse((self.out / GEN_DIR / "type_system.hpp").exists())
