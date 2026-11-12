@@ -77,7 +77,7 @@ def main() -> int:
     # Opening the port can reset the board (the first open after a flash does,
     # through the adapter's DTR/RTS lines), and a command sent while it boots is
     # lost. So retry this first query, every 0.7 s for up to 5 s.
-    started_mask = 0xFF
+    expected_managers = 0xFF
     try:
         for attempt in range(7):
             proto.send_command(DIAG_QUERY, bytes([DIAG_VERSION, 0x31, 0x01]))
@@ -91,10 +91,10 @@ def main() -> int:
             raise TimeoutError("no diag response")
         ok = len(p) >= 4 + 11 and p[0] == DIAG_VERSION and p[2] == 0x01 and p[3] == 0x00
         # Diag v3 reports module counts; legacy managers are still expected.
-        started_mask = STARTED_MOTOR | STARTED_TIME_SYNC | STARTED_IMU
+        expected_managers = STARTED_MOTOR | STARTED_TIME_SYNC | STARTED_IMU
         results.append(check("diag GetInfo", ok,
                              f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}, "
-                             f"started_mask 0x{started_mask:02X}, {len(p)} bytes"))
+                             f"expected_managers 0x{expected_managers:02X}, {len(p)} bytes"))
     except TimeoutError as exc:
         results.append(check("diag GetInfo", False, str(exc)))
 
@@ -110,7 +110,7 @@ def main() -> int:
         results.append(check("diag GetEntries", False, str(exc)))
 
     # motor SET_TIMING: version, seq, subcommand 0x0B, motor_id, control_us, telemetry_us.
-    if started_mask & STARTED_MOTOR:
+    if expected_managers & STARTED_MOTOR:
         body = bytes([MOTOR_VERSION, 0x32, 0x0B, 0x00]) + struct.pack("<II", 1000, 10000)
         proto.send_command(MOTOR_CONFIGURE, body)
         try:
@@ -127,7 +127,7 @@ def main() -> int:
 
     # IMU: enable the stream, wait for a frame on the stream channel, disable it again.
     # SetStreamEnabled body: version, seq, subcommand 0x01, enabled.
-    if started_mask & STARTED_IMU:
+    if expected_managers & STARTED_IMU:
         proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x33, 0x01, 0x01]))
         try:
             p = wait_for(proto, IMU_RESPONSE, 0x33, 3.0)
@@ -151,10 +151,10 @@ def main() -> int:
         except TimeoutError as exc:
             results.append(check("IMU SetStreamEnabled(0)", False, str(exc)))
     else:
-        print("[SKIP] IMU stream check: diag reports the IMU manager did not start (no IMU fitted?)")
+        print("[SKIP] IMU stream check: IMU manager is not expected")
 
     # time_sync: the ESP sends a request every 5 s. version, reserved, request_id u16, client time i64.
-    if started_mask & STARTED_TIME_SYNC:
+    if expected_managers & STARTED_TIME_SYNC:
         try:
             p = wait_for(proto, TIME_SYNC_REQUEST, None, 7.0)
             ok = len(p) == 12 and p[0] == TIME_SYNC_VERSION
@@ -162,7 +162,7 @@ def main() -> int:
         except TimeoutError as exc:
             results.append(check("time_sync request", False, str(exc)))
     else:
-        results.append(check("time_sync request", False, "diag reports time_sync did not start"))
+        results.append(check("time_sync request", False, "time_sync is not expected"))
 
     ser.close()
     passed = all(results)

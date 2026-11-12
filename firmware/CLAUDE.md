@@ -116,7 +116,7 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
   - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 6-byte header.
   - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 5-byte header.
   - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
-  - time_sync is at v2, diag at v2 (both bumped with the F1b framing). time_sync's ESP-initiated request already carries a `u16 request_id`.
+  - time_sync is at v2; diag is at v3 (the F3b instance/monotonic redesign). time_sync's ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.

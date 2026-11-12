@@ -285,7 +285,7 @@ extern "C" void app_main(void)
     }
     (void)core_obj;
 
-    // Last, so Boot carries the final started_mask. Records from above are
+    // Last, so Boot carries the final instance counts. Records from above are
     // waiting in the diag queue and go out right after Boot.
     diag::ReporterConfig diag_cfg{};
     diag_cfg.instances_ok=core_obj?static_cast<uint8_t>(core_obj->instanceCount()):0;
