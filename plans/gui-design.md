@@ -151,7 +151,7 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G4 Layout | Hi-fi Layout screen: instance tree by loop, add and remove instances, labels, wiring with `Ref` pickers, GPIO and validation errors, the pending-reboot banner and discard. The param table for an instance, and the custom panel slot. | Screens page | done |
 | G5 Tune and Monitor | Hi-fi Tune screen: pick a controller, live gains, test signal and capture set-up, run, overlay runs, the session file (name, save, open, export CSV), plant identification and suggested gains, save or revert. Hi-fi Monitor screen: free-form live plots of any signals, subscription set-up, pause and cursors. | Screens page | done |
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
-| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Screens page | planned |
+| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Custom panels | in progress |
 | G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
 
 ## G1 wireframes
@@ -287,6 +287,12 @@ On "Screens – Remote" (`2:6`): 16 hi-fi frames at 2560×1440 in Dark, arranged
 **Control rules represented:** a remote connection starts as an observer. It creates its command group only after the lease grant, as required by the host plan's lease rule. ARM is disabled with "ARM needs lease" when this GUI is not the holder; DISARM stays enabled whenever the device link exists, above modal scrims. Taking/releasing a lease never arms automatically. Live edits while another client drives require the agreed warning; opting out lasts only for this connection. Captures and other exclusive operations retain the host plan's disarmed/no-holder exception, rather than treating an observer as a lease holder.
 
 **Responsive checks:** at 1080p the remote Tune gain-history card becomes a compact View history entry, preserving visible gain controls and the live plot. Monitor's three plots share the available height, legends wrap, and plot geometry/axis labels are fitted to the new bounds. This applies to G6; the previously accepted G5 issues below remain open. All G6 frames contain editable layers and G2 instances; the final audit found no image-filled UI nodes and only Inter / JetBrains Mono text. G8 wires the full clickable prototype, including the compact history entry.
+
+## G7 Custom panel (discussion)
+
+Started 2026-11-13 after G6 acceptance and opening PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39). Custom panels (`2:7`) is empty; the G4 Calibration slot (`85:4679`) supplies the shell and instance context. Layout, file workflow and live-preview choices have been put to the user and remain pending; no G7 screens have been built.
+
+Proposed scope: live calibration status and guidance, calibration-file import/review/export, explicit apply progress/result and refusal/error states, with 1080p and Light checks. The firmware plan names `calibration_read`, `calibration_write` and `calibration_apply` as paused actions on the sensor loop; their detailed payload and persistence semantics remain F6 work. G7 must not imply that importing a PC file applies it or that device SAVE persists a calibration blob without that contract.
 
 ## Open issues
 
