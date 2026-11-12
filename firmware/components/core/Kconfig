@@ -1,0 +1,59 @@
+menu "DriveLink core"
+
+    config CORE_MAX_INSTANCES
+        int "Maximum module instances"
+        default 16
+        range 1 64
+        help
+            How many module instances the core can hold, across both loops.
+            The instance table and each loop's instance list are sized for
+            this at boot.
+
+    config CORE_CONTROL_TASK_STACK
+        int "Control loop task stack (bytes)"
+        default 4096
+        range 2048 16384
+        help
+            Stack of the control loop task (core_ctrl). Check its high-water
+            mark on hardware after adding modules.
+
+    config CORE_CONTROL_TASK_PRIO
+        int "Control loop task priority"
+        default 20
+        range 1 24
+        help
+            FreeRTOS priority of the control loop task. It is woken by an
+            esp_timer callback, so keep it high but below the esp_timer task
+            (priority 22).
+
+    config CORE_CONTROL_TASK_CORE
+        int "Control loop task core (-1 = no affinity)"
+        default 1
+        range -1 1
+        help
+            Core the control loop task is pinned to. Core 1 keeps it away
+            from the UART RX and config work on core 0.
+
+    config CORE_SENSOR_TASK_STACK
+        int "Sensor loop task stack (bytes)"
+        default 4096
+        range 2048 16384
+        help
+            Stack of the sensor loop task (core_sens). Sensor modules do bus
+            I/O here; check the high-water mark after adding one.
+
+    config CORE_SENSOR_TASK_PRIO
+        int "Sensor loop task priority"
+        default 10
+        range 1 24
+        help
+            FreeRTOS priority of the sensor loop task.
+
+    config CORE_SENSOR_TASK_CORE
+        int "Sensor loop task core (-1 = no affinity)"
+        default 0
+        range -1 1
+        help
+            Core the sensor loop task is pinned to.
+
+endmenu
