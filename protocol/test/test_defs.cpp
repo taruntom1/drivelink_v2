@@ -7,7 +7,7 @@
 #include "drivelink/protocol/gen/types.hpp"
 
 // Generated at build time from tools/gen/tests/fixtures (see
-// firmware/test/host/CMakeLists.txt): they prove that the generator's type
+// firmware/test/native/CMakeLists.txt): they prove that the generator's type
 // headers compile with -Werror and describe what the YAML says.
 #include "type_fixture_full.hpp"
 #include "type_fixture_sensor.hpp"

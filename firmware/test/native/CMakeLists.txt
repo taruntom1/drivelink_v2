@@ -1,17 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Host-side unit tests for the pure-logic parts of the firmware: the
-# protocol/ library (CRC, framing, frame scanner, wire codec, the generated
-# definitions; its tests are protocol/test) and the protocol encoders/decoders (including diag's codec and slot
-# table), the PID and the velocity estimator.
-# These sources have no ESP-IDF or FreeRTOS dependency; shim/ provides the
-# two IDF headers they still include (sdkconfig.h, esp_log.h).
+# Native unit tests: everything that builds without ESP-IDF, run on the host.
+#   - the protocol/ library (CRC, framing, frame scanner, wire codec, the
+#     generated definitions; its tests are protocol/test)
+#   - core_os's native backend and the pure core (registry, bind API, values,
+#     loops, the param service), with the generator's fixture types as test
+#     module types
+#   - the legacy protocol codecs (motor, IMU, time_sync, diag and its slot
+#     table), the PID and the velocity estimator
+# The legacy sources include two IDF headers; shim/ provides them (sdkconfig.h,
+# esp_log.h). The core includes neither.
 #
-#   cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
-#   cmake --build firmware/test/host/build
-#   ctest --test-dir firmware/test/host/build --output-on-failure
+#   cmake -S firmware/test/native -B firmware/test/native/build -G Ninja
+#   cmake --build firmware/test/native/build
+#   ctest --test-dir firmware/test/native/build --output-on-failure
 
-project(drivelink_host_tests LANGUAGES C CXX)
+project(drivelink_native_tests LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,13 +24,27 @@ set(CMAKE_CXX_EXTENSIONS ON) # gnu++20, close to IDF's gnu++2b
 set(COMPONENTS_DIR ${CMAKE_CURRENT_LIST_DIR}/../../components)
 set(PROTOCOL_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../protocol)
 
+find_package(Threads REQUIRED)
+
 # The pure wire library, built as the ordinary host library. Warnings are
 # errors here, like for the firmware sources below.
 add_subdirectory(${PROTOCOL_DIR} ${CMAKE_CURRENT_BINARY_DIR}/protocol)
 target_compile_options(drivelink_protocol PRIVATE -Werror)
 
-# Firmware sources under test. Add a file here only if it builds without
-# ESP-IDF (beyond the shims).
+# core_os, native backend (backend/native), and the pure core: every core
+# source except src/idf/, which reads Kconfig.
+set(CORE_SOURCES
+    ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
+    ${COMPONENTS_DIR}/core/src/core.cpp
+    ${COMPONENTS_DIR}/core/src/instance.cpp
+    ${COMPONENTS_DIR}/core/src/loop.cpp
+    ${COMPONENTS_DIR}/core/src/param_service.cpp
+    ${COMPONENTS_DIR}/core/src/registry.cpp
+    ${COMPONENTS_DIR}/core/src/value.cpp
+)
+
+# Legacy firmware sources under test. Add a file here only if it builds
+# without ESP-IDF (beyond the shims).
 set(FIRMWARE_SOURCES
     ${COMPONENTS_DIR}/pid/src/pid_controller.cpp
     ${COMPONENTS_DIR}/motor_controller/src/velocity_estimator.cpp
@@ -38,8 +56,11 @@ set(FIRMWARE_SOURCES
 )
 
 # Generator fixtures: the generator runs on tools/gen/tests/fixtures at build
-# time, and test_defs.cpp includes the type headers it writes. That proves the
-# generated headers compile with -Werror, and nothing extra is checked in.
+# time. test_defs.cpp includes the type headers it writes, and the core tests
+# use the fixture types as test module types. That proves the generated
+# headers compile with -Werror, and nothing extra is checked in. (The fixture
+# type_system.hpp is written too but never included: the core uses the real
+# one, through drivelink/protocol/gen/.)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(GEN_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../tools/gen)
 set(GEN_FIXTURE_DEFS ${GEN_DIR}/tests/fixtures)
@@ -66,6 +87,13 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_scanner.cpp
     ${PROTOCOL_DIR}/test/test_wire_codec.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
+    tests/test_core_os.cpp
+    tests/test_core_registry.cpp
+    tests/test_core_bind.cpp
+    tests/test_core_value.cpp
+    tests/test_core_params.cpp
+    tests/test_core_loop.cpp
+    tests/test_core_threaded.cpp
     tests/test_pid.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp
@@ -76,11 +104,14 @@ set(TEST_SOURCES
     tests/test_diag_table.cpp
 )
 
-add_executable(host_tests ${TEST_SOURCES} ${FIRMWARE_SOURCES} ${GEN_FIXTURE_HEADERS})
-target_link_libraries(host_tests PRIVATE drivelink::protocol)
+add_executable(native_tests ${TEST_SOURCES} ${CORE_SOURCES} ${FIRMWARE_SOURCES} ${GEN_FIXTURE_HEADERS})
+target_link_libraries(native_tests PRIVATE drivelink::protocol Threads::Threads)
 
-target_include_directories(host_tests PRIVATE
+target_include_directories(native_tests PRIVATE
     shim
+    ${COMPONENTS_DIR}/core_os/include
+    ${COMPONENTS_DIR}/core_os/backend/native/include
+    ${COMPONENTS_DIR}/core/include
     ${COMPONENTS_DIR}/pid/include
     ${COMPONENTS_DIR}/motor_controller/include
     ${COMPONENTS_DIR}/motor_manager/include
@@ -90,19 +121,20 @@ target_include_directories(host_tests PRIVATE
     ${COMPONENTS_DIR}/time_sync/priv_include
     ${COMPONENTS_DIR}/diag/include
     ${COMPONENTS_DIR}/diag/priv_include
+    tests
 )
 # The generated fixture headers, written at build time.
-target_include_directories(host_tests PRIVATE ${GEN_FIXTURE_INCLUDE})
+target_include_directories(native_tests PRIVATE ${GEN_FIXTURE_INCLUDE})
 # Third-party headers: no warnings from them.
-target_include_directories(host_tests SYSTEM PRIVATE
+target_include_directories(native_tests SYSTEM PRIVATE
     third_party/doctest
     ${COMPONENTS_DIR}/imu_bmo_055/vendor
 )
 
 # Same warning set as the IDF build, and warnings are errors.
-target_compile_options(host_tests PRIVATE
+target_compile_options(native_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Werror
 )
 
 enable_testing()
-add_test(NAME host_tests COMMAND host_tests)
+add_test(NAME native_tests COMMAND native_tests)
