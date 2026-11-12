@@ -47,10 +47,13 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 ## Models and effort
 
-- **Plan** every step with **Opus 5.5 at high effort**, whatever the step's build model. The plan sets the direction.
-- **Build** with the step's model and effort from the table. After you approve the plan, switch the session model if the build model differs.
-- **Review** always runs on **Opus**, at the step's review effort. `/overhaul-step` launches the review agent with that model and effort.
+One session runs the whole step. It is the planning agent, on Opus 5.5 at high effort, and nobody switches the model between stages.
+
+- **Plan** every step with **Opus 5.5 at high effort** (the session itself), whatever the step's build model. The plan sets the direction.
+- **Build** in an **implementation subagent**, which the planning agent spawns after you approve the plan. It runs on the step's model and effort from the table. It commits locally and reports back; it doesn't push, open the PR or flash the board.
+- **Review** is done by the **planning agent** (Opus), on the diff, at the step's review effort. For `xhigh` the session's effort is raised to `xhigh` for the review. There is no separate review agent.
   - `xhigh` is for steps where a bug can drive a motor or brick the board: framing (F1b), arming and the monitor (F4b), motors (F5a, F5b), OTA (F9), the agent (H3) and ROS (H4).
+- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the planning agent after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's tier.** If a step turns out harder (or easier) than its tier, change its row in the same PR and log the reason.
@@ -79,6 +82,7 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F1b | The main firmware logs per-task stack marks (`DRIVELINK_STACK_LOG_PERIOD_S`, default 30 s, 0 = off) using `xTaskGetHandle` + `uxTaskGetStackHighWaterMark` | `uxTaskGetSystemState` scans every stack inside a critical section and stalled the motor loop on the other core every period | n/a |
 | 2026-11-12 | F1b | Diag's query frame, response body and TX buffer moved into `Impl`; the motor and IMU wake frames and the HIL app's frame and reply buffers are static | With 1 KB frames they overflowed or crowded the task stacks (the diag task was a real overflow risk on a `GetEntries` query) | n/a |
 | 2026-11-12 | F1b | `smoke_main_firmware.py` (new) checks the managers answer with the new versions; its first query is retried for 5 s | The first open of the adapter's port after a flash resets the board and loses the first command | n/a |
+| 2026-11-12 | S0 | Workflow change: the session plans and reviews on Opus high, an implementation subagent builds at the step's model and effort, and the review agent is dropped. Bare-board hardware checks are run by the session itself; only checks that need attached equipment go to the user | Fewer manual model switches, and the planner that wrote the plan judges the result. The board needs no help for HIL or mock-module checks | n/a |
 
 ## Hardware test results
 
