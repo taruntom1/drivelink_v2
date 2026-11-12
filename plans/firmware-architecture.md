@@ -110,7 +110,7 @@ public:
     // Loop tick (in the instance's loop). Real-time rules apply in `control`.
     virtual void tick(const TickContext& t) = 0;
     // Param, signal and input access is table-driven: the instance binds generated ids
-    // to its storage in start() (ctx.bindParam(defs::cascade_pid::kVelKp, &m_vel.kp, onChange)),
+    // to its storage in start() (ctx.bindParam(defs::controller_cascade_pid::kVelKp, &m_vel.kp, onChange)),
     // so the core can copy staged values in, and sample signals out, without virtual calls per item.
     // Actions: `loop` actions run here, at the start of the tick; `paused` actions run on the
     // config task while this instance's loop is paused.
@@ -145,7 +145,7 @@ Instance tick order comes from the wiring (`Ref` params) and is computed once at
 ## Definitions (YAML)
 
 `protocol/defs/` holds:
-- `registry.yaml`: module type ids, MSG_TYPEs, stream channel ranges
+- `registry.yaml`: MSG_TYPEs and stream channel ranges. Module type ids live in each type's own YAML (`type_id`); the generator checks they are unique, and `0x00` is reserved for `system`.
 - `diag_codes.yaml` (moved from the diag component)
 - `system.yaml`: system items such as the watchdog timeout, the status rate and loop rates (type `0x00`)
 - one file per module type
@@ -155,7 +155,7 @@ Instance tick order comes from the wiring (`Ref` params) and is computed once at
 - `docs/protocol/*.md`: the generated tables, between marker comments
 - the Python table that diag's host tooling uses today, kept only while `firmware/test/uart_comm` needs it
 
-The generated files are checked in, and CI fails if they are stale. The **descriptor hash** is a CRC32 computed at build time over all the generated tables, including the diag codes. It is reported in `GET_INFO`, so the host can tell when the firmware's definitions changed.
+The generated files are checked in, and CI fails if they are stale. The **descriptor hash** is a CRC32 that the generator computes over the canonical form of all the definitions (registry, diag codes and module types), so it changes exactly when a definition changes. It is emitted as `kDescriptorHash` (see `docs/protocol/definitions.md`). It is reported in `GET_INFO`, so the host can tell when the firmware's definitions changed.
 
 ```yaml
 # protocol/defs/controller.cascade_pid.yaml
@@ -222,7 +222,7 @@ The id blocks per kind (`0x00xx`, `0x01xx`, …) are a readability convention on
 | `0x81–0x9F` | stream ESP → host | Subscription groups 0–30 |
 | `0xA0–0xBF` | stream host → ESP | Command groups 0–31 |
 
-The Kconfig MSG_TYPE options of motor_manager, the IMU and time_sync are removed.
+The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. Until their managers are ported, the legacy entries stay there: time_sync `0x20` / `0x60` (until F8), motor `0x21` / `0x61` and streams `0xBD` / `0xBE` (until F5b), IMU `0x22` / `0x42` and stream `0xBF` (until F6). **The time ping's `0x02` / `0x42` enter the registry in F8**, because the legacy IMU configure response holds `0x42` until F6.
 
 ### Core command header
 
@@ -422,7 +422,7 @@ The device stays up in a degraded state, as in diag phase 1.
 - **Timestamps are monotonic.** The `time_synced` flag and `diag::setTimeSynced()` are removed.
 - **`Boot` body:** `timestamp_us u64 | reset_reason u8 | instances_ok u8 | instances_failed u8 | safe_mode u8`. `started_mask` goes away; the instance details come from `LIST_INSTANCES`.
 - **Records gain an `instance u8`.** It comes after `source`, and is `0xFF` when the record isn't about one instance. That makes the Record body 25 bytes. `arg0` and `arg1` keep their current meaning per code, so nothing collides with codes that already use `arg1` (motor `InitFailed`, IMU `InitFailed`, `SyncFailed`).
-- **Sources become module types** (generated from `registry.yaml`), plus `system`, `uart_comm`, `diag` and `core`.
+- **Sources become module types** (generated from the module type YAMLs), plus `system`, `uart_comm`, `diag` and `core`.
 - **New YAML fields per code:** `blocks_arm` and `disarms`, plus the new `kind: latched` and `DIAG_RAISE` (see above).
 - **Code descriptors** are served by `describe.GET_CODES` and covered by the descriptor hash, so the host can name a new module's faults without being rebuilt.
 - **GetInfo** stays as a diagnostic view. Device identity is in `system.GET_INFO`.
@@ -493,7 +493,7 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | Phase | Content | Done when |
 |---|---|---|
 | F1 Link and `protocol/` | Extract framing, CRCs, scanner and `wire_codec` into `protocol/`. New framing: u16 `LEN` + HCRC8, `MAX_PAYLOAD` 1024, default baud 921600, `CONFIG_UART_ISR_IN_IRAM`. `uart_comm` fixes for the bigger frames: buffers move from the stacks into `Impl`, task stacks are resized and checked, stream slots are allocated with their own size, and `sendData` gets a non-blocking slot write (double buffer plus try-lock, with a counter for skipped writes) so the control tick never waits. Bump every module protocol version. The codec tests move from `firmware/test/host` to `protocol/test`, and `conftest.py` defaults `--baud` to 921600. | HIL tests pass with the new framing, the managers still work over it, and stack high-water marks are logged |
-| F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `firmware/CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. | Generated headers are used by diag and the managers, and the CI staleness check passes |
+| F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `firmware/CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. motor_manager and the IMU go to protocol v6 with the move. | Generated headers are used by diag and the managers, and the CI staleness check passes |
 | F3 Core skeleton and dev client | `core_os` (IDF and native), registry, loops (`control`, `sensor`), layout and NVS (A/B, validation, GPIO registry), safe mode, the system/layout/describe/param families, the action family, the status stream, `GET_INFO`, `mod_mock`, `drivelink-vdev` (in `host/vdev/`). diag v2. The first slice of `libdrivelink` (serial and TCP transport, session, the core families) and `drivelink-cli`, built by a first `host/superbuild`. `firmware/test/host` becomes `firmware/test/native`, which builds the core against `core_os`'s native backend. | With the CLI, on vdev and on hardware: mock instances can be added, described, set, saved, rebooted and reloaded |
 | F4 Groups and arming | Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
 | F5 Motor stack as modules | Split `motor_controller` into the actuator, feedback and controller types, with YAML, `emergencyStop()`, `onArmTransition()` and bumpless mode switching. Delete `motor_manager`. | Velocity and position control on hardware through groups; the monitor stops the motors in the loop-stall test; nothing remains of the old motor protocol |

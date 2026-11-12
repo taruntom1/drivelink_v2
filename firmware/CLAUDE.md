@@ -193,7 +193,7 @@ A change is done when all of the following are true:
 
 ### Files not to edit
 
-- **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
+- **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. Everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
 - **Vendor code:**
   - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
