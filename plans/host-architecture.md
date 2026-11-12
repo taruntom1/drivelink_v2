@@ -106,10 +106,12 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - **Groups.** Group ids are device resources. The agent gives each client its own groups out of the device's pool, rewrites the group ids and stream channels both ways, and sends each client only its own subscription streams. It tracks each group's epoch, so frames left over from a group's previous owner are dropped. The status stream and diag events go to every client.
   - **Time.** The agent alone answers to the ESP's clock. Clients never send pings; the agent sends them its clock model (offset, drift, reference) as an agent message whenever the model changes.
   - **Control lease.** Only one client at a time may send `ARM`, configure command groups or send command frames. While ROS's controllers are active, ROS holds the lease. The GUI takes it explicitly to tune.
+    - **Any client may disarm**, with or without the lease: the agent forwards `DISARM` (fast path or system op) from every client at once. Decided 2026-11-12 ([gui-design.md](gui-design.md)).
     - A lease change, or the lease holder disconnecting, makes the agent send `DISARM` on the fast-path MSG_TYPE. That leaves the device plain Disarmed, not in Fault.
     - The previous holder gets a lease-revoked message. ROS recovers as described under `drivelink_hardware`.
   - **Exclusive operations.** Capture, test signals, `SAVE`, `REVERT`, `FACTORY_RESET`, layout ops and OTA need the lease, or need the device to be disarmed with nobody holding the lease.
-  - **Param writes.** Any client may write live params at any time. Batches are atomic on the device. Whether to restrict this while ROS holds the lease is an open question.
+  - **Param writes.** Any client may write live params at any time. Batches are atomic on the device. This stays allowed while ROS holds the lease; the GUI warns before such an edit.
+  - **History.** The agent keeps recent diag events and arm-state changes, and sends them to a client when it connects. It keeps no captures.
 - **Agent-only messages** use their own MSG_TYPEs from the generated registry: hello and version, lease request/grant/revoke, clock model, client list.
 
 ### `drivelink-gui` (Qt/QML)
@@ -117,6 +119,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
 - Uses the current Qt 6 LTS with Qt's MinGW kit on Windows. On Linux it uses the Qt from Ubuntu 26.04.
 - **C++ backend:**
   - A device connection, either local (serial) or remote (agent), behind one interface.
+  - Its own command group, with every input it can command at hold values and keepalives, so `ARM` is never refused for a missing command group ([gui-design.md](gui-design.md)). A direct serial connection sets it up at connect. A remote connection starts as an observer and sets it up only after receiving the control lease, following the agent's command-group ownership rule.
   - Models built from the device model:
     - an instance tree (type, label, health)
     - a param table per instance (typed editors, units, ranges, enums, a pending-reboot marker, a dirty marker)
@@ -133,7 +136,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
     2. Choose a test signal and the capture signals.
     3. Run, then overlay the results against earlier runs.
     4. Save or revert.
-  - **Monitor:** free-form live plots of any signals.
+  - **Monitor:** free-form live plots of any signals, and a manual command panel that sets inputs by hand while armed.
 - **Plant identification:** fit a first-order-plus-deadtime model to an open-loop duty capture and suggest starting gains. The math lives in `libdrivelink` and has unit tests.
 
 ### `drivelink_hardware` (ROS 2)
@@ -360,7 +363,7 @@ These relative paths stay valid because the depth does not change:
 
 ## Open questions
 
-- While ROS holds the lease, may the GUI change live params, or only read them?
-- Should the agent keep a short history of captures and diag records, so a GUI that connects later can see them?
-- Should the GUI save "tuning sessions" (captures plus the params used) as files on the PC?
+- ~~While ROS holds the lease, may the GUI change live params, or only read them?~~ Decided 2026-11-11 ([gui-design.md](gui-design.md)): it may, and the GUI warns that the robot is being driven and changes apply live.
+- ~~Should the agent keep a short history of captures and diag records, so a GUI that connects later can see them?~~ Decided 2026-11-11: diag events and arm-state changes only. Captures stay with the client that ran them.
+- ~~Should the GUI save "tuning sessions" (captures plus the params used) as files on the PC?~~ Decided 2026-11-11: yes, as session files that can be reopened and exported to CSV.
 - Python bindings for `libdrivelink` (for scripts and to replace `firmware/test/uart_comm/protocol.py`): when, if ever?

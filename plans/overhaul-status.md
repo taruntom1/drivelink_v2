@@ -91,6 +91,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 Each note is deleted by the step that uses it.
 
+- **GUI design follow-ups (carried from `claude/gui-design`).** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour; [todo-layout-ops.md](todo-layout-ops.md) records the GUI assumptions for loop selection and removing referenced instances. These were proposed before F3b landed and must be reconciled with the current core before scheduling a wire change. No firmware changes are authorised by the GUI design session.
+
 - **F4a**
   - The command groups have 29 channels (`kCmdGroupChannelCount`) while the legacy streams sit on `0xBD`–`0xBF`. The Kconfig group count must `static_assert` against it.
   - The host's `Session` facade takes group services and stream decoding without a change to the transport.
