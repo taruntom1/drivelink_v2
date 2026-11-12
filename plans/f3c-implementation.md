@@ -60,3 +60,39 @@ Update root/firmware/component/host guidance, new READMEs, protocol package and
 core consumer notes, architecture implementation status and overhaul status.
 Record hardware outcome, review findings, next-step handoff and PR link. Push
 commits and open exactly one PR targeting firmware_overhaul.
+
+## Review result
+
+Self-review fixed async buffer lifetime on close, a PTY reboot write overlap,
+and matching-stream watch deadlines. The independent Codex reviewer found three
+P2 issues, all verified and fixed: idle PTY stream backpressure destroying the
+master, incomplete diagnostic terminal pages accepted as success, and exported
+JSON ABI version mismatch. The reviewer rechecked the fixes and reported no
+unresolved findings. No findings were rejected.
+
+The PTY fix retains the master across idle backpressure, bounds command reply
+drains from enqueue, and cancels queued effects on drain failure. Recovery uses
+generation guards both in handlers and the composed async_write completion
+condition so even queued successful partial completions cannot restart stale
+writes. Linux regression fills a 100 Hz PTY without readers for 15 seconds,
+submits REBOOT without draining it, waits for cancellation and reconnects on the
+same path, verifying the unsaved rate remains applied (no reboot occurred).
+Diagnostic pagination has a fake-peer regression; installed-package tests now
+exercise JSON-bearing, Session and Client symbols with JSON 3.11.3 EXACT.
+
+Hardware preparation exposed Asio's Windows flow_control(none) setter asserting
+DTR/RTS and resetting the ESP32 at every CLI open. Windows now retains the
+no-flow-control/disabled-bootstrap-lines settings supplied by Asio open(); the
+reviewer verified the pinned Asio implementation. The Windows driver also has
+transient AccessDenied/FileNotFound on immediate reopen, so opening alone retries
+those errors at 25 ms intervals for the bounded session timeout. No request has
+been sent at that point; mutation requests still never retry.
+
+## Hardware result (2026-11-13)
+
+PASS on the bare ESP32-S3: normal firmware flashed over COM3; CLI discovery,
+descriptors, temporary mock layout/wiring, typed param changes, SAVE/reboot/reload,
+loop/paused actions with blob echo, status and diag all passed. Normal firmware
+rejected bench crash. Original zero-instance layout and rates 1000/100/10 Hz
+were restored. Console stack margins all exceed 1 KB; full values are in the
+overhaul status handoff. Both Windows serial fixes were independently rechecked.

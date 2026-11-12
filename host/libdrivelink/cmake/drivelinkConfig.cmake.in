@@ -2,5 +2,5 @@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 find_dependency(drivelink_protocol)
-find_dependency(nlohmann_json 3.11)
+find_dependency(nlohmann_json 3.11.3 EXACT)
 include("${CMAKE_CURRENT_LIST_DIR}/drivelinkTargets.cmake")

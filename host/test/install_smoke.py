@@ -23,7 +23,18 @@ add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE drivelink::drivelink)
 ''')
         (source / 'main.cpp').write_text('''#include <drivelink/client.hpp>
-int main() { return drivelink::hex(drivelink::parseHex("ab")) == "ab" ? 0 : 1; }
+int main() {
+    drivelink::Json descriptor={{"value_type",1}};
+    if(drivelink::parseValue(descriptor,"42")!=42) { return 1; }
+    try {
+        drivelink::Session session("invalid-endpoint");
+        drivelink::Client client(session);
+        client.info();
+        return 2;
+    } catch(const drivelink::Error &error) {
+        return error.kind==drivelink::ErrorKind::Usage ? 0 : 3;
+    }
+}
 ''')
         command = ['cmake', '-S', str(source), '-B', str(root / 'build'), '-G', 'Ninja', f'-DCMAKE_PREFIX_PATH={prefix}']
         if os.name == 'nt':

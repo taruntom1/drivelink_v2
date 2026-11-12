@@ -386,7 +386,8 @@ Json Client::diagEntries()
         auto data = m_session.diagRequest(2, Bytes{cursor});
         Reader r(data.data(), data.size());
         const auto total = r.readU8(), next = r.readU8(), n = r.readU8();
-        if (!r.ok() || (next != 255 && (next <= cursor || !n)) || all.size() + n > total || total > 254)
+        if (!r.ok() || (next != 255 && (next <= cursor || next >= 254 || !n)) || all.size() + n > total ||
+            total > 254 || (next == 255 && all.size() + n != total))
         {
             malformed();
         }

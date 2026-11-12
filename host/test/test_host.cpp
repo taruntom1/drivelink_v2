@@ -1,10 +1,10 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "core_os/native_file.hpp"
 #include "core_os/native_kv.hpp"
+#include "diag_protocol.hpp"
 #include "doctest.h"
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
-#include "diag_protocol.hpp"
 #include <asio.hpp>
 #include <bit>
 #include <filesystem>
@@ -136,11 +136,24 @@ TEST_CASE("durable blobs survive reopening and an interrupted write")
     size_t size = 1;
     REQUIRE(b.get("test", "p_a", &result, size) == 0);
     CHECK(result == 42);
+    core_os::native::clearFaults(a);
+    core_os::native::tearNextWrite(a);
+    const std::array<uint8_t, 4> full{1, 2, 3, 4};
+    REQUIRE(a.set("test", "p_b", full.data(), full.size()) == 0);
+    core_os::KvStore torn;
+    REQUIRE(core_os::native::openFileStore(torn, dir) == 0);
+    std::array<uint8_t, 4> shortened{};
+    size = shortened.size();
+    REQUIRE(torn.get("test", "p_b", shortened.data(), size) == 0);
+    CHECK(size == 2);
+    CHECK(shortened[0] == 1);
+    CHECK(shortened[1] == 2);
     CHECK(b.set("../bad", "x", &result, 1) != 0);
-    CHECK(b.eraseNamespace("test") == 0);
+    CHECK(torn.eraseNamespace("test") == 0);
     core_os::KvStore c;
     REQUIRE(core_os::native::openFileStore(c, dir) == 0);
     CHECK(c.get("test", "p_a", &result, size) != 0);
+    CHECK(c.get("test", "p_b", &result, size) != 0);
     std::filesystem::remove_all(dir);
 }
 TEST_CASE("session matches family and seq through wrap and bounds its event queue")
@@ -270,27 +283,44 @@ TEST_CASE("protocol mismatch is an explicit connection error rather than a timeo
         CHECK(e.kind == ErrorKind::Protocol);
     }
 }
+TEST_CASE("diagnostic pages cannot end before their advertised total")
+{
+    FakeDevice device(
+        [](Socket &socket)
+        {
+            auto request = readFrame(socket);
+            sendFrame(socket, 0x63, {3, request[1], 2, 0, 1, 255, 0});
+        });
+    Session session(device.endpoint());
+    Client client(session);
+    CHECK_THROWS_AS(client.diagEntries(), Error);
+}
 TEST_CASE("diagnostic event decoding preserves instance identity and exact lengths")
 {
     FakeDevice device([](Socket &) {});
     Session session(device.endpoint());
     Client client(session);
-    std::array<uint8_t,1024> buffer{};
-    diag::protocol::RecordEvent report{123456789,2,112,7,42,-1,99,101};
-    auto n=diag::protocol::encodeRecordEvent(65535,0,report,buffer.data(),buffer.size());
-    Frame frame{192,Bytes(buffer.begin(),buffer.begin()+n)};
-    auto decoded=client.event(frame);
-    CHECK(decoded["instance"]==7);CHECK(decoded["code"]==42);CHECK(decoded["error"]==-1);
-    CHECK(decoded["timestamp_us"]==123456789);CHECK(decoded["sequence"]==65535);
-    frame.payload.push_back(0);CHECK_THROWS_AS(client.event(frame),Error);
-    diag::protocol::CounterEntry entry{112,42,3,9,7};
-    n=diag::protocol::encodeCounterDeltaEvent(1,0,123,&entry,1,buffer.data(),buffer.size());
-    decoded=client.event({192,Bytes(buffer.begin(),buffer.begin()+n)});
-    CHECK(decoded["entries"][0]["instance"]==7);CHECK(decoded["entries"][0]["delta"]==3);
-    diag::protocol::BootEvent boot{1,0,3,1,1};
-    n=diag::protocol::encodeBootEvent(2,0,boot,buffer.data(),buffer.size());
-    CHECK(client.event({192,Bytes(buffer.begin(),buffer.begin()+n)})["safe_mode"]==1);
-    diag::protocol::ClearedEvent clear{22,112,7,42};
-    n=diag::protocol::encodeClearedEvent(3,0,clear,buffer.data(),buffer.size());
-    CHECK(client.event({192,Bytes(buffer.begin(),buffer.begin()+n)})["instance"]==7);
+    std::array<uint8_t, 1024> buffer{};
+    diag::protocol::RecordEvent report{123456789, 2, 112, 7, 42, -1, 99, 101};
+    auto n = diag::protocol::encodeRecordEvent(65535, 0, report, buffer.data(), buffer.size());
+    Frame frame{192, Bytes(buffer.begin(), buffer.begin() + n)};
+    auto decoded = client.event(frame);
+    CHECK(decoded["instance"] == 7);
+    CHECK(decoded["code"] == 42);
+    CHECK(decoded["error"] == -1);
+    CHECK(decoded["timestamp_us"] == 123456789);
+    CHECK(decoded["sequence"] == 65535);
+    frame.payload.push_back(0);
+    CHECK_THROWS_AS(client.event(frame), Error);
+    diag::protocol::CounterEntry entry{112, 42, 3, 9, 7};
+    n = diag::protocol::encodeCounterDeltaEvent(1, 0, 123, &entry, 1, buffer.data(), buffer.size());
+    decoded = client.event({192, Bytes(buffer.begin(), buffer.begin() + n)});
+    CHECK(decoded["entries"][0]["instance"] == 7);
+    CHECK(decoded["entries"][0]["delta"] == 3);
+    diag::protocol::BootEvent boot{1, 0, 3, 1, 1};
+    n = diag::protocol::encodeBootEvent(2, 0, boot, buffer.data(), buffer.size());
+    CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["safe_mode"] == 1);
+    diag::protocol::ClearedEvent clear{22, 112, 7, 42};
+    n = diag::protocol::encodeClearedEvent(3, 0, clear, buffer.data(), buffer.size());
+    CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["instance"] == 7);
 }

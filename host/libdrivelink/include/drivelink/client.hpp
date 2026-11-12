@@ -2,6 +2,9 @@
 #include "drivelink/session.hpp"
 #include <array>
 #include <nlohmann/json.hpp>
+static_assert(NLOHMANN_JSON_VERSION_MAJOR == 3 && NLOHMANN_JSON_VERSION_MINOR == 11 &&
+                  NLOHMANN_JSON_VERSION_PATCH == 3,
+              "libdrivelink's public JSON ABI requires nlohmann JSON 3.11.3");
 
 namespace drivelink
 {

@@ -96,6 +96,24 @@ struct Session::Impl
         else if (endpoint.starts_with("serial://") && endpoint.size() > 9)
         {
             serial.open(endpoint.substr(9), ec);
+#ifdef _WIN32
+            // Some USB-UART drivers briefly retain exclusive ownership after
+            // the preceding CLI exits. Retrying open is safe: no request has
+            // been sent, and this wait is bounded by the session timeout.
+            const auto open_deadline = std::chrono::steady_clock::now() + options.timeout;
+            auto transient_open_error = [&]
+            {
+                // Serial CreateFile errors are Win32 codes, not Asio's
+                // WSAEACCES socket error (asio::error::access_denied).
+                return ec.category() == asio::error::get_system_category() &&
+                       (ec.value() == ERROR_ACCESS_DENIED || ec.value() == ERROR_FILE_NOT_FOUND);
+            };
+            while (transient_open_error() && std::chrono::steady_clock::now() < open_deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                serial.open(endpoint.substr(9), ec);
+            }
+#endif
             if (!ec)
             {
                 serial.set_option(asio::serial_port::baud_rate(options.baud), ec);
@@ -112,10 +130,16 @@ struct Session::Impl
             {
                 serial.set_option(asio::serial_port::stop_bits(asio::serial_port::stop_bits::one), ec);
             }
+#ifndef _WIN32
             if (!ec)
             {
                 serial.set_option(asio::serial_port::flow_control(asio::serial_port::flow_control::none), ec);
             }
+#else
+            // Asio's Windows open() already disables flow control, DTR and
+            // RTS. Its flow_control(none) option re-enables both lines, which
+            // toggles ESP32 auto-reset circuitry on every CLI invocation.
+#endif
         }
         else
         {

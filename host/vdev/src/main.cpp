@@ -134,9 +134,12 @@ struct Peer : std::enable_shared_from_this<Peer>
         std::shared_ptr<Bytes> bytes;
         core::AfterReply after;
         bool stream;
+        bool critical;
+        std::chrono::steady_clock::time_point expires;
     };
     std::deque<Output> output;
     bool closed = false;
+    uint64_t generation = 0;
     explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
     ~Peer()
     {
@@ -152,6 +155,8 @@ struct Peer : std::enable_shared_from_this<Peer>
     void read();
     void write();
     void close();
+    void armDeadline();
+    void recoverPty();
 };
 struct Server
 {
@@ -462,39 +467,85 @@ bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply af
     {
         if (!stream && type != msg::kDiagEvent)
         {
-            close();
+            recoverPty();
         }
         return false;
     }
     auto bytes = std::make_shared<Bytes>(p::frameSize(n));
     p::encodeFrame(bytes->data(), bytes->size(), type, data, n);
-    output.push_back({bytes, after, stream});
+    output.push_back({bytes, after, stream, type == msg::kCoreResponse || type == msg::kDiagQueryResponse,
+                      std::chrono::steady_clock::now() + std::chrono::seconds(2)});
+    armDeadline();
     if (output.size() == 1)
     {
         write();
     }
     return true;
 }
+void Peer::recoverPty()
+{
+#ifndef _WIN32
+    if (pty)
+    {
+        // Cancel pending operations but retain the master/slave path. Old
+        // handlers own their buffers and cannot touch the new generation.
+        ++generation;
+        asio::error_code ec;
+        pty->cancel(ec);
+        stale.cancel();
+        write_deadline.cancel();
+        output.clear();
+        scanner = p::Scanner(1024);
+        read();
+        return;
+    }
+#endif
+    close();
+}
+void Peer::armDeadline()
+{
+    write_deadline.cancel();
+    auto deadline = std::chrono::steady_clock::time_point::max();
+    for (const auto &item : output)
+    {
+#ifndef _WIN32
+        // A PTY can legitimately have no external reader between CLI calls.
+        // Only command replies need a drain deadline; idle streams stay bounded
+        // by the latest-wins queue and one in-flight buffer.
+        if (pty && !item.critical)
+        {
+            continue;
+        }
+#endif
+        deadline = std::min(deadline, item.expires);
+    }
+    if (deadline == std::chrono::steady_clock::time_point::max())
+    {
+        return;
+    }
+    write_deadline.expires_at(deadline);
+    auto self = shared_from_this();
+    const auto epoch = generation;
+    write_deadline.async_wait(
+        [self, epoch](auto ec)
+        {
+            if (!ec && self->generation == epoch)
+            {
+                self->recoverPty();
+            }
+        });
+}
 void Peer::write()
 {
     auto self = shared_from_this();
     const auto item = output.front();
-    write_deadline.expires_after(std::chrono::seconds(2));
-    write_deadline.async_wait(
-        [self](auto ec)
-        {
-            if (!ec)
-            {
-                self->close();
-            }
-        });
-    auto handler = [self, item](auto ec, size_t)
+    const auto epoch = generation;
+    auto handler = [self, item, epoch](auto ec, size_t)
     {
-        if (self->closed)
+        if (self->closed || self->generation != epoch)
         {
             return;
         }
-        self->write_deadline.cancel();
         if (ec)
         {
             self->close();
@@ -511,6 +562,7 @@ void Peer::write()
             if (self->pty)
             {
                 self->output.clear();
+                self->write_deadline.cancel();
                 self->stale.cancel();
                 self->scanner = p::Scanner(1024);
                 self->server.boot();
@@ -524,26 +576,33 @@ void Peer::write()
                 return;
             }
         }
+        self->armDeadline();
         if (!self->output.empty())
         {
             self->write();
         }
     };
+    // The completion condition runs before every low-level write in Asio's
+    // composed operation. A canceled generation must not reissue a partial
+    // write whose successful completion had already been queued at cancel().
+    auto progress = [self, epoch](const asio::error_code &ec, size_t transferred) -> size_t
+    { return !self->closed && self->generation == epoch ? asio::transfer_all()(ec, transferred) : 0; };
 #ifndef _WIN32
     if (pty)
     {
-        asio::async_write(*pty, asio::buffer(*item.bytes), handler);
+        asio::async_write(*pty, asio::buffer(*item.bytes), progress, handler);
         return;
     }
 #endif
-    asio::async_write(socket, asio::buffer(*item.bytes), handler);
+    asio::async_write(socket, asio::buffer(*item.bytes), progress, handler);
 }
 void Peer::read()
 {
     auto self = shared_from_this();
-    auto handler = [self](auto ec, size_t n)
+    const auto epoch = generation;
+    auto handler = [self, epoch](auto ec, size_t n)
     {
-        if (self->closed)
+        if (self->closed || self->generation != epoch)
         {
             return;
         }
@@ -570,13 +629,17 @@ void Peer::read()
             while (self->scanner.next(f) && !self->closed)
             {
                 self->server.receive(*self, f);
+                if (self->generation != epoch)
+                {
+                    return;
+                }
             }
         }
         self->stale.expires_after(std::chrono::milliseconds(250));
         self->stale.async_wait(
-            [self](auto error)
+            [self, epoch](auto error)
             {
-                if (!error && !self->closed)
+                if (!error && !self->closed && self->generation == epoch)
                 {
                     self->scanner.dropStale();
                     p::Scanner::Frame f;

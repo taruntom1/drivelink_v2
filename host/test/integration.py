@@ -1,5 +1,6 @@
 """Drive the shipped CLI against a separate vdev process; no hardware needed."""
 import argparse
+import binascii
 import json
 import os
 from pathlib import Path
@@ -83,7 +84,9 @@ def main():
             assert len(cli('instances')) == 3
             assert cli('get', '0:0:1')['typed_values'] == [500]
             kill()
-            url = start('--fail-writes-after', '0')
+            # Commit one new-generation instance blob, then interrupt SAVE.
+            # Reopening must still load the previous complete generation.
+            url = start('--fail-writes-after', '1')
             cli('set', '0:0:1=600'); cli('save', code=5)
             kill()
             # Three consecutive unclean exits enter safe mode. Nothing is created.
@@ -107,6 +110,31 @@ def main():
                 process = None
                 url = start('--pty')
                 assert cli('info')['protocol_version'] == 1
+                assert cli('diag-info')['reset_reason'] == 0
+                cli('set', '0:0:3=100')
+                # More than the PTY's kernel buffer: no external reader must
+                # not permanently destroy the master or its published path.
+                time.sleep(15)
+                # Submit REBOOT without draining the filled slave. Its reply
+                # deadline must cancel the effect and recover the same PTY,
+                # rather than close the published path or run a stale handler.
+                payload = bytes((1, 201, 1, 8))
+                header = bytes((1, len(payload), 0))
+                crc = 0
+                for byte in header:
+                    crc ^= byte
+                    for _ in range(8):
+                        crc = ((crc << 1) ^ (0x07 if crc & 0x80 else 0)) & 255
+                body = header + bytes((crc,)) + payload
+                frame = b'\xaa\xaa\xaa' + body + binascii.crc_hqx(body, 0xffff).to_bytes(2, 'little')
+                fd = os.open(url[9:], os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                try:
+                    assert os.write(fd, frame) == len(frame)
+                    time.sleep(3)
+                finally:
+                    os.close(fd)
+                assert cli('info')['protocol_version'] == 1
+                assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert cli('instances') == []
             print('PASS CLI discovery, typed params, actions, status, diag, persistence, failed SAVE, crash recovery, locking and transports')
         finally:

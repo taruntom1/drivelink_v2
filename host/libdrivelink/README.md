@@ -21,6 +21,14 @@ dynamic. It is not a core protocol-version mismatch.
 retries (2) and event capacity (128). TCP endpoints currently require a numeric
 IPv4 address. Serial endpoints are `serial://COM3` or `serial:///dev/ttyUSB0`.
 `close()` is idempotent, cancels pending calls and joins the I/O thread.
+Windows keeps the adapter's DTR/RTS lines disabled: reopening the CLI must not
+reset the ESP32 and discard pending layout edits. Asio's Windows open already
+configures no flow control; its flow_control(none) setter is deliberately
+avoided because it reasserts those bootstrap lines.
+Windows USB-UART drivers may briefly retain exclusive port ownership after a
+CLI exits or briefly lose the device name while reenumerating. Opening retries
+AccessDenied/FileNotFound at 25 ms intervals up to the session timeout; no
+protocol request has been sent during this bounded wait.
 
 Session requests serialize across callers; replies match type/seq/family/op.
 Timeouts permanently retire that sequence ID for this connection. Reconnect
@@ -44,6 +52,8 @@ of at most 64 refs; the caller controls their domains.
 
 The package installs headers, a static library and `drivelinkConfig.cmake`.
 Consumers use `find_package(drivelink REQUIRED)` and link
-`drivelink::drivelink`. It finds `drivelink_protocol`, Threads and nlohmann_json.
+`drivelink::drivelink`. It finds `drivelink_protocol`, Threads and nlohmann_json
+3.11.3 EXACT: JSON is part of the public ABI, so another patch/minor version
+cannot be substituted without rebuilding the library and its consumers.
 Asio headers stay private. `package.xml` lets colcon discover the CMake package;
 the superbuild is ignored by colcon. No project license grant has been added.

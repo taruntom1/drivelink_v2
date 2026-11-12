@@ -10,8 +10,11 @@ prints `READY serial:///dev/pts/N` and serves a raw PTY instead. It keeps the
 slave open across CLI invocations. One client owns configuration at a time;
 extra TCP connections are closed. Reboot replies are written before the core
 is rebuilt, loops/boot clock/diagnostics reset, and TCP is disconnected.
-PTY remains open across reboot. TX waits are bounded; a failed drain cancels
-the reboot by closing the connection.
+PTY remains open across reboot. Command reply drains have a two-second deadline
+from enqueue. A failed TCP drain closes the connection and cancels the reboot.
+A failed PTY drain cancels/drops queued replies and effects, retaining the master
+so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
+and in-flight buffer remain bounded, and later status samples replace pending ones.
 
 The vdev implements core v1, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow

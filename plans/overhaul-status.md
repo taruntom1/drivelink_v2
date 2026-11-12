@@ -5,7 +5,35 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F3c is in progress: vdev, first libdrivelink slice, CLI and host superbuild. F3b merged in #36.
+- **Next step:** F4a: subscription and command groups (preallocated, epochs). Start after F3c is merged.
+- **Handoff (F3c):**
+  - `host/README.md` has Linux/Qt-MinGW builds and CLI/vdev usage. The host
+    superbuild is `host/superbuild`; colcon still discovers the protocol and
+    host library packages separately. Installed find_package consumers are tested.
+  - `Session` owns one Asio I/O thread; synchronous calls serialize. Timed-out
+    seqs retire until reconnect; only reads retry. Mutation timeouts have unknown
+    outcomes. Event queues drop oldest with a visible count. F4a can add group
+    services and stream decoding without changing the transport/session facade.
+  - Services use device descriptors and nlohmann JSON 3.11.3 (public ABI, exact
+    version required). No module-specific host code or full cached device/time
+    model yet. Core v1 and diag v3 have no F3c wire-format changes.
+  - Vdev runs real core/mock loops, one config caller, bounded diagnostics,
+    TCP or Linux PTY, per-blob durable KV and a crash running-marker file.
+    Idle PTY backpressure retains the master; reply drain failures cancel effects
+    and recover with handler/composed-write generation guards. SIGTERM is clean
+    on Linux; killing a process counts as a crash. Native unit tests remain
+    in-memory unless file storage is explicitly attached before boot.
+  - Windows Asio flow_control(none) reasserts DTR/RTS and resets the board.
+    Keep the disabled bootstrap lines supplied by open(). Transient native
+    Win32 AccessDenied/FileNotFound at reopen retry before any request is sent;
+    Asio's similarly named socket error is not the native serial code.
+  - Self-review and independent high-effort Codex review completed. All three
+    findings were fixed and rechecked: idle PTY closure, premature diag pages and
+    exported JSON ABI version mismatch. Hardware-discovered bootstrap-line and
+    native error-code fixes were independently checked too. None were rejected.
+  - CLI bare-board smoke passed on 2026-11-13 (COM3 protocol, COM4 console), with
+    temporary mock layout, typed params, SAVE/reboot/reload, actions, status/diag
+    and restored original zero-instance layout/rates 1000/100/10 Hz.
 - **Handoff (F3b):**
   - Core v1 is specified in `docs/protocol/core.md`; diag redesign is wire v3
     (`docs/protocol/diag.md`). Enums come from `registry.yaml::wire_enums`.
@@ -88,7 +116,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
 | F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
 | F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | merged | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
-| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke (user requested) | high | in progress | |
+| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke (user requested) | high | in review | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
@@ -201,6 +229,10 @@ Choices made during implementation that the plans don't cover, or that change th
   lock and a persistent running marker/crash counter. Existing core A/B logic,
   wire formats and staging deadlines are unchanged. Test harness retries only
   definite Busy/Withdrawn rejections to tolerate desktop scheduling.
+- Review fixes: exact JSON ABI pinning; reject incomplete diag terminal pages;
+  retain idle PTY masters and bound command drains from enqueue, using generation
+  guards on handlers and composed-write continuation. Hardware fixes preserve
+  Windows DTR/RTS and retry only native open errors before sending a request.
 
 ### F3b decisions
 
@@ -218,10 +250,27 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F1b | ESP32-S3 (QFN56 rev 0.2, 8 MB PSRAM) on the bench; CH343 adapter on UART0 (GPIO43/44), native USB console | HIL test app: `pytest pytest_uart_comm.py --port COM3` at 921600 baud. Main firmware: `smoke_main_firmware.py`, three runs, with the console read for the stack marks | HIL: 22 of 22 passed (including TC-20 false header, TC-21 four 1024-byte echoes, TC-22 1024-byte stream). Smoke: diag GetInfo and GetEntries (v2), motor SET_TIMING (v5, Ok), IMU SetStreamEnabled (v5, mock IMU), time_sync request (v2) all passed. Stack marks in the handoff note. Not covered: a real BNO055, motors under load, other hosts than Windows. |
 | 2026-11-12 | F3a-1 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4; console read for 65 s after a reset | Pass: one boot, no panic or reset loop; `Core started: 0 instances; loops control 1000 us, sensor 10000 us`; legacy managers started as before (IMU in mock mode, time_sync times out with no host). Stack marks at 30 s and 60 s, bytes free: core_ctrl 3256, core_sens 3252 (stacks 4096), main 1248, uart_rx 3196, uart_tx 3096, motor_mgr_upd 2088, motor_mgr_cfg 3156, imu_cfg 2092, imu_stream 2008, time_sync 2000, diag 2796, esp_timer 3352. Not covered: anything over UART0 (no adapter). |
 | 2026-11-12 | F3a-2 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4 on a blank NVS; then a `CONFIG_CORE_BOOT_SELFTEST` build (save/reload) over four resets; then the normal firmware again. Console read after each reset | Pass. Blank NVS: `Core started: 0 instances (0 failed, 0 configured); safe mode off; config defaults; loops control 1000 us`, no NVS error. Self-test: boot 1 set 500 Hz and SAVEd (gen 1); boot 2 logged `config loaded from NVS`, control 2000 us, `reloaded 500 from NVS`, restored 1000 and SAVEd (gen 2); boots 3 and 4 repeated it (gens 3, 4). Normal firmware after it: `config loaded from NVS`, control 1000 us. Stack marks at 30 s, bytes free: main 1256, core_ctrl 3252, core_sens 3248, others as in F3a-1. Not covered: anything over UART0 (no adapter), safe mode on the board (no crash hook). |
-
 | 2026-11-12 | F3b | ESP32-S3 bare bench board; CH343 UART0 COM3 and native USB console COM4 | UART test app: 22 HIL pytest cases. Main firmware: core discovery and descriptor paging, current/pending layout, three mock instances and wiring, parameter staging, SAVE/reboot/reload, loop/paused actions with blob echo, cleanup and status; legacy main smoke. Separate CORE_BENCH_CRASH build: three deliberate panic resets, safe-mode discovery and EXIT_SAFE_MODE recovery. Normal firmware restored and both main smoke scripts rerun. | Pass. All 22 HIL cases, core smoke, legacy smoke (diag v3, motor/IMU v6, time_sync v2), and crash-loop recovery passed. Final normal build rejects BenchCrash and has zero mock instances after cleanup. Stack bytes free: main 1272, core_cfg 4764 (6144 stack), diag 1572, core_ctrl 3260, core_sens 3248; all task margins exceed 1 KB. No motors, real IMU or host/vdev exercised. |
+| 2026-11-13 | F3c | Bare ESP32-S3; CH343 UART0 COM3, native USB console COM4 | Normal firmware flashed; new CLI serial smoke (discovery/descriptors, current/pending mock layout, typed params, SAVE/reboot/reload, loop/paused actions and blob echo, status/diag); legacy main smoke; console stack marks | Pass. CLI and legacy smoke passed, normal firmware rejects BenchCrash, zero failed mock instances or dropped diag records/events. Original zero-instance layout and rates 1000/100/10 Hz restored. Every console stack margin exceeds 1 KB (full values below). No motors or real IMU tested. |
 
 ## Notes
+
+### F3c hardware result (2026-11-13)
+
+ESP32-S3 bare bench board, CH343 UART0 COM3 and native USB console COM4. Normal
+main firmware flashed; `host/test/hardware_smoke.py` passed discovery, all current
+descriptor pages, current/pending layout, three temporary mocks and wiring, typed
+param writes, SAVE/reboot/reload, loop/paused actions and blob echo, status and
+diag. Normal firmware rejected bench crash. Original zero-instance layout and
+system rates (1000/100/10 Hz) restored. Diagnostic query during mocks reported
+3 instances OK, 0 failed, 0 records/events dropped and safe mode off.
+
+Console stack bytes free after cleanup: main 1304, uart_rx 3164, uart_tx 3096,
+motor_mgr_upd 1880, motor_mgr_cfg 3156, imu_cfg 2084, imu_stream 1996,
+time_sync_task 1792, diag 2048, esp_timer 3352, core_ctrl 3256, core_sens 3260,
+core_cfg 4352. All exceed 1 KB. No motors or real IMU were exercised. The first
+preflight attempts made no configuration changes and exposed the Windows
+bootstrap-line and transient-open issues, fixed before this passing run.
 
 - **Legacy wire specs.** The deleted READMEs (motor_manager v4, IMU v4, time_sync v1, diag v1) are in git history: `git show 7a4d693:components/<name>/README.md`. The IMU guide is still at `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
 - **diag's wire spec** is now [diag.md](../docs/protocol/diag.md), redesign wire version 3.
