@@ -53,5 +53,11 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 | `imu` (0x12) | 0x000C | EncodeError | warning | counter | no | - | - | Samples that could not be encoded into a stream packet. |
 | `imu` (0x12) | 0x000D | ConfigQueueFull | warning | counter | no | - | - | A configure command was not applied because the config queue was full. It is answered with detail QueueFull. |
 | `imu` (0x12) | 0x000E | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. |
+| `actuator_mock` (0x70) | 0x0001 | InitFailed | error | record | no | stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. |
+| `feedback_mock` (0x71) | 0x0001 | InitFailed | error | record | no | stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. |
+| `imu_mock` (0x72) | 0x0001 | InitFailed | error | record | no | stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. |
+| `core` (0x04) | 0x0100 | CommandDropped | warning | counter | no | - | - | The core command queue was full. |
+| `core` (0x04) | 0x0101 | ResponseDropped | warning | counter | no | - | - | A core reply could not be queued for transmission. |
+| `uart_comm` (0x02) | 0x0008 | StreamSkipped | warning | counter | no | - | - | A stream write was skipped because its slot was busy. |
 
 <!-- diag-codes:end -->

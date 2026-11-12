@@ -10,8 +10,7 @@ namespace drivelink::protocol::defs {
 
 /// The descriptor format: what a module type exposes. `tools/gen/gen.py`
 /// writes constexpr tables of these from `protocol/defs/<type>.yaml` (see
-/// docs/protocol/definitions.md). The numeric values of the enums are not yet
-/// a wire encoding; the describe protocol (F3) fixes that.
+/// docs/protocol/definitions.md). Enum values and flag bits are the F3b wire encoding.
 
 enum class ItemKind : uint8_t {
     Param = 0,  ///< configuration, read and write

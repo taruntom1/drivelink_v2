@@ -10,6 +10,7 @@
 #include "core/value.hpp"
 #include "core/wiring_order.hpp"
 #include "core_os/boot_info.hpp"
+#include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "drivelink/protocol/gen/diag_codes.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
@@ -34,12 +35,14 @@ public:
     {
         ctx.bindParam(sys::kControlRateHz, &m_control_rate_hz);
         ctx.bindParam(sys::kSensorRateHz, &m_sensor_rate_hz);
+        ctx.bindParam(sys::kStatusRateHz, &m_status_rate_hz);
         return true;
     }
 
     void tick(const TickContext &t) override { (void)t; }
 
 private:
+    uint16_t m_status_rate_hz = 10;
     uint16_t m_control_rate_hz = 0;
     uint16_t m_sensor_rate_hz = 0;
 };
@@ -48,6 +51,15 @@ uint32_t defaultPeriodUs(uint16_t rate_id)
 {
     const defs::ItemDesc *item = defs::findItem(sys::kDesc, rate_id);
     return periodUsFromHz((item != nullptr) ? item->default_bits : 0U);
+}
+
+void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
+    for(const auto &code:defs::diag::kCodeTable) {
+        if(static_cast<uint8_t>(code.source)==type && code.code==1 && type>=0x20) {
+            core_os::reportDiag(code,err,stage,0,instance);return;
+        }
+    }
+    core_os::reportDiag(diag_codes::core::kInstanceStartFailed,err,(static_cast<uint32_t>(type)<<8U)|instance,stage,instance);
 }
 
 uint32_t instanceArg(uint8_t type_id, uint8_t instance)
@@ -155,7 +167,7 @@ Status Core::startInstance(detail::InstanceRecord &record)
         stage = kStartStageNoStage; // fail() was called with stage 0
     }
     if (stage != 0U) {
-        core_os::reportDiag(diag_codes::core::kInstanceStartFailed, err, instanceArg(record.type_id, record.instance),
+        reportStartFailed(record.type_id,record.instance,err,
                             stage);
         return Status::fail(Result::Fault, Detail::StartFailed);
     }
@@ -172,7 +184,7 @@ void Core::createObject(detail::InstanceRecord &record)
     const InstanceConfig cfg{&type->desc, record.type_id, record.instance, record.loop, record.label};
     record.object.reset(type->create(cfg));
     if (!record.object) {
-        core_os::reportDiag(diag_codes::core::kInstanceStartFailed, 0, instanceArg(record.type_id, record.instance),
+        reportStartFailed(record.type_id,record.instance,0,
                             kStartStageCreate);
         return;
     }
@@ -590,6 +602,67 @@ bool Core::applySystemParam(void *ctx, uint16_t id, uint32_t bits)
     }
     self->loop(loop_id).setPeriodUs(period_us);
     return true;
+}
+
+Status Core::runAction(Ref ref, const ActionArgs &args, ActionOut &out)
+{
+    auto *record = m_table.find(ref.type, ref.instance);
+    if (!record || !record->object) { return Status::fail(Result::NotFound, Detail::UnknownRef); }
+    const auto *item = defs::findItem(*record->desc, ref.id);
+    if (!item) { return Status::fail(Result::NotFound, Detail::UnknownRef); }
+    if (item->kind != defs::ItemKind::Action) { return Status::fail(Result::InvalidArgument, Detail::WrongKind); }
+    if (item->runs_in == defs::ActionPlacement::Paused && record->loop == kControlLoop && m_params.armed()) {
+        return Status::fail(Result::Armed, Detail::LockedWhileArmed);
+    }
+    if (args.blob.size() > kActionBlobBytes ||
+        (!args.blob.empty() && item->blob != defs::BlobDir::In && item->blob != defs::BlobDir::Both)) {
+        return Status::fail(Result::InvalidArgument, Detail::BadValue);
+    }
+    for (size_t i = 0; i < args.values.size(); ++i) {
+        if (i >= item->args.size()) {
+            if (args.values[i]) { return Status::fail(Result::InvalidArgument, Detail::BadValue); }
+            continue;
+        }
+        defs::ItemDesc arg{}; arg.type = item->args[i].type;
+        const auto check = checkValue(arg,args.values[i]);
+        if (!check.ok) { return Status::fail(Result::InvalidArgument, check.detail, static_cast<uint16_t>(i)); }
+    }
+    if (!m_running || record->loop >= kLoopCount) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
+    auto &slot = loop(record->loop).actionSlot();
+    if (slot.state.load(std::memory_order_acquire) != ActionState::Empty) {
+        return Status::fail(Result::Busy, Detail::StagingBusy);
+    }
+    slot.completed.clear(); slot.target = record->object.get(); slot.id = ref.id;
+    slot.paused = item->runs_in == defs::ActionPlacement::Paused;
+    slot.values = args.values; slot.blob_size = args.blob.size(); slot.out = {};
+    std::copy(args.blob.begin(),args.blob.end(),slot.blob.begin());
+    slot.state.store(ActionState::Ready,std::memory_order_release);
+    const auto deadline=core_os::nowUs()+ParamService::stagingTimeoutUs(loop(record->loop).periodUs());
+    while(slot.state.load(std::memory_order_acquire)==ActionState::Ready) {
+        const auto remaining=deadline-core_os::nowUs();
+        if(remaining<=0) {
+            ActionState expected=ActionState::Ready;
+            if(slot.state.compare_exchange_strong(expected,ActionState::Empty,std::memory_order_acq_rel)) {
+                return Status::fail(Result::Busy,Detail::Withdrawn);
+            }
+            break;
+        }
+        slot.completed.wait(static_cast<uint32_t>(remaining));
+    }
+    // Once claimed, the action cannot be reported as unapplied. Bounded loop
+    // actions finish before signalling; paused actions run here after the ack.
+    while (slot.state.load(std::memory_order_acquire) == ActionState::Running) { slot.completed.wait(1000); }
+    if (slot.state.load(std::memory_order_acquire) == ActionState::Paused) {
+        slot.status = record->object->runAction(ref.id,args,slot.out);
+    }
+    Status status = slot.status;
+    if (slot.out.blob_size > kActionBlobBytes ||
+        (slot.out.blob_size && item->blob != defs::BlobDir::Out && item->blob != defs::BlobDir::Both)) {
+        status = Status::fail(Result::Fault,Detail::BadValue);
+    }
+    out = slot.out;
+    slot.state.store(ActionState::Empty,std::memory_order_release);
+    return status;
 }
 
 } // namespace core

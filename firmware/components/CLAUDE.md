@@ -70,3 +70,11 @@ These rules apply to every component under `firmware/components/`. They add to t
 - **Variables and struct fields:** snake_case. Members are prefixed `m_`, file-scope statics `s_`.
 - **Constants:** `constexpr` with a `k` prefix (`kProtocolVersion`, `kMaxCatchUpTicks`).
 - **Macros and Kconfig symbols:** UPPER_SNAKE_CASE.
+
+## F3b actions and diagnostics
+
+Instance actions run through Core::runAction. Loop actions follow parameter
+application; paused actions require an acknowledged pause. Their fixed storage
+must not escape the call. Diagnostic instance identities are explicit; use
+core_os::reportDiag's instance argument for instance reports. Do not encode
+instance identity by overwriting existing code args.

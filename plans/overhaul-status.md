@@ -5,8 +5,34 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F3b: the system, layout, describe, param and action families; the status stream; `GET_INFO`; diag v2; `mod_mock`. Start it after F3a-2 is merged.
-- **Handoff (F3a-2):**
+- **Next step:** F3c: vdev, the first libdrivelink slice, CLI and host superbuild. Start it after F3b is merged.
+- **Handoff (F3b):**
+  - Core v1 is specified in `docs/protocol/core.md`; diag redesign is wire v3
+    (`docs/protocol/diag.md`). Enums come from `registry.yaml::wire_enums`.
+  - `CommandService` is pure, single-config-caller and owns fixed scratch storage.
+    F3c can feed framed requests into it and execute `takeAfterReply()` effects.
+    Supply device version, build id, receive cap and keep bench_crash false.
+  - Mock type list is `mod_mock::kTypes` (0x70..0x72). The exact first-order
+    motor and wrapped-yaw IMU are deterministic; feedback uses the previous
+    actuator tick. Mock reset exercises paused actions and bounded blob echo.
+  - Layout LIST takes current/pending view plus cursor. GET_PENDING reads effective
+    staged values. Descriptors use whole-record paging and generated size checks.
+  - Action Event signals are hints: the config caller tests slot state and deadline;
+    only Ready can be withdrawn. Once claimed it waits for definite completion.
+    Paused control-loop actions and all reboot paths refuse an armed device.
+  - Diagnostic state has 254 sparse, fixed identities. The pure record and counter
+    bridges accept instance IDs; native counters also retain those identities.
+    F4b adds latch/arming semantics; metadata flags exist with false defaults.
+  - Status defaults to 10 Hz (1..100); CPU utilization samples idle runtime deltas,
+    without stack scans. Runtime stats default on; first/unsupported samples are
+    0xFF. SMP/unicore builds skip the current two-core sampling adapter.
+  - BenchCrash is system op254 and exists only with CORE_BENCH_CRASH enabled.
+    Normal builds reject it. `smoke_core_firmware.py --safe-mode` is for the bench
+    test build; normal firmware must be restored after testing.
+  - The self-review and independent Codex reviewer found and fixed an armed reboot
+    bypass via EXIT_SAFE_MODE and stale action signals causing premature Busy.
+    Follow-up review covered CPU sampling and the instance counter bridge.
+- **Still true from F3a-2:**
   - **The C++ API F3b wraps** (all on `core::Core`, config-task side):
     - ADD_INSTANCE is `addInstance(type, loop, label, &inst)`. The device picks the lowest free instance id (0..254). The default loop (the type's first loop class) belongs in the F3b handler.
     - REMOVE_INSTANCE is `removeInstance`; it is refused while another entry refs it (`Referenced`). SET_LABEL is `setLabel`, DISCARD_PENDING is `discardPending`, GET_PENDING is `getPending`.
@@ -24,13 +50,13 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
   - **The wiring and pin helpers** are in `defs.hpp`: `kNoGpio`, `kUnwired`, `wiringRef`, `isWiringRef`, `wiringRefType`, `wiringRefInstance`, `inCategory`. F3b's describe must send the new flag bits (`Gpio` 0x20, `RefTicksAfter` 0x40).
   - **`core_config_idf.cpp`** reads `CONFIG_UART_COMM_TX_PIN` / `RX_PIN` for the GPIO policy, so an app that builds `core` needs `uart_comm` in its config.
   - **`CONFIG_CORE_BOOT_SELFTEST`** (main's Kconfig) is a bench-only check: every boot flips `control.rate_hz` between 1000 and 500 and SAVEs. Never commit it on. F3b can drop it once SAVE is on the wire.
-  - **Still not run:** the F2 smoke (`smoke_main_firmware.py`) needs the CH343 adapter (COM3), which was not connected in F3a-1 or F3a-2. Safe mode on the board needs forced crashes and has no hook yet; the native tests cover it.
+  - F3b has now run the legacy main smoke over COM3 and safe-mode crash/recovery on the board. The previous lack of a CH343 adapter and crash hook is resolved.
 - **Still true from F3a-1:**
   - **The core** is `firmware/components/core` (namespace `core`). It is pure and builds natively; it uses only `core_os`, `protocol/` and std, and reports through the `core_os` diag sink. Kconfig reaches it only through `CoreConfig` (`src/idf/core_config_idf.cpp`). Its READMEs: `firmware/components/core/README.md`, `firmware/components/core_os/README.md`.
   - **`core_os`** has the clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` (NVS; native: in-memory with fault injection) and the boot info (reset reason, RTC crash counter, reboot). The backend is picked by include dir.
   - **Instances** must bind **every** param (structural ones included), signal and input in `start()`, or they fail (`core.InstanceStartFailed`, arg1 the stage: below 0x100 from the instance, 0x100–0x103 from the core). Boot values come from the shadow, filled from NVS.
   - **Thread tests** keep loose timing bounds (MinGW wakes up to ~15 ms late). The system-param rollback on a failed timer restart (`core.TimerRestartFailed`) can't be triggered natively.
-  - **Main firmware** has no module types yet (`kModuleTypes` is empty), so the core runs with empty loops beside the legacy managers.
+  - F3b supersedes the empty module list: main now registers `mod_mock::kTypes` beside the legacy managers.
 - **Still true from F2:**
   - **Definitions** live in `protocol/defs/` (`registry.yaml`, `diag_codes.yaml`, `system.yaml`, later one YAML per module type). `python tools/gen/gen.py` writes `protocol/include/drivelink/protocol/gen/*.hpp` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`). `--check` is what CI runs; the generator's own tests are `python -m unittest discover -s tools/gen/tests`. The YAML schema, the descriptor format and the hash are specified in [docs/protocol/definitions.md](../docs/protocol/definitions.md).
   - **`system.yaml`** is type `0x00` (namespace `defs::system`, first in `kTypeTable`): no loops, params and signals only. It holds the loop rates; F3b and F4b add the status rate and `watchdog_ms` when they use them.
@@ -60,8 +86,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F1b | New framing: u16 LEN + HCRC8, `MAX_PAYLOAD` 1024, 921600 baud default, UART ISR in IRAM, protocol version bumps, HIL tests and `conftest.py` baud | yes: HIL pytest | xhigh | merged | [#31](https://github.com/taruntom1/drivelink_v2/pull/31) |
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
-| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | in review | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | high | planned | |
+| F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | in review | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
@@ -156,6 +182,21 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3a-2 | `CONFIG_CORE_BOOT_SELFTEST` (main, default off) flips `control.rate_hz` 1000 ↔ 500 and SAVEs on every boot, for the bench save/reload check before SAVE is on the wire | F3a-2 has no wire ops; the check needs to run on the board | n/a |
 | 2026-11-12 | F3a-2 | Workflow change: the session that plans a step also builds it (Opus 5.5, high; no implementation subagent, no model switch) and reviews its own diff; an independent review agent (Opus, at the step's review effort) is spawned only when the step needs one. The table's "Build model · effort" column is removed | The planner already holds the plan and its decisions, which a second agent has to re-derive; the review agent stays for the risky steps (user decision) | n/a (status file, root `CLAUDE.md`, `/overhaul-step`) |
 
+| 2026-11-12 | F3b | One PR; separate current/pending layout views; whole descriptors with generator size limits; deterministic dynamic mocks and test actions; bench-only crash injection | User decisions in the pre-plan interview | yes |
+| 2026-11-12 | F3b | This Codex session plans and implements; an available independent Codex reviewer replaces Opus for this step | Explicit user-approved workflow exception | n/a |
+| 2026-11-12 | F3b | Core starts at wire v1; diag redesign ships at v3. Instance IDs are included consistently in records, clears, counters and queries; state uses 254 fixed sparse slots | Shared codecs and definite instance identity; no steady-state allocation | yes |
+| 2026-11-12 | F3b | Status rate defaults to 10 Hz (1..100); CPU load uses idle runtime deltas; initial/disabled/unsupported samples are 0xFF | Measured utilization with constant work and no stack scans | yes |
+| 2026-11-12 | F3b | Action completion events are wake hints; Ready withdrawal tests a deadline and state, while claimed actions wait for completion. Reboot effects wait for TX drain and are refused while armed | Independent review found stale-event early withdrawal and an EXIT_SAFE_MODE reboot bypass; both fixed and tested | yes |
+
+### F3b decisions
+
+- User approved this Codex session and an available independent Codex reviewer
+  in place of the Opus-specific workflow. The planning session implements it.
+- User chose one F3b PR unless a concrete blocker appears; separate current and
+  pending layout views; deterministic dynamic mocks with actions; whole
+  descriptors bounded by generator checks; test-only hardware crash injection.
+- Internal: status defaults to 10 Hz (1..100); CPU utilization uses per-core idle runtime deltas (0xFF if unavailable); diagnostic identities use 254 fixed sparse slots.
+
 ## Hardware test results
 
 | Date | Step | Board | What was run | Result |
@@ -164,7 +205,9 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3a-1 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4; console read for 65 s after a reset | Pass: one boot, no panic or reset loop; `Core started: 0 instances; loops control 1000 us, sensor 10000 us`; legacy managers started as before (IMU in mock mode, time_sync times out with no host). Stack marks at 30 s and 60 s, bytes free: core_ctrl 3256, core_sens 3252 (stacks 4096), main 1248, uart_rx 3196, uart_tx 3096, motor_mgr_upd 2088, motor_mgr_cfg 3156, imu_cfg 2092, imu_stream 2008, time_sync 2000, diag 2796, esp_timer 3352. Not covered: anything over UART0 (no adapter). |
 | 2026-11-12 | F3a-2 | ESP32-S3 bench board; native USB only (COM4), CH343 adapter not connected | Main firmware flashed over COM4 on a blank NVS; then a `CONFIG_CORE_BOOT_SELFTEST` build (save/reload) over four resets; then the normal firmware again. Console read after each reset | Pass. Blank NVS: `Core started: 0 instances (0 failed, 0 configured); safe mode off; config defaults; loops control 1000 us`, no NVS error. Self-test: boot 1 set 500 Hz and SAVEd (gen 1); boot 2 logged `config loaded from NVS`, control 2000 us, `reloaded 500 from NVS`, restored 1000 and SAVEd (gen 2); boots 3 and 4 repeated it (gens 3, 4). Normal firmware after it: `config loaded from NVS`, control 1000 us. Stack marks at 30 s, bytes free: main 1256, core_ctrl 3252, core_sens 3248, others as in F3a-1. Not covered: anything over UART0 (no adapter), safe mode on the board (no crash hook). |
 
+| 2026-11-12 | F3b | ESP32-S3 bare bench board; CH343 UART0 COM3 and native USB console COM4 | UART test app: 22 HIL pytest cases. Main firmware: core discovery and descriptor paging, current/pending layout, three mock instances and wiring, parameter staging, SAVE/reboot/reload, loop/paused actions with blob echo, cleanup and status; legacy main smoke. Separate CORE_BENCH_CRASH build: three deliberate panic resets, safe-mode discovery and EXIT_SAFE_MODE recovery. Normal firmware restored and both main smoke scripts rerun. | Pass. All 22 HIL cases, core smoke, legacy smoke (diag v3, motor/IMU v6, time_sync v2), and crash-loop recovery passed. Final normal build rejects BenchCrash and has zero mock instances after cleanup. Stack bytes free: main 1272, core_cfg 4764 (6144 stack), diag 1572, core_ctrl 3260, core_sens 3248; all task margins exceed 1 KB. No motors, real IMU or host/vdev exercised. |
+
 ## Notes
 
 - **Legacy wire specs.** The deleted READMEs (motor_manager v4, IMU v4, time_sync v1, diag v1) are in git history: `git show 7a4d693:components/<name>/README.md`. The IMU guide is still at `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
-- **diag's wire spec** has no page under `docs/protocol/` yet. F3b writes `docs/protocol/diag.md` when diag goes to v2.
+- **diag's wire spec** is now [diag.md](../docs/protocol/diag.md), redesign wire version 3.

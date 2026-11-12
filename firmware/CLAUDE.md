@@ -47,7 +47,7 @@ A legacy source can join the native build only if it builds without ESP-IDF beyo
 - `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`.
 - On Ubuntu, `tools/gen/gen.py --check`, the generator's unit tests (`python3 -m unittest discover -s tools/gen/tests`) and the native tests.
 
-**Definitions** are in `protocol/defs/`: `registry.yaml` (MSG_TYPEs and stream channel ranges), `diag_codes.yaml` (the diag codes), `system.yaml` (the system items, type `0x00`: the loop rates so far) and, from F3b, one file per module type. After editing any of them, regenerate and commit the outputs; CI fails if they are stale. The generator needs PyYAML, which the IDF Python env and this machine's Python both have. The files and the schema are described in `docs/protocol/definitions.md`.
+**Definitions** are in `protocol/defs/`: `registry.yaml` (MSG_TYPEs and stream channel ranges), `diag_codes.yaml` (the diag codes), `system.yaml` (the system items, type `0x00`: the loop and status rates) and, from F3b, one file per module type. After editing any of them, regenerate and commit the outputs; CI fails if they are stale. The generator needs PyYAML, which the IDF Python env and this machine's Python both have. The files and the schema are described in `docs/protocol/definitions.md`.
 
 ```bash
 python tools/gen/gen.py            # regenerate
@@ -80,9 +80,9 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
 - The order is `diag::init()`, `UartComm`, then `MotorManager`, `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then the core (`startCore()`), then `diag::Reporter`.
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
 - Before the core, main initialises NVS (`core_os::nvsInit()`): a full partition or one from a newer NVS version is erased and initialised again, and both that and a failure are reported (`core.NvsInitFailed`, arg0 1 erased, 2 failed). The core boots either way.
-- The core is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, empty until F3b; each desc is checked against `defs::kTypeTable`). main calls `init()`, then `boot(store)` (safe-mode check, NVS load, layout validation, creation in dependency order, tick order; the `KvStore` is a static in main), then `start()`. If one fails, main reports `core.InitFailed` (arg0 the stage: 1 registry, 2 control loop task, 3 sensor loop task, 4 boot) and continues without the core. It logs `Core started: ...` with the running, failed and configured instance counts, safe mode, whether the config came from NVS, and the loop periods.
+- The core is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from mod_mock::kTypes; each desc is checked against `defs::kTypeTable`). main calls `init()`, then `boot(store)` (safe-mode check, NVS load, layout validation, creation in dependency order, tick order; the `KvStore` is a static in main), then `start()`. If one fails, main reports `core.InitFailed` (arg0 the stage: 1 registry, 2 control loop task, 3 sensor loop task, 4 boot) and continues without the core. It logs `Core started: ...` with the running, failed and configured instance counts, safe mode, whether the config came from NVS, and the loop periods.
 - `CONFIG_CORE_BOOT_SELFTEST` (main's Kconfig, default off, bench only, never committed on) flips `control.rate_hz` between 1000 and 500 and SAVEs on every boot, to check SAVE and the reload on hardware.
-- The Reporter comes last so its `Boot` event carries the final `started_mask`. Records from the startup wait in the diag queue until then.
+- The Reporter comes last so its `Boot` event carries the final instance counts and safe-mode flag. Records from the startup wait in the diag queue until then.
 - `app_main` never returns. If `UartComm` fails, there is no link to report on: it logs to the console and idles.
 
 **Layering** (each one is an ESP-IDF component under `firmware/components/`):
@@ -93,7 +93,7 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) holds the pure wire library: CRC, framing, the frame `Scanner` and `wire_codec`, plus the generated registry, diag code table and descriptor format (`protocol/defs/` is their source). `uart_comm` and every protocol codec build on it. Its rules are in [protocol/CLAUDE.md](../protocol/CLAUDE.md).
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info: reset reason, RTC crash counter, reboot) with an ESP-IDF backend (built on `rtos_util`) and a native one. The backend is picked by include dir, never by `#ifdef`. See `firmware/components/core_os/README.md`.
-- `core` is the new core (F3 onwards): the module registry, the instance bind API, the `control` and `sensor` loops, the param service, the layout with its pending copy and validation, NVS A/B persistence, safe mode and the boot. It is pure: it uses only `core_os`, `protocol/` and std, so it also builds natively. Kconfig reaches it through `CoreConfig`, filled by its one IDF-only source. See `firmware/components/core/README.md`. Until the legacy managers are ported, it runs beside them with empty loops.
+- `core` is the new core (F3 onwards): the module registry, the instance bind API, the `control` and `sensor` loops, the param service, the layout with its pending copy and validation, NVS A/B persistence, safe mode and the boot. It is pure: it uses only `core_os`, `protocol/` and std, so it also builds natively. Kconfig reaches it through `CoreConfig`, filled by its IDF config source; the IDF CoreLink adapter owns UART integration. See `firmware/components/core/README.md`. Until the legacy managers are ported, it runs beside them with the configured mock instances.
 - `diag` reports errors to the host as codes. The `DIAG_*` macros latch a per-code slot and queue a record, and `diag::Reporter` sends events and answers queries over `uart_comm`. Only the managers and `main` report. The hardware layers return errors and don't depend on `diag`, and the reporter reads `uart_comm`'s link counters itself. Its codec and slot table are pure modules (`diag_protocol`, `diag_table`).
 
 **UART protocol** (`uart_comm`):
@@ -116,7 +116,7 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
   - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 6-byte header.
   - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 5-byte header.
   - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
-  - time_sync is at v2, diag at v2 (both bumped with the F1b framing). time_sync's ESP-initiated request already carries a `u16 request_id`.
+  - time_sync is at v2; diag is at v3 (the F3b instance/monotonic redesign). time_sync's ESP-initiated request already carries a `u16 request_id`.
 
 **Concurrency rules**:
 - **Task lifecycle:** create every task with `rtos_util::StoppableTask`. Never use bare `xTaskCreate` / `vTaskDelete`.
@@ -215,3 +215,14 @@ A change is done when all of the following are true:
 - **Vendor code:**
   - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
+
+## F3b additions
+
+The core registers mod_mock types and CoreLink's core_cfg task. The command
+service, current/pending layout views, descriptors and actions follow
+`docs/protocol/core.md`. Diagnostics use monotonic wire v3 and sparse per-instance
+slots (`docs/protocol/diag.md`); started_mask and time_synced are removed.
+`system.status.rate_hz` controls the status stream. CoreLink's large buffers live
+in Impl; its task joins stack high-water logging. BenchCrash is compiled out
+unless CORE_BENCH_CRASH is enabled explicitly. The main-firmware smoke tests are
+smoke_main_firmware.py and smoke_core_firmware.py (the latter configures mocks).

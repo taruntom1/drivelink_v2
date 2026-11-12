@@ -20,6 +20,9 @@ enum class Source : uint8_t {
     MotorManager = 0x10,
     TimeSync = 0x11,
     Imu = 0x12,
+    ActuatorMock = 0x70,
+    FeedbackMock = 0x71,
+    ImuMock = 0x72,
 };
 
 enum class Severity : uint8_t {
@@ -41,6 +44,9 @@ struct Code {
     Severity severity;
     CodeKind kind;
     bool clears;        ///< Has an `active` bit cleared by DIAG_CLEAR on recovery
+    const char *name = nullptr;
+    bool blocks_arm = false;
+    bool disarms = false;
 };
 
 namespace codes {
@@ -48,146 +54,170 @@ namespace codes {
 namespace system {
 /// A manager failed to start. It is left out, and the rest of the firmware keeps running.
 /// arg0: manager id (1 motor_manager, 2 time_sync, 3 imu). arg1: unused.
-inline constexpr Code kManagerStartFailed{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kManagerStartFailed{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, false, "ManagerStartFailed", false, false};
 /// time_sync started, but its periodic sync task did not. esp_err gives the reason.
 /// arg0: unused. arg1: unused.
-inline constexpr Code kPeriodicSyncStartFailed{1, Source::System, 0x0002, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kPeriodicSyncStartFailed{1, Source::System, 0x0002, Severity::Error, CodeKind::Record, false, "PeriodicSyncStartFailed", false, false};
 } // namespace system
 
 namespace uart_comm {
 /// A frame candidate with a valid header was rejected for a CRC16 mismatch.
-inline constexpr Code kCrcError{2, Source::UartComm, 0x0001, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kCrcError{2, Source::UartComm, 0x0001, Severity::Warning, CodeKind::Counter, false, "CrcError", false, false};
 /// A partial frame was dropped because the sender stopped mid-frame.
-inline constexpr Code kPartialFrame{3, Source::UartComm, 0x0002, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kPartialFrame{3, Source::UartComm, 0x0002, Severity::Warning, CodeKind::Counter, false, "PartialFrame", false, false};
 /// The UART reported a framing or parity error.
-inline constexpr Code kFrameOrParityError{4, Source::UartComm, 0x0003, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kFrameOrParityError{4, Source::UartComm, 0x0003, Severity::Warning, CodeKind::Counter, false, "FrameOrParityError", false, false};
 /// The RX hardware FIFO overflowed or the ring buffer was full.
-inline constexpr Code kRxOverflow{5, Source::UartComm, 0x0004, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kRxOverflow{5, Source::UartComm, 0x0004, Severity::Warning, CodeKind::Counter, false, "RxOverflow", false, false};
 /// A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload.
-inline constexpr Code kLengthError{6, Source::UartComm, 0x0005, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kLengthError{6, Source::UartComm, 0x0005, Severity::Warning, CodeKind::Counter, false, "LengthError", false, false};
 /// Received bytes that were not part of any valid frame (counts bytes, not events).
-inline constexpr Code kDiscardedBytes{7, Source::UartComm, 0x0006, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kDiscardedBytes{7, Source::UartComm, 0x0006, Severity::Warning, CodeKind::Counter, false, "DiscardedBytes", false, false};
 /// A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.
-inline constexpr Code kHeaderCrcError{8, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kHeaderCrcError{8, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false, "HeaderCrcError", false, false};
+/// A stream write was skipped because its slot was busy.
+inline constexpr Code kStreamSkipped{52, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
 } // namespace uart_comm
 
 namespace diag {
 /// A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet).
-inline constexpr Code kRecordDropped{9, Source::Diag, 0x0001, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kRecordDropped{9, Source::Diag, 0x0001, Severity::Warning, CodeKind::Counter, false, "RecordDropped", false, false};
 /// A diag query response could not be queued for UART transmission and was dropped.
-inline constexpr Code kEventTxDropped{10, Source::Diag, 0x0002, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kEventTxDropped{10, Source::Diag, 0x0002, Severity::Warning, CodeKind::Counter, false, "EventTxDropped", false, false};
 /// A diag query was dropped because the reporter's query queue was full.
-inline constexpr Code kQueryDropped{11, Source::Diag, 0x0003, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kQueryDropped{11, Source::Diag, 0x0003, Severity::Warning, CodeKind::Counter, false, "QueryDropped", false, false};
 } // namespace diag
 
 namespace core {
 /// The core failed to start. main reports it and leaves the core out; the legacy managers keep running. esp_err gives the reason for a loop task.
 /// arg0: stage (1 registry, 2 control loop task, 3 sensor loop task, 4 boot - Core::boot refused, which is a programming error in main). arg1: for stage 1, the index of the rejected module type in main's list; else unused.
-inline constexpr Code kInitFailed{12, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kInitFailed{12, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
 /// arg0: type id << 8 | instance id. arg1: stage (the instance's own stage from fail(), or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound).
-inline constexpr Code kInstanceStartFailed{13, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kInstanceStartFailed{13, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false, "InstanceStartFailed", false, false};
 /// A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
 /// arg0: loop id (0 control, 1 sensor). arg1: the period that failed, in us.
-inline constexpr Code kTimerRestartFailed{14, Source::Core, 0x0003, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kTimerRestartFailed{14, Source::Core, 0x0003, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
 /// The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; the loops run empty. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
 /// arg0: the crash counter (consecutive boots after a panic or a watchdog reset). arg1: unused.
-inline constexpr Code kSafeModeEntered{15, Source::Core, 0x0004, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kSafeModeEntered{15, Source::Core, 0x0004, Severity::Error, CodeKind::Record, false, "SafeModeEntered", false, false};
 /// A layout entry loaded from NVS failed validation at boot and was left out. layout_invalid is set. Instances wired to it are left out too (core.DependencyMissing).
 /// arg0: type id << 8 | instance id. arg1: the core Detail of the check that failed (UnknownType, LoopMismatch, BadLabel, LabelInUse, GpioNotAllowed, GpioConflict, BadRef, WiringCycle, Capacity, ...; numbered in registry.yaml from F3b).
-inline constexpr Code kLayoutInvalid{16, Source::Core, 0x0005, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kLayoutInvalid{16, Source::Core, 0x0005, Severity::Error, CodeKind::Record, false, "LayoutInvalid", false, false};
 /// An instance was left out at boot because an instance it is wired to (a ref param) is invalid, failed to start or is itself missing a dependency. Its configuration is kept.
 /// arg0: type id << 8 | instance id of the instance left out. arg1: type id << 8 | instance id of the instance it is wired to, which is not running.
-inline constexpr Code kDependencyMissing{17, Source::Core, 0x0006, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kDependencyMissing{17, Source::Core, 0x0006, Severity::Error, CodeKind::Record, false, "DependencyMissing", false, false};
 /// NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the defaults and no instances. config_loaded_from_nvs is false. Not reported on a blank NVS.
 /// arg0: the newest layout generation that passed its checks (0 when none did). arg1: cause (1 no layout blob passed its checks, 2 no generation had every instance blob).
-inline constexpr Code kConfigLoadFailed{18, Source::Core, 0x0007, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kConfigLoadFailed{18, Source::Core, 0x0007, Severity::Error, CodeKind::Record, false, "ConfigLoadFailed", false, false};
 /// An NVS write or erase failed during SAVE or FACTORY_RESET. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
 /// arg0: the namespace, type id << 8 | instance id (0xFFFF for the layout namespace `core`). arg1: operation (1 write a blob, 2 erase a namespace).
-inline constexpr Code kNvsWriteFailed{19, Source::Core, 0x0008, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kNvsWriteFailed{19, Source::Core, 0x0008, Severity::Error, CodeKind::Record, false, "NvsWriteFailed", false, false};
 /// Reported by main at boot. esp_err is the error that nvs_flash_init returned (stage 1) or the final error (stage 2).
 /// arg0: what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved). arg1: unused.
-inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false, "NvsInitFailed", false, false};
+/// The core command queue was full.
+inline constexpr Code kCommandDropped{50, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
+/// A core reply could not be queued for transmission.
+inline constexpr Code kResponseDropped{51, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
 } // namespace core
 
 namespace motor_manager {
 /// MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 /// arg0: stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task, 9 telemetry stream slot. arg1: unused.
-inline constexpr Code kInitFailed{21, Source::MotorManager, 0x0001, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kInitFailed{21, Source::MotorManager, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR.
 /// arg0: motor id. arg1: hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT).
-inline constexpr Code kMotorCreateFailed{22, Source::MotorManager, 0x0002, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kMotorCreateFailed{22, Source::MotorManager, 0x0002, Severity::Error, CodeKind::Record, false, "MotorCreateFailed", false, false};
 /// SET_TIMING could not restart the control timer at the new period. The old period stays in effect.
 /// arg0: requested control period (us). arg1: unused.
-inline constexpr Code kTimerRestartFailed{23, Source::MotorManager, 0x0003, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kTimerRestartFailed{23, Source::MotorManager, 0x0003, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
 /// The control timer stopped waking the update task, so the control loop is not running. Detected by the config task. Cleared when the timer fires again or the manager stops.
 /// arg0: wait without a tick (ms). arg1: unused.
-inline constexpr Code kControlTimerStalled{24, Source::MotorManager, 0x0004, Severity::Warning, CodeKind::Record, true};
+inline constexpr Code kControlTimerStalled{24, Source::MotorManager, 0x0004, Severity::Warning, CodeKind::Record, true, "ControlTimerStalled", false, false};
 /// Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex).
-inline constexpr Code kControlOverrun{25, Source::MotorManager, 0x0005, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kControlOverrun{25, Source::MotorManager, 0x0005, Severity::Warning, CodeKind::Counter, false, "ControlOverrun", false, false};
 /// A setpoint stream frame was dropped because its header or length was invalid.
-inline constexpr Code kSetpointBadFrame{26, Source::MotorManager, 0x0006, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kSetpointBadFrame{26, Source::MotorManager, 0x0006, Severity::Warning, CodeKind::Counter, false, "SetpointBadFrame", false, false};
 /// A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox).
-inline constexpr Code kSetpointRejected{27, Source::MotorManager, 0x0007, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kSetpointRejected{27, Source::MotorManager, 0x0007, Severity::Warning, CodeKind::Counter, false, "SetpointRejected", false, false};
 /// A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
-inline constexpr Code kConfigQueueFull{28, Source::MotorManager, 0x0008, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kConfigQueueFull{28, Source::MotorManager, 0x0008, Severity::Warning, CodeKind::Counter, false, "ConfigQueueFull", false, false};
 /// A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.
-inline constexpr Code kResponseTxDropped{29, Source::MotorManager, 0x0009, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kResponseTxDropped{29, Source::MotorManager, 0x0009, Severity::Warning, CodeKind::Counter, false, "ResponseTxDropped", false, false};
 } // namespace motor_manager
 
 namespace time_sync {
 /// TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 /// arg0: stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback. arg1: unused.
-inline constexpr Code kInitFailed{30, Source::TimeSync, 0x0001, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kInitFailed{30, Source::TimeSync, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.
 /// arg0: stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock. arg1: host status byte (stage 3), else 0.
-inline constexpr Code kSyncFailed{31, Source::TimeSync, 0x0002, Severity::Warning, CodeKind::Record, true};
+inline constexpr Code kSyncFailed{31, Source::TimeSync, 0x0002, Severity::Warning, CodeKind::Record, true, "SyncFailed", false, false};
 /// A time sync response was dropped because it could not be decoded (bad length or version).
-inline constexpr Code kBadResponseFrame{32, Source::TimeSync, 0x0003, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kBadResponseFrame{32, Source::TimeSync, 0x0003, Severity::Warning, CodeKind::Counter, false, "BadResponseFrame", false, false};
 } // namespace time_sync
 
 namespace imu {
 /// The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 /// arg0: stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot. arg1: unused.
-inline constexpr Code kInitFailed{33, Source::Imu, 0x0001, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kInitFailed{33, Source::Imu, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
 /// arg0: I2C port. arg1: BNO055 I2C address.
-inline constexpr Code kFallbackToMock{34, Source::Imu, 0x0002, Severity::Warning, CodeKind::Record, false};
+inline constexpr Code kFallbackToMock{34, Source::Imu, 0x0002, Severity::Warning, CodeKind::Record, false, "FallbackToMock", false, false};
 /// SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.
 /// arg0: requested operation mode. arg1: unused.
-inline constexpr Code kModeSwitchFailed{35, Source::Imu, 0x0003, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kModeSwitchFailed{35, Source::Imu, 0x0003, Severity::Error, CodeKind::Record, false, "ModeSwitchFailed", false, false};
 /// The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.
 /// arg0: cause: 1 manager mutex busy, 2 sampling timer did not restart. arg1: unused.
-inline constexpr Code kStreamReenableFailed{36, Source::Imu, 0x0004, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kStreamReenableFailed{36, Source::Imu, 0x0004, Severity::Error, CodeKind::Record, false, "StreamReenableFailed", false, false};
 /// ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.
 /// arg0: unused. arg1: unused.
-inline constexpr Code kCalibrationReadFailed{37, Source::Imu, 0x0005, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kCalibrationReadFailed{37, Source::Imu, 0x0005, Severity::Error, CodeKind::Record, false, "CalibrationReadFailed", false, false};
 /// ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.
 /// arg0: unused. arg1: unused.
-inline constexpr Code kCalibrationApplyFailed{38, Source::Imu, 0x0006, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kCalibrationApplyFailed{38, Source::Imu, 0x0006, Severity::Error, CodeKind::Record, false, "CalibrationApplyFailed", false, false};
 /// SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
 /// arg0: requested sample period (us). arg1: unused.
-inline constexpr Code kTimerRestartFailed{39, Source::Imu, 0x0007, Severity::Error, CodeKind::Record, false};
+inline constexpr Code kTimerRestartFailed{39, Source::Imu, 0x0007, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
 /// The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.
 /// arg0: wait without a tick (ms). arg1: unused.
-inline constexpr Code kSamplerStalled{40, Source::Imu, 0x0008, Severity::Warning, CodeKind::Record, true};
+inline constexpr Code kSamplerStalled{40, Source::Imu, 0x0008, Severity::Warning, CodeKind::Record, true, "SamplerStalled", false, false};
 /// Sample periods that were missed because the stream task ran late.
-inline constexpr Code kSampleLate{41, Source::Imu, 0x0009, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kSampleLate{41, Source::Imu, 0x0009, Severity::Warning, CodeKind::Counter, false, "SampleLate", false, false};
 /// Samples skipped because a configure operation held the BNO055.
-inline constexpr Code kDeviceBusy{42, Source::Imu, 0x000A, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kDeviceBusy{42, Source::Imu, 0x000A, Severity::Warning, CodeKind::Counter, false, "DeviceBusy", false, false};
 /// Samples that failed to read from the BNO055.
-inline constexpr Code kReadError{43, Source::Imu, 0x000B, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kReadError{43, Source::Imu, 0x000B, Severity::Warning, CodeKind::Counter, false, "ReadError", false, false};
 /// Samples that could not be encoded into a stream packet.
-inline constexpr Code kEncodeError{44, Source::Imu, 0x000C, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kEncodeError{44, Source::Imu, 0x000C, Severity::Warning, CodeKind::Counter, false, "EncodeError", false, false};
 /// A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
-inline constexpr Code kConfigQueueFull{45, Source::Imu, 0x000D, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kConfigQueueFull{45, Source::Imu, 0x000D, Severity::Warning, CodeKind::Counter, false, "ConfigQueueFull", false, false};
 /// A configure response could not be queued for UART transmission and was dropped.
-inline constexpr Code kResponseTxDropped{46, Source::Imu, 0x000E, Severity::Warning, CodeKind::Counter, false};
+inline constexpr Code kResponseTxDropped{46, Source::Imu, 0x000E, Severity::Warning, CodeKind::Counter, false, "ResponseTxDropped", false, false};
 } // namespace imu
+
+namespace actuator_mock {
+/// The module instance failed to start.
+/// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
+inline constexpr Code kInitFailed{47, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+} // namespace actuator_mock
+
+namespace feedback_mock {
+/// The module instance failed to start.
+/// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
+inline constexpr Code kInitFailed{48, Source::FeedbackMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+} // namespace feedback_mock
+
+namespace imu_mock {
+/// The module instance failed to start.
+/// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
+inline constexpr Code kInitFailed{49, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+} // namespace imu_mock
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 47;
+inline constexpr size_t kSlotCount = 53;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -238,6 +268,12 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::imu::kEncodeError,
     codes::imu::kConfigQueueFull,
     codes::imu::kResponseTxDropped,
+    codes::actuator_mock::kInitFailed,
+    codes::feedback_mock::kInitFailed,
+    codes::imu_mock::kInitFailed,
+    codes::core::kCommandDropped,
+    codes::core::kResponseDropped,
+    codes::uart_comm::kStreamSkipped,
 }};
 
 } // namespace drivelink::protocol::defs::diag

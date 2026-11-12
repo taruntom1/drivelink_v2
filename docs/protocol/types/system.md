@@ -12,3 +12,4 @@ Device-wide settings owned by the core.
 |---|---|---|---|---|---|---|---|
 | 0x0001 | `control.rate_hz` | u16 | Hz | 100 .. 2000 | 1000 | persist, locked_while_armed | Rate of the control loop. |
 | 0x0002 | `sensor.rate_hz` | u16 | Hz | 10 .. 500 | 100 | persist, locked_while_armed | Rate of the sensor loop. |
+| 0x0003 | `status.rate_hz` | u16 | Hz | 1 .. 100 | 10 | persist |  |

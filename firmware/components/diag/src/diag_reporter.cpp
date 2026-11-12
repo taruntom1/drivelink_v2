@@ -27,12 +27,12 @@ static_assert(kMaxPayload >= protocol::kMaxFixedEventSize,
               "CONFIG_UART_COMM_MAX_PAYLOAD is too small for a diag Record event");
 static_assert(kMaxPayload >= protocol::kMaxInfoResponseSize,
               "CONFIG_UART_COMM_MAX_PAYLOAD is too small for the diag GetInfo response");
-static_assert(kSlotCount < protocol::kNoNextPage, "slot indices must stay below the GetEntries end marker");
+static_assert(detail::kRuntimeSlots < protocol::kNoNextPage, "slot indices must stay below the GetEntries end marker");
 
 // Never more entries than slots: with 1024-byte frames a page could list 127
-// entries, but only kSlotCount exist (and the arrays live on the task stack).
-constexpr size_t kMaxCounterEntries = std::min(protocol::maxCounterEntries(kMaxPayload), kSlotCount);
-constexpr size_t kMaxPageEntries = std::min(protocol::maxEntriesPerPage(kMaxPayload), kSlotCount);
+// entries, but only detail::kRuntimeSlots exist (and the arrays live on the task stack).
+constexpr size_t kMaxCounterEntries = std::min(protocol::maxCounterEntries(kMaxPayload), detail::kRuntimeSlots);
+constexpr size_t kMaxPageEntries = std::min(protocol::maxEntriesPerPage(kMaxPayload), detail::kRuntimeSlots);
 constexpr size_t kMaxResponseBody = kMaxPayload - protocol::kQueryResponseHeaderSize;
 
 /// After a failed event send (UART TX queue full), wait this long before
@@ -60,7 +60,9 @@ struct Reporter::Impl {
     uint16_t seq = 0;
     bool boot_pending = true;
     int64_t tx_backoff_until_us = 0;
-    std::array<uint32_t, kSlotCount> last_sent{};
+    std::array<uint32_t, detail::kRuntimeSlots> last_sent{};
+    std::array<detail::SlotSnapshot,detail::kRuntimeSlots> snaps{};
+    std::array<uint32_t,detail::kRuntimeSlots> now{};
     uart_comm::ErrorCounters uart_last{};
 
     // Reporter-task buffers, each about MAX_PAYLOAD (1 KB). They live here,
@@ -79,7 +81,7 @@ struct Reporter::Impl {
     void handleQueries();
     void handleQuery(const uart_comm::RxFrame &frame);
     size_t encodeInfo(uint8_t *out, size_t cap) const;
-    size_t encodeEntriesPage(uint8_t start, uint8_t *out, size_t cap) const;
+    size_t encodeEntriesPage(uint8_t start, uint8_t *out, size_t cap);
     void applyClear(uint8_t what);
     void foldUartCounters();
     void sendCounterDeltas();
@@ -216,7 +218,7 @@ void Reporter::Impl::sendBoot()
     protocol::BootEvent ev{};
     ev.timestamp_us = detail::wallClockUs();
     ev.reset_reason = static_cast<uint8_t>(esp_reset_reason());
-    ev.started_mask = config.started_mask;
+    ev.instances_ok=config.instances_ok;ev.instances_failed=config.instances_failed;ev.safe_mode=config.safe_mode;
 
     const size_t len = protocol::encodeBootEvent(seq, detail::currentFlags(), ev, tx_buf.data(), tx_buf.size());
     if (sendEvent(tx_buf.data(), len)) {
@@ -232,11 +234,11 @@ void Reporter::Impl::drainEvents()
         if (!detail::peekEvent(ev)) {
             return;
         }
-        if (ev.slot >= kSlotCount) {
+        if (ev.slot >= detail::kRuntimeSlots) {
             detail::popEvent();
             continue;
         }
-        const Code &code = kCodeTable[ev.slot];
+        const Code &code = kCodeTable[detail::table().codeSlot(ev.slot)];
 
         uint8_t *buf = tx_buf.data();
         const size_t cap = tx_buf.size();
@@ -246,6 +248,7 @@ void Reporter::Impl::drainEvents()
             rec.timestamp_us = ev.timestamp_us;
             rec.severity = static_cast<uint8_t>(code.severity);
             rec.source = static_cast<uint8_t>(code.source);
+            rec.instance = detail::table().instance(ev.slot);
             rec.code = code.code;
             rec.esp_err = ev.esp_err;
             rec.arg0 = ev.arg0;
@@ -255,6 +258,7 @@ void Reporter::Impl::drainEvents()
             protocol::ClearedEvent clr{};
             clr.timestamp_us = ev.timestamp_us;
             clr.source = static_cast<uint8_t>(code.source);
+            clr.instance = detail::table().instance(ev.slot);
             clr.code = code.code;
             len = protocol::encodeClearedEvent(seq, ev.flags, clr, buf, cap);
         }
@@ -330,7 +334,7 @@ size_t Reporter::Impl::encodeInfo(uint8_t *out, size_t cap) const
     info.flags = detail::currentFlags();
     info.uptime_us = static_cast<uint64_t>(esp_timer_get_time());
     info.reset_reason = static_cast<uint8_t>(esp_reset_reason());
-    info.started_mask = config.started_mask;
+    info.instances_ok=config.instances_ok;info.instances_failed=config.instances_failed;info.safe_mode=config.safe_mode;
     info.records_dropped = table.read(codes::diag::kRecordDropped.slot).count;
     info.events_tx_dropped = table.read(codes::diag::kEventTxDropped.slot).count;
     info.version = app->version;
@@ -338,19 +342,19 @@ size_t Reporter::Impl::encodeInfo(uint8_t *out, size_t cap) const
     return protocol::encodeInfoBody(info, out, cap);
 }
 
-size_t Reporter::Impl::encodeEntriesPage(uint8_t start, uint8_t *out, size_t cap) const
+size_t Reporter::Impl::encodeEntriesPage(uint8_t start, uint8_t *out, size_t cap)
 {
-    std::array<detail::SlotSnapshot, kSlotCount> snaps{};
+
     const detail::SlotTable &table = detail::table();
-    for (size_t slot = 0; slot < kSlotCount; ++slot) {
+    for (size_t slot = 0; slot < detail::kRuntimeSlots; ++slot) {
         snaps[slot] = table.read(slot);
     }
 
     std::array<protocol::EntryState, kMaxPageEntries> entries{};
     uint8_t total = 0;
     uint8_t next = protocol::kNoNextPage;
-    const size_t n = detail::collectEntries(kCodeTable.data(), snaps.data(), kSlotCount, start, entries.data(),
-                                            entries.size(), total, next);
+    const size_t n = detail::collectEntries(kCodeTable.data(), snaps.data(), detail::kRuntimeSlots, start, entries.data(),
+                                            entries.size(), total, next, &table);
     return protocol::encodeEntriesBody(total, next, entries.data(), n, out, cap);
 }
 
@@ -377,6 +381,7 @@ void Reporter::Impl::foldUartCounters()
         table.add(code.slot, value - last);
         last = value;
     };
+    fold(codes::uart_comm::kStreamSkipped, now.stream_skipped, uart_last.stream_skipped);
     fold(codes::uart_comm::kCrcError, now.crc_errors, uart_last.crc_errors);
     fold(codes::uart_comm::kPartialFrame, now.timeouts, uart_last.timeouts);
     fold(codes::uart_comm::kFrameOrParityError, now.uart_errors, uart_last.uart_errors);
@@ -388,9 +393,9 @@ void Reporter::Impl::foldUartCounters()
 
 void Reporter::Impl::sendCounterDeltas()
 {
-    std::array<uint32_t, kSlotCount> now{};
+
     const detail::SlotTable &table = detail::table();
-    for (size_t slot = 0; slot < kSlotCount; ++slot) {
+    for (size_t slot = 0; slot < detail::kRuntimeSlots; ++slot) {
         now[slot] = table.read(slot).count;
     }
 
@@ -398,8 +403,8 @@ void Reporter::Impl::sendCounterDeltas()
     for (;;) {
         std::array<protocol::CounterEntry, kMaxCounterEntries> entries{};
         std::array<uint8_t, kMaxCounterEntries> slots{};
-        const size_t n = detail::collectCounterDeltas(kCodeTable.data(), now.data(), last_sent.data(), kSlotCount,
-                                                      cursor, entries.data(), slots.data(), entries.size());
+        const size_t n = detail::collectCounterDeltas(kCodeTable.data(), now.data(), last_sent.data(), detail::kRuntimeSlots,
+                                                      cursor, entries.data(), slots.data(), entries.size(), &table);
         if (n == 0U) {
             return;
         }

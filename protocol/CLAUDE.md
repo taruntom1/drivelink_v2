@@ -17,3 +17,10 @@ The wire library shared by the firmware and the host: framing, CRCs, the frame s
 - **Wire changes.** Any change to the frame layout or to a codec's encoding is a protocol change: update `docs/protocol/`, the firmware, the host code and the Python HIL reference (`firmware/test/uart_comm/protocol.py`) in the same PR, and bump the protocol versions.
 - **Tests.** Every header has tests in `protocol/test/`: round trips, exact lengths, rejection of malformed input, and the resync cases for the scanner. A new `.cpp` joins `PROTOCOL_DIR` test sources in `firmware/test/native/CMakeLists.txt` until `protocol/` has its own test target. Changes to the generator come with tests in `tools/gen/tests/`.
 - **Warnings are errors** in the native test build, and the IDF build must stay warning-free.
+
+## Core wire contract
+
+Core codecs are in core_codec.hpp; enums come from registry.yaml wire_enums.
+Descriptor enum values in defs.hpp are wire values. Complete descriptor sizes
+are generator-checked; firmware's payload cap must meet kDescriptorMinPayload.
+Core v1 and diagnostic v3 are documented in docs/protocol/core.md and diag.md.

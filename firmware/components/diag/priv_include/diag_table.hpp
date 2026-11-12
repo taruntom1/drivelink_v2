@@ -98,7 +98,34 @@ private:
     std::array<Slot, N> m_slots{};
 };
 
-using SlotTable = BasicSlotTable<kSlotCount>;
+inline constexpr size_t kRuntimeSlots = 254;
+// Sparse instance slots. The base slots retain their generated indexes for
+// non-instance reports. Additional identities are claimed atomically once
+// and remain stable until reboot, including after Clear.
+class SlotTable : public BasicSlotTable<kRuntimeSlots> {
+public:
+    SlotTable() { for(auto &key:m_keys) { key.store(0); } }
+    size_t resolve(uint8_t code,uint8_t instance) {
+        if(instance==255) { return code; }
+        const uint32_t key=1U+(static_cast<uint32_t>(code)<<8U)+instance;
+        for(size_t i=kSlotCount;i<kRuntimeSlots;++i) {
+            uint32_t current=m_keys[i].load(std::memory_order_acquire);
+            if(current==key) { return i; }
+            if(current==0 && m_keys[i].compare_exchange_strong(current,key,std::memory_order_acq_rel)) { return i; }
+            if(current==key) { return i; }
+        }
+        return kRuntimeSlots;
+    }
+    uint8_t codeSlot(size_t slot) const {
+        return slot<kSlotCount?static_cast<uint8_t>(slot):static_cast<uint8_t>((m_keys[slot].load(std::memory_order_acquire)-1U)>>8U);
+    }
+    uint8_t instance(size_t slot) const {
+        return slot<kSlotCount?255:static_cast<uint8_t>(m_keys[slot].load(std::memory_order_acquire)-1U);
+    }
+    bool allocated(size_t slot) const { return slot<kSlotCount || m_keys[slot].load(std::memory_order_acquire)!=0; }
+private:
+    std::array<std::atomic<uint32_t>,kRuntimeSlots> m_keys{};
+};
 
 /// True if a slot is listed by GetEntries: it has a count or a state bit.
 constexpr bool isListed(const SlotSnapshot &s)
@@ -116,7 +143,7 @@ constexpr bool isListed(const SlotSnapshot &s)
 ///                      protocol::kNoNextPage when no listed slot remains.
 /// @return Entries written.
 size_t collectEntries(const Code *codes, const SlotSnapshot *snaps, size_t n, uint8_t start,
-                      protocol::EntryState *out, size_t max, uint8_t &total, uint8_t &next);
+                      protocol::EntryState *out, size_t max, uint8_t &total, uint8_t &next, const SlotTable *table = nullptr);
 
 /// Pick counter slots whose count changed since the last send.
 ///
@@ -128,6 +155,6 @@ size_t collectEntries(const Code *codes, const SlotSnapshot *snaps, size_t n, ui
 /// @param[in,out] cursor  Slot to resume from; set to n when the scan is done.
 /// @return Entries written (0 when nothing changed from `cursor` on).
 size_t collectCounterDeltas(const Code *codes, const uint32_t *now, const uint32_t *last, size_t n,
-                            size_t &cursor, protocol::CounterEntry *out, uint8_t *out_slots, size_t max);
+                            size_t &cursor, protocol::CounterEntry *out, uint8_t *out_slots, size_t max, const SlotTable *table = nullptr);
 
 } // namespace diag::detail

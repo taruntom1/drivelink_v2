@@ -35,8 +35,22 @@ void Loop::runTick(uint32_t elapsed)
     // 1. Heartbeat (read by the safety monitor from F4b).
     m_heartbeat.fetch_add(1U, std::memory_order_relaxed);
 
+    if (m_action.state.load(std::memory_order_acquire) == ActionState::Paused) { return; }
     // 3. Staged param batch.
     applyStaged();
+
+    ActionState expected = ActionState::Ready;
+    if (m_action.state.compare_exchange_strong(expected, ActionState::Running, std::memory_order_acq_rel)) {
+        if (m_action.paused) {
+            m_action.state.store(ActionState::Paused, std::memory_order_release);
+            m_action.completed.signal();
+            return;
+        }
+        const ActionArgs args{m_action.values, {m_action.blob.data(), m_action.blob_size}};
+        m_action.status = m_action.target->runAction(m_action.id, args, m_action.out);
+        m_action.state.store(ActionState::Done, std::memory_order_release);
+        m_action.completed.signal();
+    }
 
     // 7. Instances, in the wiring's tick order (the list order, set at boot).
     const uint32_t period_us = m_period_us.load(std::memory_order_relaxed);

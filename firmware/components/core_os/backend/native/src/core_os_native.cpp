@@ -4,6 +4,7 @@
 #include <chrono>
 #include <map>
 #include <utility>
+#include <tuple>
 
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
@@ -196,7 +197,7 @@ namespace {
 struct DiagRecord {
     std::mutex mutex;
     std::vector<native::RecordedReport> reports;
-    std::map<std::pair<uint8_t, uint16_t>, uint64_t> counters;
+    std::map<std::tuple<uint8_t, uint16_t, uint8_t>, uint64_t> counters;
 };
 
 DiagRecord &diagRecord()
@@ -205,25 +206,25 @@ DiagRecord &diagRecord()
     return record;
 }
 
-std::pair<uint8_t, uint16_t> key(DiagCode code)
+std::tuple<uint8_t, uint16_t, uint8_t> key(DiagCode code, uint8_t instance = 255)
 {
-    return {static_cast<uint8_t>(code.source), code.code};
+    return {static_cast<uint8_t>(code.source), code.code, instance};
 }
 
 } // namespace
 
-void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1)
+void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
-    r.reports.push_back({code, err, arg0, arg1});
+    r.reports.push_back({code, err, arg0, arg1, instance});
 }
 
-void countDiag(DiagCode code, uint32_t n)
+void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
-    r.counters[key(code)] += n;
+    r.counters[key(code,instance)] += n;
 }
 
 namespace native {
@@ -248,11 +249,11 @@ size_t reportCount(DiagCode code)
     return n;
 }
 
-uint64_t counterTotal(DiagCode code)
+uint64_t counterTotal(DiagCode code, uint8_t instance)
 {
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
-    const auto it = r.counters.find(key(code));
+    const auto it = r.counters.find(key(code,instance));
     return (it == r.counters.end()) ? 0U : it->second;
 }
 

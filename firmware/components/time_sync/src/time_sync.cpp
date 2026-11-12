@@ -496,7 +496,7 @@ esp_err_t TimeSync::performSync(TickType_t timeout, uint8_t& failed_stage, uint8
         m_impl->last_server_unix_us = t2;
         m_impl->last_sync_monotonic_us = static_cast<uint64_t>(esp_timer_get_time());
         xSemaphoreGive(m_impl->state_mutex);
-        diag::setTimeSynced(); // diag events now carry the time_synced flag
+        // Diagnostics use the monotonic clock independently of host time.
 
         ESP_LOGI(TAG,
                  "Synced request_id=%u offset_us=%lld rtt_us=%lu",

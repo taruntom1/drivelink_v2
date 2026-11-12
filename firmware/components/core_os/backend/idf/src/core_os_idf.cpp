@@ -85,7 +85,7 @@ void Event::clear()
 
 // -- diag sink -----------------------------------------------------------------
 
-void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1)
+void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
     // The core is pure and has no log text of its own: write the code and the
     // args, which carry the detail (see protocol/defs/diag_codes.yaml).
@@ -98,12 +98,12 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1)
                  static_cast<unsigned>(code.source), static_cast<unsigned>(code.code),
                  esp_err_to_name(static_cast<esp_err_t>(err)), arg0, arg1);
     }
-    diag::report(code, static_cast<esp_err_t>(err), arg0, arg1);
+    diag::report(code, static_cast<esp_err_t>(err), arg0, arg1, instance);
 }
 
-void countDiag(DiagCode code, uint32_t n)
+void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
-    diag::count(code, n);
+    diag::count(code, n, instance);
 }
 
 } // namespace core_os

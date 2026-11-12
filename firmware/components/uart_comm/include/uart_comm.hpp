@@ -98,6 +98,9 @@ public:
     ///         ESP_ERR_INVALID_ARG if msg_type is a stream type or outside every
     ///         range (0x00, 0xFF), len is too large, or payload is null with len > 0
     esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len);
+    /// Config-task only: wait until queued command frames reach the wire.
+    /// Other producers may continue; a timeout must prevent a planned reboot.
+    esp_err_t waitTxIdle(uint32_t timeout_ms);
 
     /// Allocate the slot of a data stream channel. Call it once per channel at
     /// setup, before the first sendData() on that channel (it allocates).

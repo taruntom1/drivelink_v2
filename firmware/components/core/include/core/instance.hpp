@@ -7,6 +7,7 @@
 #include "core/module_type.hpp"
 #include "core/status.hpp"
 #include "core/value.hpp"
+#include "core/action.hpp"
 #include "drivelink/protocol/defs.hpp"
 
 namespace core {
@@ -70,7 +71,9 @@ public:
     /// rules apply.
     virtual void tick(const TickContext &t) = 0;
 
-    // runAction comes in F3b; onArmTransition and emergencyStop in F4b.
+    virtual Status runAction(uint16_t id, const ActionArgs &in, ActionOut &out)
+    { return Status::fail(Result::InvalidArgument, Detail::Unsupported); }
+    // onArmTransition and emergencyStop come in F4b.
 };
 
 namespace detail {

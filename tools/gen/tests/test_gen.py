@@ -125,8 +125,8 @@ class GoldenOutput(TempCase):
         self.assertIn("namespace drivelink::protocol::defs::diag {", t)
         self.assertIn("FxSource = 0x20,", t)
         self.assertIn("inline constexpr size_t kSlotCount = 2;", t)
-        self.assertIn("inline constexpr Code kBroken{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, true};", t)
-        self.assertIn("inline constexpr Code kDropped{1, Source::FxSource, 0x0001, Severity::Warning, CodeKind::Counter, false};", t)
+        self.assertIn("inline constexpr Code kBroken{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, true, \"Broken\", false, false};", t)
+        self.assertIn("inline constexpr Code kDropped{1, Source::FxSource, 0x0001, Severity::Warning, CodeKind::Counter, false, \"Dropped\", false, false};", t)
         self.assertIn("/// arg0: stage. arg1: unused.", t)
         self.assertNotIn("kGone", t)  # retired codes get no slot
 
@@ -713,6 +713,21 @@ class RealDefinitions(unittest.TestCase):
             code = gen.run(gen.DEFAULT_DEFS, gen.ROOT, True)
         self.assertEqual(code, 0, out.getvalue())
 
+
+
+class WireLimits(TempCase):
+    def test_oversized_descriptor_is_rejected(self):
+        self.mutate("fixture.full.yaml", "Run a calibration.", "X" * 1100)
+        code, _, err = self.run_gen()
+        self.assertEqual(code, 2)
+        self.assertIn("complete response", err)
+
+    def test_duplicate_wire_enum_is_rejected(self):
+        path = self.defs / "registry.yaml"
+        path.write_text(path.read_text() + "\nwire_enums:\n  Result: {Ok: 0, Bad: 0}\n")
+        code, _, err = self.run_gen()
+        self.assertEqual(code, 2)
+        self.assertIn("wire enum", err)
 
 if __name__ == "__main__":
     unittest.main()

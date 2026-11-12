@@ -15,6 +15,7 @@ struct RecordedReport {
     Err err;
     uint32_t arg0;
     uint32_t arg1;
+    uint8_t instance = 255;
 };
 
 /// Every `reportDiag` call since the last reset, in order.
@@ -24,7 +25,7 @@ std::vector<RecordedReport> recordedReports();
 size_t reportCount(DiagCode code);
 
 /// The total `countDiag` adds to `code`.
-uint64_t counterTotal(DiagCode code);
+uint64_t counterTotal(DiagCode code, uint8_t instance = 255);
 
 /// Forget everything recorded.
 void resetRecordedDiag();

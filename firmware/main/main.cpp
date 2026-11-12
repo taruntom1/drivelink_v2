@@ -13,6 +13,8 @@
 #include <span>
 
 #include "core/core.hpp"
+#include "core/core_link.hpp"
+#include "mod_mock/modules.hpp"
 #include "core/core_config.hpp"
 #include "core/module_type.hpp"
 #include "core/registry.hpp"
@@ -39,9 +41,9 @@ namespace {
 // The firmware's tasks, by the names they are created with. A name with no
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the control and IMU sampling timers).
-constexpr std::array<const char *, 12> kLoggedTasks = {
+constexpr std::array<const char *, 13> kLoggedTasks = {
     "main",       "uart_rx",    "uart_tx",        "motor_mgr_upd", "motor_mgr_cfg", "imu_cfg",
-    "imu_stream", "time_sync_task", "diag",       "esp_timer",     "core_ctrl",     "core_sens",
+    "imu_stream", "time_sync_task", "diag",       "esp_timer",     "core_ctrl",     "core_sens", "core_cfg",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -64,7 +66,7 @@ void logStackHighWater()
 
 /// The module types the core can instantiate. F3b adds the first ones. Each
 /// desc must be its generated kTypeTable entry (checked in startCore()).
-constexpr std::array<const core::ModuleType *, 0> kModuleTypes{};
+const auto &kModuleTypes=mod_mock::kTypes;
 
 /// `core.NvsInitFailed` arg0 values. Part of the diag contract
 /// (protocol/defs/diag_codes.yaml): never renumber.
@@ -276,12 +278,20 @@ extern "C" void app_main(void)
     // Never destroyed (app_main never returns).
     initNvs();
     std::unique_ptr<core::Core> core_obj = startCore();
+    std::unique_ptr<core::CoreLink> core_link;
+    if(core_obj) {
+        core_link=std::make_unique<core::CoreLink>(*core_obj,uart);
+        if(!core_link->isValid()) { ESP_LOGE(TAG,"core link failed to start"); }
+    }
     (void)core_obj;
 
-    // Last, so Boot carries the final started_mask. Records from above are
+    // Last, so Boot carries the final instance counts. Records from above are
     // waiting in the diag queue and go out right after Boot.
     diag::ReporterConfig diag_cfg{};
-    diag_cfg.started_mask = started_mask;
+    diag_cfg.instances_ok=core_obj?static_cast<uint8_t>(core_obj->instanceCount()):0;
+    diag_cfg.instances_failed=core_obj?static_cast<uint8_t>(core_obj->instancesFailed()):0;
+    diag_cfg.safe_mode=core_obj && core_obj->safeMode();
+    (void)started_mask;
     diag::Reporter reporter(uart, diag_cfg);
     if (!reporter.isValid()) {
         ESP_LOGE(TAG, "diag reporter failed to start; errors are on the console only");

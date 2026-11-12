@@ -72,8 +72,8 @@ TEST_CASE("Descriptor hash is set, and the diag table comes through")
     CHECK(kDescriptorHash != 0);
     CHECK(diag::kCodeTable.size() == diag::kSlotCount);
     CHECK(diag::kSlotCount > 0);
-    // Only the system type ships so far, and it comes first (by type id).
-    REQUIRE(kTypeTable.size() == 1);
+    // System and three mock types, ordered by type id.
+    REQUIRE(kTypeTable.size() == 4);
     CHECK(kTypeTable[0] == &system::kDesc);
 }
 

@@ -4,7 +4,8 @@
 # (firmware/test/native). src/idf/core_config_idf.cpp is the only file that
 # reads Kconfig.
 idf_component_register(
-    SRCS "src/config_blob.cpp"
+    SRCS "src/command_service.cpp"
+         "src/config_blob.cpp"
          "src/core.cpp"
          "src/crc32.cpp"
          "src/instance.cpp"
@@ -17,6 +18,8 @@ idf_component_register(
          "src/value.cpp"
          "src/wiring_order.cpp"
          "src/idf/core_config_idf.cpp"
+         "src/idf/core_link.cpp"
     INCLUDE_DIRS "include"
     REQUIRES core_os protocol
+    PRIV_REQUIRES uart_comm esp_app_format diag
 )
