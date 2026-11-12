@@ -48,7 +48,7 @@ constexpr uint32_t periodUsFromHz(uint32_t rate_hz)
 /// are config task operations: one caller at a time, after `boot()`.
 class Core {
 public:
-    /// Allocates the tables, the loops and the system instance.
+    /// Allocates the tables, loop slots and system instance; boot creates the loops.
     explicit Core(const CoreConfig &config);
     ~Core(); ///< stop(), then destroy the instances
 
