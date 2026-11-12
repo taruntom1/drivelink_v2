@@ -79,7 +79,7 @@ DriveLink expects a host side that exchanges frames over UART:
 
 - Command/response messages for configuration and control operations.
 - Stream channels for fast-changing values (setpoints, telemetry).
-- Module-specific message IDs and channel IDs sourced from `sdkconfig` defaults/Kconfig.
+- Message IDs and stream channels from the generated registry (`protocol/defs/registry.yaml`, listed in `docs/protocol/registry.md`).
 
 This design allows low-latency control updates while keeping configuration and diagnostics explicit.
 
@@ -122,7 +122,7 @@ idf.py -C firmware build
 ## Configuration Notes
 
 - Most component defaults are configured via Kconfig and emitted into `sdkconfig`.
-- UART pins/baud, manager message types/channels, IMU stream behavior, and control loop timings are tunable.
+- UART pins/baud, IMU stream behavior, and control loop timings are tunable. Message types and stream channels are not: they come from the registry.
 - `firmware/main/main.cpp` currently sets example startup values (for example `max_motors = 4` and periodic time sync every 5 seconds).
 
 ## Current Validation Strategy

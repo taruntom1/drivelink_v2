@@ -3,6 +3,6 @@ idf_component_register(
          "src/time_sync_protocol.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "priv_include"
-    REQUIRES uart_comm esp_timer
-    PRIV_REQUIRES protocol rtos_util diag
+    REQUIRES uart_comm esp_timer protocol
+    PRIV_REQUIRES rtos_util diag
 )

@@ -15,7 +15,8 @@ These rules apply to every component under `firmware/components/`. They add to t
 
 ## Kconfig scope
 
-- Put in Kconfig anything a deployment might tune: task stack, priority and core; queue depths; periods and rates; timeouts; message IDs and stream channels; baud rates and pins. Give each option a `range`.
+- Put in Kconfig anything a deployment might tune: task stack, priority and core; queue depths; periods and rates; timeouts; baud rates and pins. Give each option a `range`.
+- MSG_TYPEs and stream channels are not Kconfig items. They come from the generated registry (`protocol/defs/registry.yaml`, header `drivelink/protocol/gen/registry.hpp`). A component whose public header includes that header lists `protocol` in `REQUIRES`, not `PRIV_REQUIRES`.
 - Keep pure implementation constants as `constexpr` in a header or `.cpp`. These are wire-format field sizes, limits tied to the protocol, and math constants.
 
 ## Public API
@@ -46,9 +47,9 @@ These rules apply to every component under `firmware/components/`. They add to t
 ## Errors and logging
 
 - Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`. The `DIAG_*` macros log with it.
-- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `firmware/components/diag/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
+- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `protocol/defs/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
 - Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports. A type whose construction can fail keeps the reason for its caller (`initError()`, `MotorController::hardwareFailure()`), so the report carries the real `esp_err` and stage.
-- Stage and cause numbers passed as diag args are part of the wire contract: define them as named constants next to the report, document them in `diag_codes.yaml`, and never renumber them.
+- Stage and cause numbers passed as diag args are part of the wire contract: define them as named constants next to the report, document them in `protocol/defs/diag_codes.yaml`, and never renumber them.
 - Make logs actionable: include GPIOs, channels, operator or slot IDs, and the config values involved.
 - Fail early, and leave the object in a consistent state after any failure. For example, release the DIR GPIO if MCPWM allocation fails afterwards.
 

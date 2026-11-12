@@ -3,7 +3,7 @@
 /// motor_manager wire format: enums, field values and sizes shared by the
 /// configure command, the setpoint stream and the telemetry stream. Pure C++
 /// with no ESP-IDF dependency. The MSG_TYPEs and stream channels come from
-/// Kconfig and are in motor_manager_types.hpp. README.md is the spec.
+/// the generated registry and are in motor_manager_types.hpp. README.md is the spec.
 
 #include <cstddef>
 #include <cstdint>
@@ -102,8 +102,9 @@ constexpr bool isValidSetpointKind(SetpointKind kind)
 // the SetTiming subcommand, response bodies and the telemetry output field.
 // v4 added the detail byte after result in configure responses.
 // v5: no payload change; bumped with the link framing (u16 LEN + HCRC, overhaul F1b).
+// v6: no payload change; the setpoint and telemetry streams moved to 0xBD and 0xBE (overhaul F2).
 // The version covers every motor_manager payload, including both streams.
-constexpr uint8_t kProtocolVersion = 0x05;
+constexpr uint8_t kProtocolVersion = 0x06;
 // Sent as subcommand and motor_id in a configure response when the request
 // header could not be parsed (too short or wrong version).
 constexpr uint8_t kUnparsedHeaderByte = 0xFF;

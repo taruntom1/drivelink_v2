@@ -176,7 +176,7 @@ TEST_CASE("Configure response layout")
     hdr.subcommand = static_cast<uint8_t>(ConfigureSubcommand::ReadCalibration);
     const uint8_t body[] = {0xAA, 0xBB};
     std::array<uint8_t, 8> out{};
-    CHECK(kProtocolVersion == 5);
+    CHECK(kProtocolVersion == 6);
     CHECK(kConfigureResponseHeaderSize == 5);
     REQUIRE(encodeConfigureResponse(hdr, Result{ResultCode::Busy, ResultDetail::QueueFull}, body, sizeof(body),
                                     out.data(), out.size()) == 7);

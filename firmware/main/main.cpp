@@ -87,8 +87,8 @@ extern "C" void app_main(void)
     mgr_cfg.max_motors = 4;
     mgr_cfg.configure_msg_type = motor_manager::kManagerMsgConfigure;                 // 0x21
     mgr_cfg.configure_response_msg_type = motor_manager::kManagerMsgConfigureResp;    // 0x61
-    mgr_cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel;   // 0x80
-    mgr_cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0x81
+    mgr_cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel;   // 0xBD
+    mgr_cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0xBE
     mgr_cfg.use_mock_feedback = true;
     mgr_cfg.update_task.enable = true; // timer-driven; periods from Kconfig, changeable via SetTiming
 

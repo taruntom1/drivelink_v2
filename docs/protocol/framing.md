@@ -1,6 +1,6 @@
 # Framing (link layer)
 
-How every message between the host and the ESP32-S3 is put on the wire. The payloads inside the frames are defined by each protocol (the legacy managers' code and host tests until they are ported, then the core's families). The diag codes are in [diag-codes.md](diag-codes.md).
+How every message between the host and the ESP32-S3 is put on the wire. The payloads inside the frames are defined by each protocol (the legacy managers' code and host tests until they are ported, then the core's families). The MSG_TYPE and stream channel assignments are in [registry.md](registry.md), generated from the definitions described in [definitions.md](definitions.md). The diag codes are in [diag-codes.md](diag-codes.md).
 
 The C++ implementation is `protocol/` (`framing.hpp`, `crc.hpp`, `scanner.hpp`), shared by the firmware and the host. The Python reference used by the hardware tests is `firmware/test/uart_comm/protocol.py`. Both are tested against the golden frames below.
 
@@ -50,7 +50,7 @@ The overhead is 9 bytes per frame. All multi-byte fields, in the frame and in ev
 | `0xC0–0xFE` | events | unsolicited notices |
 | `0xFF` | reserved | never sent |
 
-The current assignments are in `firmware/CLAUDE.md` ("UART protocol"). From F2 on they come from the generated registry.
+The current assignments are in [registry.md](registry.md), generated from `protocol/defs/registry.yaml`.
 
 ## Receiving (scanner rules)
 
@@ -93,5 +93,6 @@ The frame has no version field. Any change to it changes every protocol, and eve
 
 | Date | Change | Protocol versions after it |
 |---|---|---|
+| 2026-11-12 (F2) | The legacy streams moved to `0xBD` (motor setpoints), `0xBE` (motor telemetry) and `0xBF` (IMU), out of the way of the group channels. No payload changed. | motor_manager v6, IMU v6, time_sync v2, diag v2 |
 | 2026-11-10 (F1b) | `LEN` widened to u16, `HCRC` added, `MAX_PAYLOAD` 255 → 1024, default baud 921600 | motor_manager v5, IMU v5, time_sync v2, diag v2 |
 | before | u8 `LEN`, no `HCRC`, the CRC16 over `MSG_TYPE`, `LEN` and the payload, `MAX_PAYLOAD` 255 | motor_manager v4, IMU v4, time_sync v1, diag v1 |

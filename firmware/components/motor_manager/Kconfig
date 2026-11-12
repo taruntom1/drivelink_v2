@@ -1,37 +1,5 @@
 menu "Motor Manager Configuration"
 
-    config MOTOR_MANAGER_CONFIGURE_MSG_TYPE
-        hex "Configure command message type"
-        default 0x21
-        range 0x01 0x3F
-        help
-            UART message type used for motor manager configure requests
-            (command class range 0x01..0x3F).
-
-    config MOTOR_MANAGER_CONFIGURE_RESPONSE_MSG_TYPE
-        hex "Configure response message type"
-        default 0x61
-        range 0x40 0x7F
-        help
-            UART message type used for motor manager configure responses
-            (response class range 0x40..0x7F).
-
-    config MOTOR_MANAGER_SETPOINT_STREAM_CHANNEL
-        hex "Setpoint stream channel"
-        default 0x80
-        range 0x80 0xBF
-        help
-            UART stream channel for setpoint data from host to target
-            (stream class range 0x80..0xBF).
-
-    config MOTOR_MANAGER_TELEMETRY_STREAM_CHANNEL
-        hex "Telemetry stream channel"
-        default 0x81
-        range 0x80 0xBF
-        help
-            UART stream channel for telemetry data from target to host
-            (stream class range 0x80..0xBF).
-
     config MOTOR_MANAGER_USE_MOCK_FEEDBACK
         bool "Use setpoint-backed mock telemetry"
         default n

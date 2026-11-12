@@ -27,7 +27,7 @@ idf.py -C firmware fullclean             # when target/config changes leave the 
 
 There are two kinds of automated tests.
 
-**Host unit tests** (`firmware/test/host/`) cover the pure logic: the `protocol/` library (CRC, framing, scanner, wire codec; its tests live in `protocol/test/` and are compiled into this build), the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It builds `protocol/` as the host library `drivelink::protocol` and compiles the other firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`.
+**Host unit tests** (`firmware/test/host/`) cover the pure logic: the `protocol/` library (CRC, framing, scanner, wire codec, the generated definitions; its tests live in `protocol/test/` and are compiled into this build), the motor_manager / IMU / time_sync / diag protocol codecs, diag's slot table, the PID and the velocity estimator. It is a plain CMake project with a vendored doctest (`firmware/test/host/third_party/doctest`). It builds `protocol/` as the host library `drivelink::protocol` and compiles the other firmware sources directly with the host compiler. `firmware/test/host/shim/` stands in for the two IDF headers they include (`sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`). No IDF export is needed; on this machine, Strawberry Perl ships `g++`, `cmake` and `ninja`. The build also needs Python 3 with PyYAML: it runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the headers that `protocol/test/test_defs.cpp` includes.
 
 ```bash
 cmake -S firmware/test/host -B firmware/test/host/build -G Ninja
@@ -40,13 +40,17 @@ A source can join the host build only if it builds without ESP-IDF beyond those 
 
 **CI** (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main` and `firmware_overhaul`:
 - `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`.
-- On Ubuntu, `tools/gen_diag_codes.py --check` and the host tests.
+- On Ubuntu, `tools/gen/gen.py --check`, the generator's unit tests (`python3 -m unittest discover -s tools/gen/tests`) and the host tests.
 
-**diag codes** are defined in `firmware/components/diag/diag_codes.yaml`. After editing it, regenerate and commit the outputs; CI fails if they are stale. The script needs PyYAML, which the IDF Python env and this machine's Python both have:
+**Definitions** are in `protocol/defs/`: `registry.yaml` (MSG_TYPEs and stream channel ranges), `diag_codes.yaml` (the diag codes) and, from F3, one file per module type. After editing any of them, regenerate and commit the outputs; CI fails if they are stale. The generator needs PyYAML, which the IDF Python env and this machine's Python both have. The files and the schema are described in `docs/protocol/definitions.md`.
 
 ```bash
-python tools/gen_diag_codes.py
+python tools/gen/gen.py            # regenerate
+python tools/gen/gen.py --check    # what CI runs
+python -m unittest discover -s tools/gen/tests
 ```
+
+It writes the headers in `protocol/include/drivelink/protocol/gen/` (including the descriptor hash) and the generated tables in `docs/protocol/`. `firmware/components/diag/include/diag_codes.hpp` is a hand-written shim over the generated diag table, so call sites keep writing `diag::codes::<source>::k<Name>`.
 
 **Hardware-in-the-loop tests** for `uart_comm` live in `firmware/test/uart_comm/`, a separate IDF app whose `EXTRA_COMPONENT_DIRS` points at `../../components` and that builds only the components `main` requires (`set(COMPONENTS main)`).
 
@@ -57,11 +61,11 @@ pytest pytest_uart_comm.py --port COM5                      # USB-UART adapter o
 pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 ```
 
-`conftest.py` defaults `--baud` to 921600, the Kconfig default. The same directory holds `smoke_main_firmware.py`, a standalone script for the **main** firmware (not the test app): it checks that diag, motor_manager, the IMU and time_sync answer over the link with their current protocol versions (`python smoke_main_firmware.py --port COM5`).
+`conftest.py` defaults `--baud` to 921600, the Kconfig default. The same directory holds `smoke_main_firmware.py`, a standalone script for the **main** firmware (not the test app): it checks that diag, motor_manager, the IMU and time_sync answer over the link with their current protocol versions, and that the IMU stream arrives on its registry channel (`python smoke_main_firmware.py --port COM5`). It creates no motor, so nothing can move.
 
 **Stack sizes** are checked on hardware. The main firmware logs each of its tasks' stack high-water mark on the console every `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off; the task names are listed in `firmware/main/main.cpp`, so add a new task there). It uses `uxTaskGetStackHighWaterMark()`, which takes no kernel lock; don't use `uxTaskGetSystemState()`, which scans every stack inside a critical section and stalls the control loop on the other core. The HIL test app logs the uart_comm RX/TX marks when idle.
 
-**Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD`, the main task stack and the motor config task stack), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
+**Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD`, the main task stack and the motor config task stack), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay. F2 removed the MSG_TYPE and stream channel options; an old `sdkconfig` still lists them, harmlessly, until you delete it.
 
 Everything else is checked by a clean `idf.py -C firmware build` (there are no warnings today, so keep it that way) and by watching runtime logs.
 
@@ -78,7 +82,7 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
 - `pid` is pure math.
 - `motor_controller` combines one motor, one encoder and the PIDs into a controller with open-loop, velocity and position modes. Its velocity estimate is the pure `VelocityEstimator`.
 - `motor_manager`, `imu_bmo_055` and `time_sync` are the protocol-facing managers. Each registers UART callbacks and owns its own tasks. Each keeps its payload codec in a pure module with no ESP-IDF dependency (`motor_protocol`, `imu_protocol`, `time_sync_protocol`, all private), built on `drivelink::protocol::wire::Reader` / `Writer`. The managers decode and encode only through these, so the host tests cover the wire format.
-- `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) holds the pure wire library: CRC, framing, the frame `Scanner` and `wire_codec`. `uart_comm` and every protocol codec build on it. Its rules are in [protocol/CLAUDE.md](../protocol/CLAUDE.md).
+- `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) holds the pure wire library: CRC, framing, the frame `Scanner` and `wire_codec`, plus the generated registry, diag code table and descriptor format (`protocol/defs/` is their source). `uart_comm` and every protocol codec build on it. Its rules are in [protocol/CLAUDE.md](../protocol/CLAUDE.md).
 - `rtos_util` provides `StoppableTask`.
 - `diag` reports errors to the host as codes. The `DIAG_*` macros latch a per-code slot and queue a record, and `diag::Reporter` sends events and answers queries over `uart_comm`. Only the managers and `main` report. The hardware layers return errors and don't depend on `diag`, and the reporter reads `uart_comm`'s link counters itself. Its codec and slot table are pure modules (`diag_protocol`, `diag_table`).
 
@@ -93,14 +97,12 @@ Everything else is checked by a clean `idf.py -C firmware build` (there are no w
   - `sendData()` writes to a per-channel stream slot where only the latest value is sent. A channel must be opened once at setup with `openStream(channel, max_len)`, which allocates the slot (two buffers of `max_len`). `sendData()` never blocks or allocates: it try-locks the slot, copies into the buffer the TX task isn't sending, and returns `ESP_ERR_TIMEOUT` if the slot was busy (counted in `ErrorCounters::stream_skipped`). Call it freely from the control tick.
   - `UartComm::stackHighWater()` reports the RX and TX tasks' free stack, for logging. The HIL test app logs it when idle.
 - RX either calls a callback registered for the MSG_TYPE, on the RX task, or pushes the frame to a queue read by `receive()`.
-- Message IDs and channels come from each component's Kconfig:
-  - time_sync: `0x20` / `0x60`
-  - motor_manager: `0x21` / `0x61`, setpoint stream `0x80`, telemetry `0x81`
-  - IMU: `0x22` / `0x42`, stream `0x82`
-  - diag: query `0x23` / `0x63`, events `0xC0`
-  - Nothing checks for collisions between these IDs.
+- Message IDs and stream channels come from the generated registry (`protocol/defs/registry.yaml`, listed in `docs/protocol/registry.md`), through `<drivelink/protocol/gen/registry.hpp>`: `drivelink::protocol::defs::msg::k<Name>`.
+  - The generator and the header's `static_assert`s check that values are unique, in their class range, and clear of the group channel ranges.
+  - The legacy managers take their defaults from it: time_sync `0x20` / `0x60`, motor_manager `0x21` / `0x61` with the setpoint stream on `0xBD` and telemetry on `0xBE`, the IMU `0x22` / `0x42` with its stream on `0xBF`. The streams sit at the top of the command group range until F5b and F6 remove them.
+  - diag keeps query `0x23` / `0x63` and events `0xC0`.
 - Every protocol payload starts with a version byte (`kProtocolVersion`).
-  - motor_manager and IMU are both at v5 (v5 changed no payload: every version was bumped with the F1b framing). Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. Every configure response carries `result` then a `detail` byte (each manager's `ResultDetail`) saying why it failed; the manager methods return the pair as a `Result`. A command that arrives while the config queue is full is answered from the RX callback (`QueueFull`) instead of being dropped. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
+  - motor_manager and IMU are both at v6 (v6 changed no payload: it was bumped with the F2 move of their stream channels, and v5 with the F1b framing). Both have their configure commands and responses carry a host-chosen `seq` byte right after the version, echoed in the response. Every configure response carries `result` then a `detail` byte (each manager's `ResultDetail`) saying why it failed; the manager methods return the pair as a `Result`. A command that arrives while the config queue is full is answered from the RX callback (`QueueFull`) instead of being dropped. A response to a header that could not be parsed uses `0xFF` (`kUnparsedHeaderByte`) for subcommand (and motor_id). Both require exact configure body sizes.
   - motor_manager: `SET_TIMING` (`0x0B`) sets the control and telemetry periods; its response appends the applied values after the 6-byte header.
   - IMU: `SetStreamTiming` (`0x02`) sets the sample and telemetry periods; its response appends the applied values after the 5-byte header.
   - Motor and IMU stream timestamps are both wall-clock µs (`gettimeofday`, corrected by time_sync), latched at the sampling instant.
@@ -159,7 +161,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 - **Exact lengths.** A fixed-size body must be exactly its size, or it is rejected. A variable-size body carries an explicit count, and `count × entry size` must equal the remaining length.
 - **Result and detail.** A configure response carries `result` and then a `detail` byte from the manager's `ResultDetail` enum, which names the check that failed (`None` on success). Manager methods return the pair as a `Result`, so each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because the config queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied (as `SET_TIMING` does).
-- **IDs from Kconfig.** MSG_TYPE values and stream channels come only from Kconfig, within the `uart_comm` ranges above.
+- **IDs from the registry.** MSG_TYPE values and stream channels come only from `protocol/defs/registry.yaml`, through the generated `gen/registry.hpp`. Never hard-code one, and never add a Kconfig option for one.
 - **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul (see the overhaul section in the root `CLAUDE.md`): their wire format is their code and host tests, and the IMU also has `firmware/components/imu_bmo_055/docs/protocol-api-guide.md`.
 
 ### Errors, failures and memory
@@ -168,7 +170,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 - **Report errors to the host through diag** (the codes are listed in `docs/protocol/diag-codes.md`):
   - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
   - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
-  - Each new code goes in `diag_codes.yaml`, then regenerate.
+  - Each new code goes in `protocol/defs/diag_codes.yaml`, then regenerate.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
   - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`. Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery or when the task watching them stops, not on every occurrence. A real-time task only counts; a non-real-time task watches the count and reports (the motor config task does this for the control timer).
   - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (`firmware/CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `firmware/components/` and `firmware/main/`). Code must build warning-free that way too, which CI checks.
@@ -182,7 +184,7 @@ Each protocol-facing manager defines its own messages on top of the `uart_comm` 
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated diag files are current, and the host tests pass. CI checks all of them.
+- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated files are current (`python tools/gen/gen.py --check`), and the host tests and the generator's unit tests pass. CI checks all of them.
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates this file, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
@@ -191,7 +193,7 @@ A change is done when all of the following are true:
 
 ### Files not to edit
 
-- **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. `firmware/components/diag/include/diag_codes.hpp`, `firmware/components/diag/host/diag_codes.py` and the code table in `docs/protocol/diag-codes.md` come from `diag_codes.yaml` through `tools/gen_diag_codes.py`.
+- **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
 - **Vendor code:**
   - `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver. `vendor/` is a private include dir; only `Bno055Device` uses it.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
