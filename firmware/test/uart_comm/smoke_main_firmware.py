@@ -70,10 +70,21 @@ def main() -> int:
     results: list[bool] = []
 
     # diag GetInfo: version, seq, subcommand GetInfo.
-    proto.send_command(DIAG_QUERY, bytes([DIAG_VERSION, 0x31, 0x01]))
+    # Opening the port can reset the board (the first open after a flash does,
+    # through the adapter's DTR/RTS lines), and a command sent while it boots is
+    # lost. So retry this first query, every 0.7 s for up to 5 s.
     started_mask = 0xFF
     try:
-        p = wait_for(proto, DIAG_RESPONSE, 0x31, 3.0)
+        for attempt in range(7):
+            proto.send_command(DIAG_QUERY, bytes([DIAG_VERSION, 0x31, 0x01]))
+            try:
+                p = wait_for(proto, DIAG_RESPONSE, 0x31, 0.7)
+                break
+            except TimeoutError:
+                if attempt == 6:
+                    raise
+        else:  # pragma: no cover - the loop always breaks or raises
+            raise TimeoutError("no diag response")
         ok = len(p) >= 4 + 11 and p[0] == DIAG_VERSION and p[2] == 0x01 and p[3] == 0x00
         if len(p) >= 15:
             started_mask = p[14]  # header(4) + flags(1) + uptime(8) + reset_reason(1)

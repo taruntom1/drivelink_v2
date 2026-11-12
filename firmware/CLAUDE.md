@@ -61,7 +61,7 @@ pytest pytest_uart_comm.py --port COM5 -k test_echo_max_payload   # single test
 
 **Stack sizes** are checked on hardware. The main firmware logs each of its tasks' stack high-water mark on the console every `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off; the task names are listed in `firmware/main/main.cpp`, so add a new task there). It uses `uxTaskGetStackHighWaterMark()`, which takes no kernel lock; don't use `uxTaskGetSystemState()`, which scans every stack inside a critical section and stalls the control loop on the other core. The HIL test app logs the uart_comm RX/TX marks when idle.
 
-**Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD` and the stack sizes), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
+**Changed Kconfig defaults don't reach an existing `sdkconfig`.** After a pull that changes a default (F1b changed the baud rate, `MAX_PAYLOAD`, the main task stack and the motor config task stack), delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
 
 Everything else is checked by a clean `idf.py -C firmware build` (there are no warnings today, so keep it that way) and by watching runtime logs.
 
