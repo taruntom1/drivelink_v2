@@ -47,9 +47,9 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | Sonnet · high | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | Opus · high | high | in review | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
 | F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | Opus · high | high | planned | |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | Sonnet · high | high | planned | |
-| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | Sonnet · high | high | planned | |
-| F4a | Subscription and command groups (preallocated, epochs) | no | Sonnet · high | high | planned | |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag v2; `mod_mock` | yes: mock instances on the board | Opus · high | high | planned | |
+| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | Opus · high | high | planned | |
+| F4a | Subscription and command groups (preallocated, epochs) | no | Opus · high | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | Opus · high | high | planned | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | Opus · high | high | planned | |
 | F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | Sonnet · high | high | planned | |
@@ -66,11 +66,9 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 ## Models and effort
 
-One session runs the whole step. It is the planning agent, on Opus 5.5 at high effort, and nobody switches the model between stages.
-
-- **Plan** every step with **Opus 5.5 at high effort** (the session itself), whatever the step's build model. The plan sets the direction.
-- **Build** in an **implementation subagent**, which the planning agent spawns after you approve the plan. It runs on the step's model and effort from the table. It commits locally and reports back; it doesn't push, open the PR or flash the board.
-- **Review** is done by the **planning agent** (Opus), on the diff, at the step's review effort.
+- **Plan** every step with **Opus 5.5 at high effort**, whatever the step's build model. The plan sets the direction.
+- **Build** with the step's model and effort from the table. After you approve the plan, switch the session model if the build model differs.
+- **Review** always runs on **Opus**, at the step's review effort. `/overhaul-step` launches the review agent with that model and effort. Review can be skipped if not necessary.
 - **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the planning agent after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.

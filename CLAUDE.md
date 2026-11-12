@@ -48,6 +48,4 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
   - Their wire format is defined by their code and native tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
 - **Roles.** The session is the planning and review agent (Opus 5.5, high). The build is done by an implementation subagent that the session spawns with the step's model and effort. `/overhaul-step` has the details.
 - **Hardware.**
-  - Checks that run on the bare bench board (nothing attached): the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.
-  - Checks that need motors, a real IMU, the robot or other equipment: the session doesn't flash. It stops before its PR and gives the user a short test script (what to flash, what to run, what to look for).
-  - Implementation subagents never flash the board.
+  - Checks that run on the bare bench board (nothing attached) if necessary: the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.
