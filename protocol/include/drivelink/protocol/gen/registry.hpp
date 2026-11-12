@@ -17,7 +17,7 @@ namespace drivelink::protocol::defs {
 inline constexpr uint8_t kSystemTypeId = 0x00;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x306C8989;
+inline constexpr uint32_t kDescriptorHash = 0x7B5C8CD0;
 
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.

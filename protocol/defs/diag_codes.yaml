@@ -24,6 +24,7 @@ sources:
   system: 0x01
   uart_comm: 0x02
   diag: 0x03
+  core: 0x04
   motor_manager: 0x10
   time_sync: 0x11
   imu: 0x12
@@ -121,6 +122,37 @@ codes:
     severity: warning
     kind: counter
     description: A diag query was dropped because the reporter's query queue was full.
+
+  # ── core (the module registry, loops and param service) ─────────────
+  - source: core
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 registry, 2 control loop task, 3 sensor loop task)
+    arg1: for stage 1, the index of the rejected module type in main's list; else unused
+    description: The core failed to start. main reports it and leaves the core out; the legacy managers keep running. esp_err gives the reason for a loop task.
+
+  - source: core
+    code: 0x0002
+    name: InstanceStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: type id << 8 | instance id
+    arg1: stage (the instance's own stage from fail(), or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound)
+    description: A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
+
+  - source: core
+    code: 0x0003
+    name: TimerRestartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: loop id (0 control, 1 sensor)
+    arg1: the period that failed, in us
+    description: A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
 
   # ── motor_manager ────────────────────────────────────────────────────
   - source: motor_manager

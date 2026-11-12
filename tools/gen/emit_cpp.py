@@ -331,7 +331,7 @@ def gen_types(defs: dict) -> str:
     w("")
     w("namespace drivelink::protocol::defs {")
     w("")
-    w("/// Every module type, by type id. Empty until the first type is defined.")
+    w("/// The system type (0x00, from system.yaml) and every module type, by type id.")
     if types:
         w(f"inline constexpr std::array<const TypeDesc *, {len(types)}> kTypeTable{{{{")
         for t in types:

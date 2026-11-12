@@ -8,11 +8,14 @@
 #include <array>
 
 #include "drivelink/protocol/defs.hpp"
+#include "type_system.hpp"
 
 namespace drivelink::protocol::defs {
 
-/// Every module type, by type id. Empty until the first type is defined.
-inline constexpr std::array<const TypeDesc *, 0> kTypeTable{};
+/// The system type (0x00, from system.yaml) and every module type, by type id.
+inline constexpr std::array<const TypeDesc *, 1> kTypeTable{{
+    &system::kDesc,
+}};
 
 static_assert(typeIdsUnique(kTypeTable), "two module types share a type id");
 
