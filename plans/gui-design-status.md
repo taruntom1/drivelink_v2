@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G6 accepted; G7 built; PR #39 open).
+Last updated: 2026-11-13 (G6 accepted; G7 built on design branch; PR #39 merged then reverted by #40).
 
 ## Where things stand
 
@@ -24,13 +24,13 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 
 ## Next step
 
-1. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) is open from `Codex/gui-design` into `firmware_overhaul`; G6 is accepted.
+1. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) was merged at design commit `5bf0612`, then reverted by PR [#40](https://github.com/taruntom1/drivelink_v2/pull/40). G7 commit `d6b7dee` is pushed only on `Codex/gui-design`, outside that merged PR. Preserve the revert; do not reapply it or open a replacement PR without the user's direction. G6's design acceptance still stands.
 2. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised.
 3. After acceptance, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
 
 ## Handoff note
 
-- **Branch:** `Codex/gui-design`, cut from `origin/firmware_overhaul` at `01a9a1e` on 2026-11-13. Design records and helpers carried from `origin/claude/gui-design` (`66d806a`); preserve the newer firmware/host work. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) targets `firmware_overhaul`. User requested G7 in this session; further pushes update that PR.
+- **Branch:** `Codex/gui-design`, cut from `origin/firmware_overhaul` at `01a9a1e` on 2026-11-13. Design records and helpers carried from `origin/claude/gui-design` (`66d806a`); preserve the newer firmware/host work. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) merged through `5bf0612` and was reverted by [#40](https://github.com/taruntom1/drivelink_v2/pull/40) during G7. Further pushes do not update that closed PR. G7 remains on the design branch pending review and direction on any replacement PR.
 - **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [overhaul-status.md](overhaul-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
@@ -132,7 +132,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 |---|---|---|
 | 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
 | 2026-11-13 | gui design 5 | Opened PR #39 into firmware_overhaul; started G7 orientation and discussion. Custom panels page is empty; G4 Calibration slot inspected. Layout, file workflow and orientation preview await user decisions |
-| 2026-11-13 | gui design 5 | G7 choices recorded: dashboard, local file review before explicit Apply, numeric values plus graphic. Added G2 CalibrationLevel and OrientationPreview, 11 Calibration screens, all 1080p Light checks and 2 retained copies. Fixed generic signal columns, paused values, retry wording and compact file controls. G7 awaiting acceptance; PR #39 updated |
+| 2026-11-13 | gui design 5 | G7 choices recorded: dashboard, local file review before explicit Apply, numeric values plus graphic. Added G2 CalibrationLevel and OrientationPreview, 11 Calibration screens, all 1080p Light checks and 2 retained copies. Fixed generic signal columns, paused values, retry wording and compact file controls. G7 awaiting acceptance on the design branch. Discovered #39 had merged through 5bf0612 and been reverted by #40; corrected PR metadata to its merged scope and preserved the revert |
 | 2026-11-13 | gui design 4 | G5 accepted, including Auto re-run default; created Codex/gui-design from current firmware_overhaul and carried prior design records forward; G6 decisions, four G2 extensions, 16 remote frames and two retained 1080p Light checks. Self-review fixed ARM without a lease, gain-range labels, no-device connection state and responsive history/plots. G6 awaiting acceptance |
 | 2026-11-11 | gui design 1 | Phases planned; G0 (FigJam flows, state inventory); G1 wireframes |
 | 2026-11-12 | gui design 1 | G1 decisions (any client may disarm; device-name to-do); G2 design system; tuning controls (sliders, steps, gain history, auto re-run, manual command Latch) in G2 and the G1 wireframes; this status file and the `gui-design-step` skill |
