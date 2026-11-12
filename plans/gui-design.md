@@ -71,6 +71,9 @@ Read with [host-architecture.md](host-architecture.md), section "`drivelink-gui`
 | Remote live edits | Live gains remain editable while another client holds the lease. Confirm the first edit, offering Don't ask again for this connection, and keep a persistent warning banner. Run and manual commands require the lease. G6, user decision 2026-11-13. |
 | Clients and lease | A card on Device holds the client list and Take / Release lease controls; the status-bar lease chip navigates there. G6, user decision 2026-11-13. |
 | G6 acceptance | Accepted 2026-11-13: all 16 Remote screens, 1080p Light checks and the G2 LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live extensions. User requested a PR into firmware_overhaul, then G7 in this session. |
+| G7 layout | Dashboard with four live calibration levels, guidance and file/actions cards. User decision 2026-11-13. |
+| G7 calibration files | Import locally, review device/file details, then explicitly Apply to IMU. Read from IMU and Export are separate actions. Import alone sends nothing. User decision 2026-11-13. |
+| G7 orientation | Numeric orientation values plus a simple orientation graphic. User decision 2026-11-13. |
 | Tune and Monitor frames | G5 covers Tune: run results (armed, a gain being dragged, runs overlaid, metrics, gain history), disarmed, run in progress and a run stopped by a disarm, A/B compare, plant identification; Monitor: live plots with the manual command, paused with cursors, link budget full. G5. |
 | Gain of 0 | The slider and the % steps are disabled with a hint to type a value first; once the gain is non-zero the log window works. G5. |
 | Negative gains | When a gain's descriptor allows min < 0, the log slider and the % steps act on the magnitude and keep the sign; crossing zero is only by typing. The cascade_pid gains are >= 0, so no frame shows it. G5. |
@@ -151,7 +154,7 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G4 Layout | Hi-fi Layout screen: instance tree by loop, add and remove instances, labels, wiring with `Ref` pickers, GPIO and validation errors, the pending-reboot banner and discard. The param table for an instance, and the custom panel slot. | Screens page | done |
 | G5 Tune and Monitor | Hi-fi Tune screen: pick a controller, live gains, test signal and capture set-up, run, overlay runs, the session file (name, save, open, export CSV), plant identification and suggested gains, save or revert. Hi-fi Monitor screen: free-form live plots of any signals, subscription set-up, pause and cursors. | Screens page | done |
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
-| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Custom panels | in progress |
+| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Custom panels | in review |
 | G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
 
 ## G1 wireframes
@@ -288,11 +291,27 @@ On "Screens – Remote" (`2:6`): 16 hi-fi frames at 2560×1440 in Dark, arranged
 
 **Responsive checks:** at 1080p the remote Tune gain-history card becomes a compact View history entry, preserving visible gain controls and the live plot. Monitor's three plots share the available height, legends wrap, and plot geometry/axis labels are fitted to the new bounds. This applies to G6; the previously accepted G5 issues below remain open. All G6 frames contain editable layers and G2 instances; the final audit found no image-filled UI nodes and only Inter / JetBrains Mono text. G8 wires the full clickable prototype, including the compact history entry.
 
-## G7 Custom panel (discussion)
+## G7 Custom panel
 
-Started 2026-11-13 after G6 acceptance and opening PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39). Custom panels (`2:7`) is empty; the G4 Calibration slot (`85:4679`) supplies the shell and instance context. Layout, file workflow and live-preview choices have been put to the user and remain pending; no G7 screens have been built.
+On Custom panels (`2:7`): 11 hi-fi frames at 2560×1440 in Dark, in three-column rows, plus two retained 1920×1080 Light checks. The G4 Calibration slot (`85:4679`) supplies the shell, instance tree and Calibration tab. The panel keeps generic Wiring and Signals context beside it; the tab handles calibration actions, while Params remains the generic editor.
 
-Proposed scope: live calibration status and guidance, calibration-file import/review/export, explicit apply progress/result and refusal/error states, with 1080p and Light checks. The firmware plan names `calibration_read`, `calibration_write` and `calibration_apply` as paused actions on the sensor loop; their detailed payload and persistence semantics remain F6 work. G7 must not imply that importing a PC file applies it or that device SAVE persists a calibration blob without that contract.
+The dashboard shows System, Gyroscope, Accelerometer and Magnetometer levels (0–3), guidance, numeric roll/pitch/yaw and quaternion values, and a simple projected sensor-axis graphic. The sample graphic and numbers use the same pose. Stale telemetry freezes the last pose and marks it stale; before the first sample, the pose is hidden and numbers are dashes. Calibration readiness is independent of arm state.
+
+**Added to G2:** Sensor panels section `160:992`; CalibrationLevel set `160:999` (0, 1, 2, 3, Unavailable) and OrientationPreview set `160:1050` (Live, Stale, Unavailable). Both use existing variables and text styles, have QML descriptions and mapping rows (`160:1132`, `160:1141`), and are shown as instances in Dark (`160:1087`) and Light (`164:1030`). No variables were added.
+
+| Row | Frames | Covers |
+|---|---|---|
+| Live and snapshot (y 0) | Live calibration `161:1030`, Fully calibrated `161:1344`, Read snapshot and export `161:1647` | Four levels, live pose and numeric values, guidance, Read disabled until all four levels reach 3/3, separate PC export after reading |
+| File and apply (y 1640) | Imported file review `161:1965`, Applying `161:2344`, Applied `161:2669` | File source and target name/id, compatibility review, explicit Apply, indeterminate wait for device result, paused/stale sensor telemetry, success only after acknowledgement and fresh data |
+| Errors and stale data (y 3280) | File rejected `161:2988`, Apply failed `161:3291`, IMU data unavailable `161:3615` | Incomplete file rejected locally without a send; Busy result with the file retained and explicit retry; no live readings presented when telemetry is stale |
+| Review and initial load (y 4920) | Confirm apply `162:2565`, Waiting for first sample `165:3124` | Target device/instance/file, sensor/mounting caution and pause notice before Apply; no-sample state with no invented pose |
+| Checks (y 6560) | Live calibration `162:2887`, Confirm apply `163:8006` | Both 1920×1080 Light; all other G7 frames also checked at that size/theme and temporary copies removed |
+
+**File/action rules:** Import validates a file locally and sends nothing. Read from IMU and Export are separate. Apply opens the target-review dialog before sending; retry and apply-again use that same review. The panel shows device operation results and does not claim a PC file was saved to device NVS. The `.cal` extension and metadata are illustrative, pending the host file-format contract. F6 defines the payload and precise sequencing of `calibration_write` / `calibration_apply`; do not infer an atomic combined operation from the one GUI action. A multi-step failure must retain and identify the result of each completed step.
+
+Guidance and the full-calibration prerequisite for reading a profile follow [Bosch BNO055 datasheet revision 1.8, sections 3.11.1–3.11.5](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bno055-ds000.pdf). A profile must match the physical sensor and mounting; module-type validation alone does not establish that its offsets are correct.
+
+**Responsive checks:** the 1080p file card uses tighter spacing and wrapped controls; the generic signal table uses 110/80/fill columns so values and units remain visible. DISARM is enabled with the device link and stays above the confirmation scrim (y 56). All 11 frames use editable layers and G2 instances, only Inter / JetBrains Mono, and no image-filled UI. G8 connects the prototype.
 
 ## Open issues
 
@@ -309,3 +328,4 @@ Proposed scope: live calibration status and guidance, calibration-file import/re
 - **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. To settle in H2 (for example gain history as a tab, or one column of gains with scrolling).
 - **G5 notes for H2:** slider ticks in the Figma frames are only approximate (marker positions inside an instance can't be moved); in QML each tick sits at its value on the log scale. CheckItem has no warning state; Plant identification shows its open-loop caution with a neutral icon and "warning".
 - **G6 notes for H3:** reset the live-edit warning opt-out on reconnect; while confirmation is open, keep the proposed gain local and send nothing until Apply live. A lease-revoked event cancels auto re-run and any pending command/test start. The takeover checkbox is unchecked by default. Agent history is an illustrative recent-event sample; its retention limit and transport details remain part of H3. The full prototype and lease-chip navigation are connected in G8.
+- **G7 notes for F6/H2/H3:** F6 defines calibration signal/action descriptors, payload, paused-action sequencing and persistence. H2 defines the PC file format, physical-sensor provenance, Euler convention and host conversion, result handling and cancellation/reconnect behavior. Map device errors verbatim; a timeout is not proof that an apply did not occur. Before using this panel remotely, H3 must settle calibration-action authorization while another client owns the lease; the live-param permission does not automatically authorize sensor reconfiguration. This phase changes no firmware, protocol or safety policy.

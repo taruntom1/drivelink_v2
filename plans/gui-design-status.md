@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G6 accepted; PR #39 open; G7 discussion started).
+Last updated: 2026-11-13 (G6 accepted; G7 built; PR #39 open).
 
 ## Where things stand
 
@@ -12,12 +12,12 @@ Last updated: 2026-11-13 (G6 accepted; PR #39 open; G7 discussion started).
 |---|---|---|
 | G0 Foundations | done | FigJam screen map and flows 1–11; state inventory in gui-design.md |
 | G1 Wireframes | done | 21 frames. Tune (12) and Monitor (14) updated after G2 with the tuning controls |
-| G2 Design system | done | Accepted 2026-11-12. Extended in G3–G5 (details below). G6 adds LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live; reviewed with G6 |
+| G2 Design system | done | Accepted 2026-11-12. Extensions through G6 accepted; G7 CalibrationLevel and OrientationPreview reviewed with G7 |
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
 | G4 Layout | done | Accepted 2026-11-12. 11 frames on Screens – Local plus 2 kept check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
-| G7 Custom panel | in progress | Orientation complete; layout, file workflow and preview questions pending before building |
+| G7 Custom panel | in review | 11 Calibration screens on Custom panels, 2 retained 1080p Light checks; awaiting acceptance |
 | G8 Prototype and handoff | planned | |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
@@ -25,7 +25,8 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 ## Next step
 
 1. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) is open from `Codex/gui-design` into `firmware_overhaul`; G6 is accepted.
-2. Continue **G7 Custom panel** in this session. Three questions are pending: dashboard versus wizard/table, explicit file review/apply versus combined/technical actions, and numeric versus graphical orientation preview. Record the user's choices and confirm scope before building on Custom panels (`2:7`) from the G4 slot (`85:4679`).
+2. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised.
+3. After acceptance, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
 
 ## Handoff note
 
@@ -41,6 +42,8 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 - **G6 rules:** remote connections observe first and create their command group only after a lease grant (host plan clarified). Lease ownership is separate from arm state. ARM needs the lease; DISARM stays available with a device link, above every scrim. A grant leaves the board disarmed; revocation stops auto re-run/test starts. Live edits confirm before sending while another client drives; opt-out lasts one connection. Device holds the Clients and lease card; the chip navigates there in G8.
 - **G6 at 1080p:** Tune gain history uses a compact View history entry. Monitor legends wrap, its three plots share height, and the axes are fitted without shrinking the text. These fixes are scoped to G6; G5's accepted 1080p issues remain open. All 16 G6 frames checked at 1920×1080 in Light; only Tune/ROS and Monitor/observer copies kept.
 - **Naming:** the manual-command toggle is **Latch**, not Hold, because "hold" already means an input left at its hold value (Remove, Hold all).
+- **G7 rules:** Calibration tab uses a dashboard; import and validation stay local, Apply reviews the target, and Read / Export are separate. Full calibration is needed before reading a profile. A level of 3 is not an ARM permission. Missing data hides the pose; stale or paused telemetry freezes and labels it. Device SAVE is not presented as calibration persistence. F6 payload/persistence and H3 remote calibration-action permissions remain open; do not treat the live-param rule as permission for calibration actions.
+- **G7 at 1080p:** wrapped file controls, compact metadata/activity spacing and 110/80/fill generic signal columns. All 11 screens checked in Light at 1920×1080; only Live calibration and Confirm apply retained. G2 review instances also checked in both themes.
 
 ## Figma reference
 
@@ -70,6 +73,10 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 **G6 frames** (page `2:6`, Screens – Remote): header `137:1561`, note `137:1562`. Each row is four frames, 2760 px apart. Row y 0: Agent `137:978`, Unreachable `137:1115`, Version mismatch `137:1255`, No device `137:1406`. Row y 1640: Device/ROS `138:10168`, Tune/ROS `140:1715`, Confirm live edit `140:2397`, Take from ROS `138:11284`. Row y 3280: Requesting `138:11399`, Lease granted/disarmed `140:2506`, Release `140:3097`, Revoked `140:3201`. Row y 4920: Agent history `138:10938` (drawer `141:13084`), Lease available `138:10582`, Monitor observer `141:12188`, Other GUI `141:12737`. Checks y 6560: Tune/ROS 1920 Light `143:3437`, Monitor observer 1920 Light `143:4234`.
 
 **G2 changes in G6:** LeaseChip set `133:984` (Available `133:958`, Mine `133:963`, ROS `133:968`, Other `133:973`, Requesting `133:978`, Revoked `133:983`), mapping `133:1036`, instance preview `133:1045` in Shell `63:1180`. StatusBar `63:1182` optional Lease boolean. Dialog `37:390` optional Confirmation checkbox (mapping `40:937`). PlotFrame `38:417` variant State=Remote live `140:978` (mapping `40:982`). No new variables.
+
+**G7 frames** (page `2:7`, Custom panels): header `162:2714`, note `162:2715`. Three columns 2760 px apart. Row y 0: Live calibration `161:1030`, Fully calibrated `161:1344`, Read snapshot/export `161:1647`. Row y 1640: Imported file review `161:1965`, Applying `161:2344`, Applied `161:2669`. Row y 3280: File rejected `161:2988`, Apply failed `161:3291`, IMU data unavailable `161:3615`. Row y 4920: Confirm apply `162:2565`, Waiting for first sample `165:3124`. Checks y 6560: Live calibration `162:2887`, Confirm apply `163:8006` (x 2120), both 1920×1080 Light.
+
+**G2 changes in G7:** Sensor panels section `160:992` at x 5544, y 4200. CalibrationLevel set `160:999`, variants 0 `160:994`, 1 `160:995`, 2 `160:996`, 3 `160:997`, Unavailable `160:998`; Label text property. OrientationPreview set `160:1050`, Live `160:1047`, Stale `160:1048`, Unavailable `160:1049`. Mapping rows `160:1132`, `160:1141`. Instance reviews Dark `160:1087`, Light `164:1030`. Existing variables/styles only.
 
 **G2 changes in G4:** Banner `37:359` booleans `Button 2`, `Button 3`; MenuItem `31:154` boolean `Show detail` and a Detail text; mapping rows `40:928` (Banner) and `40:820` (Menu / MenuItem) extended.
 
@@ -116,6 +123,8 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Monitor's copied plot areas are initially fixed-size. At smaller widths, set plot areas to fill both axes, wrap legends, scale vector geometry and explicitly refit axis text. SCALE constraints can narrow text enough to wrap; restore WIDTH_AND_HEIGHT and place labels within bounds. Parse negative values from the node name or normalise the Unicode minus.
 - A Figma transport error can occur after a mutation was applied. Read the canvas and find exact returned/named check frames before retrying; do not assume every failed call rolled back.
 - Growing the QML mapping table can make its section overlap Icons. G6 moved the mapping section below the other sections in its column; check section bounds after adding mapping rows.
+- Returning every descendant id for many cloned screens can exceed the 48 KB use_figma return limit and roll back the call. G7 split check creation into bounded groups after inspecting the canvas; do not silently omit affected ids.
+- Narrowing a generic table card does not shrink fixed-width TableCell instances. Resize the columns explicitly or values can disappear beyond the card. Likewise, shorten or wrap the signal-card header action when its title changes to paused/stale.
 
 ## Session log
 
@@ -123,6 +132,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 |---|---|---|
 | 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
 | 2026-11-13 | gui design 5 | Opened PR #39 into firmware_overhaul; started G7 orientation and discussion. Custom panels page is empty; G4 Calibration slot inspected. Layout, file workflow and orientation preview await user decisions |
+| 2026-11-13 | gui design 5 | G7 choices recorded: dashboard, local file review before explicit Apply, numeric values plus graphic. Added G2 CalibrationLevel and OrientationPreview, 11 Calibration screens, all 1080p Light checks and 2 retained copies. Fixed generic signal columns, paused values, retry wording and compact file controls. G7 awaiting acceptance; PR #39 updated |
 | 2026-11-13 | gui design 4 | G5 accepted, including Auto re-run default; created Codex/gui-design from current firmware_overhaul and carried prior design records forward; G6 decisions, four G2 extensions, 16 remote frames and two retained 1080p Light checks. Self-review fixed ARM without a lease, gain-range labels, no-device connection state and responsive history/plots. G6 awaiting acceptance |
 | 2026-11-11 | gui design 1 | Phases planned; G0 (FigJam flows, state inventory); G1 wireframes |
 | 2026-11-12 | gui design 1 | G1 decisions (any client may disarm; device-name to-do); G2 design system; tuning controls (sliders, steps, gain history, auto re-run, manual command Latch) in G2 and the G1 wireframes; this status file and the `gui-design-step` skill |
