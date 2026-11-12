@@ -18,6 +18,12 @@ struct RecordedReport {
     uint8_t instance = 255;
 };
 
+using ReportSink = void (*)(void *, const RecordedReport &);
+using CountSink = void (*)(void *, DiagCode, uint32_t, uint8_t);
+// Set before starting tasks, clear after joining them. Null restores the
+// recording test backend. The vdev supplies bounded, fixed-storage sinks.
+void setDiagSinks(void *ctx, ReportSink report, CountSink count);
+
 /// Every `reportDiag` call since the last reset, in order.
 std::vector<RecordedReport> recordedReports();
 

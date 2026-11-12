@@ -13,6 +13,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  host-linux:
+    name: Host Linux (Ubuntu 26.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install host toolchain
+        run: apt-get update && apt-get install -y build-essential cmake ninja-build python3 python3-yaml git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Configure
+        working-directory: host/superbuild
+        run: cmake --preset linux-no-gui
+      - name: Build (warnings are errors)
+        working-directory: host/superbuild
+        run: cmake --build --preset linux --parallel 4
+      - name: Test host and CLI against TCP and PTY vdev
+        working-directory: host/superbuild
+        run: ctest --preset linux
+      - name: Test installed CMake packages
+        run: python3 host/test/install_smoke.py --build host/superbuild/build/linux
+
   firmware:
     name: idf.py build (${{ matrix.name }})
     runs-on: ubuntu-latest

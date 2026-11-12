@@ -1,0 +1,69 @@
+#pragma once
+
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace drivelink
+{
+using Bytes = std::vector<uint8_t>;
+enum class ErrorKind
+{
+    Connection,
+    Timeout,
+    Protocol,
+    Rejected,
+    Usage
+};
+class Error : public std::runtime_error
+{
+  public:
+    Error(ErrorKind kind, const std::string &message, uint8_t result = 0, uint8_t detail = 0)
+        : std::runtime_error(message), kind(kind), result(result), detail(detail)
+    {
+    }
+    ErrorKind kind;
+    uint8_t result, detail;
+};
+struct Frame
+{
+    uint8_t type;
+    Bytes payload;
+};
+struct Reply
+{
+    uint8_t result, detail;
+    Bytes body;
+};
+struct SessionOptions
+{
+    unsigned baud = 921600;
+    std::chrono::milliseconds timeout{1500};
+    unsigned read_retries = 2;
+    size_t event_capacity = 128;
+};
+// Thread-safe synchronous facade over one Asio I/O thread. Calls serialize;
+// timed-out sequence IDs are retired until reconnect to reject stale replies.
+// Endpoint: tcp://numeric-ip:port or serial://device. No callbacks on callers.
+class Session
+{
+  public:
+    explicit Session(const std::string &endpoint, SessionOptions options = {});
+    ~Session();
+    Session(const Session &) = delete;
+    Session &operator=(const Session &) = delete;
+    Reply request(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
+    Bytes diagRequest(uint8_t op, std::span<const uint8_t> body = {});
+    bool nextEvent(Frame &frame, std::chrono::milliseconds timeout);
+    uint64_t droppedEvents() const;
+    void setMaxPayload(uint16_t cap);
+    void close(); // cancels pending requests; idempotent; never waits on a peer
+  private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
+} // namespace drivelink

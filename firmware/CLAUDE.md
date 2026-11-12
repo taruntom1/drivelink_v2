@@ -27,6 +27,11 @@ idf.py -C firmware fullclean             # when target/config changes leave the 
 
 There are two kinds of automated tests.
 
+F3c also adds host unit and CLI/vdev integration tests under `host/test`, built
+by `host/superbuild`. See `host/README.md`. Native `core_os` storage stays in
+memory unless `native::openFileStore` attaches a vdev state directory. The host
+Linux job also verifies installed CMake packages and the Linux PTY serial path.
+
 **Native unit tests** (`firmware/test/native/`) cover everything that builds without ESP-IDF:
 - the `protocol/` library (CRC, framing, scanner, wire codec, the generated definitions; its tests live in `protocol/test/` and are compiled into this build)
 - `core_os`'s native backend (with the in-memory KV store and its fault injection: power loss, failed and torn writes) and the pure `core` (registry, bind API, values, loops, param batches, the pending layout and its validation, the wiring order, the NVS blobs and A/B persistence, safe mode, the boot, a threaded end-to-end run). The generator's fixture types (`fixture.full`, `fixture.sensor`, and the wiring set `actuator.fixture`, `feedback.fixture`, `fixture.wired`) serve as test module types (`tests/core_test_modules.hpp`). Core tests build a layout by writing it to a native `KvStore` (`writeLayout`) and booting a `Core` on it (`bootWith`); a reboot is a new `Core` on the same store.

@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F3c: vdev, the first libdrivelink slice, CLI and host superbuild. Start it after F3b is merged.
+- **Next step:** F3c is in progress: vdev, first libdrivelink slice, CLI and host superbuild. F3b merged in #36.
 - **Handoff (F3b):**
   - Core v1 is specified in `docs/protocol/core.md`; diag redesign is wire v3
     (`docs/protocol/diag.md`). Enums come from `registry.yaml::wire_enums`.
@@ -87,8 +87,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F2 | `tools/gen/`, `protocol/defs/` (registry, diag codes), Kconfig MSG_TYPEs replaced, legacy streams moved to `0xBD–0xBF`, descriptor table format and hash | no | high | merged | [#33](https://github.com/taruntom1/drivelink_v2/pull/33) |
 | F3a-1 | `core_os` (IDF and native), `firmware/test/native`, `system.yaml` (type 0x00), module registry and bind API, `control` / `sensor` loops, param service (atomic batches, staging slot, withdrawal) | bare board: boot check | high | merged | [#34](https://github.com/taruntom1/drivelink_v2/pull/34) |
 | F3a-2 | Layout and pending copy, validation (GPIO registry, wiring, labels), NVS A/B, safe mode, boot with dependency order (`InitFailed`, `DependencyMissing`) | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
-| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | in review | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
-| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | no | high | planned | |
+| F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | merged | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
+| F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke (user requested) | high | in progress | |
 | F4a | Subscription and command groups (preallocated, epochs) | no | high | planned | |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
@@ -187,6 +187,20 @@ Choices made during implementation that the plans don't cover, or that change th
 | 2026-11-12 | F3b | Core starts at wire v1; diag redesign ships at v3. Instance IDs are included consistently in records, clears, counters and queries; state uses 254 fixed sparse slots | Shared codecs and definite instance identity; no steady-state allocation | yes |
 | 2026-11-12 | F3b | Status rate defaults to 10 Hz (1..100); CPU load uses idle runtime deltas; initial/disabled/unsupported samples are 0xFF | Measured utilization with constant work and no stack scans | yes |
 | 2026-11-12 | F3b | Action completion events are wake hints; Ready withdrawal tests a deadline and state, while claimed actions wait for completion. Reboot effects wait for TX drain and are refused while armed | Independent review found stale-event early withdrawal and an EXIT_SAFE_MODE reboot bypass; both fixed and tested | yes |
+
+### F3c decisions
+
+- User approved the plan in `plans/f3c-implementation.md`, this Codex session
+  implementing, and an available independent Codex reviewer at high effort.
+  Multiple commits are allowed, with exactly one PR into firmware_overhaul.
+- User chose readable CLI output plus --json and a CLI smoke on the bare ESP32,
+  extending F3c's original vdev-only validation row.
+- Internal: pinned standalone Asio and nlohmann JSON; serialized requests with
+  timeout-seq retirement and read-only retry; bounded drop-oldest event queues.
+- Internal: optional per-blob durable native KV, OS state-directory ownership
+  lock and a persistent running marker/crash counter. Existing core A/B logic,
+  wire formats and staging deadlines are unchanged. Test harness retries only
+  definite Busy/Withdrawn rejections to tolerate desktop scheduling.
 
 ### F3b decisions
 

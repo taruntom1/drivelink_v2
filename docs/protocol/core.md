@@ -1,5 +1,13 @@
 # Core protocol v1 (F3b)
 
+F3c adds `libdrivelink`, `drivelink-cli` and `drivelink-vdev` as consumers of
+this same contract, with no wire-format change. The CLI supports readable and
+JSON output, generic descriptors and typed scalar values; see `host/README.md`.
+Vdev has no ESP CPU-load sampler (status loads are 0xFF) and models crash resets
+through its persistent running marker. Its build id is the source commit's first
+16 hex characters, or 16 zeros when Git metadata is unavailable; an explicit
+`DRIVELINK_VDEV_BUILD_ID` CMake override is available for source archives.
+
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
 `core_response` (0x41). All integers are little-endian. Version is 1.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.

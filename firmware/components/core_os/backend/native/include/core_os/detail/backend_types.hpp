@@ -41,6 +41,7 @@ struct PeriodicTaskState {
 
 /// The in-memory KvStore with its fault injection (core_os/native_kv.hpp).
 struct KvStoreState {
+    std::string directory; ///< empty for in-memory tests
     std::map<std::string, std::map<std::string, std::vector<uint8_t>>> data;
     uint32_t write_count = 0;      ///< writes (set and erase) that took effect
     int64_t power_loss_after = -1; ///< writes left before every write fails; -1 never

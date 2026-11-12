@@ -13,8 +13,11 @@
 #include "core_os/native_boot.hpp"
 #include "core_os/native_kv.hpp"
 #include "core_os/one_shot.hpp"
+#include "core_os/native_file.hpp"
+#include <filesystem>
 
 namespace core_os {
+namespace native { void persistCrashCount(uint32_t count); }
 
 namespace {
 
@@ -110,6 +113,11 @@ Err KvStore::set(const char *ns, const char *key, const void *data, size_t len)
             blob.back() = static_cast<uint8_t>(blob.back() ^ 0xFFU);
         }
     }
+    if (!m_state.directory.empty()) {
+        const auto safe=[](const char *s) { return std::string(s).find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")==std::string::npos; };
+        if(!safe(ns) || !safe(key) || len>65536) { return kNativeError; }
+        if(native::writeFile(std::filesystem::path(m_state.directory)/(std::string(ns)+"."+key+".blob"),blob)!=kOk) { return kNativeError; }
+    }
     m_state.data[ns][key] = std::move(blob);
     ++m_state.write_count;
     return kOk;
@@ -123,6 +131,14 @@ Err KvStore::eraseNamespace(const char *ns)
     Err err = kOk;
     if (nextWrite(m_state, err) == WriteFate::Fail) {
         return err;
+    }
+    if(!m_state.directory.empty()) {
+        const auto it=m_state.data.find(ns);
+        if(it!=m_state.data.end()) {
+            for(const auto &entry:it->second) {
+                if(native::eraseFile(std::filesystem::path(m_state.directory)/(std::string(ns)+"."+entry.first+".blob"))!=kOk) { return kNativeError; }
+            }
+        }
     }
     m_state.data.erase(ns);
     ++m_state.write_count;
@@ -236,6 +252,7 @@ uint32_t loadCrashCount()
 void storeCrashCount(uint32_t count)
 {
     s_crash_count.store(count);
+    native::persistCrashCount(count);
 }
 
 void reboot()
@@ -244,6 +261,8 @@ void reboot()
 }
 
 namespace native {
+
+void loadCrashCountForFile(uint32_t count) { s_crash_count.store(count); }
 
 void setResetWasCrash(bool crash)
 {
