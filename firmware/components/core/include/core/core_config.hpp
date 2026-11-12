@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "core/gpio_policy.hpp"
+
 namespace core {
 
 /// The core's tunables. The core is pure and reads no Kconfig itself:
@@ -17,7 +19,12 @@ struct CoreConfig {
 
     LoopTask control{4096, 20, 1}; ///< the control loop task, "core_ctrl"
     LoopTask sensor{4096, 10, 0};  ///< the sensor loop task, "core_sens"
-    uint16_t max_instances = 16;   ///< module instances, across both loops
+    uint16_t max_instances = 16;   ///< module instances, across both loops (the layout's capacity)
+    /// The pins a `gpio` param may name: bit n allows GPIO n. On the device
+    /// it is the ESP32-S3 policy minus the uart_comm TX/RX pins.
+    uint64_t gpio_allowed_mask = gpio_policy::kEsp32s3Allowed;
+    /// How long after a normal boot the crash counter is cleared (safe mode).
+    uint32_t crash_clear_delay_us = 30000000;
 };
 
 /// The config from Kconfig. Defined in `src/idf/core_config_idf.cpp`, which

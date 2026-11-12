@@ -18,6 +18,8 @@ FLAG_ENUM = {
     "read_only": "ReadOnly",
     "locked_while_armed": "LockedWhileArmed",
     "testgen": "Testgen",
+    "gpio": "Gpio",
+    "ref_ticks_after": "RefTicksAfter",
 }
 LOOP_ENUM = {"control": "Control", "sensor": "Sensor"}
 PLACEMENT_ENUM = {None: "None", "loop": "Loop", "paused": "Paused"}

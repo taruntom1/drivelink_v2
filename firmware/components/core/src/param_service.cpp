@@ -1,7 +1,9 @@
 #include "core/param_service.hpp"
 
+#include "core/pending_layout.hpp"
 #include "core/value.hpp"
 #include "core_os/clock.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
 
 namespace core {
 
@@ -14,6 +16,21 @@ constexpr uint32_t kApplyingPollUs = 1000;
 bool sameRef(const Ref &a, const Ref &b)
 {
     return a.type == b.type && a.instance == b.instance && a.id == b.id;
+}
+
+size_t itemIndex(const defs::TypeDesc &desc, uint16_t id)
+{
+    for (size_t i = 0; i < desc.items.size(); ++i) {
+        if (desc.items[i].id == id) {
+            return i;
+        }
+    }
+    return detail::kNoItem;
+}
+
+bool isPersist(const defs::ItemDesc &item)
+{
+    return defs::hasFlag(item, defs::ItemFlag::Persist);
 }
 
 } // namespace
@@ -30,26 +47,49 @@ ParamService::Target ParamService::lookup(const Ref &ref) const
     t.record = m_table.find(ref.type, ref.instance);
     if (t.record != nullptr) {
         t.index = t.record->itemIndex(ref.id);
+        if (t.index == detail::kNoItem) {
+            return t;
+        }
+        t.item = &t.record->desc->items[t.index];
+        t.system = (t.record->type_id == drivelink::protocol::defs::kSystemTypeId);
+        if (defs::hasFlag(*t.item, defs::ItemFlag::RebootRequired)) {
+            t.domain = ParamDomain::Pending;
+        } else if (t.system) {
+            t.domain = ParamDomain::System;
+        } else if (t.record->state != InstanceState::Running) {
+            t.domain = ParamDomain::Offline;
+        } else {
+            t.domain = (t.record->loop == kSensorLoop) ? ParamDomain::Sensor : ParamDomain::Control;
+        }
+        return t;
+    }
+    const PendingEntry *added = (m_pending != nullptr) ? m_pending->findAdded(ref.type, ref.instance) : nullptr;
+    if (added != nullptr) {
+        t.index = itemIndex(*added->desc, ref.id);
+        if (t.index != detail::kNoItem) {
+            t.item = &added->desc->items[t.index];
+            t.domain = ParamDomain::Pending;
+        }
     }
     return t;
 }
 
-Status ParamService::validate(const SetEntry &entry, uint16_t i, uint32_t &applied) const
+Status ParamService::validate(const SetEntry &entry, uint16_t i, uint32_t &applied, Target &t) const
 {
-    const Target t = lookup(entry.ref);
-    if (t.record == nullptr || t.index == detail::kNoItem) {
+    t = lookup(entry.ref);
+    if (t.item == nullptr) {
         return Status::fail(Result::InvalidArgument, Detail::UnknownRef, i);
     }
-    const defs::ItemDesc &item = t.record->desc->items[t.index];
+    const defs::ItemDesc &item = *t.item;
     if (item.kind != defs::ItemKind::Param) {
         return Status::fail(Result::InvalidArgument, Detail::WrongKind, i);
     }
     if (defs::hasFlag(item, defs::ItemFlag::ReadOnly)) {
         return Status::fail(Result::InvalidArgument, Detail::ReadOnly, i);
     }
-    if (defs::hasFlag(item, defs::ItemFlag::RebootRequired)) {
-        // F3a-2 stages these into the pending layout.
-        return Status::fail(Result::PendingReboot, Detail::Unsupported, i);
+    if (t.domain == ParamDomain::Pending && (t.system || m_pending == nullptr)) {
+        // The system is not a layout entry: it has no pending copy.
+        return Status::fail(Result::InvalidArgument, Detail::Unsupported, i);
     }
     if (defs::hasFlag(item, defs::ItemFlag::LockedWhileArmed) && armed()) {
         return Status::fail(Result::Armed, Detail::LockedWhileArmed, i);
@@ -58,8 +98,9 @@ Status ParamService::validate(const SetEntry &entry, uint16_t i, uint32_t &appli
     if (!check.ok) {
         return Status::fail(Result::InvalidArgument, check.detail, i);
     }
-    if (!t.record->bindings[t.index].bound) {
-        // Every live param is bound by start(); an unbound one never started.
+    if ((t.domain == ParamDomain::Control || t.domain == ParamDomain::Sensor || t.domain == ParamDomain::System) &&
+        !t.record->bindings[t.index].bound) {
+        // Every live param of a running instance is bound by start().
         return Status::fail(Result::Fault, Detail::StartFailed, i);
     }
     applied = check.applied_bits;
@@ -79,6 +120,7 @@ Status ParamService::set(std::span<const SetEntry> entries, std::span<uint32_t> 
 Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t> applied, PendingSet &pending)
 {
     pending.loop = nullptr;
+    pending.persist = false;
     if (entries.size() > kMaxBatchEntries) {
         return Status::fail(Result::InvalidArgument, Detail::BatchTooLarge, static_cast<uint16_t>(kMaxBatchEntries));
     }
@@ -89,10 +131,13 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
         return Status::success();
     }
 
-    // 1. Every entry, before anything is applied.
+    // 1. Every entry, before anything is applied. 2. One domain.
+    ParamDomain domain = ParamDomain::System;
+    bool persist = false;
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto index = static_cast<uint16_t>(i);
-        const Status st = validate(entries[i], index, applied[i]);
+        Target t;
+        const Status st = validate(entries[i], index, applied[i], t);
         if (!st.ok()) {
             return st;
         }
@@ -101,33 +146,54 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
                 return Status::fail(Result::InvalidArgument, Detail::DuplicateRef, index);
             }
         }
-    }
-
-    // 2. Domain: all system, or all one loop.
-    const uint8_t domain = lookup(entries[0].ref).record->loop;
-    for (size_t i = 1; i < entries.size(); ++i) {
-        if (lookup(entries[i].ref).record->loop != domain) {
-            return Status::fail(Result::InvalidArgument, Detail::CrossLoopBatch, static_cast<uint16_t>(i));
+        if (i == 0) {
+            domain = t.domain;
+        } else if (t.domain != domain) {
+            return Status::fail(Result::InvalidArgument, Detail::CrossLoopBatch, index);
         }
+        persist = persist || isPersist(*t.item);
     }
 
-    if (domain == kNoLoop) {
-        // 4. System: on the caller.
-        return applySystem(entries, applied);
+    switch (domain) {
+    case ParamDomain::Pending: {
+        const Status st = m_pending->setValues(entries, applied);
+        if (!st.ok()) {
+            return st;
+        }
+        setNvsDirty(true);
+        return Status::fail(Result::PendingReboot, Detail::None);
     }
-    if (domain >= kLoopCount || m_loops[domain] == nullptr) {
-        return Status::fail(Result::Fault, Detail::UnknownRef);
+    case ParamDomain::Offline: {
+        const Status st = applyOffline(entries, applied);
+        if (st.ok() && persist) {
+            setNvsDirty(true);
+        }
+        return st;
+    }
+    case ParamDomain::System: {
+        const Status st = applySystem(entries, applied);
+        if (st.ok() && persist) {
+            setNvsDirty(true);
+        }
+        return st;
+    }
+    case ParamDomain::Control:
+    case ParamDomain::Sensor:
+        break;
     }
 
     // 3. Loop: claim the slot, fill it, publish it.
-    Loop &loop = *m_loops[domain];
+    const uint8_t loop_id = (domain == ParamDomain::Sensor) ? kSensorLoop : kControlLoop;
+    if (m_loops[loop_id] == nullptr) {
+        return Status::fail(Result::Fault, Detail::UnknownRef);
+    }
+    Loop &loop = *m_loops[loop_id];
     if (!loop.beginStaging()) {
         return Status::fail(Result::Busy, Detail::StagingBusy);
     }
     std::span<StagedEntry, kMaxBatchEntries> slot = loop.stagingEntries();
     for (size_t i = 0; i < entries.size(); ++i) {
         const Target t = lookup(entries[i].ref);
-        const defs::ItemDesc &item = t.record->desc->items[t.index];
         const detail::Binding &b = t.record->bindings[t.index];
         slot[i] = StagedEntry{
             .ptr = b.ptr,
@@ -135,19 +201,22 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
             .hook = b.hook,
             .hook_ctx = t.record->object.get(),
             .shadow = &t.record->shadow[t.index],
-            .type = item.type,
-            .id = item.id,
+            .type = t.item->type,
+            .id = t.item->id,
         };
     }
     loop.publishStaging(entries.size());
     pending.loop = &loop;
+    pending.persist = persist;
     return Status::success();
 }
 
 Status ParamService::complete(PendingSet &pending, uint32_t timeout_us)
 {
     Loop *loop = pending.loop;
+    const bool persist = pending.persist;
     pending.loop = nullptr;
+    pending.persist = false;
     if (loop == nullptr) {
         return Status::success();
     }
@@ -178,6 +247,9 @@ Status ParamService::complete(PendingSet &pending, uint32_t timeout_us)
         }
     }
     loop->releaseStaging();
+    if (persist) {
+        setNvsDirty(true);
+    }
     return Status::success();
 }
 
@@ -200,8 +272,7 @@ Status ParamService::applySystem(std::span<const SetEntry> entries, std::span<co
 
     for (size_t i = 0; i < entries.size(); ++i) {
         const Target t = lookup(entries[i].ref);
-        const defs::ItemDesc &item = t.record->desc->items[t.index];
-        storeValue(item.type, t.record->bindings[t.index].ptr, applied[i]);
+        storeValue(t.item->type, t.record->bindings[t.index].ptr, applied[i]);
         t.record->shadow[t.index] = applied[i];
     }
     for (size_t i = 0; i < entries.size(); ++i) {
@@ -214,6 +285,16 @@ Status ParamService::applySystem(std::span<const SetEntry> entries, std::span<co
     return Status::success();
 }
 
+Status ParamService::applyOffline(std::span<const SetEntry> entries, std::span<const uint32_t> applied)
+{
+    core_os::LockGuard lock(m_mutex);
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const Target t = lookup(entries[i].ref);
+        t.record->shadow[t.index] = applied[i];
+    }
+    return Status::success();
+}
+
 Status ParamService::get(std::span<const Ref> refs, std::span<uint32_t> values)
 {
     if (values.size() < refs.size()) {
@@ -222,14 +303,15 @@ Status ParamService::get(std::span<const Ref> refs, std::span<uint32_t> values)
     core_os::LockGuard lock(m_mutex);
     for (size_t i = 0; i < refs.size(); ++i) {
         const auto index = static_cast<uint16_t>(i);
-        const Target t = lookup(refs[i]);
-        if (t.record == nullptr || t.index == detail::kNoItem) {
+        const detail::InstanceRecord *record = m_table.find(refs[i].type, refs[i].instance);
+        const size_t item = (record != nullptr) ? record->itemIndex(refs[i].id) : detail::kNoItem;
+        if (item == detail::kNoItem) {
             return Status::fail(Result::InvalidArgument, Detail::UnknownRef, index);
         }
-        if (t.record->desc->items[t.index].kind != defs::ItemKind::Param) {
+        if (record->desc->items[item].kind != defs::ItemKind::Param) {
             return Status::fail(Result::InvalidArgument, Detail::WrongKind, index);
         }
-        values[i] = t.record->shadow[t.index];
+        values[i] = record->shadow[item];
     }
     return Status::success();
 }

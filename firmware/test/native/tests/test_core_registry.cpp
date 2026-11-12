@@ -1,12 +1,14 @@
-// core: the module registry and Core::createInstance's checks.
+// core: the module registry, and the boot's checks of the layout entries.
 
 #include "doctest.h"
 
 #include <array>
+#include <vector>
 
 #include "core/core.hpp"
 #include "core/registry.hpp"
 #include "core_test_modules.hpp"
+#include "drivelink/protocol/gen/diag_codes.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
 #include "drivelink/protocol/gen/types.hpp"
 
@@ -18,7 +20,7 @@ TEST_CASE("Registry: lookup")
 {
     core::Registry reg;
     REQUIRE(reg.init(kTypes).ok());
-    CHECK(reg.size() == 2);
+    CHECK(reg.size() == 5);
     CHECK(reg.find(fx::kTypeId) == &kFullType);
     CHECK(reg.find(fxs::kTypeId) == &kSensorType);
     CHECK(reg.find(0x00) == nullptr);
@@ -67,48 +69,60 @@ TEST_CASE("Registry: a desc must be the generated table entry")
     CHECK_FALSE(core::descIsInTable(kFullType, drivelink::protocol::defs::kTypeTable));
 }
 
-TEST_CASE("Core::createInstance checks type, loop, uniqueness, label and capacity")
+TEST_CASE("Boot: entries are checked for type, loop, uniqueness and capacity")
 {
     reset();
-    core::Core c(testConfig(2));
-    REQUIRE(c.init(kTypes).ok());
-    CHECK(c.instanceCount() == 0);
-
-    core::Status st = c.createInstance(0x55, 0, core::kControlLoop, "x");
-    CHECK(st.result == Result::NotFound);
-    CHECK(st.detail == Detail::UnknownType);
-
-    st = c.createInstance(fxs::kTypeId, 0, core::kControlLoop, "s"); // sensor-only type
-    CHECK(st.result == Result::InvalidArgument);
-    CHECK(st.detail == Detail::LoopMismatch);
-    CHECK(c.createInstance(fx::kTypeId, 0, 7, "bad loop").detail == Detail::LoopMismatch);
-
-    st = c.createInstance(fx::kTypeId, 0, core::kControlLoop, "seventeen_chars__");
-    CHECK(st.detail == Detail::BadLabel);
-
-    REQUIRE(c.createInstance(fx::kTypeId, 0, core::kControlLoop, "sixteen_chars___").ok());
-    CHECK(c.createInstance(fx::kTypeId, 0, core::kSensorLoop, "again").result == Result::Exists);
-    REQUIRE(c.createInstance(fxs::kTypeId, 0, core::kSensorLoop, "s0").ok());
-    CHECK(c.instanceCount() == 2);
+    core_os::KvStore store;
+    writeLayout(store, {
+                           {0x55, 0, core::kControlLoop, "x"},             // unknown type
+                           {fxs::kTypeId, 0, core::kControlLoop, "s"},     // sensor-only type
+                           {fx::kTypeId, 0, core::kControlLoop, "ok"},     // fine
+                           {fx::kTypeId, 0, core::kSensorLoop, "again"},   // (type, inst) twice
+                           {fx::kTypeId, 1, core::kSensorLoop, "full"},    // beyond the capacity
+                           {fx::kTypeId, 2, 7, "bad loop"},                // also beyond it
+                       });
+    core::Core c(testConfig(4));
+    REQUIRE(bootCore(c, store).ok());
+    CHECK(c.instanceCount() == 1);
+    CHECK(c.configuredCount() == 2); // ok and the sensor-only one: the others have no record
+    CHECK(c.instancesFailed() == 5);
+    CHECK(c.layoutInvalid());
+    CHECK(stateOf(c, fx::kTypeId, 0) == core::InstanceState::Running);
+    CHECK(stateOf(c, fxs::kTypeId, 0) == core::InstanceState::Invalid);
     CHECK(c.loop(core::kControlLoop).instanceCount() == 1);
-    CHECK(c.loop(core::kSensorLoop).instanceCount() == 1);
+    CHECK(c.loop(core::kSensorLoop).instanceCount() == 0);
 
-    st = c.createInstance(fx::kTypeId, 1, core::kSensorLoop, "full");
-    CHECK(st.result == Result::NoMemory);
-    CHECK(st.detail == Detail::Capacity);
+    namespace codes = drivelink::protocol::defs::diag::codes;
+    std::vector<uint32_t> details;
+    for (const auto &r : core_os::native::recordedReports()) {
+        if (r.code.code == codes::core::kLayoutInvalid.code) {
+            details.push_back(r.arg1);
+        }
+    }
+    CHECK(details == std::vector<uint32_t>{static_cast<uint32_t>(Detail::UnknownType),
+                                           static_cast<uint32_t>(Detail::LoopMismatch),
+                                           static_cast<uint32_t>(Detail::None), // Exists
+                                           static_cast<uint32_t>(Detail::Capacity),
+                                           static_cast<uint32_t>(Detail::Capacity)});
 }
 
-TEST_CASE("Core::createInstance is boot only")
+TEST_CASE("Core::boot runs once, before start")
 {
     reset();
+    core_os::KvStore store;
+    {
+        core::Core c(testConfig());
+        REQUIRE(c.init(kTypes).ok());
+        REQUIRE(c.start().ok());
+        CHECK(c.isRunning());
+        const core::Status st = c.boot(store);
+        CHECK(st.result == Result::Busy);
+        CHECK(st.detail == Detail::NotAtBoot);
+        c.stop();
+        CHECK_FALSE(c.isRunning());
+        c.stop(); // idempotent
+    }
     core::Core c(testConfig());
-    REQUIRE(c.init(kTypes).ok());
-    REQUIRE(c.start().ok());
-    CHECK(c.isRunning());
-    const core::Status st = c.createInstance(fx::kTypeId, 0, core::kControlLoop, "late");
-    CHECK(st.result == Result::Busy);
-    CHECK(st.detail == Detail::NotAtBoot);
-    c.stop();
-    CHECK_FALSE(c.isRunning());
-    c.stop(); // idempotent
+    REQUIRE(bootCore(c, store).ok());
+    CHECK(c.boot(store).detail == Detail::NotAtBoot);
 }

@@ -10,8 +10,9 @@
 
 namespace core::detail {
 
-/// Every instance record, the system's included. Filled at boot only; after
-/// that it is read-only, so lookups need no lock.
+/// Every instance record, the system's included (first), then one per
+/// configured layout entry in layout order. Filled at boot only; after that
+/// the set of records is fixed, so lookups need no lock.
 class InstanceTable {
 public:
     /// Reserve room for `capacity` records (allocation at setup).
@@ -39,6 +40,7 @@ public:
     }
 
     size_t size() const { return m_records.size(); }
+    InstanceRecord &at(size_t i) const { return *m_records[i]; }
     size_t capacity() const { return m_capacity; }
 
     /// Destroy every instance object (records stay). The loops must be

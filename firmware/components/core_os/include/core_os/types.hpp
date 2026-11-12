@@ -15,6 +15,10 @@ inline constexpr Err kOk = 0;
 /// a late wake-up). A plain function pointer, so nothing is allocated.
 using TickFn = void (*)(void *ctx, uint32_t elapsed_periods);
 
+/// The callback of a `OneShotTimer`: `fn(ctx)`. It runs on the esp_timer task
+/// on the device (a thread natively), so it must be short and must not block.
+using OneShotFn = void (*)(void *ctx);
+
 /// "No core affinity" for `PeriodicTask::start`.
 inline constexpr int8_t kNoAffinity = -1;
 

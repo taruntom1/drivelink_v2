@@ -4,8 +4,8 @@ cmake_minimum_required(VERSION 3.16)
 #   - the protocol/ library (CRC, framing, frame scanner, wire codec, the
 #     generated definitions; its tests are protocol/test)
 #   - core_os's native backend and the pure core (registry, bind API, values,
-#     loops, the param service), with the generator's fixture types as test
-#     module types
+#     loops, the param service, the layout, NVS persistence, safe mode and the
+#     boot), with the generator's fixture types as test module types
 #   - the legacy protocol codecs (motor, IMU, time_sync, diag and its slot
 #     table), the PID and the velocity estimator
 # The legacy sources include two IDF headers; shim/ provides them (sdkconfig.h,
@@ -35,12 +35,19 @@ target_compile_options(drivelink_protocol PRIVATE -Werror)
 # source except src/idf/, which reads Kconfig.
 set(CORE_SOURCES
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
+    ${COMPONENTS_DIR}/core_os/backend/native/src/kv_store_native.cpp
+    ${COMPONENTS_DIR}/core/src/config_blob.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
+    ${COMPONENTS_DIR}/core/src/crc32.cpp
     ${COMPONENTS_DIR}/core/src/instance.cpp
+    ${COMPONENTS_DIR}/core/src/layout_validation.cpp
     ${COMPONENTS_DIR}/core/src/loop.cpp
     ${COMPONENTS_DIR}/core/src/param_service.cpp
+    ${COMPONENTS_DIR}/core/src/pending_layout.cpp
+    ${COMPONENTS_DIR}/core/src/persistence.cpp
     ${COMPONENTS_DIR}/core/src/registry.cpp
     ${COMPONENTS_DIR}/core/src/value.cpp
+    ${COMPONENTS_DIR}/core/src/wiring_order.cpp
 )
 
 # Legacy firmware sources under test. Add a file here only if it builds
@@ -69,6 +76,9 @@ set(GEN_FIXTURE_INCLUDE ${GEN_FIXTURE_ROOT}/protocol/include/drivelink/protocol/
 set(GEN_FIXTURE_HEADERS
     ${GEN_FIXTURE_INCLUDE}/type_fixture_full.hpp
     ${GEN_FIXTURE_INCLUDE}/type_fixture_sensor.hpp
+    ${GEN_FIXTURE_INCLUDE}/type_actuator_fixture.hpp
+    ${GEN_FIXTURE_INCLUDE}/type_feedback_fixture.hpp
+    ${GEN_FIXTURE_INCLUDE}/type_fixture_wired.hpp
 )
 file(GLOB GEN_SOURCES ${GEN_DIR}/*.py)
 file(GLOB GEN_FIXTURE_FILES ${GEN_FIXTURE_DEFS}/*.yaml)
@@ -94,6 +104,11 @@ set(TEST_SOURCES
     tests/test_core_params.cpp
     tests/test_core_loop.cpp
     tests/test_core_threaded.cpp
+    tests/test_core_blob.cpp
+    tests/test_core_persistence.cpp
+    tests/test_core_layout.cpp
+    tests/test_core_boot.cpp
+    tests/test_core_safe_mode.cpp
     tests/test_pid.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp

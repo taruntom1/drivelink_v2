@@ -38,7 +38,7 @@ void Loop::runTick(uint32_t elapsed)
     // 3. Staged param batch.
     applyStaged();
 
-    // 7. Instances, in insertion order (F3a-2 computes the dependency order).
+    // 7. Instances, in the wiring's tick order (the list order, set at boot).
     const uint32_t period_us = m_period_us.load(std::memory_order_relaxed);
     const TickContext t{
         .now_us = start_us,

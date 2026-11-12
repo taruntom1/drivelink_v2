@@ -1,11 +1,11 @@
 // main.cpp - DriveLink v2 entry point.
 //
-// Startup order: diag, UartComm, the managers, the core, then the diag
-// Reporter. A manager that fails to start is reported
-// (system.ManagerStartFailed), destroyed and left out; the others keep
-// running, so the host can still connect and ask what went wrong. The core
-// is the same: if it fails it is reported (core.InitFailed) and left out.
-// app_main never returns.
+// Startup order: diag, UartComm, the managers, NVS, the core (init, boot from
+// NVS, start), then the diag Reporter. A manager that fails to start is
+// reported (system.ManagerStartFailed), destroyed and left out; the others
+// keep running, so the host can still connect and ask what went wrong. The
+// core is the same: if it fails it is reported (core.InitFailed) and left
+// out. app_main never returns.
 
 #include <array>
 #include <memory>
@@ -16,8 +16,11 @@
 #include "core/core_config.hpp"
 #include "core/module_type.hpp"
 #include "core/registry.hpp"
+#include "core_os/kv_store.hpp"
 #include "diag.hpp"
 #include "diag_reporter.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
+#include "drivelink/protocol/gen/type_system.hpp"
 #include "drivelink/protocol/gen/types.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -63,10 +66,75 @@ void logStackHighWater()
 /// desc must be its generated kTypeTable entry (checked in startCore()).
 constexpr std::array<const core::ModuleType *, 0> kModuleTypes{};
 
-/// Build and start the core: the registry, the system params and both loops,
-/// with no instances yet (the layout comes in F3a-2). The Core lives on the
-/// heap: app_main's stack is small. On failure it reports core.InitFailed and
-/// returns nullptr; the rest of the firmware keeps running.
+/// `core.NvsInitFailed` arg0 values. Part of the diag contract
+/// (protocol/defs/diag_codes.yaml): never renumber.
+constexpr uint32_t kNvsInitErased = 1;
+constexpr uint32_t kNvsInitFailed = 2;
+
+/// The core's NVS store. Static: it lives as long as the core, which is
+/// never destroyed.
+core_os::KvStore &kvStore()
+{
+    static core_os::KvStore store;
+    return store;
+}
+
+/// Initialise NVS. A full partition or one from a newer NVS version is
+/// erased and initialised again; both that and a failure are reported. The
+/// core boots either way (with the defaults when nothing could be read).
+void initNvs()
+{
+    const core_os::NvsInitResult r = core_os::nvsInit();
+    if (r.erased) {
+        DIAG_ERROR(diag::codes::core::kNvsInitFailed, r.first_err, kNvsInitErased, 0,
+                   "NVS was erased and re-initialised (%s); the stored configuration is lost",
+                   esp_err_to_name(r.first_err));
+    }
+    if (r.err != ESP_OK) {
+        DIAG_ERROR(diag::codes::core::kNvsInitFailed, r.err, kNvsInitFailed, 0,
+                   "NVS init failed: %s; nothing will be loaded or saved", esp_err_to_name(r.err));
+    }
+}
+
+#if CONFIG_CORE_BOOT_SELFTEST
+/// BENCH CHECK ONLY (CONFIG_CORE_BOOT_SELFTEST, default off; never commit it
+/// on). Proves SAVE and the reload on hardware before F3b puts them on the
+/// wire: each boot flips control.rate_hz between 1000 and 500 and SAVEs, so
+/// the boot after a 1000 → 500 SAVE logs "reloaded 500 from NVS".
+void bootSelftest(core::Core &c)
+{
+    namespace sys = drivelink::protocol::defs::system;
+    const core::Ref rate{drivelink::protocol::defs::kSystemTypeId, 0, sys::kControlRateHz};
+    uint32_t value = 0;
+    if (!c.params().get({&rate, 1}, {&value, 1}).ok()) {
+        ESP_LOGE(TAG, "selftest: cannot read control.rate_hz");
+        return;
+    }
+    uint32_t next = 500;
+    if (value == 500U) {
+        ESP_LOGI(TAG, "selftest: reloaded 500 from NVS (control period %u us); restoring 1000",
+                 static_cast<unsigned>(c.loop(core::kControlLoop).periodUs()));
+        next = 1000;
+    } else {
+        ESP_LOGI(TAG, "selftest: control.rate_hz is %u; setting 500", static_cast<unsigned>(value));
+    }
+    const core::SetEntry set{rate, next};
+    uint32_t applied = 0;
+    core::Status st = c.params().set({&set, 1}, {&applied, 1});
+    if (st.ok()) {
+        st = c.save();
+    }
+    ESP_LOGI(TAG, "selftest: control.rate_hz %u and SAVE: result %u, detail %u; control period %u us",
+             static_cast<unsigned>(applied), static_cast<unsigned>(st.result), static_cast<unsigned>(st.detail),
+             static_cast<unsigned>(c.loop(core::kControlLoop).periodUs()));
+}
+#endif
+
+/// Build, boot and start the core: the registry, the layout and params from
+/// NVS (or the defaults), the instances (none until F3b brings module types)
+/// and both loops. The Core lives on the heap: app_main's stack is small. On
+/// failure it reports core.InitFailed and returns nullptr; the rest of the
+/// firmware keeps running.
 std::unique_ptr<core::Core> startCore()
 {
     const std::span<const core::ModuleType *const> types(kModuleTypes);
@@ -87,6 +155,13 @@ std::unique_ptr<core::Core> startCore()
                    static_cast<unsigned>(st.detail));
         return nullptr;
     }
+    st = c->boot(kvStore());
+    if (!st.ok()) {
+        DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_STATE, core::kInitStageBoot, 0,
+                   "Core: boot refused (result %u, detail %u)", static_cast<unsigned>(st.result),
+                   static_cast<unsigned>(st.detail));
+        return nullptr;
+    }
     st = c->start();
     if (!st.ok()) {
         const esp_err_t err = static_cast<esp_err_t>(c->startError());
@@ -95,10 +170,17 @@ std::unique_ptr<core::Core> startCore()
                    esp_err_to_name(err));
         return nullptr;
     }
-    ESP_LOGI(TAG, "Core started: %u instances; loops control %u us, sensor %u us",
-             static_cast<unsigned>(c->instanceCount()),
+    ESP_LOGI(TAG,
+             "Core started: %u instances (%u failed, %u configured); safe mode %s; config %s; loops control %u us, "
+             "sensor %u us",
+             static_cast<unsigned>(c->instanceCount()), static_cast<unsigned>(c->instancesFailed()),
+             static_cast<unsigned>(c->configuredCount()), c->safeMode() ? "ON" : "off",
+             c->configLoadedFromNvs() ? "loaded from NVS" : "defaults",
              static_cast<unsigned>(c->loop(core::kControlLoop).periodUs()),
              static_cast<unsigned>(c->loop(core::kSensorLoop).periodUs()));
+#if CONFIG_CORE_BOOT_SELFTEST
+    bootSelftest(*c);
+#endif
     return c;
 }
 
@@ -192,6 +274,7 @@ extern "C" void app_main(void)
 
     // After the legacy managers: they keep running whether or not it starts.
     // Never destroyed (app_main never returns).
+    initNvs();
     std::unique_ptr<core::Core> core_obj = startCore();
     (void)core_obj;
 

@@ -303,16 +303,19 @@ VALUE_TYPES = SCALAR_TYPES + ("enum",)
 NUMERIC_TYPES = ("u8", "u16", "u32", "i32", "f32")
 INT_RANGES = {"u8": (0, 0xFF), "u16": (0, 0xFFFF), "u32": (0, 0xFFFFFFFF), "i32": (-(2**31), 2**31 - 1)}
 # Flag names in descriptor order. `persist` and `testgen` are set from their own keys.
-FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen")
+# `gpio` and `ref_ticks_after` come from the `gpio` and `ref_order` keys.
+FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen", "gpio", "ref_ticks_after")
 LISTED_FLAGS = {"param": {"reboot_required", "read_only", "locked_while_armed"}, "signal": set(), "input": set(), "action": set()}
 PLACEMENTS = ("loop", "paused")
 BLOBS = ("none", "in", "out", "both")
 MAX_ACTION_VALUES = 4
 RESERVED_CONSTANTS = {"kTypeId", "kItems", "kDesc"}
+REF_ORDERS = ("before", "after")
+GPIO_NONE = 0xFF  # the value of a gpio param that names no pin (its default)
 
 COMMON_KEYS = {"id", "kind", "name", "description", "retired"}
 KIND_KEYS = {
-    "param": {"type", "unit", "min", "max", "default", "flags", "values", "ref", "persist"},
+    "param": {"type", "unit", "min", "max", "default", "flags", "values", "ref", "ref_order", "persist", "gpio"},
     "signal": {"type", "unit", "min", "max", "values"},
     "input": {"type", "unit", "min", "max", "values", "testgen"},
     "action": {"runs_in", "args", "results", "blob"},
@@ -520,7 +523,6 @@ def load_item(file: str, type_name: str, raw: Any) -> dict:
             fail(where, "'testgen' must be true/false")
         if raw["testgen"]:
             flags.add("testgen")
-    item["flags"] = [fl for fl in FLAG_ORDER if fl in flags]
 
     if "ref" in raw:
         ref = raw["ref"]
@@ -529,7 +531,27 @@ def load_item(file: str, type_name: str, raw: Any) -> dict:
         if not isinstance(ref, str) or not SNAKE.match(ref):
             fail(where, "'ref' must be a snake_case category name")
         item["ref"] = ref
+    if "ref_order" in raw:
+        if "ref" not in raw:
+            fail(where, "'ref_order' is only for a 'ref' param")
+        if raw["ref_order"] not in REF_ORDERS:
+            fail(where, f"ref_order must be one of {', '.join(REF_ORDERS)}")
+        if raw["ref_order"] == "after":
+            flags.add("ref_ticks_after")  # the referenced instance ticks after this one
 
+    if "gpio" in raw:
+        if not isinstance(raw["gpio"], bool):
+            fail(where, "'gpio' must be true/false")
+        if raw["gpio"]:
+            if vtype != "u8" or "reboot_required" not in flags:
+                fail(where, "'gpio' is only for a u8 param flagged reboot_required")
+            for k in ("min", "max", "default"):
+                if k in raw:
+                    fail(where, f"'{k}' is not allowed on a gpio param (the default is 0xFF, no pin; the pin policy decides the rest)")
+            flags.add("gpio")
+            item["default"], item["default_bits"] = GPIO_NONE, GPIO_NONE
+
+    item["flags"] = [fl for fl in FLAG_ORDER if fl in flags]
     return item
 
 

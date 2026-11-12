@@ -91,11 +91,13 @@ TEST_CASE("Loop: instances tick in insertion order; the list has a fixed capacit
 TEST_CASE("Loop: the core's loops tick their instances, with the loop's period")
 {
     reset();
+    core_os::KvStore store;
     core::Core c(testConfig());
-    REQUIRE(c.init(kTypes).ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 4, core::kControlLoop, "b").ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 2, core::kControlLoop, "a").ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 3, core::kSensorLoop, "s").ok());
+    // No wiring: the tick order is the layout order.
+    bootWith(c, store,
+             {{fx::kTypeId, 4, core::kControlLoop, "b"},
+              {fx::kTypeId, 2, core::kControlLoop, "a"},
+              {fx::kTypeId, 3, core::kSensorLoop, "s"}});
 
     c.loop(core::kControlLoop).runTick(1);
     const int t = fx::kTypeId << 8;

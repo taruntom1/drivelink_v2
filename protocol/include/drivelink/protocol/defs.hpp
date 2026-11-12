@@ -39,6 +39,8 @@ enum class ItemFlag : uint8_t {
     ReadOnly = 0x04,
     LockedWhileArmed = 0x08,
     Testgen = 0x10, ///< an input a test signal may drive
+    Gpio = 0x20,    ///< a pin: a u8 `reboot_required` param; `kNoGpio` names no pin
+    RefTicksAfter = 0x40, ///< a wiring param whose target ticks after this instance (YAML `ref_order: after`)
 };
 
 /// Bits of `TypeDesc::loops`: the loop classes a type may run in.
@@ -96,7 +98,7 @@ struct ItemDesc {
     bool has_min;
     bool has_max;
     std::span<const EnumValue> enum_values;
-    const char *ref; ///< category of a wiring param (u32, reboot_required), or nullptr
+    const char *ref; ///< category of a wiring param (u32, reboot_required), or nullptr; see `wiringRef()`
     ActionPlacement runs_in;
     std::span<const ActionArg> args;
     std::span<const ActionArg> results;
@@ -133,6 +135,56 @@ constexpr bool hasFlag(const ItemDesc &item, ItemFlag flag)
 constexpr bool runsIn(const TypeDesc &type, LoopClass loop)
 {
     return (type.loops & static_cast<uint8_t>(loop)) != 0U;
+}
+
+// -- pins and wiring -------------------------------------------------------------
+
+/// The value of a `gpio` param that names no pin. It is the default and
+/// claims nothing.
+inline constexpr uint8_t kNoGpio = 0xFF;
+
+/// The value of an unwired `ref` param.
+inline constexpr uint32_t kUnwired = 0;
+
+/// The value of a wiring (`ref`) param that points at (type, instance):
+/// `type << 8 | instance` in the low 16 bits, the upper 16 bits zero. No
+/// module type has id 0x00, so 0 is free to mean unwired.
+constexpr uint32_t wiringRef(uint8_t type_id, uint8_t instance)
+{
+    return (static_cast<uint32_t>(type_id) << 8U) | instance;
+}
+
+/// True if `value` has the wiring encoding (the upper 16 bits zero).
+constexpr bool isWiringRef(uint32_t value)
+{
+    return (value >> 16U) == 0U;
+}
+
+constexpr uint8_t wiringRefType(uint32_t value)
+{
+    return static_cast<uint8_t>((value >> 8U) & 0xFFU);
+}
+
+constexpr uint8_t wiringRefInstance(uint32_t value)
+{
+    return static_cast<uint8_t>(value & 0xFFU);
+}
+
+/// True if `type_name` belongs to `category`: the category is the part of the
+/// type name before the first dot (`actuator` holds `actuator.pwm_dir`). A
+/// name without a dot (`system`) is in no category.
+constexpr bool inCategory(const char *type_name, const char *category)
+{
+    if (type_name == nullptr || category == nullptr || *category == '\0') {
+        return false;
+    }
+    size_t i = 0;
+    for (; category[i] != '\0'; ++i) {
+        if (type_name[i] != category[i]) {
+            return false;
+        }
+    }
+    return type_name[i] == '.';
 }
 
 /// The raw IEEE-754 bits of a float, as stored in a value slot.

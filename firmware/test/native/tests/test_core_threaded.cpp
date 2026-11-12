@@ -22,10 +22,9 @@ constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
 TEST_CASE("Threaded: set() completes with Ok while the loops run")
 {
     reset();
+    core_os::KvStore store;
     core::Core c(testConfig());
-    REQUIRE(c.init(kTypes).ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 0, core::kControlLoop, "ctl").ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 1, core::kSensorLoop, "sen").ok());
+    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "ctl"}, {fx::kTypeId, 1, core::kSensorLoop, "sen"}});
     // 100 Hz: the 35 ms staging timeout is well above a coarse host
     // scheduler's sleep granularity.
     std::array<uint32_t, 2> applied{};

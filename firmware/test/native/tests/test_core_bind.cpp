@@ -149,13 +149,13 @@ TEST_CASE("Start: a failed instance is reported with its stage and left out")
         CAPTURE(static_cast<int>(k.mode));
         reset();
         world().mode = k.mode;
+        core_os::KvStore store;
         core::Core c(testConfig());
-        REQUIRE(c.init(kTypes).ok());
+        bootWith(c, store, {{fx::kTypeId, 2, core::kControlLoop, "m"}});
 
-        const core::Status st = c.createInstance(fx::kTypeId, 2, core::kControlLoop, "m");
-        CHECK(st.result == Result::Fault);
-        CHECK(st.detail == Detail::StartFailed);
         CHECK(c.instanceCount() == 0);
+        CHECK(c.instancesFailed() == 1);
+        CHECK(stateOf(c, fx::kTypeId, 2) == core::InstanceState::Failed);
         CHECK(c.loop(core::kControlLoop).instanceCount() == 0);
 
         const auto reports = core_os::native::recordedReports();
@@ -166,21 +166,17 @@ TEST_CASE("Start: a failed instance is reported with its stage and left out")
         CHECK(reports[0].arg1 == k.stage);
         CHECK(reports[0].err == k.err);
 
-        // Its params are not reachable, and the (type, inst) is free again.
-        uint32_t v = 0;
-        const core::Ref r = ref(fx::kTypeId, 2, fx::kGain);
-        CHECK(c.params().get({&r, 1}, {&v, 1}).detail == Detail::UnknownRef);
-        world().mode = StartMode::Normal;
-        CHECK(c.createInstance(fx::kTypeId, 2, core::kControlLoop, "m").ok());
+        // Its config stays: the params read from the shadow.
+        CHECK(getParam(c, fx::kTypeId, 2, fx::kGain) == f(1.5f));
     }
 }
 
 TEST_CASE("Start: a good instance reads its boot values")
 {
     reset();
+    core_os::KvStore store;
     core::Core c(testConfig());
-    REQUIRE(c.init(kTypes).ok());
-    REQUIRE(c.createInstance(fx::kTypeId, 0, core::kControlLoop, "m").ok());
+    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "m"}});
     REQUIRE(world().created.size() == 1);
     const FullModule &m = *world().created[0];
     CHECK(m.boot_actuator == 0);
