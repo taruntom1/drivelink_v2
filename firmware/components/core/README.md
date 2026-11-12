@@ -45,6 +45,15 @@ Getters for F3b's `GET_INFO`: `safeMode()`, `layoutInvalid()`, `configLoadedFrom
 
 **The system instance** is the core's own storage for the system params (`protocol/defs/system.yaml`, type `0x00`, instance 0). It runs in no loop and is not a layout entry.
 
+## Loops and concurrency
+
+- **The loops.** `control` (task `core_ctrl`: core 1, priority 20, default 1 kHz) and `sensor` (task `core_sens`: core 0, priority 10, default 100 Hz) each run on a `core_os::PeriodicTask`, which on the device is a `TaskTimer`-woken `StoppableTask`. The rates are the system params `control.rate_hz` and `sensor.rate_hz`. A change restarts the loop's timer from the caller of the param service.
+- **A tick:** the heartbeat, then the staged param batch, then a queued action, then each instance's `tick()` with `dt = elapsed × period`, then the stats. Instances tick in the wiring's tick order, fixed at boot (see Boot, step 6). Creation is always dependencies first.
+- **The staging slot.** A param batch reaches a loop only through its one staging slot, an atomic state (Empty → Filling → Ready → Applying → Applied) that the config task and the loop move with stores and compare-and-swaps. The config task waits on a `core_os::Event` for up to 3 periods plus 5 ms, then withdraws the batch (Ready → Empty). The loop never waits for the config task.
+- **The shadow.** The config task reads and returns param values from its own shadow copy, never from the storage the loop owns.
+- **The config task.** `CoreLink`'s `core_cfg` task is the one caller of the core's configuration calls. Its large buffers live in `Impl`, not on its stack.
+- **The status stream** is sent at `system.status.rate_hz`.
+
 ## Layout and the pending copy
 
 A layout entry is `{type, inst, loop, label}` plus the instance's params. Changes go to the **pending layout** (`PendingLayout`), which SAVE writes and a reboot applies:

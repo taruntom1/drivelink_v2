@@ -38,7 +38,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Param writes | Atomic batches. If any entry is invalid, nothing is applied, and the response names the failing index with result + detail. Live params in one batch must belong to a single loop. Each loop has **one staging slot**. The response is sent only after the loop has swapped the batch in, or after the batch was withdrawn. |
 | Layout | Structural params are flagged `reboot_required`. `ADD_INSTANCE` and `REMOVE_INSTANCE` are system ops. Layout changes are written to NVS and take effect at the next boot. Each instance has a 16-byte label, unique on the device. |
 | Persistence | Explicit `SAVE`, `REVERT` and `FACTORY_RESET`. NVS stores (id, value) pairs per instance, in A/B slots with a generation number. `SAVE` is refused while armed. |
-| Loops | A few named loops. `control` uses an esp_timer, runs on core 1, and follows the real-time rules. `sensor` runs on core 0 and allows bus I/O. Each module type declares which loop classes it may run in, the layout assigns each instance a loop (stored in its layout entry), and loop rates are params: `system.control.rate_hz` (default 1 kHz, 100–2000 Hz) and `system.sensor.rate_hz` (default 100 Hz, 10–500 Hz), both `locked_while_armed`. |
+| Loops | Loops are part of the layout. Each loop is an instance of the built-in `loop` type, and its rate, core, priority, stack and `realtime` flag are its params (at most 4 loops by default). The factory layout has `control` (1 kHz, core 1, real-time) and `sensor` (100 Hz, core 0, bus I/O allowed). Each module type declares whether it needs a real-time loop (`realtime: required`, `forbidden` or `any`), and the layout assigns each instance a loop (stored in its layout entry). An instance reads a signal from another loop through a **source**: a sampled copy that carries its age. See "Configurable loops, the real-time flag and sources". |
 | Control | Motor control is split into **Actuator**, **Feedback** and **Controller** module types, wired together by the layout. Today's code becomes `actuator.pwm_dir`, `feedback.quadrature` and `controller.cascade_pid`. |
 | Mode changes | Allowed while armed, **bumpless**. They apply at a tick boundary. The new mode's setpoint starts from the current measurement, and its integrator is preset so that the output doesn't jump. |
 | Telemetry | **Subscription groups.** Each group is bound to one loop, runs at a divider of that loop's rate, and packs its values with no per-value ids. Each group has its own stream channel and a config epoch. |
@@ -68,11 +68,15 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Signal | A value read in a loop tick: measurements, estimates and controller internals (error, P/I/D terms, integrator). |
 | Input | A value commanded by the host through a command group, such as a velocity setpoint or a duty. Inputs can also be captured and subscribed to like signals. |
 | Action | An operation with arguments and a result, such as `zero_position`, `reset_integrators` or `calibration_read`. |
-| Loop | A periodic task owned by the core. Instances run in a loop, and groups attach to one. |
+| Loop | A periodic task owned by the core, configured as an instance of the built-in `loop` type. Its instance id is the loop id. Instances run in a loop, and groups attach to one. |
+| Real-time loop | A loop whose `realtime` param is true. The real-time rules apply to every tick in it, and only it may hold types that are `realtime: required` (actuators, feedback, controllers). |
+| Source | A param of a consumer instance that names a signal (or input) of another instance, in any loop. The core gives the consumer a sampled copy with its age and a valid flag. |
 | Group | A subscription group (signals or inputs, ESP → host) or a command group (inputs, host → ESP). Each is bound to one loop. |
 | `Ref` | `type u8 \| instance u8 \| id u16`, 4 bytes on the wire. The id alone says which kind of item it is. |
 
 Wiring between instances (which controller uses which actuator and feedback) uses `Ref`-typed params. These are `u32` params flagged `reboot_required`, which hold `type << 8 | instance` in the low 16 bits with the upper 16 bits 0; `0` means unwired, which validation allows (the module's `start()` decides whether it needs the ref). A ref's `ref:` key names a category, the part of the type name before the dot (`actuator` holds `actuator.pwm_dir`). **Wired instances must run in the same loop**, and layout validation enforces that. Creation is always dependencies first; the tick order follows each ref's `ref_order` (`before`, the default: the target ticks first; `after`: it ticks after), so a controller's `actuator` ref is `ref_order: after`.
+
+Wiring gives a module a pointer to the other instance, so it only works inside one loop. To read a value from an instance in **another loop**, a type declares a **source** param instead (F4c; see "Configurable loops, the real-time flag and sources").
 
 A pin is a `u8` param flagged `reboot_required` with `gpio: true` (`ItemFlag::Gpio`). `0xFF` means no pin; it is the default and claims nothing.
 
@@ -100,7 +104,7 @@ namespace core {
 // One per module type. main passes the list to the core explicitly (no static
 // self-registration, which the linker would drop).
 struct ModuleType {
-    const defs::TypeDesc& desc;          // generated: items, loop classes, action placement
+    const defs::TypeDesc& desc;          // generated: items, real-time requirement, action placement
     Instance* (*create)(const InstanceConfig& cfg);   // called at boot only; may allocate
 };
 
@@ -111,7 +115,7 @@ public:
     // claim GPIOs through ctx, acquire hardware. On failure call ctx.fail(stage, err)
     // and return false; the core reports core.InstanceStartFailed.
     virtual bool start(InstanceContext& ctx) = 0;
-    // Loop tick (in the instance's loop). Real-time rules apply in `control`.
+    // Loop tick (in the instance's loop). Real-time rules apply in every real-time loop.
     virtual void tick(const TickContext& t) = 0;
     // Param, signal and input access is table-driven: the instance binds generated ids
     // to its storage in start() (ctx.bindParam(defs::controller_cascade_pid::kVelKp, &m_vel.kp, onChange)),
@@ -138,10 +142,10 @@ public:
    - While disarmed, actuators output zero.
 3. Swap in the staged param batch for this loop, if there is one, and signal the config task. A `mode` change goes through the controller's bumpless switch here.
 4. Run the queued `loop` actions.
-5. Apply the latest command group values from the mailbox to the bound inputs, if armed and the frame arrived after `ARM` with the current epoch.
+5. Apply the latest command group values from the mailbox to the bound inputs, if armed and the frame arrived after `ARM` with the current epoch. Then take the latest snapshot of every source link that ends in this loop (F4c).
 6. The test signal generator overrides its target input, if it's running.
 7. `tick()` each instance in this loop, in dependency order (feedback, controller, actuator).
-8. Latch the subscription groups whose divider is due, and record the capture sample.
+8. Latch the subscription groups whose divider is due, record the capture sample, and publish this loop's snapshot for every source link that starts in it (F4c).
 9. Update the loop statistics (overruns, run time).
 
 Instance tick order comes from the wiring (`Ref` params) and is computed once at boot.
@@ -151,7 +155,8 @@ Instance tick order comes from the wiring (`Ref` params) and is computed once at
 `protocol/defs/` holds:
 - `registry.yaml`: MSG_TYPEs and stream channel ranges. Module type ids live in each type's own YAML (`type_id`); the generator checks they are unique, and `0x00` is reserved for `system`.
 - `diag_codes.yaml` (moved from the diag component)
-- `system.yaml`: system items such as the watchdog timeout, the status rate and loop rates (type `0x00`)
+- `system.yaml`: system items such as the watchdog timeout and the status rate (type `0x00`). The loop rates were here until F3d; their ids are retired.
+- `loop.yaml` (from F3d): the built-in `loop` type, whose instances are the loops
 - one file per module type
 
 `tools/gen/` replaces `tools/gen_diag_codes.py`. It writes three things:
@@ -165,7 +170,7 @@ The generated files are checked in, and CI fails if they are stale. The **descri
 # protocol/defs/controller.cascade_pid.yaml
 type: controller.cascade_pid
 type_id: 0x20
-loops: [control]
+realtime: required        # F3d; `loops: [control]` before it
 items:
   # params
   - {id: 0x0001, kind: param,  name: actuator,      type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
@@ -247,7 +252,7 @@ The rules follow the protocol conventions:
 | Family | Ops |
 |---|---|
 | `0x01` system | `GET_INFO`, `ARM`, `DISARM`, `ACK_FAULT`, `SAVE`, `REVERT`, `FACTORY_RESET`, `REBOOT`, `EXIT_SAFE_MODE` |
-| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, loop, label)` (the loop defaults to the type's first loop class; the device picks the lowest free instance id of the type and returns it), `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
+| `0x02` layout | `LIST_INSTANCES` (paged), `ADD_INSTANCE(type, loop, label)` (the loop is a loop instance id; it defaults to the lowest-numbered loop the type may run in; a loop itself is added with type `loop` and no loop; the device picks the lowest free instance id of the type and returns it), `REMOVE_INSTANCE(type, inst)`, `SET_LABEL`, `DISCARD_PENDING` |
 | `0x03` describe | `GET_TYPES` (paged), `GET_ITEMS(type, start)` (paged: every item with its kind and descriptor), `GET_ENUM(type, item)`, `GET_CODES(start)` (paged diag code descriptors: source, code, name, severity, kind, flags) |
 | `0x04` param | `GET(n × Ref)`, `SET(n × (Ref, value))` (atomic batch), `GET_PENDING` (staged `reboot_required` values) |
 | `0x05` group | `SUB_CONFIG(group, loop, divider, n × Ref)`, `SUB_ENABLE`, `SUB_CLEAR`, `CMD_CONFIG(group, loop, n × Ref)`, `CMD_CLEAR`, `LIST` |
@@ -260,7 +265,7 @@ The rules follow the protocol conventions:
 - **`GET_INFO`** returns:
   - the protocol version and the firmware version (`esp_app_desc`)
   - the build id and the descriptor hash
-  - capture capacity, the receive limit and the loop list (id, name, rate)
+  - capture capacity, the receive limit and the list of running loops (id, name, rate, and from F3d a flags byte with `realtime`)
   - an instance count and flags: `pending_reboot`, `layout_invalid`, `config_loaded_from_nvs` and `safe_mode`
 - **Param `SET`**
   - **Staging rules:**
@@ -272,14 +277,14 @@ The rules follow the protocol conventions:
   - **Response timing.** The config task stages the batch and waits for the loop to take it, for up to 3 loop periods plus 5 ms.
     - If the loop takes it, the response is `Ok` with the applied values (after clamping), and a `GET` right after returns the new values.
     - If it times out, the config task withdraws the batch with a compare-and-swap on the slot and answers `Busy`. Either way the outcome is definite.
-  - **Batches for `sensor`.** A batch for `sensor` instances is applied the same way at the sensor loop's next tick.
+  - **Batches for other loops.** A batch for the instances of any loop is applied the same way, at that loop's next tick. The params of a loop instance itself (its rate) are applied on the config task, like system params.
 - **Groups** are device resources:
   - All of them are allocated at boot at the maximum size (64 entries, so about 270 B each; about 4.3 KB for 8 + 8 groups) and never freed.
   - `SUB_CONFIG` and `CMD_CONFIG` write a new configuration that the loop swaps in at a tick boundary, and they bump the group's **epoch** (u8). `CMD_CLEAR` and `SUB_CLEAR` disable a group, also through the swap.
   - Group limits come from Kconfig. The defaults are 8 subscription groups and 8 command groups, each with at most 64 entries and within `MAX_PAYLOAD`.
   - Groups are not persisted. The host sets them up after each connect, and the Boot event tells it when to do that again.
   - A subscription group may contain signals and inputs. A command group may contain only inputs (otherwise `WrongKind`).
-- **Ops refused while armed:** `SAVE`, `FACTORY_RESET`, `REBOOT`, `ota.*`, all layout ops, `CMD_CONFIG` and `CMD_CLEAR` for a group in an armed loop, and `paused` actions on instances in the `control` loop.
+- **Ops refused while armed:** `SAVE`, `FACTORY_RESET`, `REBOOT`, `ota.*`, all layout ops, `CMD_CONFIG` and `CMD_CLEAR` for a group in an armed loop, and `paused` actions on instances in a real-time loop.
 - **Capture `trigger`:**
   - `manual`
   - `testgen_start`
@@ -294,7 +299,7 @@ All stream payloads start with `version u8 | epoch u8 | counter u16`. ESP → ho
 
 | Stream | Body after the prefix |
 |---|---|
-| System status `0x80` | `arm_state u8 \| flags u8 (fault_latched, blocks_arm_active, pending_reboot, nvs_dirty, testgen_running, safe_mode, capture_state×2) \| active_error_count u8 \| cpu_load u8 × 2 \| overruns u32 per loop \| last_disarm_reason u8` |
+| System status `0x80` | `arm_state u8 \| flags u8 (fault_latched, blocks_arm_active, pending_reboot, nvs_dirty, testgen_running, safe_mode, capture_state×2) \| active_error_count u8 \| cpu_load u8 × 2 \| overruns u32 per loop \| last_disarm_reason u8`. From F3d the loop part is `loop_count u8 \| loop_count × (loop_id u8, overruns u32)`, for the running loops. |
 | Subscription group | `n × value(4)`, in the order given at configuration |
 | Command group (host → ESP) | `n × value(4)`. A frame with `n = 0` (prefix only) is a keepalive. |
 
@@ -354,11 +359,12 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 **The safety monitor** does not depend on the loops working:
 - **What it is.** An esp_timer callback, task dispatch, every 10 ms. It never blocks or takes a lock. It reads only atomics.
 - **What it checks, while armed:**
-  - each loop's heartbeat. If it hasn't advanced for 3 periods, plus 5 ms, it records `core.LoopStalled` (flagged `disarms`).
+  - each loop's heartbeat: every running loop of the layout, real-time or not. If it hasn't advanced for 3 periods, plus 5 ms, it records `core.LoopStalled` (flagged `disarms`).
   - the time of the last valid command frame against `system.watchdog_ms`. On a timeout it records `core.WatchdogTimeout`, which disarms but does not latch.
 - **What it does on either condition:** it sets the disarm flag and calls `emergencyStop()` on every actuator instance. For `actuator.pwm_dir` that forces both MCPWM generators low (`mcpwm_generator_set_force_level`), so the outputs stop even if the loop never runs again.
 - **Releasing the force.** On the next `ARM`, the loop releases the force level through `onArmTransition(true)`.
-- **Backstop.** The control task is also subscribed to the Task WDT, with panic-reset, for when even the esp_timer task is stuck.
+- **Backstop.** Every real-time loop task is also subscribed to the Task WDT, with panic-reset, for when even the esp_timer task is stuck.
+- **Priority.** A loop's priority is at most 20, below the esp_timer task (22), so the monitor always preempts a loop.
 - **`system.watchdog_ms`:** default 200, range 20–1000, `locked_while_armed`.
 
 **Faults in the control tick.**
@@ -394,6 +400,8 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 - **GPIOs:** every pin param (`gpio: true`, other than `0xFF`) is checked against the ESP32-S3 pin policy that `motor_manager` uses today (no USB pins, no flash/PSRAM pins 26–37, no uart_comm pins; `GpioNotAllowed`). It is also checked against every other pin on the device (`GpioConflict`).
 - **Wiring:** a `Ref` param must be 0 or point to an existing instance of its category (`BadRef`), in the same loop (`LoopMismatch`). Neither the ref graph nor the tick graph may have a cycle (`WiringCycle`). An instance that another one is wired to can't be removed (`Referenced`).
 - **Labels:** must be unique on the device (`LabelInUse`) and non-empty.
+- **Loops (F3d):** an instance's loop must be an existing loop instance whose `realtime` flag the type allows (`LoopMismatch`). There are at most `CORE_MAX_LOOPS` loops (`Capacity`). A loop that still holds an instance can't be removed (`Referenced`).
+- **Sources (F4c):** a source param must be 0 or name an existing signal or input of its value type (`BadRef`). The instance it names can't be removed (`Referenced`).
 
 **Flash stalls the loops.**
 - NVS and OTA writes disable the cache on both cores, so the loops can stall for several ms. That is why `SAVE` and OTA are refused while armed.
@@ -413,12 +421,90 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 
 The device stays up in a degraded state, as in diag phase 1.
 
-**No layout yet** (first boot, or after a factory reset): the device boots with zero instances and waits for the host. The board is then configured entirely from the GUI.
+**No layout yet** (first boot, or after a factory reset): the device boots with the factory layout, which is the `control` and `sensor` loops and no module instance, and waits for the host. The board is then configured entirely from the GUI.
 
 **Safe mode:**
 - A counter in RTC no-init memory counts consecutive boots whose reset reason is a panic, an interrupt WDT or a task WDT. It is cleared after 30 s of uptime.
-- When it reaches 3, the device boots with zero instances and sets `safe_mode` in `GET_INFO` and the status stream, plus the diag code `core.SafeModeEntered`.
+- When it reaches 3, the device boots with zero instances, starts no loop task (a loop's rate, core or priority may be what crashes it), and sets `safe_mode` in `GET_INFO` and the status stream, plus the diag code `core.SafeModeEntered`.
 - In safe mode the host can read and edit the layout and params, `FACTORY_RESET`, or run OTA, then `EXIT_SAFE_MODE`, which clears the counter and reboots.
+
+## Configurable loops, the real-time flag and sources
+
+Decided by the user on 2026-11-13, after F3c. F3d builds the loops and the flag; F4c builds the sources. Where older text in this plan says `control` and `sensor`, it means the two loops of the factory layout.
+
+### Loops are instances (F3d)
+
+- **The type.** `protocol/defs/loop.yaml` defines the built-in type `loop`. Its type id is reserved in `registry.yaml` beside `system_type_id`, clear of the diag source ids. The core registers it itself, like `system`; it is not in main's module list.
+- **Identity.** A loop's instance id is its loop id, used wherever a loop is named: a layout entry's `loop`, `ADD_INSTANCE`, group and capture configuration, the status stream. Its label is its name. A loop instance itself runs in no loop (`kNoLoop`).
+- **Items:**
+
+  | Item | Type | Rules |
+  |---|---|---|
+  | `rate_hz` | u16, 1–2000, default 100 | Live and `locked_while_armed`. Applied on the config task by restarting the loop's timer, as the system rate params were. |
+  | `realtime` | bool, default false | `reboot_required`. See the next section. |
+  | `core` | u8, 0–1, default 0 | `reboot_required`. |
+  | `priority` | u8, 1–20, default 10 | `reboot_required`. The ceiling keeps every loop below the esp_timer task (22), where the safety monitor runs. |
+  | `stack_bytes` | u16, 3072–16384, default 4096 | `reboot_required`. |
+  | `ticks`, `overruns`, `last_run_us`, `max_run_us` | u32 signals | The loop statistics, so a group bound to the loop can stream them. |
+
+- **Managing loops.** A loop is added and removed with `ADD_INSTANCE` and `REMOVE_INSTANCE` of type `loop`, through the pending layout, `SAVE` and a reboot, like any instance. `REMOVE_INSTANCE` is refused while a layout entry still runs in the loop (`Referenced`). A loop's params are in the system domain of a param batch.
+- **Limits.** `CORE_MAX_LOOPS` (Kconfig, default 4, range 1–8). A loop costs about 7 KB of RAM: its stack, one staging slot and one action slot. The Kconfig options for the control and sensor task stack, priority and core go away.
+- **The factory layout.** With no saved layout (first boot, factory reset) the device has `control` (id 0: 1000 Hz, real-time, core 1, priority 20) and `sensor` (id 1: 100 Hz, not real-time, core 0, priority 10), and no module instance. A saved layout may hold any set of loops.
+- **Boot.** Loops are created before the module instances. If a loop's task can't be created, the loop is `Failed` and its instances are `DependencyMissing`. In safe mode no loop task is started.
+- **Defaults.** `ADD_INSTANCE` with loop `0xFF` picks the lowest-numbered loop the type may run in (`LoopMismatch` if there is none).
+- **Persistence.** Loops are ordinary layout entries with their own param blobs. The layout blob's format version is bumped, so a layout saved before F3d is dropped and the factory layout is used. `system.control.rate_hz` (`0x0001`) and `system.sensor.rate_hz` (`0x0002`) are retired.
+- **RX priority.** The UART RX task (priority 5) stays below the loops, as it is below `sensor` today. A loop that starves it stops the command frames, and the watchdog disarms.
+
+### The real-time flag replaces the loop classes (F3d)
+
+- **In the YAML,** `realtime: required | forbidden | any` replaces `loops: [...]`. `TypeDesc::loops` and the `loop_mask` byte of `GET_TYPES` keep their encoding: bit 0 means the type may run in a real-time loop, bit 1 in the other loops.
+  - `required`: actuator, feedback and controller types. Every loop that drives an output is therefore real-time.
+  - `forbidden`: types whose tick does bus I/O or may block (`imu.bno055`).
+  - `any`: bounded computation with no I/O.
+- **What the flag does to a loop:**
+  - The real-time rules of `firmware/CLAUDE.md` apply to every tick in it.
+  - `paused` actions on its instances are refused while armed. This check is the only thing that keeps such a loop from being paused while armed: a paused loop keeps counting its heartbeat, so the monitor doesn't see it as stalled.
+  - Its task is subscribed to the Task WDT.
+- **What enforces the rules:**
+  1. **Layout validation** checks the type's requirement against the loop's flag (`LoopMismatch`).
+  2. **The module API.** Services that block (bus handles, from F6) are given only to instances in loops that are not real-time.
+  3. **A measured budget.** A tick that runs longer than its period is counted per loop (`core.LoopOverBudget`, a counter). It doesn't disarm; `core.LoopStalled` does.
+  4. **The real-time guard in the native tests and the vdev.** `Loop::runTick` of a real-time loop sets a per-thread flag in the native `core_os` backend. While it is set, a heap allocation or a blocking `core_os` call (`Mutex::lock`, `Event::wait`, the `KvStore`) fails the test; the vdev counts it. Every type that is `required` or `any` has a test that ticks it under the guard.
+- **What stays a convention:** a module that calls a blocking IDF function directly from a real-time tick is not caught on the device. Reviews and the budget counter cover that.
+
+### The stall rule is unchanged
+
+The safety monitor watches the heartbeat of every running loop, and a stall of any of them disarms and latches (`core.LoopStalled`), whether the loop is real-time or not. The monitor walks the fixed loop table and reads only atomics.
+
+### Sources: reading a value across loops (F4c)
+
+- **Declaration.** A source is a `u32` param flagged `reboot_required` with `source: <value type>` in the YAML. Its value is a packed `Ref` to a signal or input of that value type, in any loop (its own included); 0 means not connected. F4c fixes the bit layout in `defs.hpp` and how `GET_ITEMS` marks a source.
+- **In the module.** `start()` binds it with `ctx.bindSource(id, &m_x)`, where `m_x` is a `core::Sampled<T>`:
+  - `value`: the copy taken at the producer's tick.
+  - `age_us`: this tick's start time minus the producer tick's start time.
+  - `valid`: false while the source is not connected, the producer is not running, or nothing was published yet.
+  - `fresh`: true if a new snapshot arrived since this instance's last tick.
+- **A missing producer does not stop the consumer.** The consumer starts and sees `valid == false`, so a fusion module can go on with what it has. This differs from wiring, where a missing target leaves the instance out (`DependencyMissing`).
+- **The transfer** is done by the core; a module never touches it.
+  - There is one link per ordered pair of loops (producer loop, consumer loop). It holds every value that the instances of the consumer loop read from the producer loop.
+  - A link is a **triple buffer**: three value arrays and one atomic index. At the end of its tick (step 8) the producer loop copies the bound signal storage and its tick timestamp into the back array and swaps the index. At step 5 the consumer loop takes the latest array with one atomic exchange and copies the values into the bound `Sampled<T>`s.
+  - Both sides are wait-free. Neither waits, retries or takes a lock, whatever the two loops' cores and priorities are. A seqlock was rejected: a reader that preempts the writer on the same core would spin.
+  - One snapshot is one producer tick, so values from one loop are coherent with each other (a whole quaternion, both wheel positions).
+  - The links are allocated at boot from the layout. A link holds at most `CORE_MAX_LINK_VALUES` values (Kconfig, default 32); a layout that needs more is invalid (`Capacity`). The work per tick is fixed after boot.
+- **The same loop.** A source in the producer's own loop is copied directly just before the consumer's tick, with age 0. It adds a tick-order edge (the producer ticks first), and a cycle through such edges is rejected (`WiringCycle`).
+- **Latest wins.** There is no queue. A consumer slower than its producer misses samples; one that needs every sample runs in the producer's loop.
+- **Staleness is the consumer's business.** The age grows while the producer loop is paused, slow or stalled. The core sets no maximum age; a consumer that needs one has its own param.
+- **Sources are not inputs.** Inputs are written only by command groups and the test signal generator, and arm transitions don't touch sources. A source on an actuator or controller type would close a loop on the device outside the command watchdog, so adding one needs a user decision.
+- **Cost in a real-time loop:** a copy of at most `CORE_MAX_LINK_VALUES` 4-byte values and one atomic exchange per link and tick.
+- **The case this is for.** `feedback.quadrature` runs in `control`, wired to its controller as before. `imu.bno055` runs in `sensor`. A fusion type, in `sensor` or in a loop of its own, has sources on the encoders' `count` or `position` and on the IMU's signals.
+
+### What it changes in the other steps
+
+- **F4a.** A group is bound to a loop id, for any loop. Its "latch a list of bound signals at the end of the tick" code is written so that F4c's links can use it.
+- **F4b.** The monitor walks the loop table. "Armed loop" and the `paused` rule use the `realtime` flag.
+- **F5 and F6.** The motor types are `realtime: required`; `imu.bno055` is `forbidden` and runs in the factory `sensor` loop.
+- **F7.** Capture takes a loop id. F7b decides whether the test signal generator stays one per loop, now that the number of loops varies.
+- **Host.** `libdrivelink` and the CLI see loops as instances. The GUI's layout screen (H2) edits them.
 
 ## diag v2
 
@@ -484,7 +570,7 @@ The device stays up in a degraded state, as in diag phase 1.
 | Layer | Tests |
 |---|---|
 | `protocol/` | Codec round trips for every family, stream and event; exact lengths; paging; HCRC rejection of false preambles; the generator's static checks (unique ids per type) |
-| `core` (native) | Batch validation, atomicity, cross-loop rejection, staging busy and withdrawal; group swap and epoch; command frame rules; capture ring and triggers; test signal waveforms; the arming state machine including the epoch race, latching and `ACK_FAULT`; the monitor's stall and watchdog detection; NVS A/B generations and torn writes; layout validation; safe mode; boot with failing instances |
+| `core` (native) | Batch validation, atomicity, cross-loop rejection, staging busy and withdrawal; group swap and epoch; command frame rules; capture ring and triggers; test signal waveforms; the arming state machine including the epoch race, latching and `ACK_FAULT`; the monitor's stall and watchdog detection; NVS A/B generations and torn writes; layout validation; safe mode; boot with failing instances; loop instances (one loop up to the maximum, the factory layout, the real-time check, removal refused while in use); the real-time guard (an allocation or a blocking `core_os` call inside a real-time tick fails the test); source links (never published, coherence under a writer thread, age, a paused or failed producer) |
 | Modules (native) | Controller cascade, bumpless mode switch, the order of the actuator, feedback and controller ticks, `onArmTransition` resets |
 | `vdev` | End-to-end over TCP with `drivelink-cli`: connect, describe, configure, arm, command, watchdog trip, capture, save, reboot, reload |
 | Hardware | `firmware/test/uart_comm` HIL tests, updated for the new framing (with `--baud` defaulting to 921600), plus a smoke test on hardware: flash, connect, arm, run a capture, and a loop-stall test that forces the monitor to stop the motors |
@@ -500,7 +586,9 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F1 Link and `protocol/` | Extract framing, CRCs, scanner and `wire_codec` into `protocol/`. New framing: u16 `LEN` + HCRC8, `MAX_PAYLOAD` 1024, default baud 921600, `CONFIG_UART_ISR_IN_IRAM`. `uart_comm` fixes for the bigger frames: buffers move from the stacks into `Impl`, task stacks are resized and checked, stream slots are allocated with their own size, and `sendData` gets a non-blocking slot write (double buffer plus try-lock, with a counter for skipped writes) so the control tick never waits. Bump every module protocol version. The codec tests move from `firmware/test/host` to `protocol/test`, and `conftest.py` defaults `--baud` to 921600. | HIL tests pass with the new framing, the managers still work over it, and stack high-water marks are logged |
 | F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `firmware/CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. motor_manager and the IMU go to protocol v6 with the move. | Generated headers are used by diag and the managers, and the CI staleness check passes |
 | F3 Core skeleton and dev client | `core_os` (IDF and native), registry, loops (`control`, `sensor`), layout and NVS (A/B, validation, GPIO registry), safe mode, the system/layout/describe/param families, the action family, the status stream, `GET_INFO`, `mod_mock`, `drivelink-vdev` (in `host/vdev/`). diag v2. The first slice of `libdrivelink` (serial and TCP transport, session, the core families) and `drivelink-cli`, built by a first `host/superbuild`. `firmware/test/host` becomes `firmware/test/native`, which builds the core against `core_os`'s native backend. | With the CLI, on vdev and on hardware: mock instances can be added, described, set, saved, rebooted and reloaded |
+| F3d Configurable loops | Loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, and the host library, CLI and vdev updated with it. | With the CLI, on vdev and on hardware: a third loop can be added, given instances, saved, rebooted and reloaded; safe mode starts no loop |
 | F4 Groups and arming | Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
+| F4c Sources | Source params, the per-loop-pair snapshot buffers, `Sampled<T>`, and a `fusion.mock` type that reads `feedback.mock` and `imu.mock` across loops. | vdev: the fusion mock's output is streamed with the expected ages; on hardware the control loop's longest tick is measured with and without a 16-value link |
 | F5 Motor stack as modules | Split `motor_controller` into the actuator, feedback and controller types, with YAML, `emergencyStop()`, `onArmTransition()` and bumpless mode switching. Delete `motor_manager`. | Velocity and position control on hardware through groups; the monitor stops the motors in the loop-stall test; nothing remains of the old motor protocol |
 | F6 IMU module | `imu.bno055` on the `sensor` loop, with calibration actions (`calibration_read`, `calibration_write`, `calibration_apply`, all `runs_in: paused`). Delete `imu_bmo_055`. | IMU signals in subscription groups, and calibration works through actions |
 | F7 Capture and test signals | The capture and testgen families, PSRAM enabled (caps alloc only). Evaluate `SPIRAM_XIP_FROM_PSRAM`. | A step response and a chirp, captured at 1 kHz on hardware with their inputs |
