@@ -1,4 +1,4 @@
-"""F3b bare-board smoke. Main firmware, both USB connections, no hardware attached.
+"""F3d bare-board smoke. Main firmware, both USB connections, no hardware attached.
 Creates temporary mock instances, saves/reboots, runs actions and cleans them up.
 --safe-mode requires CONFIG_CORE_BENCH_CRASH=y; normal builds reject BenchCrash.
 """
@@ -15,12 +15,12 @@ class Client:
         self.seq=0
     def request(self,family,op,body=b"",accepted=(0,)):
         self.seq=(self.seq+1)&255
-        self.proto.send_command(0x01,bytes((1,self.seq,family,op))+body)
+        self.proto.send_command(0x01,bytes((2,self.seq,family,op))+body)
         deadline=time.monotonic()+4
         while time.monotonic()<deadline:
             kind,p=self.proto.read_frame(timeout=max(.01,deadline-time.monotonic()))
             if kind==0x41 and len(p)>=6 and p[1]==self.seq:
-                assert p[:4]==bytes((1,self.seq,family,op)),p
+                assert p[:4]==bytes((2,self.seq,family,op)),p
                 assert p[4] in accepted, (family,op,p.hex())
                 return p[6:]
         raise TimeoutError("core response")
@@ -30,7 +30,15 @@ class Client:
         for _ in range(2):
             n=struct.unpack_from("<H",p,offset)[0];offset+=2+n
         hash_,capacity,limit,count,flags=struct.unpack_from("<IIHBB",p,offset)
-        return dict(hash=hash_,limit=limit,count=count,flags=flags)
+        offset+=struct.calcsize("<IIHBB")
+        loop_count=p[offset];offset+=1;loops=[]
+        for _ in range(loop_count):
+            id_=p[offset];name_len=struct.unpack_from("<H",p,offset+1)[0];offset+=3
+            name=p[offset:offset+name_len].decode();offset+=name_len
+            rate,loop_flags=struct.unpack_from("<IB",p,offset);offset+=5
+            loops.append(dict(id=id_,name=name,rate_hz=rate,realtime=bool(loop_flags&1)))
+        assert offset==len(p)
+        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops)
     def connect(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
@@ -83,6 +91,7 @@ def main():
                 c.request(1,254);time.sleep(.7);info=c.connect()
             assert info["flags"]&8,info
             assert info["count"]==0
+            assert info["loops"]==[]
             c.request(1,9);time.sleep(.7);info=c.connect();assert not info["flags"]&8
             assert info["count"]==original["count"]+3
             print("PASS crash-loop safe mode and recovery",flush=True)
@@ -92,7 +101,7 @@ def main():
         deadline=time.monotonic()+3
         while True:
             kind,p=c.proto.read_frame(timeout=max(.01,deadline-time.monotonic()))
-            if kind==0x80:assert len(p)==26 and p[0]==1;break
+            if kind==0x80:assert len(p)==19+5*p[17] and p[0]==2;break
             assert time.monotonic()<deadline
         print("PASS cleanup and status stream",flush=True)
     finally:c.serial.close()

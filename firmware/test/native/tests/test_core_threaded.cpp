@@ -10,12 +10,14 @@
 #include "core/core.hpp"
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 using namespace testmod;
 using namespace std::chrono_literals;
 
 namespace {
 namespace sys = drivelink::protocol::defs::system;
+namespace lp = drivelink::protocol::defs::loop;
 constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
 } // namespace
 
@@ -24,16 +26,16 @@ TEST_CASE("Threaded: set() completes with Ok while the loops run")
     reset();
     core_os::KvStore store;
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "ctl"}, {fx::kTypeId, 1, core::kSensorLoop, "sen"}});
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "ctl"}, {fx::kTypeId, 1, core::kFactorySensorLoop, "sen"}});
     // 100 Hz: the 35 ms staging timeout is well above a coarse host
     // scheduler's sleep granularity.
     std::array<uint32_t, 2> applied{};
-    const std::array<core::SetEntry, 2> rates{entry(kSys, 0, sys::kControlRateHz, 100),
-                                              entry(kSys, 0, sys::kSensorRateHz, 100)};
+    const std::array<core::SetEntry, 2> rates{entry(defs::kLoopTypeId, 0, lp::kRateHz, 100),
+                                              entry(defs::kLoopTypeId, 1, lp::kRateHz, 100)};
     REQUIRE(c.params().set(rates, applied).ok());
     REQUIRE(c.start().ok());
 
-    const uint32_t hb = c.loop(core::kControlLoop).heartbeat();
+    const uint32_t hb = c.loop(core::kFactoryControlLoop).heartbeat();
     for (int i = 1; i <= 20; ++i) {
         CAPTURE(i);
         const auto gain = static_cast<float>(i);
@@ -51,7 +53,7 @@ TEST_CASE("Threaded: set() completes with Ok while the loops run")
         CHECK(values[0] == f(gain));
         CHECK(values[1] == static_cast<uint32_t>(i));
     }
-    CHECK(c.loop(core::kControlLoop).heartbeat() > hb);
+    CHECK(c.loop(core::kFactoryControlLoop).heartbeat() > hb);
     c.stop();
 
     // With the loops stopped, the storage is safe to read.

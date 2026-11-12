@@ -29,9 +29,9 @@ struct SetEntry {
     uint32_t bits;
 };
 
-/// Apply one system param on the caller (a loop rate restarts its timer).
+/// Apply one system or loop param on the caller (a loop rate restarts its timer).
 /// @return false on failure; the callee reports the diag code.
-using SystemApplyFn = bool (*)(void *ctx, uint16_t id, uint32_t bits);
+using SystemApplyFn = bool (*)(void *ctx, const Ref &ref, uint32_t bits);
 
 /// A loop batch that `stage()` published and `complete()` must finish.
 struct PendingSet {
@@ -44,8 +44,7 @@ struct PendingSet {
 /// Where a param write goes. Every entry of a batch must have the same one.
 enum class ParamDomain : uint8_t {
     System,  ///< system params: applied on the caller
-    Control, ///< live params of running instances in the control loop: staged
-    Sensor,  ///< ... in the sensor loop
+    Loop,    ///< live params staged in the loop identified by the target
     Offline, ///< live params of an instance that isn't running: written to its shadow on the caller
     Pending, ///< `reboot_required` params, and params of an instance that exists only in the pending layout
 };
@@ -83,7 +82,7 @@ enum class ParamDomain : uint8_t {
 /// may run concurrently.
 class ParamService {
 public:
-    ParamService(detail::InstanceTable &table, std::array<Loop *, kLoopCount> loops, SystemApplyFn system_apply,
+    ParamService(detail::InstanceTable &table, std::span<Loop *> loops, SystemApplyFn system_apply,
                  void *system_ctx);
 
     ParamService(const ParamService &) = delete;
@@ -134,6 +133,7 @@ private:
         size_t index = detail::kNoItem;
         ParamDomain domain = ParamDomain::System;
         bool system = false; ///< the system record
+        Loop *loop = nullptr;
     };
 
     Target lookup(const Ref &ref) const;
@@ -142,7 +142,7 @@ private:
     Status applyOffline(std::span<const SetEntry> entries, std::span<const uint32_t> applied);
 
     detail::InstanceTable &m_table;
-    std::array<Loop *, kLoopCount> m_loops;
+    std::span<Loop *> m_loops;
     SystemApplyFn m_system_apply;
     void *m_system_ctx;
     PendingLayout *m_pending = nullptr;

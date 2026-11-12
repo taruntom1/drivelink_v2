@@ -173,7 +173,7 @@ struct Session::Impl
         if (waiting && f.msg_type == expected_type && f.len >= 2 && f.payload[1] == expected_seq)
         {
             const bool core = expected_type == msg::kCoreResponse;
-            if (f.payload[0] != (core ? 1 : 3) || f.len < (core ? 6U : 4U))
+            if (f.payload[0] != (core ? 2 : 3) || f.len < (core ? 6U : 4U))
             {
                 protocol_error = true;
                 cv.notify_all();
@@ -309,7 +309,7 @@ struct Session::Impl
                 throw Error(ErrorKind::Connection, "sequence IDs exhausted after timeouts; reconnect");
             }
             const auto seq = static_cast<uint8_t>(sequence++ % 256);
-            Bytes payload{static_cast<uint8_t>(kind == msg::kCoreCommand ? 1 : 3), seq};
+            Bytes payload{static_cast<uint8_t>(kind == msg::kCoreCommand ? 2 : 3), seq};
             if (kind == msg::kCoreCommand)
             {
                 payload.push_back(family);

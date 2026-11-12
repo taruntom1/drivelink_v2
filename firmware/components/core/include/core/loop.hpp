@@ -13,16 +13,9 @@
 
 namespace core {
 
-/// Loop ids. A loop id is also its index in `Core`'s loop list.
-inline constexpr uint8_t kControlLoop = 0;
-inline constexpr uint8_t kSensorLoop = 1;
-inline constexpr size_t kLoopCount = 2;
-
-/// The loop class of loop `id` (the loop a type must allow to run there).
-constexpr defs::LoopClass loopClassOf(uint8_t id)
-{
-    return (id == kSensorLoop) ? defs::LoopClass::Sensor : defs::LoopClass::Control;
-}
+inline constexpr uint8_t kFactoryControlLoop = 0;
+inline constexpr uint8_t kFactorySensorLoop = 1;
+inline constexpr size_t kMaxLoops = 8;
 
 /// The most params one batch can stage.
 inline constexpr size_t kMaxBatchEntries = 64;
@@ -66,14 +59,16 @@ struct LoopStats {
 /// filled at boot only (before the task starts).
 class Loop {
 public:
-    Loop(uint8_t id, const char *name, defs::LoopClass loop_class, size_t capacity, uint32_t period_us);
+    Loop(uint8_t id, const char *name, bool realtime, size_t capacity, uint32_t period_us,
+         LoopStats *published = nullptr);
 
     Loop(const Loop &) = delete;
     Loop &operator=(const Loop &) = delete;
 
     uint8_t id() const { return m_id; }
     const char *name() const { return m_name; }
-    defs::LoopClass loopClass() const { return m_class; }
+    bool realtime() const { return m_realtime; }
+    void enable(bool enabled) { m_enabled.store(enabled, std::memory_order_release); }
 
     /// Append an instance. Boot only: the core adds them in tick order.
     /// @return false when the list is full.
@@ -125,7 +120,9 @@ private:
 
     const uint8_t m_id;
     const char *const m_name;
-    const defs::LoopClass m_class;
+    const bool m_realtime;
+    std::atomic<bool> m_enabled{false};
+    LoopStats *m_published;
 
     std::unique_ptr<Instance *[]> m_instances;
     const size_t m_capacity;

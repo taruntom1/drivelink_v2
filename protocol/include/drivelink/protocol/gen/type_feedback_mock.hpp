@@ -117,7 +117,7 @@ inline constexpr std::array<ItemDesc, 4> kItems{{
 inline constexpr TypeDesc kDesc{
     .name = "feedback.mock",
     .type_id = kTypeId,
-    .loops = loopMask(LoopClass::Control),
+    .loops = loopMask(LoopClass::Realtime),
     .items = kItems,
 };
 

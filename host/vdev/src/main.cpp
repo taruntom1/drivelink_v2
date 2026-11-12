@@ -1,6 +1,7 @@
 #include "core/command_service.hpp"
 #include "core_os/boot_info.hpp"
 #include "core_os/clock.hpp"
+#include "core_os/realtime.hpp"
 #include "core_os/native_boot.hpp"
 #include "core_os/native_diag.hpp"
 #include "core_os/native_file.hpp"
@@ -171,6 +172,7 @@ struct Server
     std::unique_ptr<core::CommandService> commands;
     std::array<uint8_t, 1024> reply{};
     uint16_t counter = 0;
+    uint64_t last_rt_violations = 0;
     int64_t next_status = 0;
     bool crash_enabled = false, stopping = false;
     explicit Server(bool bench) : crash_enabled(bench) {}
@@ -319,7 +321,7 @@ struct Server
                 core->params().get({&ref, 1}, {&hz, 1});
                 next_status = now + 1000000 / hz;
                 p::wire::Writer w(reply.data(), reply.size());
-                w.appendU8(1);
+                w.appendU8(p::core_wire::kVersion);
                 w.appendU8(0);
                 w.appendU16Le(counter++);
                 w.appendU64Le(now);
@@ -329,12 +331,18 @@ struct Server
                 w.appendU8(diag->activeErrors());
                 w.appendU8(255);
                 w.appendU8(255);
-                for (uint8_t i = 0; i < 2; ++i)
-                {
-                    w.appendU32Le(core->loop(i).stats().overruns);
+                w.appendU8(static_cast<uint8_t>(core->loopCount()));
+                for (size_t i = 0; i < core->loopCapacity(); ++i) {
+                    const auto *loop = core->loopAt(i); if (!loop) { continue; }
+                    w.appendU8(loop->id()); w.appendU32Le(loop->stats().overruns);
                 }
                 w.appendU8(0);
                 peer->send(msg::kStatusStream, reply.data(), w.size(), core::AfterReply::None, true);
+            }
+            const auto violations = core_os::realtimeViolations();
+            if (violations != last_rt_violations) {
+                std::cerr << "real-time guard violations: " << violations << '\n';
+                last_rt_violations = violations;
             }
             // Records remain pending until queued. No unbounded recording vector.
             std::lock_guard lock(diag->mutex);

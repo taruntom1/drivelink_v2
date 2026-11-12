@@ -139,7 +139,7 @@ class GoldenOutput(TempCase):
         self.assertNotIn("kOldThing", t)
         self.assertIn("std::array<ItemDesc, 15> kItems", t)
         self.assertIn("static_assert(itemIdsUnique(kItems)", t)
-        self.assertIn(".loops = loopMask(LoopClass::Control, LoopClass::Sensor),", t)
+        self.assertIn(".loops = loopMask(LoopClass::Realtime, LoopClass::NonRealtime),", t)
         # flags
         self.assertIn(".flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),", t)
         self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
@@ -294,8 +294,8 @@ class DescriptorHash(TempCase):
             ("diag_codes.yaml", "name: Broken", "name: Broken2"),
             ("diag_codes.yaml", "description: Something was dropped.", "description: Something got dropped."),
             ("fixture.sensor.yaml", "unit: m", "unit: cm"),
-            ("fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x06"),
-            ("fixture.sensor.yaml", "loops: [sensor]", "loops: [sensor, control]"),
+            ("fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x07"),
+            ("fixture.sensor.yaml", "realtime: forbidden", "realtime: any"),
             ("fixture.full.yaml", "default: 1.5", "default: 1.25"),
             ("fixture.full.yaml", "min: -100", "min: -101"),
             ("fixture.full.yaml", "default: b_mode", "default: c_mode"),
@@ -424,11 +424,11 @@ class TypeErrors(TempCase):
             ("duplicate type_id", "fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x01", "type_id 0x01 already used"),
             ("file name differs from type", f, "type: fixture.full", "type: fixture.other", "the file must be named"),
             ("bad type name", f, "type: fixture.full", "type: Fixture", "type must be snake_case"),
-            ("unknown top-level key", f, "loops: [control, sensor]", "loops: [control, sensor]\nextra: 1", "unknown key 'extra'"),
+            ("unknown top-level key", f, "realtime: any", "realtime: any\nextra: 1", "unknown key 'extra'"),
             ("misspelled items", f, "items:\n", "itemz:\n", "unknown key 'itemz'"),
-            ("empty loops", f, "loops: [control, sensor]", "loops: []", "loops must be a non-empty list"),
-            ("unknown loop", f, "loops: [control, sensor]", "loops: [control, bogus]", "must be one of control, sensor"),
-            ("loop twice", f, "loops: [control, sensor]", "loops: [control, control]", "lists a loop twice"),
+            ("invalid realtime", f, "realtime: any", "realtime: bogus", "realtime must be"),
+            ("legacy loops", f, "realtime: any", "loops: [control]", "unknown key"),
+            ("invalid realtime type", f, "realtime: any", "realtime: true", "realtime must be"),
         ])
 
     def test_item_ids_and_names(self) -> None:
@@ -596,7 +596,7 @@ class SystemType(TempCase):
 
     def test_loads_as_type_zero_with_no_loops(self) -> None:
         types = model.load_defs(self.defs)["types"]
-        self.assertEqual([t["type_id"] for t in types], [0x00, 0x01, 0x02, 0x03, 0x04, 0x05])
+        self.assertEqual([t["type_id"] for t in types], [0x00, 0x01, 0x02, 0x03, 0x04, 0x06])
         system = types[0]
         self.assertEqual(system["type"], "system")
         self.assertEqual(system["ns"], "system")
@@ -611,7 +611,7 @@ class SystemType(TempCase):
     def test_is_optional(self) -> None:
         (self.defs / self.SYS).unlink()
         types = model.load_defs(self.defs)["types"]
-        self.assertEqual([t["type_id"] for t in types], [0x01, 0x02, 0x03, 0x04, 0x05])
+        self.assertEqual([t["type_id"] for t in types], [0x01, 0x02, 0x03, 0x04, 0x06])
         code, _, err = self.run_gen()
         self.assertEqual(code, 0, err)
         self.assertFalse((self.out / GEN_DIR / "type_system.hpp").exists())
@@ -704,8 +704,8 @@ class RealDefinitions(unittest.TestCase):
         system = defs["types"][0]
         self.assertEqual(system["type_id"], 0x00)
         rates = {i["name"]: (i["min"], i["max"], i["default"]) for i in system["items"] if not i["retired"]}
-        self.assertEqual(rates["control.rate_hz"], (100, 2000, 1000))
-        self.assertEqual(rates["sensor.rate_hz"], (10, 500, 100))
+        self.assertNotIn("control.rate_hz", rates)
+        self.assertNotIn("sensor.rate_hz", rates)
 
     def test_checked_in_outputs_are_current(self) -> None:
         out = io.StringIO()
@@ -731,3 +731,22 @@ class WireLimits(TempCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigurableLoopSchema(TempCase):
+    def test_reserved_id_cannot_be_used_by_a_module(self):
+        self.mutate("fixture.sensor.yaml", "type_id: 0x02", "type_id: 0x05")
+        self.assertSpecError("reserved for the built-in loop")
+
+    def test_loop_id_cannot_collide_with_a_fixed_diag_source(self):
+        with (self.defs / "registry.yaml").open("a") as f:
+            f.write("\nloop_type_id: 0x04\n")
+        self.assertSpecError("clear of fixed diag sources")
+
+    def test_builtin_loop_has_no_tick_requirement(self):
+        shutil.copy(gen.DEFAULT_DEFS / "loop.yaml", self.defs / "loop.yaml")
+        types = model.load_defs(self.defs)["types"]
+        loop = next(t for t in types if t["type"] == "loop")
+        self.assertEqual(loop["loops"], [])
+        rate = next(i for i in loop["items"] if i["name"] == "rate_hz")
+        self.assertEqual((rate["min"], rate["max"]), (1, 2000))

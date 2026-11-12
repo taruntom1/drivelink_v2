@@ -95,7 +95,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
-- `core` is the new core (F3 onwards): the module registry, the `control` and `sensor` loops, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command and action services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
+- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command and action services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
 - `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). The `DIAG_*` macros latch a slot and queue a record, and `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
 
 ## Concurrency rules
@@ -116,7 +116,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
   - `sendCommand()` takes a buffer from a preallocated pool. `ESP_ERR_NO_MEM` means the pool is empty.
   - `sendData()` writes a latest-wins stream slot. It never blocks or allocates, so call it freely from a control tick. Open the channel once at setup with `openStream(channel, max_len)`.
 - **`RxFrame` is about 1 KB** (`MAX_PAYLOAD` is 1024). Don't put an `RxFrame` or a `MAX_PAYLOAD` buffer on a task stack without checking that task's stack mark, and remember that a queue of them costs 1 KB per entry.
-- **Stack marks** are checked on hardware. Every task keeps more than 1 KB free. Add each new task to the name list in `firmware/main/main.cpp`, which logs the marks.
+- **Stack marks** are checked on hardware. Every task keeps more than 1 KB free. The stack log walks configured loop tasks by id; add other new tasks to the name list in `firmware/main/main.cpp`, which logs the marks.
 - **Core loops:** a loop never waits for the config task. Param batches reach it only through its one staging slot, and the config task reads values from its own shadow copy. See [core/README.md](components/core/README.md), "Loops and concurrency".
 
 ## Conventions
@@ -125,7 +125,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 
 These paths are real-time:
 - the motor control tick (`MotorManager::updateTaskLoop` work, `MotorController::update`, `PidController::compute`)
-- the core loop tick (`core::Loop::runTick`, every `Instance::tick` in the `control` loop), the staging swap inside it, and the params' `OnChange` hooks
+- the core loop tick (`core::Loop::runTick`, every `Instance::tick` in a loop whose realtime flag is true), the staging swap inside it, and the params' `OnChange` hooks
 - `esp_timer` callbacks
 - ISRs and PCNT/MCPWM driver callbacks
 - code inside `portENTER_CRITICAL` or a spinlock

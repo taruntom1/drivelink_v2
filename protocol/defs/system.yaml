@@ -12,7 +12,7 @@ type: system
 type_id: 0x00
 description: Device-wide settings owned by the core.
 items:
-  # loop rates (Hz); the loop period is 1e6 / rate, rounded to the nearest us
-  - {id: 0x0001, kind: param, name: control.rate_hz, type: u16, unit: Hz, min: 100, max: 2000, default: 1000, flags: [locked_while_armed], description: "Rate of the control loop."}
-  - {id: 0x0002, kind: param, name: sensor.rate_hz, type: u16, unit: Hz, min: 10, max: 500, default: 100, flags: [locked_while_armed], description: "Rate of the sensor loop."}
+  # Retired in F3d: rates now belong to loop instances. Ids never reused.
+  - {id: 0x0001, name: control.rate_hz, retired: true}
+  - {id: 0x0002, name: sensor.rate_hz, retired: true}
   - {id: 0x0003, kind: param, name: status.rate_hz, type: u16, unit: Hz, min: 1, max: 100, default: 10}

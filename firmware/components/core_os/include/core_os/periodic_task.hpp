@@ -31,7 +31,7 @@ public:
     /// @return kOk, or an error (already running, a zero period or a null
     ///         `fn`, or the task or timer could not be created).
     Err start(const char *name, uint32_t stack_bytes, uint8_t priority, int8_t core, uint32_t period_us, TickFn fn,
-              void *ctx);
+              void *ctx, bool realtime = false);
 
     /// Change the period. While running, the timer restarts at the new
     /// period; otherwise the next `start()` uses it. On an error the old

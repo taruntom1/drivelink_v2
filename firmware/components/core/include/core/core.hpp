@@ -26,8 +26,7 @@ namespace core {
 /// Stages of `core.InitFailed` (arg0), reported by main. Part of the diag
 /// contract (protocol/defs/diag_codes.yaml): never renumber.
 inline constexpr uint32_t kInitStageRegistry = 1;
-inline constexpr uint32_t kInitStageControlTask = 2;
-inline constexpr uint32_t kInitStageSensorTask = 3;
+inline constexpr uint32_t kInitStageLoopTask = 2; // stage 3 retired
 inline constexpr uint32_t kInitStageBoot = 4;
 
 /// Loop period for a rate: 1e6 / rate_hz, rounded to the nearest µs.
@@ -37,7 +36,7 @@ constexpr uint32_t periodUsFromHz(uint32_t rate_hz)
 }
 
 /// The core facade: the registry, the system instance (the core's own
-/// storage for the system params, bound like an instance), the two loops
+/// storage for the system params, bound like an instance), the configurable loops
 /// with their tasks, the instance records, the param service, the pending
 /// layout and the persistence.
 ///
@@ -49,7 +48,7 @@ constexpr uint32_t periodUsFromHz(uint32_t rate_hz)
 /// are config task operations: one caller at a time, after `boot()`.
 class Core {
 public:
-    /// Allocates the tables, the loops and the system instance.
+    /// Allocates the tables, loop slots and system instance; boot creates the loops.
     explicit Core(const CoreConfig &config);
     ~Core(); ///< stop(), then destroy the instances
 
@@ -83,11 +82,11 @@ public:
     /// system instance failed).
     Status boot(core_os::KvStore &store);
 
-    /// Start both loop tasks. On failure nothing is left running, and
-    /// `startStage()` / `startError()` say why (for `core.InitFailed`).
+    /// Release the loop tick gates after boot. Safe mode has no loop task.
+    /// Idempotent while running; a stopped Core must be reconstructed.
     Status start();
 
-    /// Stop both loop tasks. Idempotent.
+    /// Stop every loop task. Idempotent.
     void stop();
 
     // -- layout (the pending copy) ----------------------------------------------
@@ -129,8 +128,6 @@ public:
     // -- state ------------------------------------------------------------------
 
     bool isRunning() const { return m_running; }
-    uint32_t startStage() const { return m_start_stage; }
-    core_os::Err startError() const { return m_start_err; }
 
     bool safeMode() const { return m_safe_mode; }
     bool layoutInvalid() const { return m_layout_invalid; }
@@ -141,12 +138,16 @@ public:
     bool nvsDirty() const { return m_params.nvsDirty(); }
 
     ParamService &params() { return m_params; }
-    Loop &loop(uint8_t id) { return (id == kSensorLoop) ? m_sensor : m_control; }
+    Loop &loop(uint8_t id) { return *findLoop(id); } ///< known running loop only
+    Loop *findLoop(uint8_t id) const;
+    Loop *loopAt(size_t slot) const { return slot < m_config.max_loops ? m_loops[slot] : nullptr; }
+    size_t loopCapacity() const { return m_config.max_loops; }
+    size_t loopCount() const;
     const Registry &registry() const { return m_registry; }
 
-    /// Running module instances (the system instance not counted).
+    /// Running layout instances, loops included (system excluded).
     size_t instanceCount() const;
-    /// Configured module instances: the records, running or not.
+    /// Configured layout instances, loops included: the records, running or not.
     size_t configuredCount() const { return m_table.size() - 1U; }
     const detail::InstanceRecord *recordAt(size_t index) const {
         return index < configuredCount() ? &m_table.at(index+1) : nullptr;
@@ -164,8 +165,9 @@ public:
     uint32_t loopStackHighWater(uint8_t id) const;
 
 private:
-    static bool applySystemParam(void *ctx, uint16_t id, uint32_t bits);
-    core_os::PeriodicTask &task(uint8_t id) { return (id == kSensorLoop) ? m_sensor_task : m_control_task; }
+    static bool applySystemParam(void *ctx, const Ref &ref, uint32_t bits);
+    size_t loopSlot(uint8_t id) const;
+    void createLoop(detail::InstanceRecord &record);
     std::unique_ptr<detail::InstanceRecord> makeRecord(const defs::TypeDesc &desc, uint8_t type_id,
                                                        uint8_t instance, uint8_t loop, const char *label,
                                                        const uint32_t *values);
@@ -179,12 +181,12 @@ private:
     const CoreConfig m_config;
     Registry m_registry;
     detail::InstanceTable m_table;
-    Loop m_control;
-    Loop m_sensor;
+    std::array<Loop *, kMaxLoops> m_loops{};
+    std::array<std::unique_ptr<Loop>, kMaxLoops> m_owned_loops;
+    std::unique_ptr<core_os::PeriodicTask[]> m_tasks;
+    std::array<std::array<char, 16>, kMaxLoops> m_task_names{};
     ParamService m_params;
     PendingLayout m_pending;
-    core_os::PeriodicTask m_control_task;
-    core_os::PeriodicTask m_sensor_task;
     core_os::OneShotTimer m_crash_clear;
     core_os::KvStore *m_store = nullptr;
     uint32_t m_newest_gen = 0; ///< the newest generation in NVS; SAVE writes a newer one
@@ -200,8 +202,6 @@ private:
     bool m_layout_invalid = false;
     bool m_config_loaded = false;
     bool m_saved_differs = false; ///< the last SAVE wrote the pending layout
-    uint32_t m_start_stage = 0;
-    core_os::Err m_start_err = core_os::kOk;
 };
 
 } // namespace core

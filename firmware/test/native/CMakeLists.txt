@@ -34,6 +34,7 @@ target_compile_options(drivelink_protocol PRIVATE -Werror)
 # core_os, native backend (backend/native), and the pure core: every core
 # source except src/idf/, which reads Kconfig.
 set(CORE_SOURCES
+    ${COMPONENTS_DIR}/core_os/backend/native/src/realtime_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/kv_store_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/native_file.cpp
@@ -44,6 +45,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/crc32.cpp
     ${COMPONENTS_DIR}/core/src/instance.cpp
     ${COMPONENTS_DIR}/core/src/layout_validation.cpp
+    ${COMPONENTS_DIR}/core/src/loop_instance.cpp
     ${COMPONENTS_DIR}/core/src/loop.cpp
     ${COMPONENTS_DIR}/core/src/param_service.cpp
     ${COMPONENTS_DIR}/core/src/pending_layout.cpp
@@ -101,6 +103,7 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_wire_codec.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
     tests/test_core_commands.cpp
+    tests/test_configurable_loops.cpp
     tests/test_core_os.cpp
     tests/test_core_registry.cpp
     tests/test_core_bind.cpp
@@ -155,6 +158,8 @@ target_include_directories(native_tests SYSTEM PRIVATE
 target_compile_options(native_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -Werror
 )
+
+target_link_options(native_tests PRIVATE -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
 
 enable_testing()
 add_test(NAME native_tests COMMAND native_tests)

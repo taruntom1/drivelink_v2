@@ -1,6 +1,6 @@
 type: feedback.mock
 type_id: 113
-loops: [control]
+realtime: required
 items:
   - {id: 1, kind: param, name: actuator, type: u32, ref: actuator, ref_order: after, flags: [reboot_required]}
   - {id: 256, kind: signal, name: velocity, type: f32, unit: rad/s}

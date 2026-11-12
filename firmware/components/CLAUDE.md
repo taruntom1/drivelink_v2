@@ -79,3 +79,7 @@ application; paused actions require an acknowledged pause. Their fixed storage
 must not escape the call. Diagnostic instance identities are explicit; use
 core_os::reportDiag's instance argument for instance reports. Do not encode
 instance identity by overwriting existing code args.
+
+F3d loop tasks use persisted loop parameters, not per-loop Kconfig task options.
+Only realtime loops join the Task WDT. Native real-time tests fail on allocation
+or blocking core_os calls during ticks; fixture observations must be preallocated.

@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v1 before any requested mutation.
+vdev. Every connection checks core v2 before any requested mutation.
 
 Default output is readable key/value text. With `--json`, stdout holds only
 `{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.
@@ -35,3 +35,10 @@ Watch commands produce one JSON envelope per line (NDJSON). Exit codes: 0
 success, 1 internal failure, 2 usage/value error, 3 connection, 4 timeout,
 5 device rejection, 6 malformed/incompatible protocol. Help does not open a port.
 Writes never retry; a write timeout has an unknown outcome.
+
+Loops are built-in type 5. For example, `add 5 fusion` allocates its loop id;
+`set 5:2:1=250` changes its rate, and `set 5:2:2=true` stages its real-time flag.
+Use the returned id rather than assuming 2. Add modules with `add TYPE LABEL LOOP`.
+SAVE/reboot applies additions, removals and reboot-required settings. `info`
+reports running loop ids/flags; status overruns are objects with loop_id and
+overruns. Safe mode reports no running loops, while instances lists offline config.

@@ -2,7 +2,7 @@
 type: fixture.full
 type_id: 0x01
 description: Fixture type with every feature.
-loops: [control, sensor]
+realtime: any
 items:
   # params
   - {id: 0x0001, kind: param, name: actuator, type: u32, flags: [reboot_required], ref: actuator, description: "Wiring."}

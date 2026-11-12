@@ -98,12 +98,15 @@ def load_registry(path: Path) -> dict:
     doc = load_yaml(path)
     if not isinstance(doc, dict):
         fail(f, "must be a mapping")
-    check_keys(f, doc, {"system_type_id", "msg_types", "channel_ranges", "wire_enums"}, {"system_type_id", "msg_types", "channel_ranges"})
+    check_keys(f, doc, {"system_type_id", "loop_type_id", "msg_types", "channel_ranges", "wire_enums"}, {"system_type_id", "msg_types", "channel_ranges"})
 
     system_id = doc["system_type_id"]
     if not is_int(system_id) or system_id != 0:
         fail(f, "system_type_id must be 0x00")
 
+    loop_id = doc.get("loop_type_id", 5)
+    if not is_int(loop_id) or not 1 <= loop_id <= 254 or loop_id in (1, 2, 3, 4, 16, 17, 18):
+        fail(f, "loop_type_id must be 0x01..0xFE and clear of fixed diag sources")
     msgs: list[dict] = []
     by_value: dict[int, str] = {}
     by_name: set[str] = set()
@@ -216,7 +219,7 @@ def load_registry(path: Path) -> dict:
             if not isinstance(key, str) or not PASCAL_IDENT.fullmatch(key) or not is_int(value) or not 0 <= value <= 254 or value in seen:
                 fail(f, f"invalid or duplicate wire enum {name}.{key}")
             seen.add(value)
-    return {"system_type_id": system_id, "msg_types": msgs, "channel_ranges": ranges, "wire_enums": wire_enums}
+    return {"system_type_id": system_id, "loop_type_id": loop_id, "msg_types": msgs, "channel_ranges": ranges, "wire_enums": wire_enums}
 
 
 # -- diag codes ----------------------------------------------------------------
@@ -316,7 +319,7 @@ def load_diag(path: Path, module_sources: dict | None = None) -> dict:
 
 # -- module types --------------------------------------------------------------
 
-LOOP_CLASSES = ("control", "sensor")
+LOOP_CLASSES = ("realtime", "non_realtime")
 KIND_NAMES = ("param", "signal", "input", "action")
 SCALAR_TYPES = ("bool", "u8", "u16", "u32", "i32", "f32")
 VALUE_TYPES = SCALAR_TYPES + ("enum",)
@@ -606,12 +609,14 @@ def load_items(f: str, name: str, raw_items: Any, allowed_kinds: tuple[str, ...]
     return items
 
 
-def load_type(path: Path, system_id: int) -> dict:
+def load_type(path: Path, system_id: int, loop_id: int = 5) -> dict:
     f = path.name
     doc = load_yaml(path)
     if not isinstance(doc, dict):
         fail(f, "must be a mapping")
-    check_keys(f, doc, {"type", "type_id", "description", "loops", "items"}, {"type", "type_id", "loops", "items"})
+    builtin = path.stem == "loop"
+    check_keys(f, doc, {"type", "type_id", "description", "realtime", "items"},
+               {"type", "type_id", "items"} | (set() if builtin else {"realtime"}))
     name = doc["type"]
     if not isinstance(name, str) or not DOTTED.match(name):
         fail(f, "type must be snake_case segments joined by dots, such as controller.cascade_pid")
@@ -626,14 +631,17 @@ def load_type(path: Path, system_id: int) -> dict:
     if tid == system_id:
         fail(where, "type_id is the system type id")
 
-    loops = doc["loops"]
-    if not isinstance(loops, list) or not loops:
-        fail(where, "loops must be a non-empty list")
-    for lp in loops:
-        if lp not in LOOP_CLASSES:
-            fail(where, f"loop '{lp}' must be one of {', '.join(LOOP_CLASSES)}")
-    if len(set(loops)) != len(loops):
-        fail(where, "loops lists a loop twice")
+    if (tid == loop_id) != builtin:
+        fail(where, "loop_type_id is reserved for the built-in loop type")
+    requirement = doc.get("realtime")
+    if builtin:
+        if requirement is not None:
+            fail(where, "the loop type runs in no loop: remove 'realtime'")
+        loops = []
+    else:
+        if requirement not in ("required", "forbidden", "any"):
+            fail(where, "realtime must be required, forbidden or any")
+        loops = {"required": ["realtime"], "forbidden": ["non_realtime"], "any": list(LOOP_CLASSES)}[requirement]
 
     items = load_items(f, name, doc["items"])
 
@@ -691,7 +699,7 @@ def load_defs(defs_dir: Path) -> dict:
     for path in sorted(defs_dir.glob("*.yaml")):
         if path.name in RESERVED_FILES:
             continue
-        types.append(load_type(path, registry["system_type_id"]))
+        types.append(load_type(path, registry["system_type_id"], registry["loop_type_id"]))
     system_path = defs_dir / SYSTEM_FILE
     if system_path.exists():  # optional: without it there is no system type
         types.append(load_system(system_path, registry["system_type_id"]))

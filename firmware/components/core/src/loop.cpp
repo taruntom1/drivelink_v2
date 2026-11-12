@@ -1,13 +1,17 @@
 #include "core/loop.hpp"
 
 #include "core_os/clock.hpp"
+#include "core_os/realtime.hpp"
+#include "core_os/diag_sink.hpp"
+#include "drivelink/protocol/gen/diag_codes.hpp"
 
 namespace core {
 
-Loop::Loop(uint8_t id, const char *name, defs::LoopClass loop_class, size_t capacity, uint32_t period_us)
+Loop::Loop(uint8_t id, const char *name, bool realtime, size_t capacity, uint32_t period_us, LoopStats *published)
     : m_id(id),
       m_name(name),
-      m_class(loop_class),
+      m_realtime(realtime),
+      m_published(published),
       m_instances(std::make_unique<Instance *[]>(capacity)),
       m_capacity(capacity),
       m_period_us(period_us)
@@ -25,11 +29,13 @@ bool Loop::addInstance(Instance *instance)
 
 void Loop::taskEntry(void *ctx, uint32_t elapsed)
 {
-    static_cast<Loop *>(ctx)->runTick(elapsed);
+    auto *loop = static_cast<Loop *>(ctx);
+    if (loop->m_enabled.load(std::memory_order_acquire)) { loop->runTick(elapsed); }
 }
 
 void Loop::runTick(uint32_t elapsed)
 {
+    core_os::RealtimeScope guard(m_realtime);
     const int64_t start_us = core_os::nowUs();
 
     // 1. Heartbeat (read by the safety monitor from F4b).
@@ -72,6 +78,10 @@ void Loop::runTick(uint32_t elapsed)
     m_last_run_us.store(run_us, std::memory_order_relaxed);
     if (run_us > m_max_run_us.load(std::memory_order_relaxed)) {
         m_max_run_us.store(run_us, std::memory_order_relaxed); // only the loop writes it
+    }
+    if (m_published) { *m_published = stats(); }
+    if (run_us > period_us) {
+        core_os::countDiag(drivelink::protocol::defs::diag::codes::core::kLoopOverBudget, 1, m_id);
     }
 }
 

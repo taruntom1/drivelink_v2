@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "drivelink/protocol/gen/registry.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 namespace core {
 
@@ -184,6 +185,21 @@ Status PendingLayout::addInstance(uint8_t type_id, uint8_t loop, const char *lab
     }
     uint8_t chosen = 0;
     Status st = run([&](std::vector<uint16_t> &touched) {
+        if (type_id != defs::kLoopTypeId && loop == kNoLoop) {
+            bool found_loop = false;
+            uint8_t lowest = kNoLoop;
+            for (const auto &candidate : m_entries) {
+                if (candidate.type_id != defs::kLoopTypeId) { continue; }
+                const size_t flag = itemIndex(*candidate.desc, defs::loop::kRealtime);
+                const bool realtime = valueAt(candidate, flag) != 0;
+                if (candidate.instance < lowest && defs::runsIn(type->desc,
+                        realtime ? defs::LoopClass::Realtime : defs::LoopClass::NonRealtime)) {
+                    lowest = candidate.instance; found_loop = true;
+                }
+            }
+            if (!found_loop) { return Status::fail(Result::InvalidArgument, Detail::LoopMismatch); }
+            loop = lowest;
+        }
         bool found = false;
         for (unsigned id = 0; id <= kMaxInstanceId && !found; ++id) {
             if (find(type_id, static_cast<uint8_t>(id)) == nullptr) {
@@ -231,6 +247,9 @@ Status PendingLayout::removeInstance(uint8_t type_id, uint8_t instance)
         for (size_t j = 0; j < v.size(); ++j) {
             if (j == index) {
                 continue;
+            }
+            if (type_id == defs::kLoopTypeId && v[j].type_id != defs::kLoopTypeId && v[j].loop == instance) {
+                return Status::fail(Result::InvalidArgument, Detail::Referenced);
             }
             for (const RefLink &link : refLinks(v, j)) {
                 if (link.target == index) {

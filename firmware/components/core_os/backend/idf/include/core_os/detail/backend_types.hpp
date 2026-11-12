@@ -32,6 +32,7 @@ struct PeriodicTaskState {
     TickFn fn = nullptr;
     void *ctx = nullptr;
     std::atomic<uint32_t> period_us{0};
+    std::atomic<int32_t> watchdog_ready{0};
 };
 
 /// The KvStore opens an NVS handle per call, so it keeps no state.

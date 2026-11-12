@@ -26,6 +26,7 @@
 #     0x42 until F6 removes the IMU manager.
 
 system_type_id: 0x00
+loop_type_id: 0x05
 
 msg_types:
   # -- core (F3 on) --

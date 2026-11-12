@@ -35,7 +35,7 @@ bool isPersist(const defs::ItemDesc &item)
 
 } // namespace
 
-ParamService::ParamService(detail::InstanceTable &table, std::array<Loop *, kLoopCount> loops,
+ParamService::ParamService(detail::InstanceTable &table, std::span<Loop *> loops,
                            SystemApplyFn system_apply, void *system_ctx)
     : m_table(table), m_loops(loops), m_system_apply(system_apply), m_system_ctx(system_ctx)
 {
@@ -58,8 +58,13 @@ ParamService::Target ParamService::lookup(const Ref &ref) const
             t.domain = ParamDomain::System;
         } else if (t.record->state != InstanceState::Running) {
             t.domain = ParamDomain::Offline;
+        } else if (t.record->type_id == drivelink::protocol::defs::kLoopTypeId) {
+            t.domain = ParamDomain::System;
         } else {
-            t.domain = (t.record->loop == kSensorLoop) ? ParamDomain::Sensor : ParamDomain::Control;
+            t.domain = ParamDomain::Loop;
+            for (auto *loop : m_loops) {
+                if (loop && loop->id() == t.record->loop) { t.loop = loop; break; }
+            }
         }
         return t;
     }
@@ -98,7 +103,7 @@ Status ParamService::validate(const SetEntry &entry, uint16_t i, uint32_t &appli
     if (!check.ok) {
         return Status::fail(Result::InvalidArgument, check.detail, i);
     }
-    if ((t.domain == ParamDomain::Control || t.domain == ParamDomain::Sensor || t.domain == ParamDomain::System) &&
+    if ((t.domain == ParamDomain::Loop || t.domain == ParamDomain::System) &&
         !t.record->bindings[t.index].bound) {
         // Every live param of a running instance is bound by start().
         return Status::fail(Result::Fault, Detail::StartFailed, i);
@@ -134,6 +139,7 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
     // 1. Every entry, before anything is applied. 2. One domain.
     ParamDomain domain = ParamDomain::System;
     bool persist = false;
+    Loop *target_loop = nullptr;
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto index = static_cast<uint16_t>(i);
         Target t;
@@ -148,7 +154,8 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
         }
         if (i == 0) {
             domain = t.domain;
-        } else if (t.domain != domain) {
+            target_loop = t.loop;
+        } else if (t.domain != domain || (domain == ParamDomain::Loop && t.loop != target_loop)) {
             return Status::fail(Result::InvalidArgument, Detail::CrossLoopBatch, index);
         }
         persist = persist || isPersist(*t.item);
@@ -177,17 +184,15 @@ Status ParamService::stage(std::span<const SetEntry> entries, std::span<uint32_t
         }
         return st;
     }
-    case ParamDomain::Control:
-    case ParamDomain::Sensor:
+    case ParamDomain::Loop:
         break;
     }
 
     // 3. Loop: claim the slot, fill it, publish it.
-    const uint8_t loop_id = (domain == ParamDomain::Sensor) ? kSensorLoop : kControlLoop;
-    if (m_loops[loop_id] == nullptr) {
+    if (target_loop == nullptr) {
         return Status::fail(Result::Fault, Detail::UnknownRef);
     }
-    Loop &loop = *m_loops[loop_id];
+    Loop &loop = *target_loop;
     if (!loop.beginStaging()) {
         return Status::fail(Result::Busy, Detail::StagingBusy);
     }
@@ -258,13 +263,12 @@ Status ParamService::applySystem(std::span<const SetEntry> entries, std::span<co
     core_os::LockGuard lock(m_mutex);
 
     for (size_t i = 0; i < entries.size(); ++i) {
-        const uint16_t id = entries[i].ref.id;
-        if (m_system_apply != nullptr && !m_system_apply(m_system_ctx, id, applied[i])) {
+        if (m_system_apply != nullptr && !m_system_apply(m_system_ctx, entries[i].ref, applied[i])) {
             // Roll back what was applied, newest first, from the shadow (not
             // updated yet).
             for (size_t j = i; j-- > 0;) {
                 const Target t = lookup(entries[j].ref);
-                (void)m_system_apply(m_system_ctx, entries[j].ref.id, t.record->shadow[t.index]);
+                (void)m_system_apply(m_system_ctx, entries[j].ref, t.record->shadow[t.index]);
             }
             return Status::fail(Result::Fault, Detail::TimerFailed, static_cast<uint16_t>(i));
         }

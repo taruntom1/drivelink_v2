@@ -10,16 +10,6 @@ menu "DriveLink main"
             log off. Used to size task stacks. Compiled out when
             DIAG_CONSOLE_LOG is off (no console text).
 
-    config CORE_BOOT_SELFTEST
-        bool "Core boot self-test (bench check only)"
-        default n
-        help
-            A hardware check of the core's NVS persistence, for the bench
-            only: never commit it on. After the core starts, main flips the
-            system param control.rate_hz between 1000 and 500 and SAVEs it,
-            so every boot after the first logs that it reloaded the value
-            from NVS. It changes the control loop rate on every boot.
-
     config CORE_BENCH_CRASH
         bool "Enable wire crash command (bare-board tests only)"
         default n

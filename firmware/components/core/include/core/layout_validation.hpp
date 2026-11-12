@@ -27,6 +27,7 @@ struct LayoutEntry {
 struct ValidationConfig {
     uint64_t gpio_allowed_mask; ///< bit n: GPIO n may be claimed
     size_t max_instances;       ///< the layout's capacity
+    size_t max_loops = 4;
 };
 
 inline constexpr size_t kNoEntry = static_cast<size_t>(-1);

@@ -11,15 +11,8 @@ namespace core {
 /// `CORE_*` options, and native builds fill it directly. The defaults here
 /// match the Kconfig defaults.
 struct CoreConfig {
-    struct LoopTask {
-        uint32_t stack_bytes;
-        uint8_t priority;
-        int8_t core; ///< 0, 1 or -1 (no affinity)
-    };
-
-    LoopTask control{4096, 20, 1}; ///< the control loop task, "core_ctrl"
-    LoopTask sensor{4096, 10, 0};  ///< the sensor loop task, "core_sens"
-    uint16_t max_instances = 16;   ///< module instances, across both loops (the layout's capacity)
+    uint8_t max_loops = 4;        ///< simultaneously configured loops, 1..8
+    uint16_t max_instances = 16;   ///< module instances across all loops (loop capacity is separate)
     /// The pins a `gpio` param may name: bit n allows GPIO n. On the device
     /// it is the ESP32-S3 policy minus the uart_comm TX/RX pins.
     uint64_t gpio_allowed_mask = gpio_policy::kEsp32s3Allowed;

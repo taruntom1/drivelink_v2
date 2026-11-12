@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
+#include "core/loop_instance.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 #include <utility>
 
 #include "core/layout_validation.hpp"
@@ -23,8 +26,6 @@ namespace {
 namespace sys = drivelink::protocol::defs::system;
 namespace diag_codes = drivelink::protocol::defs::diag::codes;
 
-constexpr const char *kControlTaskName = "core_ctrl";
-constexpr const char *kSensorTaskName = "core_sens";
 constexpr const char *kCrashClearName = "core_crash_clr";
 
 /// The core's own storage for the system params. It runs in no loop: the
@@ -33,8 +34,6 @@ class SystemInstance final : public Instance {
 public:
     bool start(InstanceContext &ctx) override
     {
-        ctx.bindParam(sys::kControlRateHz, &m_control_rate_hz);
-        ctx.bindParam(sys::kSensorRateHz, &m_sensor_rate_hz);
         ctx.bindParam(sys::kStatusRateHz, &m_status_rate_hz);
         return true;
     }
@@ -43,15 +42,7 @@ public:
 
 private:
     uint16_t m_status_rate_hz = 10;
-    uint16_t m_control_rate_hz = 0;
-    uint16_t m_sensor_rate_hz = 0;
 };
-
-uint32_t defaultPeriodUs(uint16_t rate_id)
-{
-    const defs::ItemDesc *item = defs::findItem(sys::kDesc, rate_id);
-    return periodUsFromHz((item != nullptr) ? item->default_bits : 0U);
-}
 
 void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
     for(const auto &code:defs::diag::kCodeTable) {
@@ -82,17 +73,21 @@ bool revertable(const defs::ItemDesc &item)
            !defs::hasFlag(item, defs::ItemFlag::ReadOnly) && !defs::hasFlag(item, defs::ItemFlag::RebootRequired);
 }
 
+CoreConfig normalized(CoreConfig config)
+{
+    config.max_loops = std::clamp<uint8_t>(config.max_loops, 1, kMaxLoops);
+    config.max_instances = std::clamp<uint16_t>(config.max_instances, 1, 64);
+    return config;
+}
+
 } // namespace
 
 Core::Core(const CoreConfig &config)
-    : m_config(config),
-      m_table(static_cast<size_t>(config.max_instances) + 1U), // + the system instance
-      m_control(kControlLoop, "control", defs::LoopClass::Control, config.max_instances,
-                defaultPeriodUs(sys::kControlRateHz)),
-      m_sensor(kSensorLoop, "sensor", defs::LoopClass::Sensor, config.max_instances,
-               defaultPeriodUs(sys::kSensorRateHz)),
-      m_params(m_table, {&m_control, &m_sensor}, &Core::applySystemParam, this),
-      m_pending(m_registry, m_table, ValidationConfig{config.gpio_allowed_mask, config.max_instances})
+    : m_config(normalized(config)),
+      m_table(static_cast<size_t>(m_config.max_instances) + m_config.max_loops + 1U),
+      m_tasks(std::make_unique<core_os::PeriodicTask[]>(m_config.max_loops)),
+      m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
+      m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops})
 {
     m_params.setPendingLayout(&m_pending);
     std::unique_ptr<detail::InstanceRecord> record =
@@ -112,7 +107,7 @@ Core::~Core()
 
 Status Core::init(std::span<const ModuleType *const> types)
 {
-    if (!m_system_ok) {
+    if (!m_system_ok || m_config.max_loops == 0 || m_config.max_loops > kMaxLoops) {
         return Status::fail(Result::Fault, Detail::StartFailed);
     }
     return m_registry.init(types);
@@ -228,11 +223,25 @@ Status Core::boot(core_os::KvStore &store)
             const defs::ItemDesc &item = system.desc->items[i];
             if (item.kind == defs::ItemKind::Param && system.bindings[i].bound) {
                 storeValue(item.type, system.bindings[i].ptr, system.shadow[i]);
-                (void)applySystemParam(this, item.id, system.shadow[i]); // the tasks aren't running: cannot fail
+                (void)applySystemParam(this, Ref{system.type_id, system.instance, item.id}, system.shadow[i]); // the tasks aren't running: cannot fail
             }
         }
     } else if (cfg.found_any) {
         core_os::reportDiag(diag_codes::core::kConfigLoadFailed, 0, cfg.newest_gen, cfg.cause);
+    }
+
+    if (!cfg.complete) {
+        namespace lp = defs::loop;
+        auto factory = [&](uint8_t id, const char *name, bool realtime) {
+            persist::StoredInstance entry{};
+            entry.type_id = defs::kLoopTypeId; entry.instance = id; entry.loop = kNoLoop;
+            std::strncpy(entry.label, name, kLabelBytes);
+            entry.pairs = {{lp::kRateHz, realtime ? 1000U : 100U}, {lp::kRealtime, realtime ? 1U : 0U},
+                           {lp::kCore, realtime ? 1U : 0U}, {lp::kPriority, realtime ? 20U : 10U}};
+            cfg.instances.push_back(std::move(entry));
+        };
+        factory(kFactoryControlLoop, "control", true);
+        if (m_config.max_loops > 1) { factory(kFactorySensorLoop, "sensor", false); }
     }
 
     // 3. Validate.
@@ -250,7 +259,7 @@ Status Core::boot(core_os::KvStore &store)
         entries[i] = LayoutEntry{desc, s.type_id, s.instance, s.loop, s.label, values[i].data()};
     }
     std::vector<Status> status(n);
-    (void)validateLayout(entries, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances}, status);
+    (void)validateLayout(entries, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops}, status);
 
     // 4. Records.
     std::vector<detail::InstanceRecord *> records(n, nullptr);
@@ -283,6 +292,14 @@ Status Core::boot(core_os::KvStore &store)
         return Status::success(); // no instance, and the crash counter stays
     }
 
+    // Establish loop tasks before starting their dependent modules. Their
+    // callbacks stay gated until start(), after every tick list is complete.
+    for (size_t i = 0; i < n; ++i) {
+        if (records[i] && status[i].ok() && records[i]->type_id == defs::kLoopTypeId) {
+            createLoop(*records[i]);
+        }
+    }
+
     // 5. Create, dependencies first.
     std::vector<bool> include(n, false);
     for (size_t i = 0; i < n; ++i) {
@@ -290,6 +307,14 @@ Status Core::boot(core_os::KvStore &store)
     }
     for (const size_t i : creationOrder(entries, include)) {
         detail::InstanceRecord &record = *records[i];
+        if (record.type_id == defs::kLoopTypeId) { continue; }
+        const auto *owner = m_table.find(defs::kLoopTypeId, record.loop);
+        if (!owner || owner->state != InstanceState::Running) {
+            record.state = InstanceState::DependencyMissing;
+            core_os::reportDiag(diag_codes::core::kDependencyMissing, 0, instanceArg(record.type_id, record.instance),
+                                instanceArg(defs::kLoopTypeId, record.loop));
+            continue;
+        }
         uint32_t missing = 0;
         bool is_missing = false;
         for (const RefLink &link : refLinks(entries, i)) {
@@ -311,7 +336,7 @@ Status Core::boot(core_os::KvStore &store)
 
     // 6. Fill the loops in tick order.
     for (size_t i = 0; i < n; ++i) {
-        include[i] = records[i] != nullptr && records[i]->state == InstanceState::Running;
+        include[i] = records[i] != nullptr && records[i]->type_id != defs::kLoopTypeId && records[i]->state == InstanceState::Running;
     }
     for (const size_t i : tickOrder(entries, include)) {
         detail::InstanceRecord &record = *records[i];
@@ -323,29 +348,36 @@ Status Core::boot(core_os::KvStore &store)
     return Status::success();
 }
 
+void Core::createLoop(detail::InstanceRecord &record)
+{
+    createObject(record);
+    if (record.state != InstanceState::Running) { return; }
+    auto &instance = static_cast<LoopInstance &>(*record.object);
+    size_t slot = 0;
+    while (slot < m_config.max_loops && m_loops[slot]) { ++slot; }
+    if (slot == m_config.max_loops) { record.state = InstanceState::Failed; return; }
+    m_owned_loops[slot] = std::make_unique<Loop>(record.instance, record.label, instance.realtime,
+        m_config.max_instances, periodUsFromHz(instance.rate), &instance.signals);
+    m_loops[slot] = m_owned_loops[slot].get();
+    std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
+    const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,
+        m_loops[slot]->periodUs(), &Loop::taskEntry, m_loops[slot], instance.realtime);
+    if (err != core_os::kOk) {
+        record.state = InstanceState::Failed;
+        m_loops[slot] = nullptr;
+        m_owned_loops[slot].reset();
+        core_os::reportDiag(diag_codes::core::kInitFailed, err, kInitStageLoopTask, record.instance);
+    }
+}
+
 Status Core::start()
 {
-    if (m_running) {
-        return Status::success();
+    if (!m_booted) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
+    if (m_started) {
+        return m_running ? Status::success() : Status::fail(Result::Busy, Detail::NotAtBoot);
     }
-    m_start_stage = 0;
-    m_start_err = core_os::kOk;
-
-    core_os::Err err = m_control_task.start(kControlTaskName, m_config.control.stack_bytes, m_config.control.priority,
-                                            m_config.control.core, m_control.periodUs(), &Loop::taskEntry,
-                                            &m_control);
-    if (err != core_os::kOk) {
-        m_start_stage = kInitStageControlTask;
-        m_start_err = err;
-        return Status::fail(Result::Fault, Detail::StartFailed);
-    }
-    err = m_sensor_task.start(kSensorTaskName, m_config.sensor.stack_bytes, m_config.sensor.priority,
-                              m_config.sensor.core, m_sensor.periodUs(), &Loop::taskEntry, &m_sensor);
-    if (err != core_os::kOk) {
-        m_control_task.stop();
-        m_start_stage = kInitStageSensorTask;
-        m_start_err = err;
-        return Status::fail(Result::Fault, Detail::StartFailed);
+    for (size_t i = 0; i < m_config.max_loops; ++i) {
+        if (m_loops[i]) { m_loops[i]->enable(true); }
     }
     m_running = true;
     m_started = true;
@@ -354,9 +386,32 @@ Status Core::start()
 
 void Core::stop()
 {
-    m_control_task.stop();
-    m_sensor_task.stop();
+    for (size_t i = 0; i < m_config.max_loops; ++i) {
+        if (m_loops[i]) { m_loops[i]->enable(false); }
+        m_tasks[i].stop();
+    }
     m_running = false;
+}
+
+size_t Core::loopSlot(uint8_t id) const
+{
+    for (size_t i = 0; i < m_config.max_loops; ++i) {
+        if (m_loops[i] && m_loops[i]->id() == id) { return i; }
+    }
+    return m_config.max_loops;
+}
+
+Loop *Core::findLoop(uint8_t id) const
+{
+    const size_t slot = loopSlot(id);
+    return slot < m_config.max_loops ? m_loops[slot] : nullptr;
+}
+
+size_t Core::loopCount() const
+{
+    size_t count = 0;
+    for (size_t i = 0; i < m_config.max_loops; ++i) { count += m_loops[i] != nullptr ? 1U : 0U; }
+    return count;
 }
 
 // -- layout ----------------------------------------------------------------------
@@ -490,16 +545,17 @@ Status Core::revert()
         return Status::fail(Result::NotFound, Detail::NoSavedConfig);
     }
 
-    // One list per domain: system, control, sensor, offline.
-    std::array<std::vector<SetEntry>, 4> lists;
+    // One list per domain: system/live loop params, each actual loop, offline.
+    std::vector<std::vector<SetEntry>> lists(static_cast<size_t>(m_config.max_loops) + 2U);
     auto addRecord = [&](const detail::InstanceRecord &r, std::span<const ParamPair> pairs) {
         std::vector<uint32_t> v(r.desc->items.size());
         persist::applyPairs(*r.desc, pairs, v.data());
-        size_t list = 3;
-        if (r.type_id == drivelink::protocol::defs::kSystemTypeId) {
+        size_t list = static_cast<size_t>(m_config.max_loops) + 1U;
+        if (r.type_id == defs::kSystemTypeId ||
+            (r.type_id == defs::kLoopTypeId && r.state == InstanceState::Running)) {
             list = 0;
         } else if (r.state == InstanceState::Running) {
-            list = (r.loop == kSensorLoop) ? 2U : 1U;
+            list = loopSlot(r.loop) + 1U;
         }
         for (size_t k = 0; k < r.desc->items.size(); ++k) {
             if (revertable(r.desc->items[k])) {
@@ -580,27 +636,23 @@ size_t Core::instancesFailed() const
 
 uint32_t Core::loopStackHighWater(uint8_t id) const
 {
-    return (id == kSensorLoop) ? m_sensor_task.stackHighWaterMark() : m_control_task.stackHighWaterMark();
+    const size_t slot = loopSlot(id);
+    return slot < m_config.max_loops ? m_tasks[slot].stackHighWaterMark() : 0U;
 }
 
-bool Core::applySystemParam(void *ctx, uint16_t id, uint32_t bits)
+bool Core::applySystemParam(void *ctx, const Ref &ref, uint32_t bits)
 {
     auto *self = static_cast<Core *>(ctx);
-    uint8_t loop_id = 0;
-    if (id == sys::kControlRateHz) {
-        loop_id = kControlLoop;
-    } else if (id == sys::kSensorRateHz) {
-        loop_id = kSensorLoop;
-    } else {
-        return true; // nothing to do beyond storing it
-    }
-    const uint32_t period_us = periodUsFromHz(bits);
-    const core_os::Err err = self->task(loop_id).setPeriod(period_us);
+    if (ref.type != defs::kLoopTypeId || ref.id != defs::loop::kRateHz) { return true; }
+    const size_t slot = self->loopSlot(ref.instance);
+    if (slot == self->m_config.max_loops) { return true; } // offline configuration
+    const uint32_t period = periodUsFromHz(bits);
+    const auto err = self->m_tasks[slot].setPeriod(period);
     if (err != core_os::kOk) {
-        core_os::reportDiag(diag_codes::core::kTimerRestartFailed, err, loop_id, period_us);
+        core_os::reportDiag(diag_codes::core::kTimerRestartFailed, err, ref.instance, period);
         return false;
     }
-    self->loop(loop_id).setPeriodUs(period_us);
+    self->m_loops[slot]->setPeriodUs(period);
     return true;
 }
 
@@ -611,7 +663,7 @@ Status Core::runAction(Ref ref, const ActionArgs &args, ActionOut &out)
     const auto *item = defs::findItem(*record->desc, ref.id);
     if (!item) { return Status::fail(Result::NotFound, Detail::UnknownRef); }
     if (item->kind != defs::ItemKind::Action) { return Status::fail(Result::InvalidArgument, Detail::WrongKind); }
-    if (item->runs_in == defs::ActionPlacement::Paused && record->loop == kControlLoop && m_params.armed()) {
+    if (item->runs_in == defs::ActionPlacement::Paused && findLoop(record->loop) && findLoop(record->loop)->realtime() && m_params.armed()) {
         return Status::fail(Result::Armed, Detail::LockedWhileArmed);
     }
     if (args.blob.size() > kActionBlobBytes ||
@@ -627,7 +679,7 @@ Status Core::runAction(Ref ref, const ActionArgs &args, ActionOut &out)
         const auto check = checkValue(arg,args.values[i]);
         if (!check.ok) { return Status::fail(Result::InvalidArgument, check.detail, static_cast<uint16_t>(i)); }
     }
-    if (!m_running || record->loop >= kLoopCount) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
+    if (!m_running || !findLoop(record->loop)) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
     auto &slot = loop(record->loop).actionSlot();
     if (slot.state.load(std::memory_order_acquire) != ActionState::Empty) {
         return Status::fail(Result::Busy, Detail::StagingBusy);

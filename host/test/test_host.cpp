@@ -5,6 +5,7 @@
 #include "doctest.h"
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
+#include "drivelink/protocol/core_codec.hpp"
 #include <asio.hpp>
 #include <bit>
 #include <filesystem>
@@ -37,7 +38,7 @@ void sendFrame(Socket &socket, uint8_t type, const Bytes &payload)
 }
 void answer(Socket &socket, const Bytes &request, const Bytes &body = {})
 {
-    Bytes data{1, request[1], request[2], request[3], 0, 0};
+    Bytes data{2, request[1], request[2], request[3], 0, 0};
     data.insert(data.end(), body.begin(), body.end());
     sendFrame(socket, 0x41, data);
 }
@@ -270,7 +271,7 @@ TEST_CASE("protocol mismatch is an explicit connection error rather than a timeo
         [](Socket &socket)
         {
             auto request = readFrame(socket);
-            sendFrame(socket, 0x41, {2, request[1], 1, 1, 0, 0});
+            sendFrame(socket, 0x41, {1, request[1], 1, 1, 0, 0});
         });
     Session session(device.endpoint());
     try
@@ -323,4 +324,43 @@ TEST_CASE("diagnostic event decoding preserves instance identity and exact lengt
     diag::protocol::ClearedEvent clear{22, 112, 7, 42};
     n = diag::protocol::encodeClearedEvent(3, 0, clear, buffer.data(), buffer.size());
     CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["instance"] == 7);
+}
+
+TEST_CASE("status v2 carries sparse loop ids and rejects duplicate ids and bad counts")
+{
+    FakeDevice device([](Socket &socket) {
+        std::array<uint8_t,1> byte{};asio::error_code ec;
+        socket.read_some(asio::buffer(byte),ec);
+    });
+    Session session(device.endpoint()); Client client(session);
+    Bytes payload(18,0); payload[0]=2; payload[17]=2;
+    payload.insert(payload.end(), {3,1,0,0,0, 19,9,0,0,0, 0});
+    auto status=client.event({128,payload});
+    CHECK(status["overruns"][0]["loop_id"]==3);
+    CHECK(status["overruns"][1]["loop_id"]==19);
+    CHECK(status["overruns"][1]["overruns"]==9);
+    payload[23]=3;CHECK_THROWS_AS(client.event({128,payload}),Error);
+    payload[23]=19;payload[17]=9;CHECK_THROWS_AS(client.event({128,payload}),Error);
+    payload[17]=2;payload.push_back(0);CHECK_THROWS_AS(client.event({128,payload}),Error);
+}
+
+TEST_CASE("GET_INFO v2 validates sparse ids, loop flags and duplicate loop identities")
+{
+    auto body=[](bool duplicate, bool bad_flags) {
+        Bytes bytes(256);protocol::wire::Writer w(bytes.data(),bytes.size());
+        w.appendU8(2);protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"build");
+        w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);w.appendU8(2);w.appendU8(0);w.appendU8(2);
+        w.appendU8(3);protocol::core_wire::string(w,"first");w.appendU32Le(1000);w.appendU8(1);
+        w.appendU8(duplicate?3:19);protocol::core_wire::string(w,"second");w.appendU32Le(100);w.appendU8(bad_flags?2:0);
+        bytes.resize(w.size());return bytes;
+    };
+    FakeDevice device([&](Socket &socket) {
+        answer(socket,readFrame(socket),body(false,false));
+        answer(socket,readFrame(socket),body(true,false));
+        answer(socket,readFrame(socket),body(false,true));
+    });
+    Session session(device.endpoint());Client client(session);
+    const auto info=client.info();CHECK(info["loops"][0]["realtime"]==true);
+    CHECK(info["loops"][1]["id"]==19);CHECK(info["loops"][1]["realtime"]==false);
+    CHECK_THROWS_AS(client.info(),Error);CHECK_THROWS_AS(client.info(),Error);
 }

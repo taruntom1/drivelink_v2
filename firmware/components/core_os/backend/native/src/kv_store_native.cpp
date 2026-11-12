@@ -15,6 +15,7 @@
 #include "core_os/one_shot.hpp"
 #include "core_os/native_file.hpp"
 #include <filesystem>
+#include "core_os/realtime.hpp"
 
 namespace core_os {
 namespace native { void persistCrashCount(uint32_t count); }
@@ -70,6 +71,7 @@ KvStore::~KvStore() = default;
 
 Err KvStore::get(const char *ns, const char *key, void *buf, size_t &len)
 {
+    recordRealtimeViolation();
     if (!validName(ns) || !validName(key)) {
         return kNativeError;
     }
@@ -96,6 +98,7 @@ Err KvStore::get(const char *ns, const char *key, void *buf, size_t &len)
 
 Err KvStore::set(const char *ns, const char *key, const void *data, size_t len)
 {
+    recordRealtimeViolation();
     if (!validName(ns) || !validName(key) || (data == nullptr && len > 0U)) {
         return kNativeError;
     }
@@ -125,6 +128,7 @@ Err KvStore::set(const char *ns, const char *key, const void *data, size_t len)
 
 Err KvStore::eraseNamespace(const char *ns)
 {
+    recordRealtimeViolation();
     if (!validName(ns)) {
         return kNativeError;
     }
@@ -147,6 +151,7 @@ Err KvStore::eraseNamespace(const char *ns)
 
 Err KvStore::listNamespaces(NamespaceFn fn, void *ctx)
 {
+    recordRealtimeViolation();
     if (fn == nullptr) {
         return kNativeError;
     }

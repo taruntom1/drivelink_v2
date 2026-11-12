@@ -9,6 +9,7 @@
 
 #include "drivelink/protocol/defs.hpp"
 #include "type_system.hpp"
+#include "type_loop.hpp"
 #include "type_actuator_mock.hpp"
 #include "type_feedback_mock.hpp"
 #include "type_imu_mock.hpp"
@@ -16,8 +17,9 @@
 namespace drivelink::protocol::defs {
 
 /// The system type (0x00, from system.yaml) and every module type, by type id.
-inline constexpr std::array<const TypeDesc *, 4> kTypeTable{{
+inline constexpr std::array<const TypeDesc *, 5> kTypeTable{{
     &system::kDesc,
+    &loop::kDesc,
     &actuator_mock::kDesc,
     &feedback_mock::kDesc,
     &imu_mock::kDesc,

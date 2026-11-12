@@ -73,35 +73,25 @@ TEST_CASE("Descriptor hash is set, and the diag table comes through")
     CHECK(diag::kCodeTable.size() == diag::kSlotCount);
     CHECK(diag::kSlotCount > 0);
     // System and three mock types, ordered by type id.
-    REQUIRE(kTypeTable.size() == 4);
+    REQUIRE(kTypeTable.size() == 5);
     CHECK(kTypeTable[0] == &system::kDesc);
 }
 
-TEST_CASE("System type: type 0x00, no loops, the loop rates")
+TEST_CASE("Built-in descriptors: system rates retired, configurable loop parameters")
 {
-    CHECK(system::kTypeId == kSystemTypeId);
-    CHECK(findType(kTypeTable, kSystemTypeId) == &system::kDesc);
+    CHECK(system::kDesc.type_id == 0);
     CHECK(system::kDesc.loops == 0);
-    CHECK_FALSE(runsIn(system::kDesc, LoopClass::Control));
-
-    const ItemDesc *control = findItem(system::kDesc, system::kControlRateHz);
-    REQUIRE(control != nullptr);
-    CHECK(control->kind == ItemKind::Param);
-    CHECK(control->type == ValueType::U16);
-    CHECK(hasFlag(*control, ItemFlag::LockedWhileArmed));
-    CHECK(control->min_bits == 100);
-    CHECK(control->max_bits == 2000);
-    CHECK(control->default_bits == 1000);
-
-    const ItemDesc *sensor = findItem(system::kDesc, system::kSensorRateHz);
-    REQUIRE(sensor != nullptr);
-    CHECK(sensor->min_bits == 10);
-    CHECK(sensor->max_bits == 500);
-    CHECK(sensor->default_bits == 100);
-
-    for (const ItemDesc &item : system::kDesc.items) {
-        CHECK((item.kind == ItemKind::Param || item.kind == ItemKind::Signal));
-    }
+    CHECK(findItem(system::kDesc, 1) == nullptr);
+    CHECK(findItem(system::kDesc, 2) == nullptr);
+    CHECK(findItem(system::kDesc, system::kStatusRateHz)->default_bits == 10);
+    CHECK(loop::kDesc.type_id == kLoopTypeId);
+    CHECK(loop::kDesc.loops == 0);
+    const auto *rate = findItem(loop::kDesc, loop::kRateHz);
+    REQUIRE(rate);
+    CHECK(rate->min_bits == 1);
+    CHECK(rate->max_bits == 2000);
+    CHECK(hasFlag(*rate, ItemFlag::LockedWhileArmed));
+    CHECK(hasFlag(*findItem(loop::kDesc, loop::kRealtime), ItemFlag::RebootRequired));
 }
 
 TEST_CASE("f32 bits round trip")
@@ -121,10 +111,10 @@ TEST_CASE("Fixture type: ids and tables")
     CHECK(std::strcmp(fx::kDesc.name, "fixture.full") == 0);
     CHECK(fx::kDesc.type_id == 0x01);
     CHECK(fx::kDesc.items.size() == 15); // the retired id has no entry
-    CHECK(runsIn(fx::kDesc, LoopClass::Control));
-    CHECK(runsIn(fx::kDesc, LoopClass::Sensor));
-    CHECK_FALSE(runsIn(fixture_sensor::kDesc, LoopClass::Control));
-    CHECK(runsIn(fixture_sensor::kDesc, LoopClass::Sensor));
+    CHECK(runsIn(fx::kDesc, LoopClass::Realtime));
+    CHECK(runsIn(fx::kDesc, LoopClass::NonRealtime));
+    CHECK_FALSE(runsIn(fixture_sensor::kDesc, LoopClass::Realtime));
+    CHECK(runsIn(fixture_sensor::kDesc, LoopClass::NonRealtime));
     CHECK(fx::kVelKp == 0x0030);
 }
 
@@ -290,7 +280,7 @@ TEST_CASE("Flag and loop helpers")
 {
     CHECK(flagBits() == 0);
     CHECK(flagBits(ItemFlag::RebootRequired, ItemFlag::Persist) == 0x03);
-    CHECK(loopMask(LoopClass::Control, LoopClass::Sensor) == 0x03);
+    CHECK(loopMask(LoopClass::Realtime, LoopClass::NonRealtime) == 0x03);
 }
 
 TEST_CASE("Defs: gpio and ref_order flags, wiring values and categories")

@@ -13,6 +13,7 @@
 #include "core/wiring_order.hpp"
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 
 using namespace testmod;
 using core::Detail;
@@ -21,9 +22,10 @@ using core::Result;
 namespace {
 
 namespace sys = drivelink::protocol::defs::system;
+namespace lp = drivelink::protocol::defs::loop;
 constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
-constexpr uint8_t kCtl = core::kControlLoop;
-constexpr uint8_t kSen = core::kSensorLoop;
+constexpr uint8_t kCtl = core::kFactoryControlLoop;
+constexpr uint8_t kSen = core::kFactorySensorLoop;
 
 /// A core booted on an empty store.
 struct Rig {
@@ -73,10 +75,10 @@ TEST_CASE("Layout: add picks the lowest free id; remove, label and discard")
     CHECK(rig.add(fxs::kTypeId, kSen, "s") == 0); // ids are per type
     REQUIRE(rig.core.removeInstance(fx::kTypeId, 0).ok());
     CHECK(rig.add(fx::kTypeId, kCtl, "c") == 0); // reused
-    CHECK(rig.core.pendingLayout().entries().size() == 3);
+    CHECK(rig.core.pendingLayout().entries().size() == 5);
 
     REQUIRE(rig.core.setLabel(fx::kTypeId, 1, "renamed").ok());
-    CHECK(std::strcmp(rig.core.pendingLayout().entries()[0].label, "renamed") == 0);
+    CHECK(std::strcmp(rig.core.pendingLayout().entries()[2].label, "renamed") == 0);
 
     CHECK(rig.core.removeInstance(fx::kTypeId, 9).detail == Detail::UnknownRef);
     CHECK(rig.core.setLabel(fx::kTypeId, 9, "x").detail == Detail::UnknownRef);
@@ -89,7 +91,7 @@ TEST_CASE("Layout: add picks the lowest free id; remove, label and discard")
     CHECK(rig.core.addInstance(fx::kTypeId, 2, "x", inst).detail == Detail::LoopMismatch);
 
     // Nothing is running: the pending layout waits for SAVE and a reboot.
-    CHECK(rig.core.instanceCount() == 0);
+    CHECK(rig.core.instanceCount() == 2);
     REQUIRE(rig.core.discardPending().ok());
     CHECK_FALSE(rig.core.pendingLayout().active());
     CHECK(rig.core.pendingLayout().entries().empty());
@@ -108,7 +110,7 @@ TEST_CASE("Layout: the capacity bounds the layout")
     const core::Status st = c.addInstance(fx::kTypeId, kCtl, "c", inst);
     CHECK(st.result == Result::NoMemory);
     CHECK(st.detail == Detail::Capacity);
-    CHECK(c.pendingLayout().entries().size() == 2); // undone
+    CHECK(c.pendingLayout().entries().size() == 4); // undone
 }
 
 TEST_CASE("Layout: labels are non-empty, at most 16 characters and unique")
@@ -126,7 +128,7 @@ TEST_CASE("Layout: labels are non-empty, at most 16 characters and unique")
     CHECK(rig.core.setLabel(fx::kTypeId, 0, "b").detail == Detail::LabelInUse);
     CHECK(rig.core.setLabel(fx::kTypeId, 0, "").detail == Detail::BadLabel);
     CHECK(rig.core.setLabel(fx::kTypeId, 0, "b2").ok());
-    CHECK(rig.core.pendingLayout().entries().size() == 2);
+    CHECK(rig.core.pendingLayout().entries().size() == 4);
 }
 
 TEST_CASE("Layout: pins must be allowed and unique; 0xFF claims nothing")
@@ -272,7 +274,7 @@ TEST_CASE("Layout: pending SETs, mixed batches and GET_PENDING")
     REQUIRE(c.params().stage({&live, 1}, applied, p).ok());
     p.loop->runTick(1);
     REQUIRE(c.params().complete(p, 0).ok());
-    const std::array<core::Ref, 3> refs{ref(fx::kTypeId, 0, fx::kLevel), ref(kSys, 0, sys::kControlRateHz),
+    const std::array<core::Ref, 3> refs{ref(fx::kTypeId, 0, fx::kLevel), ref(defs::kLoopTypeId, 0, lp::kRateHz),
                                         ref(fx::kTypeId, 0, fx::kPosition)};
     std::array<uint32_t, 3> vals{};
     st = c.getPending(refs, vals);
@@ -308,7 +310,7 @@ TEST_CASE("Layout: pending_reboot follows the pending copy and the last SAVE")
     core::Core next(testConfig());
     REQUIRE(bootCore(next, rig.store).ok());
     CHECK_FALSE(next.pendingReboot());
-    CHECK(next.instanceCount() == 1);
+    CHECK(next.instanceCount() == 3);
     CHECK(stateOf(next, fx::kTypeId, 0) == core::InstanceState::Running);
     CHECK(getParam(next, fx::kTypeId, 0, fx::kGain) == f(1.5f)); // the defaults
 }
@@ -358,18 +360,20 @@ TEST_CASE("Layout validation and wiring order, directly")
     wired_vals[5] = defs::kNoGpio;
     uint32_t act_vals[4] = {defs::kNoGpio};
     uint32_t fb_vals[4] = {defs::kNoGpio};
+    uint32_t loop_values[9] = {1000, 1, 1, 20, 4096};
     const std::vector<core::LayoutEntry> entries{
         {&act::kDesc, act::kTypeId, 0, kCtl, "a", act_vals},
         {&wd::kDesc, wd::kTypeId, 0, kCtl, "w", wired_vals},
         {&fb::kDesc, fb::kTypeId, 0, kCtl, "f", fb_vals},
+        {&lp::kDesc, defs::kLoopTypeId, 0, core::kNoLoop, "control", loop_values},
     };
-    std::vector<core::Status> st(3);
+    std::vector<core::Status> st(4);
     CHECK(core::validateLayout(entries, {kTestGpioMask, 16}, st) == 0);
-    const std::vector<bool> all(3, true);
+    const std::vector<bool> all{true, true, true, false};
     CHECK(core::creationOrder(entries, all) == std::vector<size_t>{0, 2, 1});
     CHECK(core::tickOrder(entries, all) == std::vector<size_t>{2, 1, 0});
     // Leaving the feedback out drops its link.
-    const std::vector<bool> some{true, true, false};
+    const std::vector<bool> some{true, true, false, false};
     CHECK(core::tickOrder(entries, some) == std::vector<size_t>{1, 0});
 
     // An unknown type in the middle: the entry wired to it misses a dependency.

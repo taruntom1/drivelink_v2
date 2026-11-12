@@ -25,7 +25,7 @@ std::unique_ptr<core::detail::InstanceRecord> makeRecord()
     r->desc = &fx::kDesc;
     r->type_id = fx::kTypeId;
     r->instance = 3;
-    r->loop = core::kControlLoop;
+    r->loop = core::kFactoryControlLoop;
     const size_t n = fx::kDesc.items.size();
     r->bindings = std::make_unique<core::detail::Binding[]>(n);
     r->shadow = std::make_unique<uint32_t[]>(n);
@@ -151,12 +151,12 @@ TEST_CASE("Start: a failed instance is reported with its stage and left out")
         world().mode = k.mode;
         core_os::KvStore store;
         core::Core c(testConfig());
-        bootWith(c, store, {{fx::kTypeId, 2, core::kControlLoop, "m"}});
+        bootWith(c, store, {{fx::kTypeId, 2, core::kFactoryControlLoop, "m"}});
 
-        CHECK(c.instanceCount() == 0);
+        CHECK(c.instanceCount() == 2);
         CHECK(c.instancesFailed() == 1);
         CHECK(stateOf(c, fx::kTypeId, 2) == core::InstanceState::Failed);
-        CHECK(c.loop(core::kControlLoop).instanceCount() == 0);
+        CHECK(c.loop(core::kFactoryControlLoop).instanceCount() == 0);
 
         const auto reports = core_os::native::recordedReports();
         REQUIRE(reports.size() == 1);
@@ -176,7 +176,7 @@ TEST_CASE("Start: a good instance reads its boot values")
     reset();
     core_os::KvStore store;
     core::Core c(testConfig());
-    bootWith(c, store, {{fx::kTypeId, 0, core::kControlLoop, "m"}});
+    bootWith(c, store, {{fx::kTypeId, 0, core::kFactoryControlLoop, "m"}});
     REQUIRE(world().created.size() == 1);
     const FullModule &m = *world().created[0];
     CHECK(m.boot_actuator == 0);

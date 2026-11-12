@@ -38,7 +38,7 @@ struct CoreLink::Impl {
     core_os::PeriodicTask task;
     uart_comm::RxFrame frame{};
     std::array<uint8_t,CONFIG_UART_COMM_MAX_PAYLOAD> reply{};
-    std::array<uint8_t,32> status{};
+    std::array<uint8_t,19 + 5*kMaxLoops> status{};
     CpuLoadSampler cpu;
     uint16_t counter=0;
     int64_t next_status=0;
@@ -72,7 +72,7 @@ struct CoreLink::Impl {
         core.params().get({&rate,1},{&hz,1});
         next_status=now+1000000/hz;
         drivelink::protocol::wire::Writer w(status.data(),status.size());
-        w.appendU8(1);w.appendU8(0);w.appendU16Le(counter++);w.appendU64Le(static_cast<uint64_t>(now));
+        w.appendU8(drivelink::protocol::core_wire::kVersion);w.appendU8(0);w.appendU16Le(counter++);w.appendU64Le(static_cast<uint64_t>(now));
         w.appendU8(0); // disarmed until F4b
         w.appendU8((core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0));
         w.appendU8(diag::activeErrorCount());
@@ -83,7 +83,11 @@ struct CoreLink::Impl {
             static_cast<uint32_t>(ulTaskGetIdleRunTimeCounterForCore(1))});
 #endif
         w.appendU8(load[0]);w.appendU8(load[1]);
-        for(uint8_t i=0;i<kLoopCount;++i) { w.appendU32Le(core.loop(i).stats().overruns); }
+        w.appendU8(static_cast<uint8_t>(core.loopCount()));
+        for(size_t i=0;i<core.loopCapacity();++i) {
+            const auto *loop=core.loopAt(i);if (!loop) { continue; }
+            w.appendU8(loop->id());w.appendU32Le(loop->stats().overruns);
+        }
         w.appendU8(0);
         const auto err=uart.sendData(msg::kStatusStream,status.data(),w.size());
         if(err!=ESP_OK && err!=ESP_ERR_TIMEOUT) { ESP_LOGW(TAG,"status send failed: %s",esp_err_to_name(err)); }

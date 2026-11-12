@@ -91,9 +91,9 @@ Json Client::info()
     Reader r(reply.body.data(), reply.body.size());
     Json j;
     j["protocol_version"] = r.readU8();
-    if (j["protocol_version"] != 1)
+    if (j["protocol_version"] != 2)
     {
-        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v1");
+        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v2");
     }
     j["firmware_version"] = string(r);
     j["build_id"] = string(r);
@@ -104,13 +104,22 @@ Json Client::info()
     j["running_instances"] = r.readU8();
     j["flags"] = r.readU8();
     const auto n = r.readU8();
+    if (n > 8) { malformed(); }
+    std::array<bool, 256> seen{};
     j["loops"] = Json::array();
     for (unsigned i = 0; i < n; ++i)
     {
         Json l;
-        l["id"] = r.readU8();
+        const auto id = r.readU8();
+        if (id == 255 || seen[id]) { malformed(); }
+        seen[id] = true;
+        l["id"] = id;
         l["name"] = string(r);
         l["rate_hz"] = r.readU32Le();
+        const auto flags = r.readU8();
+        if (flags & ~1U) { malformed(); }
+        l["flags"] = flags;
+        l["realtime"] = (flags & 1) != 0;
         j["loops"].push_back(l);
     }
     exact(r);
@@ -423,7 +432,7 @@ Json Client::event(const Frame &frame) const
     const auto version = r.readU8();
     if (frame.type == protocol::defs::msg::kStatusStream)
     {
-        if (version != 1)
+        if (version != 2)
         {
             malformed();
         }
@@ -434,7 +443,16 @@ Json Client::event(const Frame &frame) const
         j["flags"] = r.readU8();
         j["active_errors"] = r.readU8();
         j["cpu_load"] = Json::array({r.readU8(), r.readU8()});
-        j["overruns"] = Json::array({r.readU32Le(), r.readU32Le()});
+        const auto count = r.readU8();
+        if (count > 8) { malformed(); }
+        std::array<bool, 256> seen{};
+        j["overruns"] = Json::array();
+        for (unsigned i=0; i<count; ++i) {
+            const auto id = r.readU8();
+            if (id == 255 || seen[id]) { malformed(); }
+            seen[id] = true;
+            j["overruns"].push_back({{"loop_id", id}, {"overruns", r.readU32Le()}});
+        }
         j["last_disarm_reason"] = r.readU8();
     }
     else if (frame.type == protocol::defs::msg::kDiagEvent)

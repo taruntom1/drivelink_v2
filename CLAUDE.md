@@ -4,7 +4,7 @@ This file is the repo map and holds the rules that cross areas. Each area has it
 
 ## What this is
 
-DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) that drives motors, reads encoders and sensors and runs the control loops, plus host software that talks to the board over a binary UART protocol. F3c adds the first host library, CLI and virtual device; the rest follows [plans/host-architecture.md](plans/host-architecture.md).
+DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) that drives motors, reads encoders and sensors and runs the control loops, plus host software that talks to the board over a binary UART protocol. F3d adds configurable loop instances and core wire v2 to the firmware, host library, CLI and virtual device; the rest follows [plans/host-architecture.md](plans/host-architecture.md).
 
 ## Repo map
 

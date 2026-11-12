@@ -3,7 +3,7 @@
 type: actuator.fixture
 type_id: 0x03
 description: Fixture actuator.
-loops: [control, sensor]
+realtime: any
 items:
   - {id: 0x0001, kind: param, name: pin, type: u8, flags: [reboot_required], gpio: true, description: "Output pin."}
   - {id: 0x0010, kind: param, name: duty_limit, type: f32, min: 0, max: 1, default: 1}

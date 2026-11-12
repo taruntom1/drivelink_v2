@@ -16,7 +16,7 @@ namespace core {
 /// it in a static array). Lookup is a linear scan: there are only a handful.
 class Registry {
 public:
-    /// Take the list. Rejects a null entry (`UnknownType`), type id 0x00
+    /// Take the list. Rejects a null entry (`UnknownType`), type ids 0x00 and 0x05
     /// (`ReservedType`), a null `create` (`NoFactory`) and a type id listed
     /// twice (`DuplicateType`), all as `InvalidArgument` with the entry's
     /// index. On failure the registry stays empty.

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "core/core.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
 #include "core/instance.hpp"
 #include "core/module_type.hpp"
 #include "core/persistence.hpp"
@@ -115,6 +116,7 @@ inline void reset()
     w.objects.clear();
     w.fail_start.clear();
     w.tick_log.clear();
+    w.tick_log.reserve(4096);
     w.create_log.clear();
     core_os::native::resetRecordedDiag();
     core_os::native::resetBootInfo();
@@ -126,6 +128,7 @@ public:
 
     bool start(core::InstanceContext &ctx) override
     {
+        hook_ids.reserve(128);
         boot_actuator = ctx.param(fx::kActuator);
         const StartMode mode = world().mode;
         if (mode == StartMode::FailStage) {
@@ -406,6 +409,18 @@ inline void writeLayout(core_os::KvStore &store, const std::vector<Inst> &insts,
         std::memcpy(s.label, i.label.data(), std::min(i.label.size(), core::kLabelBytes));
         s.pairs = i.values;
         items.push_back(std::move(s));
+    }
+    namespace lp = defs::loop;
+    for (uint8_t id=0; id<2; ++id) {
+        const bool present = std::any_of(items.begin(), items.end(), [id](const auto &i) {
+            return i.type_id == defs::kLoopTypeId && i.instance == id;
+        });
+        if (present) { continue; }
+        core::persist::StoredInstance loop{};
+        loop.type_id=defs::kLoopTypeId; loop.instance=id; loop.loop=core::kNoLoop;
+        std::strcpy(loop.label, id==0 ? "control" : "sensor");
+        loop.pairs={{lp::kRateHz,id==0 ? 1000U : 100U},{lp::kRealtime,id==0 ? 1U : 0U}};
+        items.push_back(std::move(loop));
     }
     REQUIRE(core::persist::saveConfig(store, gen, items, system).ok());
 }
