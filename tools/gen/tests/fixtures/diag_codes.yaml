@@ -1,0 +1,32 @@
+# Fixture diag codes for the generator tests.
+sources:
+  system: 0x01
+  fx_source: 0x20
+
+codes:
+  - source: system
+    code: 0x0001
+    name: Broken
+    severity: error
+    kind: record
+    clears: true
+    arg0: stage
+    arg1: unused
+    description: Something broke.
+
+  - source: fx_source
+    code: 0x0001
+    name: Dropped
+    severity: warning
+    kind: counter
+    description: Something was dropped.
+
+  - source: fx_source
+    code: 0x0002
+    name: Gone
+    severity: error
+    kind: record
+    retired: true
+    arg0: unused
+    arg1: unused
+    description: Retired code.

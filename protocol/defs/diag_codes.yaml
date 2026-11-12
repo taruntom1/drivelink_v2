@@ -1,12 +1,13 @@
 # diag code table: the single source of every error and warning code sent
 # over the control UART. After editing, run:
 #
-#   python tools/gen_diag_codes.py
+#   python tools/gen/gen.py
 #
 # and commit the regenerated files with this one (CI fails if they are stale):
-#   firmware/components/diag/include/diag_codes.hpp
-#   firmware/components/diag/host/diag_codes.py
+#   protocol/include/drivelink/protocol/gen/diag_codes.hpp
+#   protocol/include/drivelink/protocol/gen/registry.hpp (the descriptor hash)
 #   the code table in docs/protocol/diag-codes.md
+#   the descriptor hash line in docs/protocol/registry.md
 #
 # Rules:
 #   - Never renumber or reuse a code. Retire it with `retired: true`; it

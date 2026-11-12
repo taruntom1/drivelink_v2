@@ -67,8 +67,11 @@ jobs:
       - name: Install Ninja and PyYAML
         run: sudo apt-get update && sudo apt-get install -y ninja-build python3-yaml
 
-      - name: Check generated diag code files
-        run: python3 tools/gen_diag_codes.py --check
+      - name: Check the generated headers and docs
+        run: python3 tools/gen/gen.py --check
+
+      - name: Generator unit tests
+        run: python3 -m unittest discover -s tools/gen/tests
 
       - name: Check the Python frame reference (HIL protocol.py)
         run: python3 firmware/test/uart_comm/protocol.py

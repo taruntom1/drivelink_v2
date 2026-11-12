@@ -1,0 +1,60 @@
+# The wire registry: every MSG_TYPE and stream channel range of the protocol.
+# After editing, run:
+#
+#   python tools/gen/gen.py
+#
+# and commit the regenerated files with this one (CI fails if they are stale):
+#   protocol/include/drivelink/protocol/gen/registry.hpp
+#   docs/protocol/registry.md
+#
+# Rules:
+#   - Values are unique, between 0x01 and 0xFE, and fall in the MSG_TYPE
+#     classes of docs/protocol/framing.md: command 0x01-0x3F, response
+#     0x40-0x7F, stream 0x80-0xBF, event 0xC0-0xFE.
+#   - direction: host_to_esp | esp_to_host | both
+#   - legacy: the overhaul step that removes the entry. A legacy entry is
+#     the old manager protocol, kept until that step ports the manager.
+#   - channel_ranges: stream channels the core will hand out in groups. A
+#     range holds no entries, except legacy entries at its tail. They cut
+#     the usable channel count, which the generated header exports. The
+#     count grows when the legacy entries are removed.
+#   - `symbol` names the generated constants: k<symbol>ChannelFirst and
+#     k<symbol>ChannelCount.
+#   - Module type ids live in each type's own file. Only the id reserved for
+#     `system` is set here.
+#   - The time ping (0x02 / 0x42) joins in F8. The legacy IMU response holds
+#     0x42 until F6 removes the IMU manager.
+
+system_type_id: 0x00
+
+msg_types:
+  # -- core (F3 on) --
+  - {name: core_command,           value: 0x01, direction: host_to_esp, description: "Core command (family, op). Not used until F3."}
+  - {name: core_response,          value: 0x41, direction: esp_to_host, description: "Answer to a core command."}
+  - {name: disarm,                 value: 0x03, direction: host_to_esp, description: "DISARM fast path, handled in the RX callback and never queued."}
+  - {name: core_event,             value: 0xC1, direction: esp_to_host, description: "Core events: capture done, test signal done, layout applied, OTA state, arm state change."}
+  - {name: status_stream,          value: 0x80, direction: esp_to_host, description: "System status stream, also the heartbeat."}
+
+  # -- diag --
+  - {name: diag_query,             value: 0x23, direction: host_to_esp, description: "diag query: GetInfo, GetEntries, Clear."}
+  - {name: diag_query_response,    value: 0x63, direction: esp_to_host, description: "Answer to a diag query."}
+  - {name: diag_event,             value: 0xC0, direction: esp_to_host, description: "diag events: Record, CounterDelta, Cleared, Boot."}
+
+  # -- legacy time_sync (removed in F8) --
+  - {name: time_sync_request,      value: 0x20, direction: esp_to_host, legacy: F8, description: "time_sync request, sent by the ESP."}
+  - {name: time_sync_response,     value: 0x60, direction: host_to_esp, legacy: F8, description: "time_sync response, sent by the host."}
+
+  # -- legacy motor_manager (removed in F5b) --
+  - {name: motor_configure,        value: 0x21, direction: host_to_esp, legacy: F5b, description: "motor_manager configure command."}
+  - {name: motor_configure_response, value: 0x61, direction: esp_to_host, legacy: F5b, description: "motor_manager configure response."}
+  - {name: motor_setpoint_stream,  value: 0xBD, direction: host_to_esp, legacy: F5b, description: "motor_manager setpoint stream."}
+  - {name: motor_telemetry_stream, value: 0xBE, direction: esp_to_host, legacy: F5b, description: "motor_manager telemetry stream."}
+
+  # -- legacy IMU (removed in F6) --
+  - {name: imu_configure,          value: 0x22, direction: host_to_esp, legacy: F6, description: "IMU configure command."}
+  - {name: imu_configure_response, value: 0x42, direction: esp_to_host, legacy: F6, description: "IMU configure response."}
+  - {name: imu_stream,             value: 0xBF, direction: esp_to_host, legacy: F6, description: "IMU telemetry stream."}
+
+channel_ranges:
+  - {name: sub_groups, symbol: SubGroup, first: 0x81, last: 0x9F, direction: esp_to_host, description: "Subscription groups 0-30."}
+  - {name: cmd_groups, symbol: CmdGroup, first: 0xA0, last: 0xBF, direction: host_to_esp, description: "Command groups 0-31. The legacy streams hold the top channels until F5b and F6."}
