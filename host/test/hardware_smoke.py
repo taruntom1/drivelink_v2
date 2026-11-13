@@ -66,8 +66,8 @@ def main():
         cli('save'); cli('reboot'); connected()
         assert cli('get', rate_refs[0])['typed_values'] == [target_rate]
         cli('action', f'112:{motor}:768', '0.5'); time.sleep(.15)
-        assert cli('action', f'112:{motor}:768', '0.5')['typed_values'][0] > 0
-        assert cli('action', f'113:{encoder}:768')['typed_values'][0] > 0
+        assert cli('action', f'112:{motor}:768', '0.5')['typed_values'][0] == 0
+        assert cli('action', f'113:{encoder}:768')['typed_values'][0] == 0
         assert cli('action', f'112:{motor}:769', '--blob', '6563686f')['blob_hex'] == '6563686f'
         cli('action', f'114:{imu}:768'); cli('action', f'114:{imu}:769')
         info = cli('info')

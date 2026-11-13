@@ -1,11 +1,13 @@
 #include "mod_mock/modules.hpp"
 #include "core/instance.hpp"
+#include "core_os/diag_sink.hpp"
 #include "drivelink/protocol/gen/type_actuator_mock.hpp"
 #include "drivelink/protocol/gen/type_feedback_mock.hpp"
 #include "drivelink/protocol/gen/type_imu_mock.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <atomic>
 
 namespace mod_mock {
 namespace {
@@ -13,11 +15,12 @@ namespace defs = drivelink::protocol::defs;
 class Actuator final : public core::Instance {
 public:
     bool start(core::InstanceContext &ctx) override {
+        instance_id = ctx.instanceId();
         return ctx.bindParam(1,&tau) && ctx.bindParam(2,&gain) &&
             ctx.bindSignal(256,&velocity) && ctx.bindSignal(257,&position) && ctx.bindInput(512,&duty);
     }
     void tick(const core::TickContext &t) override {
-        const float target = std::clamp(duty,-1.F,1.F)*gain;
+        const float target = stopped.load(std::memory_order_acquire) ? 0.F : std::clamp(duty,-1.F,1.F)*gain;
         const float decay = std::exp(-t.dt_s/tau);
         position += target*t.dt_s + (velocity-target)*tau*(1.F-decay);
         velocity = target+(velocity-target)*decay;
@@ -29,11 +32,18 @@ public:
         } else if (id == 769) {
             velocity = 0; position = 0; duty = 0;
             out.blob_size = in.blob.size(); std::copy(in.blob.begin(),in.blob.end(),out.blob.begin());
+        } else if (id == 770) {
+            const auto code = in.values[0] ? defs::diag::codes::actuator_mock::kFaultInjected : defs::diag::codes::actuator_mock::kArmBlocked;
+            if (in.values[1]) { core_os::raiseDiag(code, instance_id); } else { core_os::clearDiag(code, instance_id); }
         } else { return core::Status::fail(core::Result::InvalidArgument,core::Detail::UnknownRef); }
         return {};
     }
     float velocity = 0, position = 0;
+    void onArmTransition(bool armed) override { duty = 0; stopped.store(!armed, std::memory_order_release); }
+    void emergencyStop() override { stopped.store(true, std::memory_order_release); }
 private:
+    std::atomic<bool> stopped{true};
+    uint8_t instance_id = 255;
     float tau = .1F, gain = 10, duty = 0;
 };
 class Feedback final : public core::Instance {

@@ -8,6 +8,7 @@ idf_component_register(
          "src/group_service.cpp"
          "src/config_blob.cpp"
          "src/core.cpp"
+         "src/safety.cpp"
          "src/crc32.cpp"
          "src/instance.cpp"
          "src/layout_validation.cpp"

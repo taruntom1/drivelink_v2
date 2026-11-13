@@ -69,3 +69,9 @@ pending edits, dirty configuration, invalid layout or safe mode, creates tempora
 mock instances, checks persistence/actions/status/diag and restores the original
 layout, loop rates and system status rate. It never sends the legacy motor commands. Do not use
 this smoke script with motors or sensors attached.
+
+
+F4b uses core v4 for arming, fast DISARM and read-only runtime limits. The CLI
+adds bounded command/keepalive runs and CSV subscriptions; see cli/README.md.
+The library exposes arm/disarm/acknowledgeFault wrappers, and Session routes
+system DISARM over MSG_TYPE 0x03. Command values stay explicit and finite.

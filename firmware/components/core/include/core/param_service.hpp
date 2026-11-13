@@ -116,10 +116,12 @@ public:
     /// How long `set()` waits for a loop: 3 periods plus 5 ms.
     static uint32_t stagingTimeoutUs(uint32_t period_us) { return (3U * period_us) + 5000U; }
 
-    /// The arm state, for `locked_while_armed`. Nothing sets it until F4b's
-    /// arm state machine, except tests.
+    /// The arm state, for `locked_while_armed`. Core uses its authoritative
+    /// commit word; setArmed is also available to isolated service tests.
     void setArmed(bool armed) { m_armed.store(armed, std::memory_order_relaxed); }
-    bool armed() const { return m_armed.load(std::memory_order_relaxed); }
+    void useArmWord(const std::atomic<uint32_t> *word) { m_arm_word = word; }
+    bool armed() const { return m_armed.load(std::memory_order_relaxed) ||
+        (m_arm_word && (m_arm_word->load(std::memory_order_acquire) & 1U)); }
 
     /// Unsaved changes: a `persist` param or the pending layout changed since
     /// the last SAVE.
@@ -148,6 +150,7 @@ private:
     PendingLayout *m_pending = nullptr;
     core_os::Mutex m_mutex; ///< guards the shadows
     std::atomic<bool> m_armed{false};
+    const std::atomic<uint32_t> *m_arm_word = nullptr;
     std::atomic<bool> m_nvs_dirty{false};
 };
 

@@ -5,4 +5,7 @@ namespace core_os::native {
 void failPeriodicStartAfter(int32_t successes);
 void failNextPeriodChange();
 void failPeriodChangeAfter(int32_t successes);
+// Deterministic tests only. Change only while all tasks/timers are stopped.
+void setManualScheduling(bool manual);
+bool manualScheduling();
 }

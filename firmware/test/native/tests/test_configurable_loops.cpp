@@ -151,7 +151,7 @@ TEST_CASE("Configurable loops: one task failure leaves other loops and the link 
     CHECK(c.findRecord(defs::kLoopTypeId,0)->state==core::InstanceState::Failed);
     CHECK(c.findRecord(112,0)->state==core::InstanceState::DependencyMissing);
     CHECK(c.findRecord(114,0)->state==core::InstanceState::Running);
-    core::CommandService service(c,{}); const uint8_t query[]={3,1,1,1};std::array<uint8_t,1024> reply{};
+    core::CommandService service(c,{}); const uint8_t query[]={4,1,1,1};std::array<uint8_t,1024> reply{};
     CHECK(service.handle(query,reply)>6);CHECK(reply[4]==0);
     c.stop();
 }

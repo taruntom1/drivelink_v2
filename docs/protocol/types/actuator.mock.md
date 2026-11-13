@@ -30,3 +30,4 @@ Type id `0x70`. Loops: realtime.
 |---|---|---|---|---|---|---|
 | 0x0300 | `drive` | loop | duty: f32 | velocity: f32, position: f32 | none |  |
 | 0x0301 | `reset` | paused | none | none | both |  |
+| 0x0302 | `diagnostic` | loop | disarms: bool, active: bool | none | none | Raise or clear a mock arm blocker (false) or disarming fault (true). |

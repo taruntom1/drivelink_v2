@@ -58,4 +58,11 @@ struct OneShotState {
     bool cancel = false;
 };
 
+struct PeriodicTimerState {
+    std::thread thread;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool stop = false;
+};
+
 } // namespace core_os::detail

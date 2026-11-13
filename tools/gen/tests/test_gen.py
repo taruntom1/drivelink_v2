@@ -750,3 +750,15 @@ class ConfigurableLoopSchema(TempCase):
         self.assertEqual(loop["loops"], [])
         rate = next(i for i in loop["items"] if i["name"] == "rate_hz")
         self.assertEqual((rate["min"], rate["max"]), (1, 2000))
+
+
+class LatchedDiagnostics(TempCase):
+    def test_latched_has_active_state_and_no_args(self):
+        p = self.defs / "diag_codes.yaml"
+        p.write_text(p.read_text() + "\n  - {source: system, code: 2, name: Fault, severity: error, kind: latched, disarms: true, description: Fault.}\n")
+        self.assertEqual(self.run_gen()[0], 0)
+        text = self.read(f"{GEN_DIR}/diag_codes.hpp")
+        self.assertIn("Latched = 2", text)
+        self.assertIn("CodeKind::Latched, true", text)
+        self.mutate("diag_codes.yaml", "kind: latched, disarms", "kind: latched, arg0: forbidden, disarms")
+        self.assertSpecError("latched codes carry no args")

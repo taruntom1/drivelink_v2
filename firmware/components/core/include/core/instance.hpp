@@ -73,7 +73,12 @@ public:
 
     virtual Status runAction(uint16_t id, const ActionArgs &in, ActionOut &out)
     { return Status::fail(Result::InvalidArgument, Detail::Unsupported); }
-    // onArmTransition and emergencyStop come in F4b.
+    // On the owning loop, after inputs are reset. Both hooks are bounded,
+    // nonblocking and allocation-free. emergencyStop may run concurrently
+    // with tick/onArmTransition on esp_timer's task: use atomic state or a
+    // hardware force, never touch ordinary loop-owned storage from it.
+    virtual void onArmTransition(bool armed) { (void)armed; }
+    virtual void emergencyStop() {}
 };
 
 namespace detail {

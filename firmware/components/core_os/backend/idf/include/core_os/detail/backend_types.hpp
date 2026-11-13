@@ -46,4 +46,13 @@ struct OneShotState {
     void *ctx = nullptr;
 };
 
+struct PeriodicTimerState {
+    esp_timer_handle_t handle = nullptr;
+    OneShotFn fn = nullptr;
+    void *ctx = nullptr;
+    StaticSemaphore_t fence_storage{};
+    SemaphoreHandle_t fence_done = nullptr;
+    esp_timer_handle_t fence = nullptr;
+};
+
 } // namespace core_os::detail

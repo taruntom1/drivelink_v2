@@ -167,7 +167,7 @@ Every protocol on top of the `uart_comm` frame follows these rules:
 - Check every ESP-IDF return value, and log failures with `esp_err_to_name`.
 - **Report errors to the host through diag** (the codes are listed in `docs/protocol/diag-codes.md`):
   - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
-  - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
+  - Frequent events are counted with `DIAG_COUNT`; recoverable active conditions use `DIAG_RAISE` on `kind: latched` codes. These atomic paths and latched `DIAG_CLEAR` are allowed on real-time paths.
   - Each new code goes in `protocol/defs/diag_codes.yaml`, then regenerate. Call sites write `diag::codes::<source>::k<Name>`, through the hand-written shim `firmware/components/diag/include/diag_codes.hpp`.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
   - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`.

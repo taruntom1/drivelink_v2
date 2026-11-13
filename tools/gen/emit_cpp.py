@@ -173,6 +173,7 @@ def gen_diag(defs: dict) -> str:
     w("enum class CodeKind : uint8_t {")
     w("    Record = 0,")
     w("    Counter = 1,")
+    w("    Latched = 2,")
     w("};")
     w("")
     w("/// One code: its slot in the diag table and its fixed attributes.")

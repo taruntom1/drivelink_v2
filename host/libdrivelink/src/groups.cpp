@@ -1,5 +1,6 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/core_codec.hpp"
+#include "drivelink/protocol/gen/type_system.hpp"
 
 namespace drivelink {
 namespace {
@@ -25,17 +26,20 @@ Bytes configBody(uint8_t group, uint8_t loop, uint16_t divider, std::span<const 
 Json Client::groups()
 {
     Json result = {{"groups", Json::array()}};
+    namespace sys = protocol::defs::system;
+    const std::array<Ref, 3> limits{{{0,0,sys::kLimitsSubGroups}, {0,0,sys::kLimitsCmdGroups}, {0,0,sys::kLimitsGroupEntries}}};
+    const auto caps = get(limits)["values"];
+    const auto subs = caps[0].get<unsigned>(), cmds = caps[1].get<unsigned>(), entries = caps[2].get<unsigned>();
+    if (subs > defs::kSubGroupChannelCount || cmds > defs::kCmdGroupChannelCount || !entries || entries > 64) { malformed(); }
+    result["subscription_capacity"] = subs; result["command_capacity"] = cmds; result["entry_capacity"] = entries;
     uint16_t cursor = 0;
     unsigned known_total = 65536;
     do {
         Bytes body{static_cast<uint8_t>(cursor), static_cast<uint8_t>(cursor >> 8)};
         const auto reply = accepted(static_cast<uint8_t>(defs::Family::Group), static_cast<uint8_t>(defs::GroupOp::List), body);
         Reader r(reply.body.data(), reply.body.size());
-        const auto subs = r.readU8(), cmds = r.readU8(), entries = r.readU8();
         const auto total = r.readU16Le(), next = r.readU16Le(); const auto count = r.readU8();
-        if (!r.ok() || subs > defs::kSubGroupChannelCount || cmds > defs::kCmdGroupChannelCount || !entries || entries > 64 ||
-            total != subs + cmds || (known_total != 65536 && (total != known_total || result["subscription_capacity"] != subs ||
-                result["command_capacity"] != cmds || result["entry_capacity"] != entries)) || cursor > total || count > total - cursor ||
+        if (!r.ok() || total != subs + cmds || (known_total != 65536 && total != known_total) || cursor > total || count > total - cursor ||
             (next == 65535 ? cursor + count != total : next != cursor + count || next <= cursor || next >= total)) { malformed(); }
         known_total = total;
         result["subscription_capacity"] = subs; result["command_capacity"] = cmds; result["entry_capacity"] = entries;

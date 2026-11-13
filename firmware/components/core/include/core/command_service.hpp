@@ -9,6 +9,8 @@ struct DeviceInfo {
     bool bench_crash = false;
 };
 enum class AfterReply : uint8_t { None, Reboot, Crash };
+// No service scratch, queue or config-task state. Safe on the RX callback.
+size_t fastDisarm(Core &core, std::span<const uint8_t> request, std::span<uint8_t> response);
 // Config-task owned. Buffers belong to the caller, and are never retained.
 class CommandService {
 public:

@@ -18,4 +18,13 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t in
 /// device.
 void countDiag(DiagCode code, uint32_t n, uint8_t instance = 255);
 
+void raiseDiag(DiagCode code, uint8_t instance = 255);
+void clearDiag(DiagCode code, uint8_t instance = 255);
+bool diagBlocksArm();
+bool diagDisarmsActive();
+using DiagDisarmFn = void (*)(void *, DiagCode);
+// Single device owner. Install before enabling loops; clear after stopping
+// them. Clearing fences every in-flight notification on the config caller.
+void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn);
+
 } // namespace core_os

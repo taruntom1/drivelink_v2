@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xC12BC7B2;
+inline constexpr uint32_t kDescriptorHash = 0x0E3A2FD9;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -72,6 +72,14 @@ enum class Detail : uint8_t {
     ReservedType = 35,
     DuplicateType = 36,
     NoFactory = 37,
+    FaultLatched = 38,
+    BlocksArm = 39,
+    LayoutInvalid = 40,
+    NoCommandGroup = 41,
+    DisarmRaced = 42,
+    FaultActive = 43,
+    MonitorUnavailable = 44,
+    RebootPending = 45,
 };
 
 enum class Family : uint8_t {
@@ -96,6 +104,7 @@ enum class SystemOp : uint8_t {
     FactoryReset = 7,
     Reboot = 8,
     ExitSafeMode = 9,
+    BenchStall = 253,
     BenchCrash = 254,
 };
 
@@ -133,7 +142,7 @@ enum class ActionOp : uint8_t {
     Run = 1,
 };
 
-inline constexpr size_t kDescriptorMinPayload = 128;
+inline constexpr size_t kDescriptorMinPayload = 142;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
 inline constexpr uint8_t kCoreCommand = 0x01;

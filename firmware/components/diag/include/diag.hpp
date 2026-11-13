@@ -41,6 +41,11 @@ void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t inst
 /// Add `n` to a counter code. Use DIAG_COUNT / DIAG_COUNT_N.
 /// Real-time safe: two relaxed atomic operations, from any context.
 void count(Code code, uint32_t n, uint8_t instance = 255);
+void raise(Code code, uint8_t instance = 255);
+bool blocksArm();
+bool disarmsActive();
+using DisarmFn = void (*)(void *, Code);
+void setDisarmHandler(void *ctx, DisarmFn fn);
 
 /// Clear a code's active bit and, if it was set, queue a Cleared event.
 /// Use DIAG_CLEAR. Task context only.
@@ -61,6 +66,9 @@ inline void checkLogFormat(const char *fmt, ...)
 } // namespace detail
 
 } // namespace diag
+
+#define DIAG_RAISE(code) do { static_assert((code).kind == ::diag::CodeKind::Latched); ::diag::raise(code); } while (false)
+#define DIAG_RAISE_INSTANCE(code, instance) do { static_assert((code).kind == ::diag::CodeKind::Latched); ::diag::raise(code, instance); } while (false)
 
 #if CONFIG_DIAG_CONSOLE_LOG
 #define DIAG_DETAIL_LOG_ERROR(fmt, ...) ESP_LOGE(TAG, fmt, ##__VA_ARGS__)
@@ -112,7 +120,7 @@ inline void checkLogFormat(const char *fmt, ...)
 /// The condition behind a `clears: true` code is gone.
 #define DIAG_CLEAR(code)                                                                             \
     do {                                                                                             \
-        static_assert((code).kind == ::diag::CodeKind::Record && (code).clears,                     \
+        static_assert((code).kind != ::diag::CodeKind::Counter && (code).clears,                     \
                       "DIAG_CLEAR needs a record code with clears: true");                           \
         ::diag::clear((code));                                                                       \
     } while (0)

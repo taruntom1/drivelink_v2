@@ -11,6 +11,12 @@ Device-wide settings owned by the core.
 | Id | Name | Type | Unit | Range | Default | Flags | Description |
 |---|---|---|---|---|---|---|---|
 | 0x0003 | `status.rate_hz` | u16 | Hz | 1 .. 100 | 10 | persist |  |
+| 0x0004 | `watchdog_ms` | u16 | ms | 20 .. 1000 | 200 | persist, locked_while_armed |  |
+| 0x0010 | `limits.loops` | u16 |  |  | 0 | read_only |  |
+| 0x0011 | `limits.instances` | u16 |  |  | 0 | read_only |  |
+| 0x0012 | `limits.sub_groups` | u16 |  |  | 0 | read_only |  |
+| 0x0013 | `limits.cmd_groups` | u16 |  |  | 0 | read_only |  |
+| 0x0014 | `limits.group_entries` | u16 |  |  | 0 | read_only |  |
 
 ## Retired ids
 

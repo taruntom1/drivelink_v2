@@ -9,3 +9,4 @@ items:
   - {id: 512, kind: input, name: duty, type: f32, min: -1, max: 1, testgen: true}
   - {id: 768, kind: action, name: drive, runs_in: loop, args: [{name: duty, type: f32}], results: [{name: velocity, type: f32}, {name: position, type: f32}]}
   - {id: 769, kind: action, name: reset, runs_in: paused, blob: both}
+  - {id: 770, kind: action, name: diagnostic, runs_in: loop, args: [{name: disarms, type: bool}, {name: active, type: bool}], description: "Raise or clear a mock arm blocker (false) or disarming fault (true)."}

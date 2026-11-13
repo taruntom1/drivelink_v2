@@ -68,3 +68,21 @@ native_realtime.hpp; vdev leaves it unset and reports counter changes on stderr.
 The default native diagnostic counters use fixed atomic storage, without a
 mutex or an allocation in countDiag. Event::signal is still allowed in ticks.
 `native_task.hpp` supplies one-shot task-start and timer-restart fault injection.
+
+
+F4b adds `periodic_timer.hpp`: PeriodicTimer calls directly on esp_timer's
+priority-22 task every period, independently of loop tasks. Its fence timer
+and semaphore are allocated at setup; stop waits for the callback fence before
+releasing context. The native backend uses a separate thread and runs callbacks
+under the real-time guard. `native_task.hpp::setManualScheduling` is test-only:
+with all owners stopped, tests can select manual Loop/monitor advancement.
+
+The diagnostic sink adds allocation-free `raiseDiag`, `clearDiag`,
+`diagBlocksArm`, `diagDisarmsActive`, and a single-device disarm observer.
+Notification never waits; unregistering waits on the config caller for readers
+to finish. Native/vdev share one fixed atomic diagnostic table. Record sinks
+remain task-only, while raise/clear and safety queries are allowed in ticks.
+
+F4b enables CONFIG_ESP_TASK_WDT_PANIC in firmware defaults and requires the
+initialized panic-reset Task WDT at build time. Existing generated sdkconfigs
+must be regenerated when taking this default.

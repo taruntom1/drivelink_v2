@@ -225,7 +225,7 @@ def load_registry(path: Path) -> dict:
 # -- diag codes ----------------------------------------------------------------
 
 SEVERITIES = {"error": ("Error", 1), "warning": ("Warning", 2)}
-KINDS = {"record": "Record", "counter": "Counter"}
+KINDS = {"record": "Record", "counter": "Counter", "latched": "Latched"}
 MAX_SLOTS = 254  # 0xFF is the "no next page" marker in GetEntries
 
 
@@ -277,11 +277,13 @@ def load_diag(path: Path, module_sources: dict | None = None) -> dict:
         retired = c.get("retired", False)
         if not isinstance(clears, bool) or not isinstance(retired, bool):
             fail(where, "'clears' and 'retired' must be true/false")
-        if c["kind"] == "counter":
-            if clears:
+        if c["kind"] in ("counter", "latched"):
+            if c["kind"] == "counter" and clears:
                 fail(where, "counter codes cannot clear")
             if "arg0" in c or "arg1" in c:
-                fail(where, "counter codes carry no args")
+                fail(where, f"{c['kind']} codes carry no args")
+            if c["kind"] == "latched":
+                clears = True
         else:
             for arg in ("arg0", "arg1"):
                 if arg not in c:

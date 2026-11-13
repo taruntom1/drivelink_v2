@@ -105,5 +105,10 @@ void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
     diag::count(code, n, instance);
 }
+void raiseDiag(DiagCode code, uint8_t instance) { diag::raise(code, instance); }
+void clearDiag(DiagCode code, uint8_t instance) { diag::clear(code, instance); }
+bool diagBlocksArm() { return diag::blocksArm(); }
+bool diagDisarmsActive() { return diag::disarmsActive(); }
+void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn) { diag::setDisarmHandler(ctx, fn); }
 
 } // namespace core_os

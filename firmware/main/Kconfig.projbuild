@@ -11,9 +11,10 @@ menu "DriveLink main"
             DIAG_CONSOLE_LOG is off (no console text).
 
     config CORE_BENCH_CRASH
-        bool "Enable wire crash command (bare-board tests only)"
+        bool "Enable wire crash/stall commands (bare-board tests only)"
         default n
         help
-            Enables system BenchCrash, deliberately aborting after replying.
+            Enables BenchCrash (abort after reply) and BenchStall (deliberate loop
+            busy work for safety monitor and Task WDT tests).
             Never enable in a deployed build.
 endmenu

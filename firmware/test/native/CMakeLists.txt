@@ -36,6 +36,7 @@ target_compile_options(drivelink_protocol PRIVATE -Werror)
 set(CORE_SOURCES
     ${COMPONENTS_DIR}/core_os/backend/native/src/realtime_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
+    ${COMPONENTS_DIR}/core_os/backend/native/src/periodic_timer_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/kv_store_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/native_file.cpp
     ${COMPONENTS_DIR}/core/src/config_blob.cpp
@@ -43,6 +44,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/group_service.cpp
     ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
+    ${COMPONENTS_DIR}/core/src/safety.cpp
     ${COMPONENTS_DIR}/core/src/crc32.cpp
     ${COMPONENTS_DIR}/core/src/instance.cpp
     ${COMPONENTS_DIR}/core/src/layout_validation.cpp
@@ -105,6 +107,7 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_defs.cpp
     tests/test_core_commands.cpp
     tests/test_core_groups.cpp
+    tests/test_core_safety.cpp
     tests/test_configurable_loops.cpp
     tests/test_core_os.cpp
     tests/test_core_registry.cpp

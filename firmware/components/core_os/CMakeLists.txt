@@ -6,6 +6,7 @@ idf_component_register(
     SRCS "backend/idf/src/core_os_idf.cpp"
          "backend/idf/src/kv_store_idf.cpp"
          "backend/idf/src/periodic_task_idf.cpp"
+         "backend/idf/src/periodic_timer_idf.cpp"
     INCLUDE_DIRS "include" "backend/idf/include"
     REQUIRES freertos rtos_util protocol esp_timer
     PRIV_REQUIRES diag log nvs_flash esp_system

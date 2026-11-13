@@ -56,7 +56,7 @@ These rules apply to every component under `firmware/components/`. They add to t
 ## Errors and logging
 
 - Declare exactly one module-level tag per source file: `static const char *const TAG = "<module>";`. The `DIAG_*` macros log with it.
-- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent faults, real-time paths), with a code from `protocol/defs/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
+- Errors and warnings the host should know about go through `DIAG_ERROR` / `DIAG_WARN` (managers) or `DIAG_COUNT` (frequent events) / `DIAG_RAISE` (latched conditions, real-time paths), with a code from `protocol/defs/diag_codes.yaml`. Put the actionable detail (motor id, GPIO, failing stage) in the two args as well as in the text, because with `CONFIG_DIAG_CONSOLE_LOG=n` the text is gone.
 - Hardware layers (`motor_hal`, `rotary_encoder_hal`, `rtos_util`, `pid`) don't depend on `diag`. They return `esp_err_t` / `bool`, and the manager that called them reports. A type whose construction can fail keeps the reason for its caller (`initError()`, `MotorController::hardwareFailure()`), so the report carries the real `esp_err` and stage. The pure `core` doesn't depend on `diag` either: it reports through the `core_os` diag sink.
 - Stage and cause numbers passed as diag args are part of the wire contract: define them as named constants next to the report, document them in `protocol/defs/diag_codes.yaml`, and never renumber them.
 - Make logs actionable: include GPIOs, channels, operator or slot IDs, and the config values involved.

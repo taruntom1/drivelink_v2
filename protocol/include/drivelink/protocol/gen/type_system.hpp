@@ -18,13 +18,25 @@ inline constexpr uint8_t kTypeId = 0x00;
 
 /// param status.rate_hz
 inline constexpr uint16_t kStatusRateHz = 0x0003;
+/// param watchdog_ms
+inline constexpr uint16_t kWatchdogMs = 0x0004;
+/// param limits.loops
+inline constexpr uint16_t kLimitsLoops = 0x0010;
+/// param limits.instances
+inline constexpr uint16_t kLimitsInstances = 0x0011;
+/// param limits.sub_groups
+inline constexpr uint16_t kLimitsSubGroups = 0x0012;
+/// param limits.cmd_groups
+inline constexpr uint16_t kLimitsCmdGroups = 0x0013;
+/// param limits.group_entries
+inline constexpr uint16_t kLimitsGroupEntries = 0x0014;
 
 // Retired ids, never reused: 0x0001 control.rate_hz, 0x0002 sensor.rate_hz
 
 namespace detail {
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 1> kItems{{
+inline constexpr std::array<ItemDesc, 7> kItems{{
     ItemDesc{
         .id = 0x0003,
         .kind = ItemKind::Param,
@@ -38,6 +50,126 @@ inline constexpr std::array<ItemDesc, 1> kItems{{
         .default_bits = 0x0000000A,
         .has_min = true,
         .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0004,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),
+        .name = "watchdog_ms",
+        .unit = "ms",
+        .description = "",
+        .min_bits = 0x00000014,
+        .max_bits = 0x000003E8,
+        .default_bits = 0x000000C8,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0010,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.loops",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0011,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.instances",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0012,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.sub_groups",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0013,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.cmd_groups",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0014,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.group_entries",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
         .enum_values = {},
         .ref = nullptr,
         .runs_in = ActionPlacement::None,

@@ -480,3 +480,8 @@ codes:
   - {source: core, code: 258, name: LoopOverBudget, severity: warning, kind: counter, description: "A loop tick took longer than its period; instance identifies the loop."}
 
   - {source: core, code: 259, name: CommandFrameRejected, severity: warning, kind: counter, description: "A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog."}
+
+  - {source: core, code: 260, name: LoopStalled, severity: error, kind: latched, disarms: true, description: "A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required."}
+  - {source: core, code: 261, name: WatchdogTimeout, severity: warning, kind: latched, disarms: true, description: "No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible."}
+  - {source: actuator_mock, code: 2, name: FaultInjected, severity: error, kind: latched, disarms: true, description: "A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT."}
+  - {source: actuator_mock, code: 3, name: ArmBlocked, severity: warning, kind: latched, blocks_arm: true, description: "A mock diagnostic action raised an arm-blocking condition."}

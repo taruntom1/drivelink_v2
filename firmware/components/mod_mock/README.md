@@ -18,3 +18,10 @@ Descriptors, IDs, params, signals, inputs and actions are generated from the
 three module YAML files. Actions and ticks never allocate, block or log.
 Native command tests and `smoke_core_firmware.py` exercise them. Command inputs
 and arming integrate in F4; F3b's drive action is a simulation test control.
+
+
+F4b gates actuator motion on an atomic emergency force, released by its owning
+loop's arm transition. Disarmed drive actions leave zero target duty. The
+`diagnostic(disarms, active)` loop action raises/clears either a mock arm blocker
+or a disarming latched fault, allowing the real safety path to be tested without
+motors. It is ordinary descriptor-driven behavior in the host.

@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "core/instance.hpp"
+#include "core/arm_state.hpp"
 #include "core_os/event.hpp"
 #include "drivelink/protocol/defs.hpp"
 
@@ -75,13 +77,14 @@ public:
     /// Append an instance. Boot only: the core adds them in tick order.
     /// @return false when the list is full.
     bool addInstance(Instance *instance);
+    void addInputs(const detail::InstanceRecord &record); // boot only
     size_t instanceCount() const { return m_count; }
 
     /// One tick, following the plan's tick order:
     ///   1. increment the heartbeat
     ///   3. swap in a staged batch (Ready → Applying, copy, hooks, Applied,
     ///      signal the config task)
-    ///   5. swap group configs and consume command mailboxes (disarmed in F4a)
+    ///   5. swap group configs and consume command mailboxes with the current arm instant
     ///   7. tick() each instance in list order (the wiring's tick order, fixed at
 ///      boot)
     ///   8. latch due subscription groups on this loop
@@ -90,6 +93,9 @@ public:
     /// work is bounded (kMaxBatchEntries copies plus the instances).
     void runTick(uint32_t elapsed);
     void setGroups(GroupService *groups) { m_groups = groups; } // boot only
+    void setArmState(ArmState *arm) { m_arm = arm; } // boot only
+    void resetInputs();
+    void benchStall(uint32_t duration_us) { m_bench_stall_us.store(duration_us, std::memory_order_release); }
 
     /// `core_os::TickFn` for the loop's PeriodicTask: `ctx` is the Loop.
     static void taskEntry(void *ctx, uint32_t elapsed);
@@ -129,10 +135,15 @@ private:
     std::atomic<bool> m_enabled{false};
     LoopStats *m_published;
     GroupService *m_groups = nullptr;
+    ArmState *m_arm = nullptr;
+    uint32_t m_seen_arm = 0;
 
     std::unique_ptr<Instance *[]> m_instances;
     const size_t m_capacity;
     size_t m_count = 0;
+    struct Input { defs::ValueType type; void *ptr; uint32_t bits; };
+    std::vector<Input> m_inputs;
+    std::atomic<uint32_t> m_bench_stall_us{0};
 
     std::array<StagedEntry, kMaxBatchEntries> m_staging{};
     size_t m_staged_count = 0;

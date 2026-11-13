@@ -29,6 +29,8 @@ inline constexpr uint16_t kDuty = 0x0200;
 inline constexpr uint16_t kDrive = 0x0300;
 /// action reset
 inline constexpr uint16_t kReset = 0x0301;
+/// action diagnostic: Raise or clear a mock arm blocker (false) or disarming fault (true).
+inline constexpr uint16_t kDiagnostic = 0x0302;
 
 namespace detail {
 inline constexpr std::array<ActionArg, 1> kArgs0300{{
@@ -38,9 +40,13 @@ inline constexpr std::array<ActionArg, 2> kResults0300{{
     {"velocity", ValueType::F32, ""},
     {"position", ValueType::F32, ""},
 }};
+inline constexpr std::array<ActionArg, 2> kArgs0302{{
+    {"disarms", ValueType::Bool, ""},
+    {"active", ValueType::Bool, ""},
+}};
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 7> kItems{{
+inline constexpr std::array<ItemDesc, 8> kItems{{
     ItemDesc{
         .id = 0x0001,
         .kind = ItemKind::Param,
@@ -180,6 +186,26 @@ inline constexpr std::array<ItemDesc, 7> kItems{{
         .args = {},
         .results = {},
         .blob = BlobDir::Both,
+    },
+    ItemDesc{
+        .id = 0x0302,
+        .kind = ItemKind::Action,
+        .type = ValueType::None,
+        .flags = flagBits(),
+        .name = "diagnostic",
+        .unit = "",
+        .description = "Raise or clear a mock arm blocker (false) or disarming fault (true).",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::Loop,
+        .args = detail::kArgs0302,
+        .results = {},
+        .blob = BlobDir::None,
     },
 }};
 
