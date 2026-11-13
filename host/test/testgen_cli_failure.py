@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart
 from protocol import UartCommProto, encode_frame
 
 
-def run(cli_path, endpoint, target):
+def check(cli_path, endpoint, command):
     remote = urlparse(endpoint)
     assert remote.scheme == 'tcp'
     stopped = threading.Event()
@@ -66,8 +66,7 @@ def run(cli_path, endpoint, target):
     worker.start()
     try:
         completed = subprocess.run([str(cli_path), '--endpoint', f'tcp://127.0.0.1:{listener.getsockname()[1]}',
-            '--timeout-ms', '250', '--json', 'testgen-run', '0', '20', '5000',
-            '0', target, 'step', '0', '.1', '0', '0', '1000', '1'],
+            '--timeout-ms', '250', '--json', *command],
             capture_output=True, text=True, timeout=15)
     finally:
         stopped.set(); listener.close(); worker.join(12)
@@ -75,4 +74,10 @@ def run(cli_path, endpoint, target):
     result = json.loads(completed.stdout)
     assert completed.returncode == 4 and not result['ok'], (completed.returncode, result)
     assert seen['applied_arm'] and seen['cleanup_disarm'], seen
-    print('PASS testgen-run sends DISARM after an applied ARM reply is lost', flush=True)
+    print(f'PASS {command[0]} sends DISARM after an applied ARM reply is lost', flush=True)
+
+
+def run(cli_path, endpoint, target):
+    check(cli_path, endpoint, ['testgen-run', '0', '20', '5000', '0', target,
+                              'step', '0', '.1', '0', '0', '1000', '1'])
+    check(cli_path, endpoint, ['cmd-run', '0', '20', '50'])

@@ -340,7 +340,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 if (!period || !n || period * 2 >= limit) { usage("period must be less than half watchdog_ms, and count must be positive"); }
                 bool owns_arm = false;
                 try {
-                    if (cmd == "cmd-run") { client.arm(); owns_arm = true; }
+                    if (cmd == "cmd-run") { owns_arm = true; client.arm(); }
                     auto next = std::chrono::steady_clock::now();
                     uint32_t sent = 0;
                     while (sent < n && !interrupted) {
