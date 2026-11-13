@@ -41,6 +41,7 @@ public:
         ctx.bindParam(sys::kLimitsSubGroups, &m_limits[2]);
         ctx.bindParam(sys::kLimitsCmdGroups, &m_limits[3]);
         ctx.bindParam(sys::kLimitsGroupEntries, &m_limits[4]);
+        ctx.bindParam(sys::kLimitsLinkValues, &m_limits[5]);
         return true;
     }
 
@@ -49,7 +50,7 @@ public:
 private:
     uint16_t m_status_rate_hz = 10;
     uint16_t m_watchdog_ms = 200;
-    std::array<uint16_t, 5> m_limits{};
+    std::array<uint16_t, 6> m_limits{};
 };
 
 void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
@@ -85,6 +86,7 @@ CoreConfig normalized(CoreConfig config)
 {
     config.max_loops = std::clamp<uint8_t>(config.max_loops, 1, kMaxLoops);
     config.max_instances = std::clamp<uint16_t>(config.max_instances, 1, 64);
+    config.link_values = std::clamp<uint16_t>(config.link_values, 1, 64);
     return config;
 }
 
@@ -97,7 +99,7 @@ Core::Core(const CoreConfig &config)
       m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
       m_groups(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.subscription_groups,
                m_config.command_groups, m_config.group_entries),
-      m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops})
+      m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values})
 {
     m_params.setPendingLayout(&m_pending);
     m_params.useArmWord(&m_arm.word);
@@ -113,11 +115,11 @@ Core::Core(const CoreConfig &config)
 }
 
 void Core::initializeLimits(detail::InstanceRecord &record) {
-    const std::array<std::pair<uint16_t, uint32_t>, 5> values{{
+    const std::array<std::pair<uint16_t, uint32_t>, 6> values{{
         {sys::kLimitsLoops, m_config.max_loops}, {sys::kLimitsInstances, m_config.max_instances},
         {sys::kLimitsSubGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Subscription))},
         {sys::kLimitsCmdGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Command))},
-        {sys::kLimitsGroupEntries, m_groups.entryCapacity()}}};
+        {sys::kLimitsGroupEntries, m_groups.entryCapacity()}, {sys::kLimitsLinkValues, m_config.link_values}}};
     for (const auto &[id, value] : values) { record.shadow[record.itemIndex(id)] = value; }
 }
 
@@ -174,6 +176,11 @@ Status Core::startInstance(detail::InstanceRecord &record)
         stage = kStartStageNoStage;
     } else {
         for (size_t i = 0; i < record.desc->items.size(); ++i) {
+            if (defs::hasFlag(record.desc->items[i], defs::ItemFlag::Source)) {
+                bool source_bound = false;
+                for (const auto &source : record.sources) { source_bound |= source.param_index == i; }
+                if (!source_bound) { stage = kStartStageUnbound; break; }
+            }
             if (record.desc->items[i].kind != defs::ItemKind::Action && !record.bindings[i].bound) {
                 stage = kStartStageUnbound;
                 break;
@@ -282,7 +289,7 @@ Status Core::boot(core_os::KvStore &store)
         entries[i] = LayoutEntry{desc, s.type_id, s.instance, s.loop, s.label, values[i].data()};
     }
     std::vector<Status> status(n);
-    (void)validateLayout(entries, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops}, status);
+    (void)validateLayout(entries, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values}, status);
 
     // 4. Records.
     std::vector<detail::InstanceRecord *> records(n, nullptr);
@@ -357,6 +364,10 @@ Status Core::boot(core_os::KvStore &store)
         createObject(record);
     }
 
+    // Resolve source consumers before filling tick entries with their fixed
+    // source indices. Loop callbacks remain gated throughout boot.
+    m_sources.build(m_table);
+
     // 6. Fill the loops in tick order.
     for (size_t i = 0; i < n; ++i) {
         include[i] = records[i] != nullptr && records[i]->type_id != defs::kLoopTypeId && records[i]->state == InstanceState::Running;
@@ -387,6 +398,7 @@ void Core::createLoop(detail::InstanceRecord &record)
         m_config.max_instances, periodUsFromHz(instance.rate), &instance.signals);
     m_loops[slot] = m_owned_loops[slot].get();
     m_loops[slot]->setGroups(&m_groups);
+    m_loops[slot]->setSources(&m_sources);
     m_loops[slot]->setArmState(&m_arm);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
     const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,

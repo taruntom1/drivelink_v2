@@ -38,7 +38,7 @@ void sendFrame(Socket &socket, uint8_t type, const Bytes &payload)
 }
 void answer(Socket &socket, const Bytes &request, const Bytes &body = {})
 {
-    Bytes data{4, request[1], request[2], request[3], 0, 0};
+    Bytes data{protocol::core_wire::kVersion, request[1], request[2], request[3], 0, 0};
     data.insert(data.end(), body.begin(), body.end());
     sendFrame(socket, 0x41, data);
 }
@@ -326,14 +326,14 @@ TEST_CASE("diagnostic event decoding preserves instance identity and exact lengt
     CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["instance"] == 7);
 }
 
-TEST_CASE("status v4 carries sparse loop ids and rejects duplicate ids and bad counts")
+TEST_CASE("status v5 carries sparse loop ids and rejects duplicate ids and bad counts")
 {
     FakeDevice device([](Socket &socket) {
         std::array<uint8_t,1> byte{};asio::error_code ec;
         socket.read_some(asio::buffer(byte),ec);
     });
     Session session(device.endpoint()); Client client(session);
-    Bytes payload(18,0); payload[0]=4; payload[17]=2;
+    Bytes payload(18,0); payload[0]=protocol::core_wire::kVersion; payload[17]=2;
     payload.insert(payload.end(), {3,1,0,0,0, 19,9,0,0,0, 0});
     auto status=client.event({128,payload});
     CHECK(status["overruns"][0]["loop_id"]==3);
@@ -344,11 +344,11 @@ TEST_CASE("status v4 carries sparse loop ids and rejects duplicate ids and bad c
     payload[17]=2;payload.push_back(0);CHECK_THROWS_AS(client.event({128,payload}),Error);
 }
 
-TEST_CASE("GET_INFO v4 validates sparse ids, loop flags and duplicate loop identities")
+TEST_CASE("GET_INFO v5 validates sparse ids, loop flags and duplicate loop identities")
 {
     auto body=[](bool duplicate, bool bad_flags) {
         Bytes bytes(256);protocol::wire::Writer w(bytes.data(),bytes.size());
-        w.appendU8(4);protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"build");
+        w.appendU8(protocol::core_wire::kVersion);protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"build");
         w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);w.appendU8(2);w.appendU8(0);w.appendU8(2);
         w.appendU8(3);protocol::core_wire::string(w,"first");w.appendU32Le(1000);w.appendU8(1);
         w.appendU8(duplicate?3:19);protocol::core_wire::string(w,"second");w.appendU32Le(100);w.appendU8(bad_flags?2:0);
@@ -369,13 +369,13 @@ TEST_CASE("command payloads and subscription decoding preserve types and reject 
 {
     const std::array<uint32_t,2> values{std::bit_cast<uint32_t>(1.5F), 42};
     const auto payload=commandPayload(255,65535,values);
-    CHECK(payload==Bytes{4,255,255,255,0,0,192,63,42,0,0,0});
+    CHECK(payload==Bytes{protocol::core_wire::kVersion,255,255,255,0,0,192,63,42,0,0,0});
     CHECK(commandPayload(1,0,{}).size()==4);
     std::array<uint32_t,65> too_many{};CHECK_THROWS_AS(commandPayload(1,0,too_many),Error);
     Json group={{"channel",129},{"id",0},{"epoch",255},{"kind","subscription"},{"configured",true},
         {"refs",Json::array({Json::object(),Json::object()})}};
     Json descriptors=Json::array({{{"value_type",5}},{{"value_type",3}}});
-    Frame frame{129,Bytes{4,255,255,255,1,0,0,0,0,0,0,0,0,0,192,63,42,0,0,0}};
+    Frame frame{129,Bytes{protocol::core_wire::kVersion,255,255,255,1,0,0,0,0,0,0,0,0,0,192,63,42,0,0,0}};
     const auto decoded=decodeSubscription(frame,group,descriptors);
     CHECK(decoded["counter"]==65535);CHECK(decoded["timestamp_us"]==1);
     CHECK(decoded["typed_values"]==Json::array({1.5,42}));
@@ -399,7 +399,7 @@ TEST_CASE("host groups validate pages and mutations and send stream frames on th
         answer(socket,readFrame(socket),{8,129});
         answer(socket,readFrame(socket),{9,130}); // wrong channel for group zero
         const auto command=readFrame(socket);
-        if(command!=Bytes{4,8,99,0,42,0,0,0}) { throw std::runtime_error("bad command payload"); }
+        if(command!=Bytes{protocol::core_wire::kVersion,8,99,0,42,0,0,0}) { throw std::runtime_error("bad command payload"); }
         answer(socket,readFrame(socket)); // drain barrier
         // A non-progressing page must fail rather than loop forever.
         answer(socket,readFrame(socket),{3,1,0,0,0,1,0,0,0,64,0,0,0});

@@ -17,6 +17,7 @@ Device-wide settings owned by the core.
 | 0x0012 | `limits.sub_groups` | u16 |  |  | 0 | read_only |  |
 | 0x0013 | `limits.cmd_groups` | u16 |  |  | 0 | read_only |  |
 | 0x0014 | `limits.group_entries` | u16 |  |  | 0 | read_only |  |
+| 0x0015 | `limits.link_values` | u16 |  |  | 0 | read_only |  |
 
 ## Retired ids
 

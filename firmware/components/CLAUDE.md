@@ -87,3 +87,8 @@ or blocking core_os calls during ticks; fixture observations must be preallocate
 F4a group access transfers slot ownership with one atomic claim and never
 waits or spins in a loop/RX path. Configuration shadows belong only to the
 config caller; signals and inputs are accessed only by the owning loop.
+
+F4c source links use SPSC triple buffers, one per ordered loop pair. Resolve
+and allocate before enabling loops. Never read another loop's plain bindings
+from a consumer tick; only the producer latches those bindings. Sampled
+storage belongs to the consumer loop. ARM/DISARM do not reset it.

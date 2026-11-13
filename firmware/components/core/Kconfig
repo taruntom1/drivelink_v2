@@ -26,6 +26,14 @@ menu "DriveLink core"
             Loop tasks are configured by persisted loop instance parameters.
             With a limit of one, the factory layout contains only control.
 
+    config CORE_MAX_LINK_VALUES
+        int "Maximum distinct source values per ordered loop pair"
+        default 32
+        range 1 64
+        help
+            Each used pair allocates three snapshots at boot. Identical
+            target refs share one value slot within a pair.
+
     config CORE_SUBSCRIPTION_GROUPS
         int "Subscription group pool size"
         default 8

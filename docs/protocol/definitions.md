@@ -9,7 +9,7 @@
 | `system.yaml` | the system items (type `0x00`) | `gen/types.hpp`, `gen/type_system.hpp`, [types/system.md](types/system.md) |
 | `<type>.yaml`, one per module type | the items a module type exposes | `gen/types.hpp`, `gen/type_<type>.hpp`, `types/<type>.md` |
 
-The definitions include three mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
+The definitions include four mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
 
 The headers are in `protocol/include/drivelink/protocol/gen/`, namespace `drivelink::protocol::defs`. Never edit them by hand.
 
@@ -67,6 +67,29 @@ items:
   - {id: 0x0300, kind: action, name: reset_integrators, runs_in: loop}
   - {id: 0x0400, name: old_item, retired: true}
 ```
+
+### Source declarations (F4c)
+
+```yaml
+- {id: 0x0010, kind: source, name: left, type: i32, value_id: 0x0110, age_id: 0x0111}
+```
+
+This expands to a u32 param `left` (`reboot_required`, `Source` flag 0x80,
+persisted), an i32 signal `left.value`, and a u32 microsecond
+signal `left.age_us`. The param defaults to zero (disconnected). The target
+is encoded as `type << 24 | instance << 16 | item_id`; it must name a signal
+or input of the declared value type. See [core.md](core.md#sources-f4c).
+
+Required keys: `id`, `kind`, `name`, `type`, `value_id`, `age_id`.
+Optional keys: `description`, `unit` (on the value signal), and `values`
+(required for enum value types). Source params always persist: their targets
+take effect only after SAVE/reboot. A `persist` override is rejected.
+All scalar and enum value types are supported. Source flags and signal names
+are generated and cannot be overridden. Every expanded id, name and C++
+constant participates in the normal collision checks, including retired ids.
+The suffixes are always `.value` and `.age_us`. Sources are not allowed on
+system, loop, actuator or controller types. Adding one to an actuator or
+controller requires a user decision on safety.
 
 ### Type
 
@@ -131,7 +154,7 @@ Everything else follows the module type rules above: ids, names, value types, li
 
 `protocol/include/drivelink/protocol/defs.hpp` (hand-written) defines what the generated tables hold.
 
-- Enums: `ItemKind`, `ValueType`, `ItemFlag` (bits `RebootRequired` 0x01, `Persist` 0x02, `ReadOnly` 0x04, `LockedWhileArmed` 0x08, `Testgen` 0x10, `Gpio` 0x20, `RefTicksAfter` 0x40), `LoopClass` (bits `Control`, `Sensor`), `ActionPlacement` and `BlobDir`. Their numeric values are not a wire encoding yet. The describe protocol (F3) fixes that.
+- Enums: `ItemKind`, `ValueType`, `ItemFlag` (bits `RebootRequired` 0x01, `Persist` 0x02, `ReadOnly` 0x04, `LockedWhileArmed` 0x08, `Testgen` 0x10, `Gpio` 0x20, `RefTicksAfter` 0x40, `Source` 0x80), `LoopClass` (bits `Realtime`, `NonRealtime`), `ActionPlacement` and `BlobDir`. Their numeric values are the describe protocol wire encoding.
 - `ItemDesc`: `id`, `kind`, `type`, `flags`, `name`, `unit`, `description`, `min_bits`, `max_bits`, `default_bits`, `has_min`, `has_max`, `enum_values`, `ref`, `runs_in`, `args`, `results` and `blob`.
 - `TypeDesc`: `name`, `type_id`, `loops` and `items`.
 - `findItem(type, id)`, `findType(table, type_id)`, `hasFlag`, `runsIn`, `f32Bits` and `f32FromBits`.

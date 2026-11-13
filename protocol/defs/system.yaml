@@ -22,3 +22,4 @@ items:
   - {id: 0x0012, kind: param, name: limits.sub_groups, type: u16, default: 0, flags: [read_only], persist: false}
   - {id: 0x0013, kind: param, name: limits.cmd_groups, type: u16, default: 0, flags: [read_only], persist: false}
   - {id: 0x0014, kind: param, name: limits.group_entries, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0015, kind: param, name: limits.link_values, type: u16, default: 0, flags: [read_only], persist: false}

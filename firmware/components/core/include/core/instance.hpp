@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include "core/sampled.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -109,6 +112,15 @@ struct InstanceRecord {
     /// the config task last applied, or the boot value. The loop never
     /// touches it.
     std::unique_ptr<uint32_t[]> shadow;
+    struct SourceBinding {
+        size_t param_index;
+        defs::ValueType type;
+        void *value;
+        uint32_t *age;
+        bool *valid;
+        bool *fresh;
+    };
+    std::vector<SourceBinding> sources; // bound once at boot
 
     /// Index of item `id` in `desc->items`, or `kNoItem`.
     size_t itemIndex(uint16_t id) const;
@@ -127,6 +139,12 @@ inline constexpr size_t kNoItem = static_cast<size_t>(-1);
 /// bound. `bindParam` writes the param's boot value into the storage.
 class InstanceContext {
 public:
+    template <typename T> bool bindSource(uint16_t id, Sampled<T> *storage)
+    {
+        return bindSourceStorage(id, valueTypeOf<T>(), storage ? &storage->value : nullptr,
+            storage ? &storage->age_us : nullptr, storage ? &storage->valid : nullptr,
+            storage ? &storage->fresh : nullptr);
+    }
     /// `table` resolves `ref()`; without it every ref reads as unwired.
     explicit InstanceContext(detail::InstanceRecord &record, const detail::InstanceTable *table = nullptr)
         : m_record(record), m_table(table)
@@ -185,6 +203,7 @@ public:
     Detail bindError() const { return m_bind_error; }
 
 private:
+    bool bindSourceStorage(uint16_t id, defs::ValueType type, void *value, uint32_t *age, bool *valid, bool *fresh);
     bool bind(uint16_t id, defs::ItemKind kind, defs::ValueType type, void *storage, OnChange hook);
 
     detail::InstanceRecord &m_record;

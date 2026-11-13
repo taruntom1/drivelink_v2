@@ -246,7 +246,7 @@ def slot_text(item: dict, key: str) -> str:
 def flags_expr(item: dict) -> str:
     if not item["flags"]:
         return "flagBits()"
-    return "flagBits(" + ", ".join(f"ItemFlag::{FLAG_ENUM[f]}" for f in item["flags"]) + ")"
+    return "flagBits(" + ", ".join(f"ItemFlag::{'Source' if f == 'source' else FLAG_ENUM[f]}" for f in item["flags"]) + ")"
 
 
 def gen_type(t: dict) -> str:

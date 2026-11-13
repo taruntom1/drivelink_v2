@@ -6,6 +6,7 @@
 idf_component_register(
     SRCS "src/command_service.cpp"
          "src/group_service.cpp"
+         "src/source_service.cpp"
          "src/config_blob.cpp"
          "src/core.cpp"
          "src/safety.cpp"

@@ -13,9 +13,13 @@ list. No HAL or OS dependency beyond core; allocation is at instance creation.
   actuator.mock wiring only; unsupported actuator types fail safely at start.
 - imu.mock (0x72, sensor): constant-rate yaw, wrapped to +/-pi, with sample
   and paused reset actions.
+- fusion.mock (0x73, any loop): sources `feedback` and `imu`, their generated
+  value/age signals, and `combined`, the sum of valid source values (missing
+  values contribute zero). It exercises same-loop and cross-loop sampling
+  without an actuator output. Source targets use packed signal/input refs.
 
 Descriptors, IDs, params, signals, inputs and actions are generated from the
-three module YAML files. Actions and ticks never allocate, block or log.
+four module YAML files. Actions and ticks never allocate, block or log.
 Native command tests and `smoke_core_firmware.py` exercise them. Command inputs
 and arming integrate in F4; F3b's drive action is a simulation test control.
 
