@@ -5,6 +5,7 @@
 # reads Kconfig.
 idf_component_register(
     SRCS "src/capture_service.cpp"
+         "src/testgen_service.cpp"
          "src/command_service.cpp"
          "src/group_service.cpp"
          "src/source_service.cpp"

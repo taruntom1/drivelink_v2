@@ -19,11 +19,11 @@ from __future__ import annotations
 import struct
 import time
 
-CORE_PROTOCOL_VERSION = 6
+CORE_PROTOCOL_VERSION = 7
 
 
 def command_group_payload(epoch: int, counter: int, values: tuple[int, ...] = ()) -> bytes:
-    """Core v6 command stream; values are descriptor-typed raw u32 slots."""
+    """Core v7 command stream; values are descriptor-typed raw u32 slots."""
     if len(values) > 64:
         raise ValueError("at most 64 group entries")
     return struct.pack("<BBH", CORE_PROTOCOL_VERSION, epoch, counter) + struct.pack("<" + "I" * len(values), *values)
@@ -295,7 +295,7 @@ def _frames(data: bytes, count: int) -> list[tuple[int, bytes]]:
 
 
 def _self_test() -> None:
-    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("06ffffff0000c03f2a000000")
+    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("07ffffff0000c03f2a000000")
     assert len(command_group_payload(0, 0)) == 4
     assert len(command_group_payload(0, 0, (0,) * 64)) == 260
     try:

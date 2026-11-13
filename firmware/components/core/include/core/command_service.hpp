@@ -12,6 +12,8 @@ enum class AfterReply : uint8_t { None, Reboot, Crash };
 inline constexpr size_t kCaptureDoneEventBytes = 11;
 // Config task: the CaptureDone event payload once per completed capture, else 0.
 size_t captureDoneEvent(Core &core, std::span<uint8_t> payload);
+size_t testgenDoneEvent(Core &core, std::span<uint8_t> payload);
+inline uint8_t testgenStatusBits(Core &core) { return core.testgen().running() ? 16 : 0; }
 // The capture state for status bits 6..7.
 inline uint8_t captureStatusBits(Core &core)
 { return static_cast<uint8_t>(static_cast<uint8_t>(core.capture().snapshot().state) << 6); }
@@ -27,6 +29,8 @@ private:
     Status dispatch(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
                     drivelink::protocol::wire::Writer &w);
     Status capture(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
+                   drivelink::protocol::wire::Writer &w);
+    Status testgen(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
                    drivelink::protocol::wire::Writer &w);
     Core &m_core;
     DeviceInfo m_info;

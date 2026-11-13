@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xA057D6C3;
+inline constexpr uint32_t kDescriptorHash = 0xF34300B1;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -169,6 +169,35 @@ enum class CaptureState : uint8_t {
 
 enum class CoreEvent : uint8_t {
     CaptureDone = 1,
+    TestgenDone = 2,
+};
+
+enum class TestgenOp : uint8_t {
+    Start = 1,
+    Stop = 2,
+    Status = 3,
+};
+
+enum class TestgenWaveform : uint8_t {
+    Step = 0,
+    Square = 1,
+    Ramp = 2,
+    Sine = 3,
+    ChirpLinear = 4,
+    ChirpLog = 5,
+};
+
+enum class TestgenState : uint8_t {
+    Idle = 0,
+    Running = 1,
+    Done = 2,
+};
+
+enum class TestgenReason : uint8_t {
+    None = 0,
+    Completed = 1,
+    Stopped = 2,
+    Disarmed = 3,
 };
 
 enum class ActionOp : uint8_t {

@@ -82,6 +82,8 @@ public:
 
     /// Loop step 8: record one tick of `loop`. `period_us` is its current period.
     void sample(uint8_t loop, int64_t now_us, uint32_t period_us);
+    // Owning loop only, before sample; never touches another loop's trigger.
+    void testgenStarted(uint8_t loop);
 
 private:
     bool claim() { return !m_owned.test_and_set(std::memory_order_acquire); }

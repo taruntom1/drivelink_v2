@@ -41,6 +41,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core_os/backend/native/src/native_file.cpp
     ${COMPONENTS_DIR}/core/src/config_blob.cpp
     ${COMPONENTS_DIR}/core/src/capture_service.cpp
+    ${COMPONENTS_DIR}/core/src/testgen_service.cpp
     ${COMPONENTS_DIR}/core/src/command_service.cpp
     ${COMPONENTS_DIR}/core/src/group_service.cpp
     ${COMPONENTS_DIR}/core/src/source_service.cpp
@@ -114,6 +115,7 @@ set(TEST_SOURCES
     tests/test_core_commands.cpp
     tests/test_core_groups.cpp
     tests/test_core_capture.cpp
+    tests/test_core_testgen.cpp
     tests/test_core_sources.cpp
     tests/test_core_safety.cpp
     tests/test_configurable_loops.cpp

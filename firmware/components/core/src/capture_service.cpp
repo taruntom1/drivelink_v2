@@ -80,9 +80,9 @@ Status CaptureService::configure(uint8_t loop, uint16_t divider, uint32_t sample
     BoundSignal trigger_binding{};
     switch (trigger.kind) {
     case CaptureTriggerKind::Manual:
+    case CaptureTriggerKind::TestgenStart:
         if (!isZero(trigger.ref) || trigger.edge != CaptureEdge::Rising || trigger.value) { return bad(Detail::BadValue); }
         break;
-    case CaptureTriggerKind::TestgenStart: return bad(Detail::Unsupported);
     case CaptureTriggerKind::ValueChange:
     case CaptureTriggerKind::Threshold: {
         const bool threshold = trigger.kind == CaptureTriggerKind::Threshold;
@@ -233,6 +233,17 @@ bool CaptureService::takeDone(CaptureSnapshot &out)
     if (!m_done_pending.exchange(false, std::memory_order_acq_rel)) { return false; }
     out = snapshot();
     return out.state == CaptureState::Done;
+}
+
+void CaptureService::testgenStarted(uint8_t loop)
+{
+    if (m_state.load(std::memory_order_acquire) != static_cast<uint8_t>(CaptureState::Armed) ||
+        m_loop.load(std::memory_order_relaxed) != loop || !claim()) { return; }
+    if (m_state.load(std::memory_order_acquire) == static_cast<uint8_t>(CaptureState::Armed) &&
+        m_loop.load(std::memory_order_relaxed) == loop && m_trigger.kind == CaptureTriggerKind::TestgenStart) {
+        m_force.store(true, std::memory_order_release);
+    }
+    release();
 }
 
 void CaptureService::sample(uint8_t loop, int64_t now_us, uint32_t period_us)

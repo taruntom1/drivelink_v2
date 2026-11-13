@@ -18,6 +18,7 @@ namespace core {
 class GroupService;
 class SourceService;
 class CaptureService;
+class TestgenService;
 
 inline constexpr uint8_t kFactoryControlLoop = 0;
 inline constexpr uint8_t kFactorySensorLoop = 1;
@@ -97,6 +98,7 @@ public:
     void setGroups(GroupService *groups) { m_groups = groups; } // boot only
     void setSources(SourceService *sources) { m_sources = sources; } // boot only
     void setCapture(CaptureService *capture) { m_capture = capture; } // boot only
+    void setTestgen(TestgenService *testgen) { m_testgen = testgen; } // boot only
     void setArmState(ArmState *arm) { m_arm = arm; } // boot only
     void resetInputs();
     void benchStall(uint32_t duration_us) { m_bench_stall_us.store(duration_us, std::memory_order_release); }
@@ -141,6 +143,7 @@ private:
     GroupService *m_groups = nullptr;
     SourceService *m_sources = nullptr;
     CaptureService *m_capture = nullptr;
+    TestgenService *m_testgen = nullptr;
     ArmState *m_arm = nullptr;
     uint32_t m_seen_arm = 0;
 
@@ -148,7 +151,7 @@ private:
     std::unique_ptr<TickEntry[]> m_instances;
     const size_t m_capacity;
     size_t m_count = 0;
-    struct Input { defs::ValueType type; void *ptr; uint32_t bits; int64_t *receipt_us; };
+    struct Input { defs::ValueType type; void *ptr; uint32_t bits; int64_t *receipt_us; detail::Binding *gate; };
     std::vector<Input> m_inputs;
     std::atomic<uint32_t> m_bench_stall_us{0};
 

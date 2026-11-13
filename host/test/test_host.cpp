@@ -472,3 +472,42 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
     CHECK_THROWS_AS(client.captureConfig(0,1,10,0,bad,refs),Error);
     CHECK_THROWS_AS(client.captureConfig(0,1,10,10,{},refs),Error);
 }
+
+TEST_CASE("testgen SDK encodes requests and rejects malformed status and events")
+{
+    auto status=[] {
+        Bytes b(48); protocol::wire::Writer w(b.data(),b.size());
+        w.appendU8(3); w.appendU8(2); w.appendU8(1); // loop 3, done/completed
+        w.appendU32Le(42); w.appendU32Le(2000); w.appendU32Le(1); w.appendU32Le(protocol::defs::f32Bits(.1F));
+        w.appendU8(32); w.appendU8(0); w.appendU16Le(514); w.appendU8(4);
+        for (float x : {0.F,.1F,.5F,3.F}) { w.appendU32Le(protocol::defs::f32Bits(x)); }
+        w.appendU32Le(2000); w.appendU32Le(1); return b;
+    };
+    FakeDevice device([&](Socket &socket) {
+        const auto start=readFrame(socket);
+        if (start.size()!=34 || start[2]!=7 || start[3]!=1 || start[4]!=3 || start[9]!=4) {
+            throw std::runtime_error("wrong START encoding");
+        }
+        answer(socket,start,Bytes{42,0,0,0});
+        answer(socket,readFrame(socket),status());
+        answer(socket,readFrame(socket)); // STOP
+        auto malformed=status(); malformed.push_back(0);
+        answer(socket,readFrame(socket),malformed);
+        malformed=status(); malformed[1]=9; answer(socket,readFrame(socket),malformed);
+        answer(socket,readFrame(socket),Bytes{1}); // truncated START reply
+    });
+    Session session(device.endpoint()); Client client(session);
+    TestgenConfig c; c.loop=3; c.target={32,0,514}; c.waveform=4;
+    c.amplitude=.1F; c.frequency_start=.5F; c.frequency_end=3; c.duration_ms=2000;
+    CHECK(client.testgenStart(c)["run"]==42);
+    const auto s=client.testgenStatus(3); CHECK(s["state"]=="done"); CHECK(s["reason"]=="completed");
+    CHECK(s["waveform"]=="chirp_linear"); CHECK(s["target"]["item"]==514);
+    CHECK(client.testgenStop(3)["ok"]==true);
+    CHECK_THROWS_AS(client.testgenStatus(3),Error); CHECK_THROWS_AS(client.testgenStatus(3),Error);
+    CHECK_THROWS_AS(client.testgenStart(c),Error);
+    Bytes event{protocol::core_wire::kVersion,2,3,42,0,0,0,2};
+    CHECK(client.event({protocol::defs::msg::kCoreEvent,event})["reason"]=="stopped");
+    event[7]=0; CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
+    event[7]=3; event.push_back(0); CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
+    CHECK(parseTestgenWaveform("chirp_log")==5); CHECK_THROWS_AS(parseTestgenWaveform("invalid"),Error);
+}

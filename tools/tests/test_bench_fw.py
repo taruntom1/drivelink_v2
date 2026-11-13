@@ -23,6 +23,7 @@ class BenchTest(unittest.TestCase):
         self.normal_config.write_text('# CONFIG_CORE_BENCH_CRASH is not set\n')
         self.calls = []
         self.enabled = False
+        self.xip = False
         for name, value in [('FIRMWARE', self.firmware), ('OUT', self.root / 'logs')]:
             patch = mock.patch.object(bench_fw, name, value)
             patch.start()
@@ -34,8 +35,11 @@ class BenchTest(unittest.TestCase):
             build = step.argv[step.argv.index('-B') + 1]
             header = self.firmware / build / 'config' / 'sdkconfig.h'
             header.parent.mkdir(parents=True)
-            header.write_text('#define CONFIG_CORE_BENCH_CRASH 1\n' if self.enabled else
-                              '/* #undef CONFIG_CORE_BENCH_CRASH */\n')
+            content = '#define CONFIG_CORE_BENCH_CRASH 1\n' if self.enabled else '/* #undef CONFIG_CORE_BENCH_CRASH */\n'
+            if self.xip:
+                content += ''.join(f'#define CONFIG_{x} 1\n' for x in (
+                    'SPIRAM_XIP_FROM_PSRAM', 'SPIRAM_FETCH_INSTRUCTIONS', 'SPIRAM_RODATA'))
+            header.write_text(content)
 
     def run_main(self, *args):
         with mock.patch.object(validate, 'idf_env', return_value={'IDF_PATH': 'idf'}), \
@@ -75,6 +79,21 @@ class BenchTest(unittest.TestCase):
         self.run_step = lambda *args, **kwargs: None
         self.assertEqual(self.run_main('normal'), 1)
 
+    def test_xip_is_isolated_and_normal_rejects_xip(self):
+        self.xip = True
+        before = self.normal_config.read_bytes()
+        self.assertEqual(self.run_main('xip'), 0)
+        self.assertIn('SDKCONFIG=build_xip/sdkconfig', self.calls[0].argv)
+        self.assertEqual(self.normal_config.read_bytes(), before)
+        self.calls.clear()
+        self.assertEqual(self.run_main('normal'), 1)
+        self.assertEqual([s.title for s in self.calls], ['build'])
+
+    def test_xip_refuses_missing_xip_or_bench_enabled(self):
+        self.assertEqual(self.run_main('xip'), 1)
+        self.xip = self.enabled = True
+        self.assertEqual(self.run_main('xip'), 1)
+
     def test_build_failure_does_not_flash(self):
         def fail(name, step, log, verbose):
             self.calls.append(step)
@@ -87,7 +106,7 @@ class BenchTest(unittest.TestCase):
         with mock.patch.object(validate, 'idf_env') as export, \
                 mock.patch.object(validate, 'run_step') as run, \
                 contextlib.redirect_stdout(io.StringIO()):
-            for mode in ('bench', 'normal'):
+            for mode in ('bench', 'normal', 'xip'):
                 self.assertEqual(bench_fw.main([mode, '--dry-run']), 0)
             with self.assertRaises(SystemExit) as caught:
                 bench_fw.main(['--help'])

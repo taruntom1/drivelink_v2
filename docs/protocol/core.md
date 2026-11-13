@@ -1,13 +1,14 @@
-# Core protocol v6 (F7a)
+# Core protocol v7 (F7b)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
 the capture family, the core event stream and the status capture state.
-Firmware, host library, CLI and vdev use v6 together; older peers are
+F7b (v7) adds test generation, its completion event and capture trigger.
+Firmware, host library, CLI and vdev use v7 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 6.
+`core_response` (0x41). All integers are little-endian. Version is 7.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -233,8 +234,8 @@ disarmed; a reboot leaves the capture unconfigured.
 
 The trigger is always 10 bytes: `kind u8, Ref, edge u8, value u32`. Kinds:
 manual 0, testgen_start 1, value_change 2, threshold 3. Edges: rising 0,
-falling 1. Fields a kind does not use must be zero. `testgen_start` is refused
-(`Unsupported`) until the test signal generator lands (F7b). `value_change`
+falling 1. Fields a kind does not use must be zero. `testgen_start` fires on
+the next due sample after generation starts on the capture's loop. `value_change`
 fires when the trigger value's 4-byte slot differs from the previous sample's;
 `threshold` fires when the previous sample is below (rising) or above
 (falling) `value` and the current one reaches it, compared in the item's type
@@ -289,10 +290,87 @@ covers the whole time since ARM, including history no longer in the ring.
 ## Core events (0xC1, F7a)
 
 Core events are reliable frames from the device: `version u8, event u8, body`.
-Event ids come from the generated `CoreEvent` enum. F7a sends only
+Event ids come from the generated `CoreEvent` enum. The events are:
 CaptureDone (1), once per completed capture: `recorded u32, trigger_index u32,
 flags u8` (the STATUS flags). CONFIG, ARM and ABORT drop an unsent CaptureDone. A host
 that was not connected learns the result from STATUS.
+
+TestgenDone (2), once per terminated run: `loop u8, run u32, reason u8`
+(8 bytes including the event header). Reasons: Completed 1, Stopped 2,
+Disarmed 3. Each loop retains one pending terminal event; START is refused
+with WrongState until the config task has consumed it, so a new run cannot
+overwrite an unsent result. Transport failure is counted as ResponseDropped;
+STATUS remains authoritative. Completion of one loop does not stop others.
+
+## Test generator (family 7, F7b)
+
+One generator per running loop. Only running f32 inputs flagged Testgen may
+be targeted (currently cascade-controller setpoints and the mock duty input).
+The generator configuration is volatile. START requires Armed and captures
+the exact arm generation; DISARM, faults and the watchdog invalidate it.
+Re-arming never resumes an old test. No generation feeds the watchdog.
+
+| Op | Request body | Accepted response body |
+|---|---|---|
+| START (1) | `loop u8, Ref, waveform u8, offset f32, amplitude f32, frequency_start f32, frequency_end f32, duration_ms u32, repeat u32` (30 bytes) | `run u32` |
+| STOP (2) | `loop u8` | empty |
+| STATUS (3) | `loop u8` | 48-byte body below |
+
+STATUS: `loop u8, state u8, reason u8, run u32, elapsed_ms u32,
+repetitions u32, value f32, Ref, waveform u8, offset f32, amplitude f32,
+frequency_start f32, frequency_end f32, duration_ms u32, repeat u32`.
+States: Idle 0, Running 1, Done 2. Reason is None 0 until Done. Run ids are
+per-loop u32 counters (wrap modulo 2^32), scoped to the current boot; correlate
+events with loop and run. Idle has run/value/progress zero and default
+configuration. Elapsed time and completed repetitions saturate at UINT32_MAX.
+After disarm, STATUS reports Done/Disarmed immediately; the owning loop
+publishes the terminal event when it next runs, which can be later if stalled.
+
+Waveforms: Step 0, Square 1, Ramp 2, Sine 3, ChirpLinear 4, ChirpLog 5.
+All values are offset plus amplitude times the following shape:
+
+- Step: 1 from the first emitted sample through the run.
+- Square: +1 for the first half-period and -1 for the second; 50% duty.
+- Ramp: t/D over one duration D, starting at zero.
+- Sine: sin(2*pi*f0*t), zero phase at start.
+- Linear chirp: sin(2*pi*(f0*t + (f1-f0)*t*t/(2*D))).
+- Log chirp: sin(2*pi*f0*D*expm1(log(f1/f0)*t/D)/log(f1/f0));
+  equal frequencies use the ordinary sine limit.
+
+t is device elapsed time within the current repetition; D is duration_ms/1000.
+Duration must be positive; repeat 1 means once, 0 repeats until STOP/DISARM.
+At a repeat boundary, phase restarts at t=0. At the final duration boundary
+the run ends without emitting an extra endpoint sample: the last emitted
+value is held. Missed ticks advance elapsed time, so they do not slow a
+waveform. All parameters must be finite. Square/sine require 0 < f0 < half
+the loop rate and f1=0; chirps require both frequencies positive and below
+half the loop rate. Step/ramp require f0=f1=0. Clamp each output to descriptor
+limits (and finite f32 range for an unlimited input).
+
+START refuses an active run or pending completion with InvalidArgument/
+WrongState, invalid target kind with WrongKind, an unflagged/non-f32 input
+with Unsupported, cross-loop/unknown loop with LoopMismatch and invalid
+parameters with BadValue. Disarmed START is NotArmed/WrongState. A disarm
+racing activation is NotArmed/DisarmRaced. Refusals do not mutate the run.
+STOP is idempotent. START/STOP apply on the loop through bounded staging;
+Busy/Withdrawn guarantees no effect. Once claimed, wait for a definite result.
+Unknown operation is InvalidArgument/Unsupported; fixed lengths are exact.
+
+The loop suppresses command-group writes and input receipts for the active
+target, retaining other entries and the frame's watchdog feed. Generation
+runs before module ticks, updating the target and its receipt from the actual
+write time. This participates in the controller's fresh-input mode contract.
+On STOP/completion, the last emitted value remains until a command received
+strictly after termination. Earlier mailboxes are discarded for that target
+even if consumed later. A subsequent run on another target preserves the
+old target's handoff boundary. Keepalives never change or refresh setpoints.
+ARM/DISARM reset inputs as before; monitor emergency force is unchanged.
+
+A testgen_start capture trigger requests the next due sample when the first
+generated value is emitted on that capture's loop. A capture divider may
+delay the recorded trigger. Other loops, repeat boundaries and captures
+armed after the start do not trigger it. Capture keeps recording after STOP,
+completion or DISARM.
 
 ## Action (family 8)
 
@@ -318,7 +396,7 @@ loop_count u8 | loop_count * (loop_id u8, overruns u32) | last_disarm_reason u8`
 (19 + 5 * loop_count bytes, at most 59).
 Epoch is 0. Counter wraps at 65536. Only running loops are included; safe mode
 has loop_count zero. Loop IDs may have gaps. Flags: fault_latched 1, blocks_arm_active 2, pending_reboot 4, nvs_dirty 8,
-testgen_running 16 (reserved until F7b), safe_mode 32. Bits 6..7 are the
+testgen_running 16 (any loop effectively generating), safe_mode 32. Bits 6..7 are the
 capture state (Idle 0, Armed 1, Triggered 2, Done 3). CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
 It is 0xFF until the first interval, or when measurement is disabled or the
 runtime clock is not ESP timer. CORE_STATUS_CPU_LOAD defaults on and selects
@@ -364,7 +442,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=6 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=7 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.

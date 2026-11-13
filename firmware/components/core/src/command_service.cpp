@@ -44,6 +44,54 @@ size_t captureDoneEvent(Core &core, std::span<uint8_t> payload)
     w.appendU8(captureFlags(core.capture().info(), snap));
     return w.size();
 }
+size_t testgenDoneEvent(Core &core, std::span<uint8_t> payload)
+{
+    uint8_t loop = 0; TestgenSnapshot snap;
+    if (payload.size() < 8 || !core.testgen().takeDone(loop, snap)) { return 0; }
+    wire::Writer w(payload.data(), payload.size());
+    w.appendU8(cw::kVersion); w.appendU8(static_cast<uint8_t>(defs::CoreEvent::TestgenDone));
+    w.appendU8(loop); w.appendU32Le(snap.run); w.appendU8(static_cast<uint8_t>(snap.reason));
+    return w.size();
+}
+Status CommandService::testgen(cw::Header h, wire::Reader &r, wire::Writer &w)
+{
+    auto &gen = m_core.testgen();
+    const auto loop = r.readU8();
+    if (!r.ok()) { return bad(); }
+    switch (static_cast<defs::TestgenOp>(h.op)) {
+    case defs::TestgenOp::Start: {
+        TestgenConfig c; c.loop = loop; c.target = ref(r);
+        c.waveform = static_cast<TestgenWaveform>(r.readU8());
+        c.offset = defs::f32FromBits(r.readU32Le()); c.amplitude = defs::f32FromBits(r.readU32Le());
+        c.frequency_start = defs::f32FromBits(r.readU32Le()); c.frequency_end = defs::f32FromBits(r.readU32Le());
+        c.duration_ms = r.readU32Le(); c.repeat = r.readU32Le();
+        if (!r.done()) { return bad(); }
+        if (w.remaining() < 4) { return bad(Detail::BufferTooSmall); }
+        uint32_t run = 0; const auto st = gen.start(c, run);
+        if (st.ok()) { w.appendU32Le(run); }
+        return st;
+    }
+    case defs::TestgenOp::Stop:
+        if (!r.done()) { return bad(); }
+        return gen.stop(loop);
+    case defs::TestgenOp::Status: {
+        if (!r.done()) { return bad(); }
+        if (w.remaining() < 48) { return bad(Detail::BufferTooSmall); }
+        TestgenSnapshot snap; const auto st = gen.snapshot(loop, snap);
+        if (!st.ok()) { return st; }
+        const auto &c = *gen.config(loop);
+        w.appendU8(loop); w.appendU8(static_cast<uint8_t>(snap.state)); w.appendU8(static_cast<uint8_t>(snap.reason));
+        w.appendU32Le(snap.run); w.appendU32Le(snap.elapsed_ms); w.appendU32Le(snap.repetitions); w.appendU32Le(snap.value_bits);
+        w.appendU8(c.target.type); w.appendU8(c.target.instance); w.appendU16Le(c.target.id);
+        w.appendU8(static_cast<uint8_t>(c.waveform));
+        w.appendU32Le(defs::f32Bits(c.offset)); w.appendU32Le(defs::f32Bits(c.amplitude));
+        w.appendU32Le(defs::f32Bits(c.frequency_start)); w.appendU32Le(defs::f32Bits(c.frequency_end));
+        w.appendU32Le(c.duration_ms); w.appendU32Le(c.repeat);
+        return {};
+    }
+    default: return bad(Detail::Unsupported);
+    }
+}
 Status CommandService::capture(cw::Header h,wire::Reader &r,wire::Writer &w)
 {
     auto &cap=m_core.capture();
@@ -325,6 +373,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         w.patchU8(2,static_cast<uint8_t>(next<total?next:0xFF));w.patchU8(3,static_cast<uint8_t>(next<total?next>>8:0xFF));w.patchU8(4,count);return {};
     }
     case defs::Family::Capture: return capture(h,r,w);
+    case defs::Family::Testgen: return testgen(h,r,w);
     case defs::Family::Action: {
         if(h.op!=1) { return bad(Detail::Unsupported); }
         const auto target=ref(r);ActionArgs args;

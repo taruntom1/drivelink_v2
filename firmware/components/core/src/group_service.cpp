@@ -59,7 +59,7 @@ Status bindSignal(const detail::InstanceTable &table, const Ref &ref, uint8_t lo
     const uint8_t owner = rec->type_id == defs::kLoopTypeId ? rec->instance : rec->loop;
     if (owner != loop) { return bad(Detail::LoopMismatch); }
     if (rec->state != InstanceState::Running || !rec->bindings[index].bound) { return bad(Detail::DependencyMissing); }
-    out = {ref, &item, rec->bindings[index].ptr, rec->bindings[index].receipt_us};
+    out = {ref, &item, rec->bindings[index].ptr, rec->bindings[index].receipt_us, &rec->bindings[index]};
     return {};
 }
 
@@ -266,6 +266,8 @@ void GroupService::beginTick(uint8_t loop, bool armed, int64_t armed_at_us)
             if (kind == GroupKind::Command && cfg.info.configured && cfg.info.loop == loop && s.command_ready) {
                 if (armed && s.command_us > armed_at_us) {
                     for (size_t j = 0; j < cfg.info.count; ++j) {
+                        const auto *gate = cfg.bindings[j].gate;
+                        if (gate && (gate->testgen_active || s.command_us <= gate->command_after_us)) { continue; }
                         storeValue(cfg.bindings[j].item->type, cfg.bindings[j].storage, s.values[j]);
                         if (cfg.bindings[j].receipt_us) { *cfg.bindings[j].receipt_us = s.command_us; }
                     }

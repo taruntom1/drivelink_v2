@@ -175,5 +175,26 @@ wire_enums:
     Done: 3
   CoreEvent:
     CaptureDone: 1
+    TestgenDone: 2
+  TestgenOp:
+    Start: 1
+    Stop: 2
+    Status: 3
+  TestgenWaveform:
+    Step: 0
+    Square: 1
+    Ramp: 2
+    Sine: 3
+    ChirpLinear: 4
+    ChirpLog: 5
+  TestgenState:
+    Idle: 0
+    Running: 1
+    Done: 2
+  TestgenReason:
+    None: 0
+    Completed: 1
+    Stopped: 2
+    Disarmed: 3
   ActionOp:
     Run: 1

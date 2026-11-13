@@ -1,4 +1,5 @@
 #include "drivelink/client.hpp"
+#include "drivelink/protocol/defs.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <chrono>
@@ -38,6 +39,12 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   capture-arm | capture-trigger | capture-abort | capture-status
   capture-wait [TIMEOUT_MS]   (until done: the CaptureDone event, if seen, and STATUS)
   capture-read [--csv]   (a done capture; CSV time is relative to the trigger)
+  testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT
+  testgen-stop LOOP | testgen-status LOOP | testgen-wait LOOP [TIMEOUT_MS]
+  testgen-run GROUP PERIOD_MS TIMEOUT_MS LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT
+    WAVE: step | square | ramp | sine | chirp_linear | chirp_log
+    Use zero for unused frequencies. REPEAT=0 runs until stopped/disarmed.
+    testgen-run arms, feeds keepalives, runs the test, and disarms on exit.
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
@@ -382,6 +389,83 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         }
         return nullptr;
+    }
+    if (cmd == "testgen-start" || cmd == "testgen-run") {
+        const bool run = cmd == "testgen-run";
+        const size_t first = run ? 4 : 1;
+        if (args.size() != first + 9) { usage("testgen expects LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT"); }
+        TestgenConfig c;
+        c.loop = static_cast<uint8_t>(id(first, 254)); c.target = parseRef(args[first+1]);
+        c.waveform = parseTestgenWaveform(args[first+2]);
+        const Json scalar{{"value_type", 5}}; // f32; parseValue rejects nonfinite/overflow/trailing data
+        c.offset = protocol::defs::f32FromBits(parseValue(scalar, args[first+3]));
+        c.amplitude = protocol::defs::f32FromBits(parseValue(scalar, args[first+4]));
+        c.frequency_start = protocol::defs::f32FromBits(parseValue(scalar, args[first+5]));
+        c.frequency_end = protocol::defs::f32FromBits(parseValue(scalar, args[first+6]));
+        c.duration_ms = id(first+7, UINT32_MAX); c.repeat = id(first+8, UINT32_MAX);
+        if (!run) { return client.testgenStart(c); }
+        const auto group_id = static_cast<uint8_t>(id(1, 255));
+        const auto period = id(2, 1000), timeout = id(3, 3600000);
+        const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1})["values"][0].get<uint32_t>();
+        if (!period || !timeout || period*2 >= limit) { usage("positive timeout/period required; period must be less than half watchdog_ms"); }
+        Json group;
+        const auto listing = client.groups();
+        for (const auto &g : listing["groups"]) {
+            if (g["kind"] == "command" && g["id"] == group_id) { group = g; }
+        }
+        if (group.is_null() || !group["configured"].get<bool>()) { usage("command group is not configured"); }
+        InterruptScope interrupt_scope;
+        bool owns_arm = false;
+        try {
+            client.arm(); owns_arm = true;
+            uint16_t counter = 0;
+            const auto feed = [&] {
+                if (!client.command(group_id, group["epoch"], counter++)) { throw Error(ErrorKind::Connection, "keepalive queue full"); }
+            };
+            feed();
+            const auto started = client.testgenStart(c);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+            auto next = std::chrono::steady_clock::now();
+            Json status;
+            while (!interrupted) {
+                feed(); status = client.testgenStatus(c.loop);
+                if (status["run"] != started["run"]) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
+                if (status["state"] == "done") { break; }
+                if (std::chrono::steady_clock::now() >= deadline) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
+                next += std::chrono::milliseconds(period); std::this_thread::sleep_until(next);
+            }
+            client.disarm(); owns_arm = false;
+            return {{"status", status}, {"interrupted", interrupted != 0}};
+        } catch (...) {
+            if (owns_arm) { try { client.disarm(); } catch (...) {} }
+            throw;
+        }
+    }
+    if (cmd == "testgen-stop" || cmd == "testgen-status") {
+        count(1); const auto loop = static_cast<uint8_t>(id(1, 254));
+        return cmd == "testgen-stop" ? client.testgenStop(loop) : client.testgenStatus(loop);
+    }
+    if (cmd == "testgen-wait") {
+        if (args.size() < 2 || args.size() > 3) { usage("testgen-wait LOOP [TIMEOUT_MS]"); }
+        const auto loop = static_cast<uint8_t>(id(1, 254));
+        const auto timeout = args.size() == 3 ? id(2, 3600000) : 10000;
+        auto status = client.testgenStatus(loop); const auto run = status["run"];
+        if (status["state"] == "idle") { usage("testgen is idle"); }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+        Json done;
+        while (status["state"] == "running") {
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (remaining.count() <= 0) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
+            Frame frame;
+            if (session.nextEvent(frame, std::min(remaining, std::chrono::milliseconds(500))) &&
+                frame.type == protocol::defs::msg::kCoreEvent) {
+                auto event = client.event(frame);
+                if (event["name"] == "testgen_done" && event["loop"] == loop && event["run"] == run) { done = event; }
+            }
+            status = client.testgenStatus(loop);
+            if (status["run"] != run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
+        }
+        return {{"status", status}, {"event", done}};
     }
     if (cmd == "capture-config")
     {
