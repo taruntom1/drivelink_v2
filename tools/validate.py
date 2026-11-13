@@ -123,6 +123,7 @@ def idf_env():
         env['IDF_TOOLS_PATH'] = str(Path.home() / '.espressif')
     if IDF_PYTHON_311.is_dir():
         env['PATH'] = f"{IDF_PYTHON_311};{env['PATH']}"
+    env.pop('MSYSTEM', None)  # set by Git Bash; ESP-IDF refuses to run under MSYS
     marker = '---validate-env---'
     script = (f". '{export}' *> $null; '{marker}'; "
               "Get-ChildItem Env: | ForEach-Object { $_.Name + '=' + $_.Value }")
@@ -130,7 +131,9 @@ def idf_env():
                           env=env, capture_output=True, text=True, errors='replace')
     exported = parse_env(done.stdout, marker) if marker in done.stdout else {}
     if not exported.get('IDF_PYTHON_ENV_PATH'):
-        raise Unavailable('ESP-IDF export failed; see firmware/CLAUDE.md ("Commands")')
+        errors = [line for line in (done.stdout + done.stderr).splitlines() if line.startswith('ERROR')]
+        raise Unavailable('ESP-IDF export failed' + (f' ({errors[0]})' if errors else '')
+                          + '; see firmware/CLAUDE.md ("Commands")')
     return exported
 
 
@@ -258,29 +261,23 @@ def git(*args):
     return subprocess.run(['git', *args], cwd=ROOT, check=True, capture_output=True).stdout
 
 
-def changed_paths(status):
-    """The paths of a `git status --porcelain -z` listing."""
-    fields = status.decode('utf-8', 'surrogateescape').split('\0')
-    paths, i = [], 0
-    while i < len(fields) and fields[i]:
-        paths.append(fields[i][3:])
-        i += 2 if fields[i][0] in 'RC' else 1  # a rename or copy is followed by its source
-    return sorted(paths)
-
-
 def fingerprint(check):
-    """A hash of the files the check covers, or None when it can't be known."""
+    """A hash of the files the check covers, or None when it can't be known.
+
+    It hashes the files as they are on disk (tracked or new, not ignored), so
+    staging or committing them does not change it.
+    """
     if CI:
         return None
     spec = ['.', *(f':(exclude){path}' for path in NOT_CODE), *([] if check.reads_docs else DOCS)]
     try:
-        digest = hashlib.sha256(git('ls-files', '-s', '--', *spec))
-        status = git('status', '--porcelain', '-z', '--untracked-files=all', '--', *spec)
+        listing = git('ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', *spec)
     except (OSError, subprocess.CalledProcessError):
         return None
-    for path in changed_paths(status):
+    digest = hashlib.sha256()
+    for path in sorted(set(listing.decode('utf-8', 'surrogateescape').split('\0')) - {''}):
         file = ROOT / path
-        digest.update(path.encode('utf-8', 'surrogateescape'))
+        digest.update(path.encode('utf-8', 'surrogateescape') + b'\0')
         digest.update(hashlib.sha256(file.read_bytes()).digest() if file.is_file() else b'gone')
     return digest.hexdigest()
 

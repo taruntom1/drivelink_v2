@@ -1,5 +1,6 @@
 """Tests for the pure parts of tools/validate.py."""
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -45,15 +46,62 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(validate.warning_lines(output),
                          ['main.cpp:3:9: warning: unused variable [-Wunused-variable]'])
 
-    def test_changed_paths_skip_the_source_of_a_rename(self):
-        status = b' M tools/validate.py\0R  new name.cpp\0old.cpp\0?? host/x.py\0'
-        self.assertEqual(validate.changed_paths(status),
-                         ['host/x.py', 'new name.cpp', 'tools/validate.py'])
-        self.assertEqual(validate.changed_paths(b''), [])
-
     def test_parse_env_reads_only_what_follows_the_marker(self):
         env = validate.parse_env('noise=1\n--m--\nPath=C:\\a;C:\\b\nIDF_PATH=C:\\idf\nA=b=c\n', '--m--')
         self.assertEqual(env, {'PATH': 'C:\\a;C:\\b', 'IDF_PATH': 'C:\\idf', 'A': 'b=c'})
+
+
+class FingerprintTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        for name, value in (('ROOT', self.root), ('CI', False)):
+            patch = mock.patch.object(validate, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.git('init', '-q')
+        (self.root / 'plans').mkdir()
+        for name in ('a.cpp', 'README.md', 'plans/status.md'):
+            (self.root / name).write_text('first')
+        self.code = validate.Check('code', '', None)
+        self.docs = validate.Check('docs', '', None, reads_docs=True)
+
+    def git(self, *args):
+        subprocess.run(['git', '-c', 'user.name=test', '-c', 'user.email=test@example.com', *args],
+                       cwd=self.root, check=True, capture_output=True)
+
+    def prints(self):
+        return validate.fingerprint(self.code), validate.fingerprint(self.docs)
+
+    def test_staging_and_committing_do_not_change_it(self):
+        before = self.prints()
+        self.assertIsNotNone(before[0])
+        self.git('add', '.')
+        self.assertEqual(self.prints(), before)
+        self.git('commit', '-q', '-m', 'first')
+        self.assertEqual(self.prints(), before)
+
+    def test_only_the_files_a_check_covers_change_it(self):
+        code, docs = self.prints()
+        (self.root / 'plans/status.md').write_text('second')
+        self.assertEqual(self.prints(), (code, docs))
+        (self.root / 'README.md').write_text('second')
+        self.assertEqual(validate.fingerprint(self.code), code)
+        self.assertNotEqual(validate.fingerprint(self.docs), docs)
+        (self.root / 'a.cpp').write_text('second')
+        self.assertNotEqual(validate.fingerprint(self.code), code)
+
+    def test_a_new_or_deleted_file_changes_it(self):
+        self.git('add', '.')
+        self.git('commit', '-q', '-m', 'first')
+        code = validate.fingerprint(self.code)
+        (self.root / 'b.cpp').write_text('new')
+        added = validate.fingerprint(self.code)
+        self.assertNotEqual(added, code)
+        (self.root / 'b.cpp').unlink()
+        (self.root / 'a.cpp').unlink()
+        self.assertNotIn(validate.fingerprint(self.code), (code, added))
 
 
 class RunTest(unittest.TestCase):
