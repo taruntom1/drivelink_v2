@@ -34,6 +34,24 @@ menu "DriveLink core"
             Each used pair allocates three snapshots at boot. Identical
             target refs share one value slot within a pair.
 
+    config CORE_CAPTURE_MAX_REFS
+        int "Maximum signals or inputs per capture"
+        default 16
+        range 1 64
+        help
+            The bindings are fixed arrays for 64 refs; this only limits a
+            capture. The effective limit is also capped by the UART payload
+            size, so a capture STATUS reply fits.
+
+    config CORE_CAPTURE_MAX_KB
+        int "Largest capture ring (KB)"
+        default 4096
+        range 32 16384
+        help
+            The ring is allocated from PSRAM at capture CONFIG. The device
+            reports the smaller of this and the largest free PSRAM block at
+            boot. A board without PSRAM uses a 32 KB internal ring instead.
+
     config CORE_SUBSCRIPTION_GROUPS
         int "Subscription group pool size"
         default 8

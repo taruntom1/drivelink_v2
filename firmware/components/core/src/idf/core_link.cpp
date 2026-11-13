@@ -38,6 +38,7 @@ struct CoreLink::Impl {
     uart_comm::CallbackRegistration disarm_registration;
     std::array<uart_comm::CallbackRegistration, defs::kCmdGroupChannelCount> command_registrations;
     std::array<uint8_t, kGroupStreamBytes> group_stream{};
+    std::array<uint8_t, kCaptureDoneEventBytes> event{};
     core_os::PeriodicTask task;
     uart_comm::RxFrame frame{};
     std::array<uint8_t,CONFIG_UART_COMM_MAX_PAYLOAD> reply{};
@@ -69,6 +70,12 @@ struct CoreLink::Impl {
                 core_os::reboot();
             }
         }
+        if (const auto n=captureDoneEvent(core,event); n) {
+            // Events are reliable frames: the command pool, retried briefly.
+            esp_err_t err=uart.sendCommand(msg::kCoreEvent,event.data(),n);
+            for(unsigned i=0;err==ESP_ERR_NO_MEM && i<100;++i) { vTaskDelay(1);err=uart.sendCommand(msg::kCoreEvent,event.data(),n); }
+            if(err!=ESP_OK) { DIAG_COUNT(diag::codes::core::kResponseDropped); }
+        }
         for (size_t i=0;i<core.groups().capacity(GroupKind::Subscription);++i) {
             const auto n=core.groups().takeStream(static_cast<uint8_t>(i),group_stream);
             if (n) {
@@ -85,7 +92,7 @@ struct CoreLink::Impl {
         w.appendU8(drivelink::protocol::core_wire::kVersion);w.appendU8(0);w.appendU16Le(counter++);w.appendU64Le(static_cast<uint64_t>(now));
         w.appendU8(static_cast<uint8_t>(core.armStatus()));
         w.appendU8((core.armStatus()==ArmStatus::Fault?1:0)|(core.blocksArm()?2:0)|
-            (core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0));
+            (core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0)|captureStatusBits(core));
         w.appendU8(diag::activeErrorCount());
         std::array<uint8_t,2> load{255,255};
 #if CONFIG_CORE_STATUS_CPU_LOAD && CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER && !CONFIG_FREERTOS_SMP && !CONFIG_FREERTOS_UNICORE

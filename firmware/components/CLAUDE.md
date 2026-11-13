@@ -113,3 +113,11 @@ updates through `ActionOut`; the core validates the entire batch, checks the
 owning acknowledged pause, updates hookless live bindings and shadows, and
 marks persistence dirty before resuming the loop. There is no wire metadata
 change and no direct module access to the config shadow.
+
+F7a capture records on its loop under a single-attempt claim and never waits;
+the config caller writes the capture's configuration and ring only while the
+loop leaves them alone (Idle or Done) and publishes them with the Armed
+release store. The ring is the only PSRAM allocation; allocate it only at
+capture CONFIG through `core_os::captureAlloc`. Never put an atomic or other
+shared state in PSRAM (IDF serves atomics there with a critical section);
+assert lock-freedom with `core_os::lockFreeAtomic<T>()`.

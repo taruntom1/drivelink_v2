@@ -24,6 +24,8 @@ The API headers in `include/core_os/` are common to both. Each backend has its o
 | `kv_store.hpp` | `KvStore`: `get(ns, key, buf, len)` (a null `buf` gives the size), `set` (commits), `eraseNamespace`, `listNamespaces(fn, ctx)`; `nvsInit()` |
 | `boot_info.hpp` | `resetWasCrash()`, `loadCrashCount()` / `storeCrashCount()` (RTC no-init), `reboot()` |
 | `one_shot.hpp` | `OneShotTimer`: `start(name, delay_us, fn, ctx, realtime=false)` calls `fn(ctx)` once; `cancel()` |
+| `atomics.hpp` | `lockFreeAtomic<T>()`: always lock-free, or a word-sized atomic served by IDF's IRAM S32C1I helpers when PSRAM makes IDF build with `-mdisable-hardware-atomics` (`kAtomicsOutOfLine`). Atomics must never live in PSRAM |
+| `capture_memory.hpp` | `captureCapacity(limit)`, `captureAlloc(bytes)`, `captureFree(ring)`: the capture ring. IDF: PSRAM through `heap_caps_malloc(MALLOC_CAP_SPIRAM)` (the largest free PSRAM block at boot is the capacity), or a 32 KB internal ring when the board has no PSRAM. Native: malloc, 4 MiB unless `native::setCaptureCapacity`; `native::failNextCaptureAlloc()` (in `native_task.hpp`) injects a failure. Configure time only |
 
 Native only, for the tests:
 - `core_os/native_diag.hpp`: what the diag sink recorded (`recordedReports()`, `reportCount()`, `counterTotal()`, `resetRecordedDiag()`).

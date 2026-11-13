@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v5 before any requested mutation.
+vdev. Every connection checks core v6 before any requested mutation.
 
 F4c source parameters have `is_source: true` in item JSON (flag 0x80).
 Configure them through `set`, using the numeric packed reference
@@ -79,3 +79,13 @@ Read group capacities through `get 0:0:18 0:0:19 0:0:20`; GROUP LIST has no
 capacity prefix, while the Client::groups JSON convenience fields remain.
 `bench-stall LOOP DURATION_MS` is refused by normal firmware and vdev. A
 bench-enabled firmware / vdev --allow-crash schedules a deliberate loop stall.
+
+Capture (F7a): `capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...`
+with TRIGGER `manual`, `value_change REF` or `threshold REF rising|falling VALUE`
+(the value is parsed with the trigger item's descriptor). `capture-arm`,
+`capture-trigger`, `capture-abort` and `capture-status` map to the ops.
+`capture-wait [TIMEOUT_MS]` returns once the capture is done, with the
+CaptureDone event when it arrived during the call. `capture-read` pages every
+sample of a done capture and adds typed rows; `capture-read --csv` prints
+`index,time_us,REF...`, where time is relative to the trigger sample
+(`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.

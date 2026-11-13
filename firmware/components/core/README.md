@@ -98,6 +98,8 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 |---|---|---|
 | `CORE_MAX_INSTANCES` | 16 | 1–64 |
 | `CORE_MAX_LOOPS` | 4 | 1–8 |
+| `CORE_CAPTURE_MAX_REFS` | 16 | 1–64 (also capped so a capture STATUS fits the payload) |
+| `CORE_CAPTURE_MAX_KB` | 4096 | 32–16384 (the largest capture ring) |
 
 `CoreConfig::gpio_allowed_mask` is the ESP32-S3 policy minus the uart_comm TX/RX pins (`CONFIG_UART_COMM_TX_PIN` / `_RX_PIN`). `crash_clear_delay_us` is 30 s.
 
@@ -273,3 +275,33 @@ Loop actions cannot request these updates.
 Calibration uses ordinary persistent typed params, so SAVE's existing complete-
 generation A/B transaction, pending-layout origin values, REVERT, removal and
 factory reset require no new blob format. Details: `docs/protocol/imu.md`.
+
+## Capture (F7a)
+
+`CaptureService` (`core/capture_service.hpp`, `Core::capture()`) is the one
+capture of the device; the wire contract is in `docs/protocol/core.md`.
+
+- **Memory.** Bindings are fixed arrays for 64 refs; `capture_refs` only
+  limits a capture. The ring is allocated at CONFIG through `core_os::captureAlloc` (PSRAM,
+  or 32 KB internal without it) and freed only by the next CONFIG or the
+  destructor. `capacityBytes()` is fixed at construction from
+  `core_os::captureCapacity(capture_max_bytes)`.
+- **Recording.** `Loop::runTick` calls `sample(loop, tick_start, period)` after
+  the groups' latch. The capture's loop records only in Armed/Triggered, under
+  a single-attempt claim: it never waits, allocates or logs, and a lost claim
+  (only a concurrent ABORT) marks the capture irregular. The loop alone moves
+  Armed → Triggered → Done.
+- **Config side.** CONFIG and ARM refuse an active capture before touching the
+  claim, so a refusal never costs the loop a tick; ARM publishes Armed after
+  releasing it. CONFIG, ARM and ABORT take the claim by spinning, then with a
+  few bounded sleeps (`Busy/StagingBusy` if the loop never lets go). The configuration, ring and
+  loop-owned counters are written only while the loop leaves them alone (Idle
+  or Done) and are published by the Armed release store. TRIGGER only sets an
+  atomic request. STATUS reads atomics; the trigger timestamp is read only
+  after an acquire of Triggered/Done. READ is allowed only in Done.
+- **Events.** `takeDone()` returns a completed capture once (Done is stored
+  before the pending flag); `captureDoneEvent()` encodes it and
+  `captureStatusBits()` gives status bits 6..7. `CoreLink` and the vdev send
+  the event on 0xC1 from their config task.
+- `bindSignal()` (group_service) is the shared ref resolution of groups and
+  capture.

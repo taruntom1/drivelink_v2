@@ -94,7 +94,8 @@ Json Client::info()
     j["protocol_version"] = r.readU8();
     if (j["protocol_version"] != protocol::core_wire::kVersion)
     {
-        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v4");
+        throw Error(ErrorKind::Protocol,
+                    "incompatible core protocol; expected v" + std::to_string(protocol::core_wire::kVersion));
     }
     j["firmware_version"] = string(r);
     j["build_id"] = string(r);
@@ -125,6 +126,7 @@ Json Client::info()
     }
     exact(r);
     m_session.setMaxPayload(cap);
+    m_max_payload = cap;
     return j;
 }
 Json Client::pages(uint8_t family, uint8_t op, const Bytes &prefix)
@@ -461,6 +463,25 @@ Json Client::event(const Frame &frame) const
             j["overruns"].push_back({{"loop_id", id}, {"overruns", r.readU32Le()}});
         }
         j["last_disarm_reason"] = r.readU8();
+    }
+    else if (frame.type == protocol::defs::msg::kCoreEvent)
+    {
+        if (version != protocol::core_wire::kVersion)
+        {
+            malformed();
+        }
+        const auto event = r.readU8();
+        j["event"] = event;
+        if (event != static_cast<uint8_t>(protocol::defs::CoreEvent::CaptureDone))
+        {
+            malformed();
+        }
+        j["name"] = "capture_done";
+        j["recorded"] = r.readU32Le();
+        j["trigger_index"] = r.readU32Le();
+        const auto flags = r.readU8();
+        if (flags > 3) { malformed(); }
+        j["irregular"] = (flags & 2) != 0;
     }
     else if (frame.type == protocol::defs::msg::kDiagEvent)
     {

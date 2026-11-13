@@ -30,6 +30,73 @@ bool label(wire::Reader &r, char (&s)[kLabelBytes+1]) {
 }
 void page(wire::Writer &w,uint16_t total,uint16_t next,uint8_t n) { w.appendU16Le(total);w.appendU16Le(next);w.appendU8(n); }
 }
+static uint8_t captureFlags(const CaptureInfo &info, const CaptureSnapshot &snap)
+{
+    return static_cast<uint8_t>((info.configured ? 1 : 0) | (snap.irregular ? 2 : 0));
+}
+size_t captureDoneEvent(Core &core, std::span<uint8_t> payload)
+{
+    CaptureSnapshot snap;
+    if (payload.size() < kCaptureDoneEventBytes || !core.capture().takeDone(snap)) { return 0; }
+    wire::Writer w(payload.data(), payload.size());
+    w.appendU8(cw::kVersion); w.appendU8(static_cast<uint8_t>(defs::CoreEvent::CaptureDone));
+    w.appendU32Le(snap.recorded); w.appendU32Le(snap.trigger_index);
+    w.appendU8(captureFlags(core.capture().info(), snap));
+    return w.size();
+}
+Status CommandService::capture(cw::Header h,wire::Reader &r,wire::Writer &w)
+{
+    auto &cap=m_core.capture();
+    switch (static_cast<defs::CaptureOp>(h.op)) {
+    case defs::CaptureOp::Config: {
+        const auto loop=r.readU8();const auto divider=r.readU16Le();
+        const auto samples=r.readU32Le();const auto pre=r.readU32Le();
+        CaptureTrigger trigger;
+        const auto kind=r.readU8();trigger.ref=ref(r);const auto edge=r.readU8();trigger.value=r.readU32Le();
+        const auto count=r.readU8();
+        if(!r.ok() || r.remaining()!=4U*count) { return bad(); }
+        if(count>kMaxCaptureRefs) { return bad(Detail::BatchTooLarge); }
+        if(kind>static_cast<uint8_t>(CaptureTriggerKind::Threshold) || edge>static_cast<uint8_t>(CaptureEdge::Falling)) { return bad(); }
+        trigger.kind=static_cast<CaptureTriggerKind>(kind);trigger.edge=static_cast<CaptureEdge>(edge);
+        for(size_t i=0;i<count;++i) { m_refs[i]=ref(r); }
+        return cap.configure(loop,divider,samples,pre,trigger,{m_refs.data(),count});
+    }
+    case defs::CaptureOp::Arm: if(!r.done()) { return bad(); } return cap.arm();
+    case defs::CaptureOp::Abort: if(!r.done()) { return bad(); } return cap.abort();
+    case defs::CaptureOp::Trigger: if(!r.done()) { return bad(); } return cap.trigger();
+    case defs::CaptureOp::Status: {
+        if(!r.done()) { return bad(); }
+        const auto &info=cap.info();const auto snap=cap.snapshot();
+        if(w.remaining()<44U+4U*info.count) { return bad(Detail::BufferTooSmall); }
+        w.appendU8(static_cast<uint8_t>(snap.state));w.appendU8(captureFlags(info,snap));
+        w.appendU8(info.loop);w.appendU16Le(info.divider);w.appendU32Le(info.samples);w.appendU32Le(info.pre_trigger);
+        w.appendU8(static_cast<uint8_t>(info.trigger.kind));
+        w.appendU8(info.trigger.ref.type);w.appendU8(info.trigger.ref.instance);w.appendU16Le(info.trigger.ref.id);
+        w.appendU8(static_cast<uint8_t>(info.trigger.edge));w.appendU32Le(info.trigger.value);
+        w.appendU32Le(snap.recorded);w.appendU32Le(snap.trigger_index);w.appendU32Le(snap.period_us);
+        w.appendU64Le(static_cast<uint64_t>(snap.trigger_us));w.appendU8(info.count);
+        for(size_t i=0;i<info.count;++i) {
+            w.appendU8(info.refs[i].type);w.appendU8(info.refs[i].instance);w.appendU16Le(info.refs[i].id);
+        }
+        return {};
+    }
+    case defs::CaptureOp::Read: {
+        const auto first=r.readU32Le();const auto count=r.readU16Le();
+        if(!r.done() || !count) { return bad(); }
+        if(cap.snapshot().state!=CaptureState::Done) { return bad(Detail::WrongState); }
+        const size_t n=cap.info().count;
+        const size_t room=std::min<size_t>(kCaptureReadBytes,w.remaining()>6?w.remaining()-6:0);
+        if(!n || static_cast<size_t>(count)*n*4U>room) { return bad(Detail::BufferTooSmall); }
+        const auto values=std::span(m_capture_values.data(),static_cast<size_t>(count)*n);
+        const auto st=cap.read(first,count,values);
+        if(!st.ok()) { return st; }
+        w.appendU32Le(first);w.appendU16Le(count);
+        for(auto v:values) { w.appendU32Le(v); }
+        return {};
+    }
+    default: return bad(Detail::Unsupported);
+    }
+}
 size_t CommandService::handle(std::span<const uint8_t> request,std::span<uint8_t> response)
 {
     m_after=AfterReply::None;
@@ -60,7 +127,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         switch (static_cast<defs::SystemOp>(h.op)) {
         case defs::SystemOp::GetInfo:
             w.appendU8(cw::kVersion);cw::string(w,m_info.version);cw::string(w,m_info.build_id);
-            w.appendU32Le(defs::kDescriptorHash);w.appendU32Le(0); // capture capacity, F7
+            w.appendU32Le(defs::kDescriptorHash);w.appendU32Le(static_cast<uint32_t>(m_core.capture().capacityBytes()));
             w.appendU16Le(m_info.max_payload);w.appendU8(static_cast<uint8_t>(m_core.instanceCount()));
             w.appendU8((m_core.pendingReboot()?1:0)|(m_core.layoutInvalid()?2:0)|
                 (m_core.configLoadedFromNvs()?4:0)|(m_core.safeMode()?8:0));
@@ -257,6 +324,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         if(next<total && count==0) { return bad(Detail::BufferTooSmall); }
         w.patchU8(2,static_cast<uint8_t>(next<total?next:0xFF));w.patchU8(3,static_cast<uint8_t>(next<total?next>>8:0xFF));w.patchU8(4,count);return {};
     }
+    case defs::Family::Capture: return capture(h,r,w);
     case defs::Family::Action: {
         if(h.op!=1) { return bad(Detail::Unsupported); }
         const auto target=ref(r);ActionArgs args;

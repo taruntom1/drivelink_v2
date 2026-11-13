@@ -9,6 +9,12 @@ struct DeviceInfo {
     bool bench_crash = false;
 };
 enum class AfterReply : uint8_t { None, Reboot, Crash };
+inline constexpr size_t kCaptureDoneEventBytes = 11;
+// Config task: the CaptureDone event payload once per completed capture, else 0.
+size_t captureDoneEvent(Core &core, std::span<uint8_t> payload);
+// The capture state for status bits 6..7.
+inline uint8_t captureStatusBits(Core &core)
+{ return static_cast<uint8_t>(static_cast<uint8_t>(core.capture().snapshot().state) << 6); }
 // No service scratch, queue or config-task state. Safe on the RX callback.
 size_t fastDisarm(Core &core, std::span<const uint8_t> request, std::span<uint8_t> response);
 // Config-task owned. Buffers belong to the caller, and are never retained.
@@ -20,6 +26,8 @@ public:
 private:
     Status dispatch(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
                     drivelink::protocol::wire::Writer &w);
+    Status capture(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
+                   drivelink::protocol::wire::Writer &w);
     Core &m_core;
     DeviceInfo m_info;
     AfterReply m_after = AfterReply::None;
@@ -27,5 +35,6 @@ private:
     std::array<Ref,kMaxBatchEntries> m_refs{};
     std::array<uint32_t,kMaxBatchEntries> m_values{};
     ActionOut m_action_out{};
+    std::array<uint32_t,kCaptureReadBytes/4> m_capture_values{};
 };
 }

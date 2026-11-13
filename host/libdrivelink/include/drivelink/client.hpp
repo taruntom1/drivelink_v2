@@ -14,6 +14,15 @@ struct Ref
     uint8_t type = 0, instance = 0;
     uint16_t item = 0;
 };
+// Capture trigger: kind manual 0, testgen_start 1, value_change 2, threshold 3;
+// edge rising 0, falling 1; value is the threshold slot bits.
+struct CaptureTrigger
+{
+    uint8_t kind = 0;
+    Ref ref{};
+    uint8_t edge = 0;
+    uint32_t value = 0;
+};
 // First service slice, without a cached device model. All descriptors come
 // from the connected device. The caller owns the Session and serializes Client.
 class Client
@@ -49,12 +58,25 @@ class Client
     Json subEnable(uint8_t group, bool enabled);
     Json groupClear(uint8_t group, bool command);
     bool command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values = {});
+    Json captureConfig(uint8_t loop, uint16_t divider, uint32_t samples, uint32_t pre_trigger,
+                       const CaptureTrigger &trigger, std::span<const Ref> refs);
+    Json captureArm();
+    Json captureTrigger();
+    Json captureAbort();
+    Json captureStatus();
+    // One READ page: `width` is the configured ref count.
+    Json captureRead(uint32_t first, uint16_t count, size_t width);
+    // STATUS of a Done capture plus every sample (`data`, rows of slot bits),
+    // paged within the device payload (call info() first to learn it).
+    Json captureData();
 
   private:
     Reply accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
     Json pages(uint8_t family, uint8_t op, const Bytes &prefix = {});
     Json groupMutation(uint8_t op, const Bytes &body);
+    Json captureOp(uint8_t op);
     Session &m_session;
+    uint16_t m_max_payload = 1024;
 };
 // Descriptor types use the existing ValueType wire encoding. These functions
 // reject truncation, trailing junk, overflow, invalid bool/enum, NaN and Inf.
@@ -63,6 +85,7 @@ Json valueJson(uint8_t type, uint32_t bits);
 Bytes parseHex(const std::string &text);
 std::string hex(std::span<const uint8_t> bytes);
 Ref parseRef(const std::string &text);
+uint8_t parseCaptureTrigger(const std::string &text); // manual, value_change, threshold, ...
 uint32_t parseUnsigned(const std::string &text, uint32_t max = UINT32_MAX);
 Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> values);
 // Returns null for a stale epoch/channel. Descriptor order matches group refs.

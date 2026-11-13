@@ -326,6 +326,7 @@ struct Server
         }
         if (peer && !peer->closed)
         {
+            if (const auto n = core::captureDoneEvent(*core, reply); n) { peer->send(msg::kCoreEvent, reply.data(), n); }
             for (size_t i=0;i<core->groups().capacity(core::GroupKind::Subscription);++i) {
                 const auto n=core->groups().takeStream(static_cast<uint8_t>(i),reply);
                 if (n) { peer->send(static_cast<uint8_t>(p::defs::kSubGroupChannelFirst+i),reply.data(),n,core::AfterReply::None,true); }
@@ -345,7 +346,7 @@ struct Server
                 w.appendU8(static_cast<uint8_t>(core->armStatus()));
                 w.appendU8((core->armStatus() == core::ArmStatus::Fault ? 1 : 0) | (core->blocksArm() ? 2 : 0) |
                            (core->pendingReboot() ? 4 : 0) | (core->nvsDirty() ? 8 : 0) |
-                           (core->safeMode() ? 32 : 0));
+                           (core->safeMode() ? 32 : 0) | core::captureStatusBits(*core));
                 w.appendU8(diag->activeErrors());
                 w.appendU8(255);
                 w.appendU8(255);

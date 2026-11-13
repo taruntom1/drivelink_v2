@@ -4,7 +4,7 @@
 sensor loop at 100 Hz. `imu.mock` (`0x72`) provides the same calibration and
 signal contract on vdev and the bare board. Discover items through the ordinary
 core describe family; the generated [BNO055](types/imu.bno055.md) and
-[mock](types/imu.mock.md) tables hold their IDs. Core stays v5 and diag v3.
+[mock](types/imu.mock.md) tables hold their IDs. The IMU adds no core wire change (core v5 then, v6 since F7a capture) and diag stays v3.
 
 ## Configuration and signals
 

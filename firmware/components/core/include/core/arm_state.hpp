@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include "core_os/atomics.hpp"
 #include <cstdint>
 
 namespace core {
@@ -52,5 +53,5 @@ public:
 private:
     std::atomic<uint32_t> m_arm_low{0}, m_arm_high{0}, m_reason{0};
 };
-static_assert(std::atomic<uint32_t>::is_always_lock_free);
+static_assert(core_os::lockFreeAtomic<uint32_t>()); // see core_os/atomics.hpp
 } // namespace core

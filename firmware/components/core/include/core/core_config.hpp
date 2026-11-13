@@ -17,6 +17,10 @@ struct CoreConfig {
     uint8_t max_loops = 4;        ///< simultaneously configured loops, 1..8
     uint16_t max_instances = 16;   ///< module instances across all loops (loop capacity is separate)
     uint16_t link_values = 32;     ///< distinct target values per ordered loop pair, 1..64
+    uint8_t capture_refs = 16;     ///< signals or inputs per capture, 1..64 (and within the STATUS reply)
+    /// The largest capture ring; the device reports the smaller of this and
+    /// the largest free PSRAM block (32 KB internal without PSRAM).
+    uint32_t capture_max_bytes = 4U * 1024U * 1024U;
     /// The pins a `gpio` param may name: bit n allows GPIO n. On the device
     /// it is the ESP32-S3 policy minus the uart_comm TX/RX pins.
     uint64_t gpio_allowed_mask = gpio_policy::kEsp32s3Allowed;
