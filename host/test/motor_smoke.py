@@ -49,6 +49,20 @@ PID, MOCK_ACT, MOCK_FB, PWM_DIR, QUAD = 0x20, 112, 113, 0x21, 0x22
 POOL_PINS = [1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 39, 40, 41, 42, 47]
 
 
+def retryable_rejection(command, result):
+    """Test harness only: these explicit rejections guarantee no effect.
+
+    A group publisher can lose its single atomic claim to the loop. Unknown
+    outcomes/timeouts and opaque module-action Busy responses are not retried.
+    """
+    if result.get('result') != 5:
+        return False
+    if result.get('detail') == 15:  # Withdrawn, before application
+        return True
+    return result.get('detail') == 14 and command[0] in (
+        'sub-config', 'sub-enable', 'sub-clear', 'cmd-config', 'cmd-clear')
+
+
 class Device:
     def __init__(self, cli_path, endpoint):
         self.cli_path, self.endpoint = cli_path, endpoint
@@ -58,8 +72,7 @@ class Device:
             p = subprocess.run([str(self.cli_path), '--endpoint', self.endpoint, '--json', *map(str, command)],
                                capture_output=True, text=True, timeout=20)
             result = json.loads(p.stdout)
-            # Withdrawn guarantees no mutation; an unknown outcome is never retried.
-            if code == 0 and result.get('result') == 5 and result.get('detail') == 15 and attempt < 9:
+            if code == 0 and p.returncode == 5 and retryable_rejection(command,result) and attempt < 9:
                 time.sleep(.02)
                 continue
             break

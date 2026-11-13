@@ -69,3 +69,8 @@ reads quantized counts/position/filtered velocity from `feedback.mock`. Plant
 params include deadband, saturation, selectable one-tick delay and optional
 seeded encoder noise. The real-time guard covers controller and mock ticks.
 `host/test/motor_smoke.py` runs the same CLI control scenario on TCP and UART.
+
+F6's `imu.mock` uses the shared pure IMU state/calibration codec. Persistent
+calibration, paused actions and modes run through the actual core; vdev has no
+I2C backend and does not register `imu.bno055`. The generic CLI/host discovers
+all module metadata; no module table is compiled into libdrivelink.

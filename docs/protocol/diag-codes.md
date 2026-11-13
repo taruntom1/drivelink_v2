@@ -6,7 +6,7 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 
 | Source | Code | Name | Severity | Kind | Clears | arg0 | arg1 | Description |
 |---|---|---|---|---|---|---|---|---|
-| `system` (0x01) | 0x0001 | ManagerStartFailed | error | record | no | manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu) | unused | A manager failed to start. It is left out, and the rest of the firmware keeps running. |
+| `system` (0x01) | 0x0001 | ManagerStartFailed | error | record | no | manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6) | unused | A manager failed to start. It is left out, and the rest of the firmware keeps running. |
 | `system` (0x01) | 0x0002 | PeriodicSyncStartFailed | error | record | no | unused | unused | time_sync started, but its periodic sync task did not. esp_err gives the reason. |
 | `uart_comm` (0x02) | 0x0001 | CrcError | warning | counter | no | - | - | A frame candidate with a valid header was rejected for a CRC16 mismatch. |
 | `uart_comm` (0x02) | 0x0002 | PartialFrame | warning | counter | no | - | - | A partial frame was dropped because the sender stopped mid-frame. |
@@ -39,20 +39,20 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 | `time_sync` (0x11) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback | unused | TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
 | `time_sync` (0x11) | 0x0002 | SyncFailed | warning | record | yes | stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock | host status byte (stage 3), else 0 | A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported. |
 | `time_sync` (0x11) | 0x0003 | BadResponseFrame | warning | counter | no | - | - | A time sync response was dropped because it could not be decoded (bad length or version). |
-| `imu` (0x12) | 0x0001 | InitFailed | error | record | no | stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot | unused | The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
-| `imu` (0x12) | 0x0002 | FallbackToMock | warning | record | no | I2C port | BNO055 I2C address | The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error. |
-| `imu` (0x12) | 0x0003 | ModeSwitchFailed | error | record | no | requested operation mode | unused | SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here. |
-| `imu` (0x12) | 0x0004 | StreamReenableFailed | error | record | no | cause: 1 manager mutex busy, 2 sampling timer did not restart | unused | The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled. |
-| `imu` (0x12) | 0x0005 | CalibrationReadFailed | error | record | no | unused | unused | ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here. |
-| `imu` (0x12) | 0x0006 | CalibrationApplyFailed | error | record | no | unused | unused | ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here. |
-| `imu` (0x12) | 0x0007 | TimerRestartFailed | error | record | no | requested sample period (us) | unused | SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect. |
-| `imu` (0x12) | 0x0008 | SamplerStalled | warning | record | yes | wait without a tick (ms) | unused | The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops. |
-| `imu` (0x12) | 0x0009 | SampleLate | warning | counter | no | - | - | Sample periods that were missed because the stream task ran late. |
-| `imu` (0x12) | 0x000A | DeviceBusy | warning | counter | no | - | - | Samples skipped because a configure operation held the BNO055. |
-| `imu` (0x12) | 0x000B | ReadError | warning | counter | no | - | - | Samples that failed to read from the BNO055. |
-| `imu` (0x12) | 0x000C | EncodeError | warning | counter | no | - | - | Samples that could not be encoded into a stream packet. |
-| `imu` (0x12) | 0x000D | ConfigQueueFull | warning | counter | no | - | - | A configure command was not applied because the config queue was full. It is answered with detail QueueFull. |
-| `imu` (0x12) | 0x000E | ResponseTxDropped | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. |
+| `imu` (0x12) | 0x0001 | ~~InitFailed~~ (retired) | error | record | no | stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot | unused | The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows. |
+| `imu` (0x12) | 0x0002 | ~~FallbackToMock~~ (retired) | warning | record | no | I2C port | BNO055 I2C address | The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error. |
+| `imu` (0x12) | 0x0003 | ~~ModeSwitchFailed~~ (retired) | error | record | no | requested operation mode | unused | SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0004 | ~~StreamReenableFailed~~ (retired) | error | record | no | cause: 1 manager mutex busy, 2 sampling timer did not restart | unused | The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled. |
+| `imu` (0x12) | 0x0005 | ~~CalibrationReadFailed~~ (retired) | error | record | no | unused | unused | ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0006 | ~~CalibrationApplyFailed~~ (retired) | error | record | no | unused | unused | ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here. |
+| `imu` (0x12) | 0x0007 | ~~TimerRestartFailed~~ (retired) | error | record | no | requested sample period (us) | unused | SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect. |
+| `imu` (0x12) | 0x0008 | ~~SamplerStalled~~ (retired) | warning | record | yes | wait without a tick (ms) | unused | The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops. |
+| `imu` (0x12) | 0x0009 | ~~SampleLate~~ (retired) | warning | counter | no | - | - | Sample periods that were missed because the stream task ran late. |
+| `imu` (0x12) | 0x000A | ~~DeviceBusy~~ (retired) | warning | counter | no | - | - | Samples skipped because a configure operation held the BNO055. |
+| `imu` (0x12) | 0x000B | ~~ReadError~~ (retired) | warning | counter | no | - | - | Samples that failed to read from the BNO055. |
+| `imu` (0x12) | 0x000C | ~~EncodeError~~ (retired) | warning | counter | no | - | - | Samples that could not be encoded into a stream packet. |
+| `imu` (0x12) | 0x000D | ~~ConfigQueueFull~~ (retired) | warning | counter | no | - | - | A configure command was not applied because the config queue was full. It is answered with detail QueueFull. |
+| `imu` (0x12) | 0x000E | ~~ResponseTxDropped~~ (retired) | warning | counter | no | - | - | A configure response could not be queued for UART transmission and was dropped. |
 | `actuator_mock` (0x70) | 0x0001 | InitFailed | error | record | no | stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. |
 | `feedback_mock` (0x71) | 0x0001 | InitFailed | error | record | no | stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. |
 | `actuator_pwm_dir` (0x21) | 0x0001 | InitFailed | error | record | no | stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound) | unused | The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1. |
@@ -69,5 +69,8 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 | `actuator_mock` (0x70) | 0x0003 | ArmBlocked | warning | latched | yes | - | - | A mock diagnostic action raised an arm-blocking condition. |
 | `actuator_pwm_dir` (0x21) | 0x0002 | DriverFault | error | latched | yes | - | - | An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required. |
 | `feedback_quadrature` (0x22) | 0x0002 | ReadFailed | error | latched | yes | - | - | Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required. |
+| `imu_bno055` (0x30) | 0x0001 | InitFailed | error | record | no | stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages 0x100 through 0x103 retain their meaning | unused | Instance failed to start; esp_err carries the underlying bus or driver error. |
+| `imu_bno055` (0x30) | 0x0002 | ReadFailed | warning | latched | yes | - | - | The latest sensor read failed; numeric values are retained and valid is false. Clears after a complete successful sample. |
+| `imu_bno055` (0x30) | 0x0003 | ActionFailed | error | record | no | action id | actual mode (255 when mode restoration failed) | A mode or calibration bus operation failed. esp_err carries the first bus error. |
 
 <!-- diag-codes:end -->

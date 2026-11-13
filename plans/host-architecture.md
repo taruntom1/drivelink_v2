@@ -367,3 +367,12 @@ These relative paths stay valid because the depth does not change:
 - ~~Should the agent keep a short history of captures and diag records, so a GUI that connects later can see them?~~ Decided 2026-11-11: diag events and arm-state changes only. Captures stay with the client that ran them.
 - ~~Should the GUI save "tuning sessions" (captures plus the params used) as files on the PC?~~ Decided 2026-11-11: yes, as session files that can be reopened and exported to CSV.
 - Python bindings for `libdrivelink` (for scripts and to replace `firmware/test/uart_comm/protocol.py`): when, if ever?
+
+## F6 calibration contract
+
+IMU actions and typed calibration params remain descriptor-driven. Read/write
+stages configuration, explicit SAVE commits it, and boot restores it. A generic
+action form can pass the versioned blob; a custom GUI panel is optional. Vdev
+uses `imu.mock` and the shared pure state/codec, without a physical bus backend.
+Calibration quality comes from levels, while `calibration.valid` means a staged
+blob exists. See `docs/protocol/imu.md`.

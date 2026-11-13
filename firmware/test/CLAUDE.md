@@ -8,7 +8,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 - The `protocol/` library: CRC, framing, scanner, wire codec and the generated definitions. Its tests live in `protocol/test/` and are compiled into this build.
 - `core_os`'s native backend, with the in-memory KV store and its fault injection (power loss, failed and torn writes).
 - The pure `core`: registry, bind API, values, loops, param batches, the pending layout and its validation, the wiring order, the NVS blobs and A/B persistence, safe mode, the boot, and a threaded end-to-end run.
-- The legacy IMU, time_sync and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator.
+- The time_sync and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator; the pure BNO055 driver/state over its fake bus.
 
 **How it is built:**
 - A plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`).
@@ -39,7 +39,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 
 Standalone scripts in `firmware/test/uart_comm/`, for the **main** firmware, not the test app. Update them with any change to what they check.
 
-- `smoke_main_firmware.py --port COMx` checks that diag, the IMU and time_sync answer with their current protocol versions, and that the IMU stream arrives on its registry channel.
+- `smoke_main_firmware.py --port COMx` checks diag and time_sync with their current protocol versions. The legacy IMU protocol was removed in F6.
 - `smoke_core_firmware.py` exercises the core with mock instances and removes them again. `--safe-mode` needs a build with `CONFIG_CORE_BENCH_CRASH=y`; flash the normal firmware again afterwards.
 
 The ports and the state of the bench board are in `plans/overhaul-status.md` ("Hardware notes").
@@ -139,3 +139,20 @@ proven by the native test in `test_motor_hardware.cpp` (no tick at all: the
 monitor alone forces `actuator.pwm_dir`) and, physically, only by a motor's
 encoder. It needs a `CONFIG_CORE_BENCH_CRASH=y` build or vdev
 `--allow-crash`, which host integration uses.
+
+F6 adds `test_imu_modules.cpp`/`fake_imu_bus.cpp`: register timing, identity,
+units, mode/health/reset failures, resource ownership, calibration codec and
+errors, atomic paused-action updates and A/B persistence/REVERT/removal.
+`host/test/imu_smoke.py` runs the same mock workflow in host integration and on
+the bare board; `--modules real --missing-sensor` checks failed start/ARM refusal.
+The deferred `--modules real --calibration-wait 300` run waits for 3/3/3/3,
+then checks exact profile application and boot restore in CONFIG.
+`--stack-wait` holds the layout for a short COM4 capture; close COM4 before
+cleanup reboots (see the status file's driver trap).
+
+Host integration's test-only helper retries `Withdrawn` and group-only
+`StagingBusy` rejections, which guarantee no effect. The latter can occur
+when a native loop owns the group slot at the single publish attempt. Retries
+are bounded; timeouts, opaque action Busy responses and expected refusals are
+never retried. `tools/tests/test_host_retry.py` covers these boundaries under
+the existing `gen` check. Production CLI/SDK mutation retry policy is unchanged.

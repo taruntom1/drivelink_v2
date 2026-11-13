@@ -16,12 +16,12 @@ namespace diag {
 /// Legacy manager startup bits used by app_main; not part of diagnostic v3.
 /// 0x01 was motor_manager (removed in F5b).
 constexpr uint8_t kStartedTimeSync = 0x02;
-constexpr uint8_t kStartedImu = 0x04;
+// 0x04 was imu (removed in F6); reserved.
 
 /// Manager ids used as arg0 of system.ManagerStartFailed. 1 was
 /// motor_manager (removed in F5b); never reuse it.
 constexpr uint32_t kManagerIdTimeSync = 2;
-constexpr uint32_t kManagerIdImu = 3;
+// Manager id 3 was imu (removed in F6); reserved.
 
 struct ReporterConfig {
     uint8_t event_msg_type = drivelink::protocol::defs::msg::kDiagEvent;                   ///< 0xC0–0xFE

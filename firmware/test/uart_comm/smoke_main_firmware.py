@@ -10,10 +10,6 @@ the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
 It checks, each with the protocol version the firmware must speak:
   - diag      GetInfo (0x23) -> response on 0x63, diag v3
   - diag      GetEntries(0) -> response on 0x63 (the diag task's largest stack use)
-  - IMU       SetStreamEnabled(1) (0x22) -> response on 0x42, IMU v6, any result
-              then a stream frame on 0xBF whose first byte is the IMU version (v6),
-              then SetStreamEnabled(0) -> response on 0x42
-              (skipped if diag reports the IMU manager did not start, e.g. no IMU fitted)
   - time_sync the ESP's periodic sync request on 0x20, time_sync v2 (every 5 s)
 
 Exit code 0 when every check passes. Watch the USB-Serial-JTAG console
@@ -32,11 +28,9 @@ import serial
 from protocol import UartCommProto
 
 DIAG_QUERY, DIAG_RESPONSE, DIAG_VERSION = 0x23, 0x63, 0x03
-IMU_CONFIGURE, IMU_RESPONSE, IMU_VERSION = 0x22, 0x42, 0x06
-IMU_STREAM = 0xBF  # moved here from 0x82 in F2; the first payload byte is the IMU version
 TIME_SYNC_REQUEST, TIME_SYNC_VERSION = 0x20, 0x02
+STARTED_TIME_SYNC = 0x02
 
-STARTED_TIME_SYNC, STARTED_IMU = 0x02, 0x04  # 0x01 was motor_manager (removed in F5b)
 
 
 def wait_for(proto: UartCommProto, msg_type: int, seq: int | None, timeout: float) -> bytes:
@@ -87,7 +81,7 @@ def main() -> int:
             raise TimeoutError("no diag response")
         ok = len(p) >= 4 + 11 and p[0] == DIAG_VERSION and p[2] == 0x01 and p[3] == 0x00
         # Diag v3 reports module counts; legacy managers are still expected.
-        expected_managers = STARTED_TIME_SYNC | STARTED_IMU
+        expected_managers = STARTED_TIME_SYNC
         results.append(check("diag GetInfo", ok,
                              f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}, "
                              f"expected_managers 0x{expected_managers:02X}, {len(p)} bytes"))
@@ -104,34 +98,6 @@ def main() -> int:
                              f"total {p[4] if len(p) > 4 else '?'}, {len(p)} bytes"))
     except TimeoutError as exc:
         results.append(check("diag GetEntries", False, str(exc)))
-
-    # IMU: enable the stream, wait for a frame on the stream channel, disable it again.
-    # SetStreamEnabled body: version, seq, subcommand 0x01, enabled.
-    if expected_managers & STARTED_IMU:
-        proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x33, 0x01, 0x01]))
-        try:
-            p = wait_for(proto, IMU_RESPONSE, 0x33, 3.0)
-            ok = len(p) >= 5 and p[0] == IMU_VERSION and p[2] == 0x01
-            results.append(check("IMU SetStreamEnabled(1)", ok,
-                                 f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}"))
-        except TimeoutError as exc:
-            results.append(check("IMU SetStreamEnabled(1)", False, str(exc)))
-        try:
-            p = wait_for(proto, IMU_STREAM, None, 5.0)
-            ok = len(p) >= 1 and p[0] == IMU_VERSION
-            results.append(check("IMU stream on 0xBF", ok, f"version {p[0] if p else '?'}, {len(p)} bytes"))
-        except TimeoutError as exc:
-            results.append(check("IMU stream on 0xBF", False, str(exc)))
-        proto.send_command(IMU_CONFIGURE, bytes([IMU_VERSION, 0x34, 0x01, 0x00]))
-        try:
-            p = wait_for(proto, IMU_RESPONSE, 0x34, 3.0)
-            ok = len(p) >= 5 and p[0] == IMU_VERSION and p[2] == 0x01
-            results.append(check("IMU SetStreamEnabled(0)", ok,
-                                 f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}"))
-        except TimeoutError as exc:
-            results.append(check("IMU SetStreamEnabled(0)", False, str(exc)))
-    else:
-        print("[SKIP] IMU stream check: IMU manager is not expected")
 
     # time_sync: the ESP sends a request every 5 s. version, reserved, request_id u16, client time i64.
     if expected_managers & STARTED_TIME_SYNC:

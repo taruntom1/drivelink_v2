@@ -299,6 +299,43 @@ Status ParamService::applyOffline(std::span<const SetEntry> entries, std::span<c
     return Status::success();
 }
 
+Status ParamService::applyPaused(const detail::InstanceRecord &record, std::span<const ActionParamUpdate> updates)
+{
+    if (updates.size() > kActionParamUpdates) { return Status::fail(Result::InvalidArgument, Detail::BatchTooLarge); }
+    Loop *owner = nullptr;
+    for (auto *loop : m_loops) { if (loop && loop->id() == record.loop) { owner = loop; break; } }
+    if (!owner || owner->actionSlot().state.load(std::memory_order_acquire) != ActionState::Paused ||
+        owner->actionSlot().target != record.object.get()) {
+        return Status::fail(Result::Busy, Detail::StagingBusy);
+    }
+    // No loop/RX caller uses this path. Paused excludes all accesses to the
+    // ordinary bindings; the mutex excludes concurrent shadow readers.
+    core_os::LockGuard lock(m_mutex);
+    bool persist = false;
+    for (size_t i = 0; i < updates.size(); ++i) {
+        const auto &u = updates[i];
+        Target target;
+        uint32_t applied = 0;
+        const Status st = validate({{record.type_id, record.instance, u.id}, u.bits}, static_cast<uint16_t>(i), applied, target);
+        if (!st.ok()) { return st; }
+        if (target.domain != ParamDomain::Loop || target.record != &record ||
+            record.bindings[target.index].hook || applied != u.bits) {
+            return Status::fail(Result::InvalidArgument, Detail::BadValue, static_cast<uint16_t>(i));
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (updates[j].id == u.id) { return Status::fail(Result::InvalidArgument, Detail::DuplicateRef, static_cast<uint16_t>(i)); }
+        }
+        persist = persist || isPersist(*target.item);
+    }
+    for (const auto &u : updates) {
+        const size_t i = record.itemIndex(u.id);
+        storeValue(record.desc->items[i].type, record.bindings[i].ptr, u.bits);
+        record.shadow[i] = u.bits;
+    }
+    if (persist && !updates.empty()) { setNvsDirty(true); }
+    return Status::success();
+}
+
 Status ParamService::get(std::span<const Ref> refs, std::span<uint32_t> values)
 {
     if (values.size() < refs.size()) {

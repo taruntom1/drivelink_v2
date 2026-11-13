@@ -54,3 +54,10 @@ Both mocks implement `mod_motor` interfaces. A controller claims its actuator
 at startup, making the standalone duty input ineffective; `drive` then returns
 Busy/AlreadyBound. Duplicate controllers fail startup and block ARM. A standalone
 mock retains its original input/action API. There are no new wire encodings.
+
+F6 extends `imu.mock` with representative quaternion/vector/temperature and
+calibration-status signals, validity/age/count, modes and the shared versioned
+calibration codec. `calibration_read`/`write` stage params through the paused
+action transaction; `apply` updates the simulated sensor. Saved calibration is
+applied at boot. Existing rate/yaw/sample/reset IDs remain stable. See
+`docs/protocol/imu.md`; physical calibration quality is a separate HW check.

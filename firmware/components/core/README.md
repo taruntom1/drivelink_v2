@@ -178,7 +178,7 @@ Instance blobs retain format 1; layout format 2 retires pre-F3d layouts.
 metadata, bounded RX command mailboxes, and latest subscription samples.
 Defaults are eight subscription groups and eight command groups, each with up
 to 64 refs. Kconfig CORE_SUBSCRIPTION_GROUPS (1..31), CORE_COMMAND_GROUPS
-(1..31; 32 once F6 frees the IMU stream) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
+(1..32) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
 are statically checked. The effective entry limit is capped by the payload
 (22 + 4*n bytes for a complete LIST record), so 128-byte builds advertise 26
 entries. All storage is allocated at construction, including
@@ -258,3 +258,18 @@ No RX/monitor thread accesses this plain binding storage. The existing monitor
 receipt API and exact-generation stop claim are unchanged. Motor controllers
 compare the timestamp strictly against their mode-application instant, so an
 old queued input cannot bypass a mode switch's fresh-command requirement.
+
+## Paused-action parameter updates (F6)
+
+`ActionOut` may request up to 24 `(own item id, value bits)` updates. They are
+internal C++ metadata and are never serialized. Only a successful acknowledged
+paused action can commit them. `ParamService::applyPaused` verifies ownership,
+all IDs/types/ranges, uniqueness, writability and armed restrictions before any
+mutation; structural, read-only and hooked params are rejected. The caller
+holds the owning loop paused, updates bindings plus mutex-protected shadows
+and sets NVS dirty before releasing it. Hooks remain owning-loop operations.
+Loop actions cannot request these updates.
+
+Calibration uses ordinary persistent typed params, so SAVE's existing complete-
+generation A/B transaction, pending-layout origin values, REVERT, removal and
+factory reset require no new blob format. Details: `docs/protocol/imu.md`.

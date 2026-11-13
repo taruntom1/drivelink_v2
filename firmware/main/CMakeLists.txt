@@ -1,3 +1,3 @@
 idf_component_register(SRCS "main.cpp"
                     INCLUDE_DIRS "."
-                    REQUIRES uart_comm time_sync imu_bmo_055 diag core core_os protocol mod_mock mod_motor)
+                    REQUIRES uart_comm time_sync mod_imu_bno055 diag core core_os protocol mod_mock mod_motor)

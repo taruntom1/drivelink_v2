@@ -369,3 +369,22 @@ TEST_CASE("Param get: params only, from the shadow")
     std::array<uint32_t, 1> small{};
     CHECK(rig.params().get(refs, small).detail == Detail::BufferTooSmall);
 }
+
+TEST_CASE("Paused action updates retain read-only and locked-while-armed checks")
+{
+    Rig rig;
+    auto &record = *rig.core.findRecord(fx::kTypeId, 1);
+    auto &slot = rig.sensor().actionSlot();
+    slot.target = record.object.get();
+    slot.state.store(core::ActionState::Paused);
+    core::ActionParamUpdate update{fx::kCount, 10};
+    CHECK(rig.params().applyPaused(record, {&update,1}).detail == Detail::ReadOnly);
+    update = {fx::kMode, 0};
+    rig.params().setArmed(true);
+    CHECK(rig.params().applyPaused(record, {&update,1}).detail == Detail::LockedWhileArmed);
+    CHECK(rig.get(fx::kTypeId,1,fx::kMode) == 1);
+    rig.params().setArmed(false);
+    REQUIRE(rig.params().applyPaused(record, {&update,1}).ok());
+    CHECK(rig.get(fx::kTypeId,1,fx::kMode) == 0);
+    slot.state.store(core::ActionState::Empty);
+}

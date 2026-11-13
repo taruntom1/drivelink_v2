@@ -9,7 +9,7 @@
 | `system.yaml` | the system items (type `0x00`) | `gen/types.hpp`, `gen/type_system.hpp`, [types/system.md](types/system.md) |
 | `<type>.yaml`, one per module type | the items a module type exposes | `gen/types.hpp`, `gen/type_<type>.hpp`, `types/<type>.md` |
 
-The definitions include four mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
+The definitions include system, loop, motor and IMU types, including four mock types. Native tests also generate separate fixture types.
 
 The headers are in `protocol/include/drivelink/protocol/gen/`, namespace `drivelink::protocol::defs`. Never edit them by hand.
 
@@ -32,7 +32,6 @@ system_type_id: 0x00
 loop_type_id: 0x05
 msg_types:
   - {name: diag_query, value: 0x23, direction: host_to_esp, description: "..."}
-  - {name: imu_stream, value: 0xBF, direction: esp_to_host, legacy: F6}
 channel_ranges:
   - {name: cmd_groups, symbol: CmdGroup, first: 0xA0, last: 0xBF, direction: host_to_esp}
 ```
@@ -42,7 +41,7 @@ Rules:
 - `direction` is `host_to_esp`, `esp_to_host` or `both`.
 - `legacy: <step>` marks the old protocol of a manager. The step that ports the manager removes the entry.
 - A channel range lies inside the stream class (`0x80–0xBF`) and overlaps no other range.
-- A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 31 while the legacy IMU stream holds `0xBF` (29 until F5b removed the motor streams), and grows to 32 in F6.
+- A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 32 after F6 removed the last legacy stream at `0xBF`; subscriptions retain 31 channels. It was 29 before F5b and 31 until F6.
 - `symbol` names the constants `k<symbol>ChannelFirst` and `k<symbol>ChannelCount`.
 - `system_type_id` is `0x00`; `loop_type_id` is `0x05`, clear of the fixed diagnostic sources. Both are reserved. Other type ids are in their own files.
 
@@ -95,7 +94,7 @@ controller requires a user decision on safety.
 
 - `type`: snake_case segments joined by dots. The file must be named `<type>.yaml`.
 - `type_id`: `0x01–0xFE`, unique across types. `0x00` is the system.
-- `loops`: `control` and/or `sensor`, the loop classes the type may run in.
+- `realtime`: `required`, `forbidden` or `any` (see "Loop requirements" below).
 
 ### Items
 
@@ -167,7 +166,7 @@ For each type, `gen/type_<type with . replaced by _>.hpp` holds, in namespace `d
 - `kItems` (the `ItemDesc` table) and `kDesc` (the `TypeDesc`)
 - a `static_assert` that the ids in `kItems` are unique
 
-`gen/types.hpp` holds `kTypeTable`, a table of pointers to every `kDesc`, sorted by type id, so the system type (`defs::system::kDesc`) comes first. Today it holds only the system type.
+`gen/types.hpp` holds `kTypeTable`, a table of pointers to every `kDesc`, sorted by type id, so the system type (`defs::system::kDesc`) comes first. It includes system, loop and the real/mock module types.
 
 ## The descriptor hash
 

@@ -7,6 +7,7 @@
 #include "drivelink/protocol/gen/type_actuator_mock.hpp"
 #include "drivelink/protocol/gen/type_feedback_mock.hpp"
 #include "drivelink/protocol/gen/type_imu_mock.hpp"
+#include "mod_imu_bno055/state.hpp"
 #include "drivelink/protocol/gen/type_fusion_mock.hpp"
 #include <algorithm>
 #include <cmath>
@@ -118,16 +119,49 @@ private:
 };
 class Imu final : public core::Instance {
 public:
-    bool start(core::InstanceContext &ctx) override { return ctx.bindParam(1,&rate) && ctx.bindSignal(256,&yaw); }
-    void tick(const core::TickContext &t) override { yaw = std::remainder(yaw + rate*t.dt_s,6.283185307F); }
-    core::Status runAction(uint16_t id, const core::ActionArgs &, core::ActionOut &out) override {
-        if (id == 769) { yaw = 0; }
-        else if (id == 768) { out.values[0] = defs::f32Bits(yaw); }
+    bool start(core::InstanceContext &ctx) override {
+        if (!ctx.bindParam(1,&rate) || !state.bind(ctx)) { return false; }
+        state.actual_mode = state.startup_mode;
+        if (state.staged.valid) { applied = state.staged; }
+        return true;
+    }
+    void tick(const core::TickContext &t) override {
+        if (!state.actual_mode) { state.valid = false; state.available = 0; state.age(t.now_us); return; }
+        auto sample = state.sample;
+        sample.yaw = std::remainder(sample.yaw + rate*t.dt_s,6.283185307F);
+        sample.quaternion = {std::cos(sample.yaw/2), 0, 0, std::sin(sample.yaw/2)};
+        sample.gyro[2] = rate; sample.gravity[2] = sample.accel[2] = 9.81F;
+        sample.mag[0] = 25; sample.temperature = 25;
+        sample.calibration.fill(applied.valid ? 3 : 0);
+        state.publish(sample, t.now_us);
+    }
+    core::Status runAction(uint16_t id, const core::ActionArgs &in, core::ActionOut &out) override {
+        namespace imu = mod_imu_bno055;
+        if (id == 769) { state.sample.yaw = 0; }
+        else if (id == 768) { out.values[0] = defs::f32Bits(state.sample.yaw); }
+        else if (id == imu::kCalibrationRead) {
+            auto cal = applied; cal.valid = true;
+            if (!imu::encodeCalibration(cal, {out.blob.data(), imu::kCalibrationBlobBytes})) { return imu::badCalibration(); }
+            out.blob_size = imu::kCalibrationBlobBytes; imu::calibrationUpdates(cal, out);
+        } else if (id == imu::kCalibrationWrite) {
+            imu::Calibration cal;
+            if (!imu::decodeCalibration(in.blob, cal)) { return imu::badCalibration(); }
+            imu::calibrationUpdates(cal, out);
+        } else if (id == imu::kCalibrationApply) {
+            if (!state.staged.valid) { return imu::badCalibration(); }
+            applied = state.staged;
+        } else if (id == imu::kSetMode) {
+            if (in.values[0] > 12) { return imu::badCalibration(); }
+            state.actual_mode = static_cast<uint8_t>(in.values[0]);
+            state.available = imu::modeAvailability(state.actual_mode); state.valid = false;
+        }
         else { return core::Status::fail(core::Result::InvalidArgument,core::Detail::UnknownRef); }
         return {};
     }
 private:
-    float rate = .1F,yaw = 0;
+    float rate = .1F;
+    mod_imu_bno055::State state;
+    mod_imu_bno055::Calibration applied;
 };
 class Fusion final : public core::Instance {
 public:

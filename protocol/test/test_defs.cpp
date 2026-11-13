@@ -31,9 +31,6 @@ TEST_CASE("Registry MSG_TYPE constants")
     CHECK(msg::kDiagEvent == 0xC0);
     CHECK(msg::kTimeSyncRequest == 0x20);
     CHECK(msg::kTimeSyncResponse == 0x60);
-    CHECK(msg::kImuConfigure == 0x22);
-    CHECK(msg::kImuConfigureResponse == 0x42);
-    CHECK(msg::kImuStream == 0xBF);
     CHECK(kSystemTypeId == 0x00);
 }
 
@@ -57,9 +54,8 @@ TEST_CASE("Channel ranges: the legacy IMU stream cuts the command groups")
     CHECK(kSubGroupChannelFirst == 0x81);
     CHECK(kSubGroupChannelCount == 31);
     CHECK(kCmdGroupChannelFirst == 0xA0);
-    CHECK(kCmdGroupChannelCount == 31);
+    CHECK(kCmdGroupChannelCount == 32);
     // The usable command channels end just below the legacy IMU stream (F6).
-    CHECK(kCmdGroupChannelFirst + kCmdGroupChannelCount == msg::kImuStream);
     CHECK(kSubGroupChannelFirst + kSubGroupChannelCount == kCmdGroupChannelFirst);
 }
 
@@ -70,7 +66,7 @@ TEST_CASE("Descriptor hash is set, and the diag table comes through")
     CHECK(diag::kSlotCount > 0);
     // System, loop, the controller, the two hardware motor types and four
     // mock types, ordered by type id.
-    REQUIRE(kTypeTable.size() == 9);
+    REQUIRE(kTypeTable.size() == 10);
     CHECK(kTypeTable[0] == &system::kDesc);
 }
 

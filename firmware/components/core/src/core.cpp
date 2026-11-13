@@ -783,6 +783,14 @@ Status Core::runAction(Ref ref, const ActionArgs &args, ActionOut &out)
         (slot.out.blob_size && item->blob != defs::BlobDir::Out && item->blob != defs::BlobDir::Both)) {
         status = Status::fail(Result::Fault,Detail::BadValue);
     }
+    if (status.ok() && slot.out.param_count) {
+        if (slot.state.load(std::memory_order_acquire) != ActionState::Paused ||
+            slot.out.param_count > kActionParamUpdates) {
+            status = Status::fail(Result::Fault, Detail::BadValue);
+        } else {
+            status = m_params.applyPaused(*record, {slot.out.params.data(), slot.out.param_count});
+        }
+    }
     out = slot.out;
     slot.state.store(ActionState::Empty,std::memory_order_release);
     return status;
