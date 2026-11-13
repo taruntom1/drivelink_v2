@@ -50,3 +50,4 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
 - **Roles.** The session plans, builds and reviews the step itself (Opus 5.5, high). It spawns an independent review agent (Opus, at the step's review effort) only when the step needs one: wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff. `/overhaul-step` has the details.
 - **Hardware.**
   - Checks that run on the bare bench board (nothing attached) if necessary: the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.
+  - Checks that need motors, an IMU or the robot are deferred: the step writes and dry-runs their script and lists it in "Deferred hardware checks" in the status file. They run in the HW step after F10, or as soon as the hardware arrives.
