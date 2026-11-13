@@ -243,3 +243,18 @@ per-code/instance overflow bits retain active conditions until cleared.
 Before raising a timed-out or stalled condition, the monitor CAS-claims the
 exact arm generation it evaluated. A concurrent disarm/re-arm discards the old
 observation, so the new ARM always receives its own watchdog grace interval.
+
+## F5a-1 optional interfaces and input receipts
+
+`Instance::queryInterface(uint32_t)` is a startup-only C++ extension point;
+unknown IDs return null. Interface IDs are not wire values. Motor modules use
+it to resolve compatible actuator/feedback APIs without RTTI or core coupling.
+
+`bindInput` optionally accepts an `int64_t*` for the last applied value-frame's
+RX timestamp. GroupService copies it with the input on the owning loop, only
+for a validated post-ARM value-bearing mailbox. Keepalives do not update it.
+ARM/DISARM reset the timestamp to zero with the input; sources are unaffected.
+No RX/monitor thread accesses this plain binding storage. The existing monitor
+receipt API and exact-generation stop claim are unchanged. Motor controllers
+compare the timestamp strictly against their mode-application instant, so an
+old queued input cannot bypass a mode switch's fresh-command requirement.

@@ -155,7 +155,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   3. Stay disarmed. The command group sends keepalive frames.
 - **`prepare_command_mode_switch` / `perform_command_mode_switch`:**
   1. Set each controller's `mode` param to match the newly claimed command interfaces. The firmware switches modes bumplessly, so this works while armed.
-  2. Set the command values to hold: the current position, zero velocity, zero duty.
+  2. Set command values to hold (current position, zero velocity, zero duty) and send a fresh value frame after the mode write completes. The F5a controller ignores old queued/inactive setpoints; keepalives do not satisfy the new mode's fresh-command requirement.
   3. When the first command interface is claimed, `ARM`. When the last one is released, `DISARM`.
 - **`on_deactivate`:** `DISARM`, then release the lease.
 - **`read()`:** copies the latest group values out of the seqlock buffers, with timestamps mapped to ROS time.

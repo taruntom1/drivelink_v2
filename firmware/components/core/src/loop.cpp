@@ -38,11 +38,16 @@ void Loop::taskEntry(void *ctx, uint32_t elapsed)
 void Loop::addInputs(const detail::InstanceRecord &record) {
     for (size_t i = 0; i < record.desc->items.size(); ++i) {
         const auto &item = record.desc->items[i];
-        if (item.kind == defs::ItemKind::Input) { m_inputs.push_back({item.type, record.bindings[i].ptr, item.default_bits}); }
+        if (item.kind == defs::ItemKind::Input) {
+            m_inputs.push_back({item.type, record.bindings[i].ptr, item.default_bits, record.bindings[i].receipt_us});
+        }
     }
 }
 void Loop::resetInputs() {
-    for (const auto &input : m_inputs) { storeValue(input.type, input.ptr, input.bits); }
+    for (const auto &input : m_inputs) {
+        storeValue(input.type, input.ptr, input.bits);
+        if (input.receipt_us) { *input.receipt_us = 0; }
+    }
 }
 
 void Loop::runTick(uint32_t elapsed)

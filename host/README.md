@@ -75,3 +75,32 @@ F4b uses core v5 for arming, fast DISARM and read-only runtime limits. The CLI
 adds bounded command/keepalive runs and CSV subscriptions; see cli/README.md.
 The library exposes arm/disarm/acknowledgeFault wrappers, and Session routes
 system DISARM over MSG_TYPE 0x03. Command values stay explicit and finite.
+
+## Motor controller smoke (F5a-1)
+
+The CLI discovers `controller.cascade_pid` and its live tuning, measurements and
+setpoints directly from the device. It supports open-loop duty, velocity PID and
+position/velocity cascade. An armed mode change requires a fresh value command;
+keepalives preserve the watchdog but leave `waiting_for_command` set.
+
+For a clean loops-only device with idle groups, run:
+
+```powershell
+python host/test/motor_smoke.py --cli host/superbuild/build/windows-mingw/cli/drivelink-cli.exe --endpoint serial://COM3 --loop-rate 1000
+```
+
+Replace the endpoint with the vdev TCP URL to exercise the identical controller.
+The script checks SAVE/reload, velocity and position tracking, mode freshness,
+watchdog stop and re-arm, then restores layout and settings. `--report` writes
+sample traces and `--stack-wait 35` holds the mock layout for console stack
+sampling. Real-motor module setup remains F5a-2; `--modules real` currently
+refuses before mutating configuration. Follow the script's first-run procedure
+when F5a-2 enables it, and add the F5b stall scenario before HW.
+
+Linux integration retains its serial PTY after the transport tests. Buffered
+status frames can survive between CLI sessions, so the motor smoke polls for
+Disarmed plus the Watchdog reason rather than treating its first queued status
+as current. Native tests verify the exact watchdog deadline. On the CH343, a
+CLI command or stream operation takes hundreds of milliseconds; the smoke feeds
+before mode writes and reuses its held-position sample to avoid an unintended
+watchdog gap. It never raises the firmware watchdog beyond its existing range.

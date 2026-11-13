@@ -113,3 +113,11 @@ ages. `smoke_sources_firmware.py --port COM3` checks sources on the bare board
 and compares the longest control tick with zero and sixteen linked values
 in otherwise identical mock layouts. It requires an original layout with
 loops only and restores it. Use COM4 concurrently to inspect stack marks.
+
+F5a-1 adds `test_motor_modules.cpp`: real cascade PID with quantized mock
+feedback, limits, all six mode transfers, command freshness, exclusive actuator
+ownership, delay/emergency overrides, seeded noise reset and count wrap.
+Host integration invokes `host/test/motor_smoke.py` on vdev; the same script
+runs controller/mocks on the bare board via `--endpoint serial://COM3
+--loop-rate 1000`. It restores a clean loops-only layout/settings and refuses
+pending edits or configured groups. Real-module setup follows in F5a-2.

@@ -40,7 +40,7 @@ The firmware is rebuilt around a **core** that describes itself, so the host sof
 | Persistence | Explicit `SAVE`, `REVERT` and `FACTORY_RESET`. NVS stores (id, value) pairs per instance, in A/B slots with a generation number. `SAVE` is refused while armed. |
 | Loops | Loops are part of the layout. Each loop is an instance of the built-in `loop` type, and its rate, core, priority, stack and `realtime` flag are its params (at most 4 loops by default). The factory layout has `control` (1 kHz, core 1, real-time) and `sensor` (100 Hz, core 0, bus I/O allowed). Each module type declares whether it needs a real-time loop (`realtime: required`, `forbidden` or `any`), and the layout assigns each instance a loop (stored in its layout entry). An instance reads a signal from another loop through a **source**: a sampled copy that carries its age. See "Configurable loops, the real-time flag and sources". |
 | Control | Motor control is split into **Actuator**, **Feedback** and **Controller** module types, wired together by the layout. Today's code becomes `actuator.pwm_dir`, `feedback.quadrature` and `controller.cascade_pid`. |
-| Mode changes | Allowed while armed, **bumpless**. They apply at a tick boundary. The new mode's setpoint starts from the current measurement, and its integrator is preset so that the output doesn't jump. |
+| Mode changes | Allowed while armed, **bumpless**. Hold previous duty for the transition tick within current limits; initialize from measured feedback and preset integrators. Require an active-input value frame received strictly after mode application; keepalives and old queued values cannot release the wait. |
 | Telemetry | **Subscription groups.** Each group is bound to one loop, runs at a divider of that loop's rate, and packs its values with no per-value ids. Each group has its own stream channel and a config epoch. |
 | Commands | **Command groups**, packed the same way. Host → ESP stream channels, applied at the start of the loop tick. Only valid frames received after `ARM`, carrying the current epoch, feed the watchdog. |
 | Group memory | All groups are allocated at their maximum size at boot and never freed. A new group configuration is swapped in through the staged path. |
@@ -694,3 +694,31 @@ Mock diagnostic actions and a default-off BenchStall (guarded by the existing
 bench crash option) exercise these paths without motors. There is no NVS
 format change. Automatic NaN-to-hold mapping remains for later host modeling,
 as permitted by the host plan; the explicit command API still rejects NaN.
+
+## F5a motor implementation boundary
+
+F5a is split into two PRs/sessions. F5a-1 provides shared pure motor interfaces,
+`controller.cascade_pid` and realistic mocks; F5a-2 adds the real PWM+DIR actuator,
+quadrature feedback and real-pin setup checks. F5b still removes the legacy motor
+stack/streams and adds the loop-stall campaign. Real motor checks remain deferred.
+The PWM+DIR HAL has one PWM generator; F5a-2 must reconcile the earlier safety
+section's two-generator wording with that hardware before implementing force.
+
+The new controller implements a true position → bounded velocity target →
+velocity PID → bounded duty cascade, unlike the legacy position-to-duty PID.
+Each actuator has at most one controller owner. A duplicate fails startup and
+blocks ARM. Standalone mock commands cannot override a claimed actuator. A
+shared control-port lifetime makes claim release safe regardless of record
+teardown order; its mutable fields remain owned by one loop.
+
+A mode switch captures measured velocity/position or previous duty once,
+tracks previous output in the integrators and suppresses derivative kick.
+Only an active-input value frame received strictly after mode application
+releases `waiting_for_command`; equal timestamps are stale. A fresh frame
+during the transition tick is used on the next tick. An unchanged mode write
+creates no new boundary. Watchdog semantics are unchanged, including while
+waiting. ARM/DISARM clear controller histories and internal input receipt
+metadata, hold zero duty/velocity or measured position, and preserve encoder
+position and source storage. These are module semantics over existing encodings.
+The old PID wrapper retains its original integration policy while sharing pure
+math with the new conditional-integration kernel.

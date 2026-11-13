@@ -16,6 +16,7 @@ struct BoundSignal {
     Ref ref{};
     const defs::ItemDesc *item = nullptr;
     void *storage = nullptr;
+    int64_t *receipt_us = nullptr;
 };
 void latchSignals(std::span<const BoundSignal> signals, std::span<uint32_t> values);
 

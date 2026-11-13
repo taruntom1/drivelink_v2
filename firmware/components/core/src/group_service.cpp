@@ -139,7 +139,7 @@ Status GroupService::stageConfig(GroupKind kind, uint8_t id, uint8_t loop, uint1
             }
         }
         cfg.info.refs[i] = ref;
-        cfg.bindings[i] = {ref, &item, rec->bindings[index].ptr};
+        cfg.bindings[i] = {ref, &item, rec->bindings[index].ptr, rec->bindings[index].receipt_us};
     }
     return d.publish(*s);
 }
@@ -259,6 +259,7 @@ void GroupService::beginTick(uint8_t loop, bool armed, int64_t armed_at_us)
                 if (armed && s.command_us > armed_at_us) {
                     for (size_t j = 0; j < cfg.info.count; ++j) {
                         storeValue(cfg.bindings[j].item->type, cfg.bindings[j].storage, s.values[j]);
+                        if (cfg.bindings[j].receipt_us) { *cfg.bindings[j].receipt_us = s.command_us; }
                     }
                 }
                 s.command_ready = false;

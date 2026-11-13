@@ -8,7 +8,7 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
 - Before the core, main initialises NVS (`core_os::nvsInit()`). A full partition or one from a newer NVS version is erased and initialised again. Both that and a failure are reported (`core.NvsInitFailed`, arg0 1 erased, 2 failed). The core boots either way.
 - The core:
-  - It is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from `mod_mock::kTypes`; each desc is checked against `defs::kTypeTable`).
+  - It is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from `mod_mock::kTypes` and `mod_motor::kTypes`; each desc is checked against `defs::kTypeTable`).
   - main calls `init()`, then `boot(store)`, then `start()`. The `KvStore` is a static in main. What `boot` does is in `firmware/components/core/README.md`.
   - If one of them fails, main reports `core.InitFailed` (arg0 the stage: 1 registry, 2 loop task with id in arg1, 3 retired, 4 boot) and continues without the core.
   - It logs `Core started: ...` with the running, failed and configured instance counts, safe mode, whether the config came from NVS, and each running loop's id, real-time flag and period.

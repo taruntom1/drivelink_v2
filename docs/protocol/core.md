@@ -326,3 +326,27 @@ Like BenchCrash it requires the default-off `CONFIG_CORE_BENCH_CRASH` test
 build (vdev: `--allow-crash`). It schedules deliberate busy work in that loop,
 withholding its Task WDT feed. It is for bare-board monitor/WDT verification;
 normal builds answer Unsupported. No layout or NVS format changes are involved.
+
+## Motor controller commands (F5a-1)
+
+`controller.cascade_pid` (type 0x20) is discovered through the existing module
+and item descriptors; there is no new family or encoding. Position control
+cascades position PID to a velocity target to velocity PID to duty. The live
+`mode`, tuning and limits, signals and command inputs are in its generated type
+table. References use ordinary structural same-loop wiring.
+
+An armed mode change holds the previous duty for the transition tick, within
+current limits, and starts the new mode from measured feedback. The controller
+then requires an active-input value frame received strictly after mode
+application. Equal timestamps, preexisting inputs and keepalives cannot release
+`waiting_for_command`. A new frame during the transition tick takes effect on
+the next tick. Rewriting an unchanged mode does not reset this boundary.
+The watchdog remains active while waiting; keepalives still feed it.
+
+Only one controller can claim an actuator. Duplicate ownership fails startup
+and blocks ARM using the existing failed-instance rule. A claimed mock ignores
+its standalone duty input and refuses its `drive` action with Busy/AlreadyBound.
+ARM/DISARM reset controller state and receipts, holding zero duty/velocity or
+measured position; they preserve encoder position and source storage. See
+`firmware/components/mod_motor/README.md` for implementation contracts. These
+are discovered module behaviors over core v5; diag remains v3 and NVS unchanged.

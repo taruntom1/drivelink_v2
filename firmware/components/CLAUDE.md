@@ -92,3 +92,9 @@ F4c source links use SPSC triple buffers, one per ordered loop pair. Resolve
 and allocate before enabling loops. Never read another loop's plain bindings
 from a consumer tick; only the producer latches those bindings. Sampled
 storage belongs to the consumer loop. ARM/DISARM do not reset it.
+
+F5a-1 motor interfaces use startup-only `Instance::queryInterface` and a shared
+control-port lifetime. Resolve/claim before loops start; never copy shared
+ownership in a tick. Commands, observations and control-port fields belong to
+the same loop. Optional input receipt timestamps are copied only with validated
+post-ARM value frames; keepalives never make a mode's stale setpoint fresh.

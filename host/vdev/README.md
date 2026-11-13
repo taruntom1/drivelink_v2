@@ -62,3 +62,10 @@ with the safety interlock and reporter; reporting uses bounded storage. Native
 scheduling can jitter more than a board: use slower loop rates (for example
 100 Hz) for desktop arming tests. `--allow-crash` also enables BenchStall; a
 native stall exercises the monitor, while Task WDT panic-reset is device-only.
+
+F5a-1 also registers the actual `controller.cascade_pid` implementation (0x20).
+It drives `actuator.mock` through the same interface as future PWM hardware and
+reads quantized counts/position/filtered velocity from `feedback.mock`. Plant
+params include deadband, saturation, selectable one-tick delay and optional
+seeded encoder noise. The real-time guard covers controller and mock ticks.
+`host/test/motor_smoke.py` runs the same CLI control scenario on TCP and UART.

@@ -44,6 +44,8 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/group_service.cpp
     ${COMPONENTS_DIR}/core/src/source_service.cpp
     ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
+    ${COMPONENTS_DIR}/mod_motor/src/controller.cpp
+    ${COMPONENTS_DIR}/mod_motor/src/velocity_estimator.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
     ${COMPONENTS_DIR}/core/src/safety.cpp
     ${COMPONENTS_DIR}/core/src/crc32.cpp
@@ -124,6 +126,7 @@ set(TEST_SOURCES
     tests/test_core_boot.cpp
     tests/test_core_safe_mode.cpp
     tests/test_pid.cpp
+    tests/test_motor_modules.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp
     tests/test_motor_validation.cpp
@@ -142,6 +145,7 @@ target_include_directories(native_tests PRIVATE
     ${COMPONENTS_DIR}/core_os/backend/native/include
     ${COMPONENTS_DIR}/core/include
     ${COMPONENTS_DIR}/mod_mock/include
+    ${COMPONENTS_DIR}/mod_motor/include
     ${COMPONENTS_DIR}/pid/include
     ${COMPONENTS_DIR}/motor_controller/include
     ${COMPONENTS_DIR}/motor_manager/include

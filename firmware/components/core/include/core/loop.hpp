@@ -145,7 +145,7 @@ private:
     std::unique_ptr<TickEntry[]> m_instances;
     const size_t m_capacity;
     size_t m_count = 0;
-    struct Input { defs::ValueType type; void *ptr; uint32_t bits; };
+    struct Input { defs::ValueType type; void *ptr; uint32_t bits; int64_t *receipt_us; };
     std::vector<Input> m_inputs;
     std::atomic<uint32_t> m_bench_stall_us{0};
 

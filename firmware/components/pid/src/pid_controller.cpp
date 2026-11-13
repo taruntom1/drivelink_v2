@@ -1,4 +1,5 @@
 #include "pid_controller.hpp"
+#include "pid_kernel.hpp"
 #include "esp_log.h"
 #include <algorithm>
 #include <cmath>
@@ -36,8 +37,6 @@ struct PidImpl {
 
 namespace {
 
-constexpr float kTwoPi = 6.28318530717958647692f;
-
 bool isValidCutoff(float hz)
 {
     return std::isfinite(hz) && hz >= 0.0f;
@@ -51,16 +50,6 @@ bool isValidGain(float g)
 bool areValidLimits(float min, float max)
 {
     return std::isfinite(min) && std::isfinite(max) && min < max;
-}
-
-// Smoothing factor of a first-order low-pass with cutoff `hz` sampled after
-// `dt_s` seconds. 1 means "no filtering".
-float lowPassAlpha(float hz, float dt_s)
-{
-    if (hz <= 0.0f) {
-        return 1.0f;
-    }
-    return 1.0f - std::exp(-kTwoPi * hz * dt_s);
 }
 
 } // namespace
@@ -204,19 +193,9 @@ float PidController::compute(float input, float setpoint, float dt_s, float feed
     // Derivative term
     float d_term = 0.0f;
     if (!m_impl->first_compute) {
-        float d_raw;
-        if (m_impl->derivative_mode == DerivativeMode::OnError) {
-            d_raw = error - m_impl->last_error;
-        } else {
-            // Derivative on measurement: negate to get correct sign
-            d_raw = -(input - m_impl->last_input);
-        }
-
-        // Filter the derivative rate (not the per-sample delta), so the
-        // filter state stays meaningful when dt changes between calls.
-        const float d_rate = d_raw / dt;
-        const float alpha = lowPassAlpha(m_impl->derivative_cutoff_hz, dt);
-        m_impl->d_filtered = alpha * d_rate + (1.0f - alpha) * m_impl->d_filtered;
+        m_impl->d_filtered = derivativeRate(input, error, m_impl->last_input,
+            m_impl->last_error, dt, m_impl->derivative_cutoff_hz,
+            m_impl->derivative_mode == DerivativeMode::OnError, m_impl->d_filtered);
 
         d_term = sign * m_impl->kd * m_impl->d_filtered;
     } else {
@@ -224,8 +203,7 @@ float PidController::compute(float input, float setpoint, float dt_s, float feed
     }
 
     // Compute and clamp output
-    float output = p_term + m_impl->integral_sum + d_term + feedforward;
-    output = std::clamp(output, m_impl->out_min, m_impl->out_max);
+    float output = pidOutput(p_term, m_impl->integral_sum, d_term, feedforward, m_impl->out_min, m_impl->out_max);
 
     // Store state for next iteration
     m_impl->last_input = input;
