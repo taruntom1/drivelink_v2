@@ -9,7 +9,7 @@
 | `system.yaml` | the system items (type `0x00`) | `gen/types.hpp`, `gen/type_system.hpp`, [types/system.md](types/system.md) |
 | `<type>.yaml`, one per module type | the items a module type exposes | `gen/types.hpp`, `gen/type_<type>.hpp`, `types/<type>.md` |
 
-The definitions include three mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
+The definitions include four mock module types, the system items and the built-in loop type. Native tests also generate separate fixture types.
 
 The headers are in `protocol/include/drivelink/protocol/gen/`, namespace `drivelink::protocol::defs`. Never edit them by hand.
 
@@ -67,6 +67,28 @@ items:
   - {id: 0x0300, kind: action, name: reset_integrators, runs_in: loop}
   - {id: 0x0400, name: old_item, retired: true}
 ```
+
+### Source declarations (F4c)
+
+```yaml
+- {id: 0x0010, kind: source, name: left, type: i32, value_id: 0x0110, age_id: 0x0111}
+```
+
+This expands to a u32 param `left` (`reboot_required`, `Source` flag 0x80,
+persisted by default), an i32 signal `left.value`, and a u32 microsecond
+signal `left.age_us`. The param defaults to zero (disconnected). The target
+is encoded as `type << 24 | instance << 16 | item_id`; it must name a signal
+or input of the declared value type. See [core.md](core.md#sources-f4c).
+
+Required keys: `id`, `kind`, `name`, `type`, `value_id`, `age_id`.
+Optional keys: `description`, `unit` (on the value signal), `values`
+(required for enum value types), and `persist` (default true).
+All scalar and enum value types are supported. Source flags and signal names
+are generated and cannot be overridden. Every expanded id, name and C++
+constant participates in the normal collision checks, including retired ids.
+The suffixes are always `.value` and `.age_us`. Sources are not allowed on
+system, loop, actuator or controller types. Adding one to an actuator or
+controller requires a user decision on safety.
 
 ### Type
 

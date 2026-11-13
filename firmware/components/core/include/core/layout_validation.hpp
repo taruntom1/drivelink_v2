@@ -28,6 +28,7 @@ struct ValidationConfig {
     uint64_t gpio_allowed_mask; ///< bit n: GPIO n may be claimed
     size_t max_instances;       ///< the layout's capacity
     size_t max_loops = 4;
+    size_t link_values = 32;     ///< distinct values per ordered pair of different loops
 };
 
 inline constexpr size_t kNoEntry = static_cast<size_t>(-1);
@@ -45,6 +46,8 @@ struct RefLink {
 
 /// The wiring links of entry `i` (configure time: it allocates).
 std::vector<RefLink> refLinks(std::span<const LayoutEntry> entries, size_t i);
+std::vector<RefLink> sourceLinks(std::span<const LayoutEntry> entries, size_t i);
+uint8_t signalLoop(const LayoutEntry &entry);
 
 /// Validate a whole layout. `out[i]` (`out` at least as long as `entries`)
 /// receives entry i's status: Ok, or the first check it failed. The checks,

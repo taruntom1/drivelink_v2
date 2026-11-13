@@ -21,6 +21,33 @@ size_t InstanceRecord::itemIndex(uint16_t id) const
 
 } // namespace detail
 
+bool InstanceContext::bindSourceStorage(uint16_t id, defs::ValueType type, void *value,
+                                      uint32_t *age, bool *valid, bool *fresh)
+{
+    const size_t index = m_record.itemIndex(id);
+    const auto *param = index == detail::kNoItem ? nullptr : &m_record.desc->items[index];
+    const auto *sample = param ? defs::sourceSignal(*m_record.desc, *param, ".value") : nullptr;
+    const auto *age_item = param ? defs::sourceSignal(*m_record.desc, *param, ".age_us") : nullptr;
+    if (!param || !defs::hasFlag(*param, defs::ItemFlag::Source) || !sample || !age_item ||
+        param->kind != defs::ItemKind::Param || param->type != defs::ValueType::U32 ||
+        age_item->type != defs::ValueType::U32) {
+        if (m_bind_error == Detail::None) { m_bind_error = Detail::WrongKind; }
+        return false;
+    }
+    if (!value || !age || !valid || !fresh) {
+        if (m_bind_error == Detail::None) { m_bind_error = Detail::NullStorage; }
+        return false;
+    }
+    if (!bind(id, defs::ItemKind::Param, defs::ValueType::U32, &m_record.shadow[index], nullptr) ||
+        !bind(sample->id, defs::ItemKind::Signal, type, value, nullptr) ||
+        !bind(age_item->id, defs::ItemKind::Signal, defs::ValueType::U32, age, nullptr)) { return false; }
+    *age = kInvalidAgeUs;
+    *valid = false;
+    *fresh = false;
+    m_record.sources.push_back({index, type, value, age, valid, fresh});
+    return true;
+}
+
 bool InstanceContext::bind(uint16_t id, defs::ItemKind kind, defs::ValueType type, void *storage, OnChange hook)
 {
     Detail error = Detail::None;

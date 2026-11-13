@@ -4,6 +4,7 @@
 #include "drivelink/protocol/gen/type_actuator_mock.hpp"
 #include "drivelink/protocol/gen/type_feedback_mock.hpp"
 #include "drivelink/protocol/gen/type_imu_mock.hpp"
+#include "drivelink/protocol/gen/type_fusion_mock.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -81,10 +82,25 @@ public:
 private:
     float rate = .1F,yaw = 0;
 };
+class Fusion final : public core::Instance {
+public:
+    bool start(core::InstanceContext &ctx) override {
+        return ctx.bindSource(defs::fusion_mock::kFeedback, &feedback) &&
+               ctx.bindSource(defs::fusion_mock::kImu, &imu) &&
+               ctx.bindSignal(defs::fusion_mock::kCombined, &combined);
+    }
+    void tick(const core::TickContext &) override {
+        combined = (feedback.valid ? feedback.value : 0.F) + (imu.valid ? imu.value : 0.F);
+    }
+private:
+    core::Sampled<float> feedback, imu;
+    float combined = 0;
+};
 template<class T> core::Instance *make(const core::InstanceConfig &) { return new T; }
 const core::ModuleType actuator{defs::actuator_mock::kDesc,make<Actuator>};
 const core::ModuleType feedback{defs::feedback_mock::kDesc,make<Feedback>};
 const core::ModuleType imu{defs::imu_mock::kDesc,make<Imu>};
+const core::ModuleType fusion{defs::fusion_mock::kDesc,make<Fusion>};
 }
-const std::array<const core::ModuleType *,3> kTypes{&actuator,&feedback,&imu};
+const std::array<const core::ModuleType *,4> kTypes{&actuator,&feedback,&imu,&fusion};
 }

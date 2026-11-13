@@ -76,6 +76,14 @@ Status checkRefs(std::span<const LayoutEntry> entries, size_t i)
             return invalid(Detail::LoopMismatch);
         }
     }
+    for (const RefLink &link : sourceLinks(entries, i)) {
+        if (link.target == kNoEntry || !entries[link.target].desc) { return invalid(Detail::BadRef); }
+        const auto &target = entries[link.target];
+        const auto *item = defs::findItem(*target.desc, defs::sourceRefId(link.value));
+        const auto *sample = defs::sourceSignal(*e.desc, e.desc->items[link.item], ".value");
+        if (!item || !sample || (item->kind != defs::ItemKind::Signal && item->kind != defs::ItemKind::Input) ||
+            item->type != sample->type || signalLoop(target) == kNoLoop) { return invalid(Detail::BadRef); }
+    }
     return Status::success();
 }
 
@@ -108,6 +116,27 @@ size_t findEntry(std::span<const LayoutEntry> entries, uint8_t type_id, uint8_t 
         }
     }
     return kNoEntry;
+}
+
+uint8_t signalLoop(const LayoutEntry &entry)
+{
+    return entry.type_id == defs::kLoopTypeId ? entry.instance : entry.loop;
+}
+
+std::vector<RefLink> sourceLinks(std::span<const LayoutEntry> entries, size_t i)
+{
+    std::vector<RefLink> links;
+    const auto &entry = entries[i];
+    if (!entry.desc) { return links; }
+    for (size_t k = 0; k < entry.desc->items.size(); ++k) {
+        const auto &item = entry.desc->items[k];
+        if (item.kind != defs::ItemKind::Param || !defs::hasFlag(item, defs::ItemFlag::Source)) { continue; }
+        const auto value = entry.values[k];
+        if (value) {
+            links.push_back({k, findEntry(entries, defs::sourceRefType(value), defs::sourceRefInstance(value)), false, value});
+        }
+    }
+    return links;
 }
 
 std::vector<RefLink> refLinks(std::span<const LayoutEntry> entries, size_t i)
@@ -194,6 +223,27 @@ size_t validateLayout(std::span<const LayoutEntry> entries, const ValidationConf
         out[i] = st;
     }
 
+    // Capacity is counted by distinct target refs, independently for each
+    // ordered loop pair. Consumers can share a single copied value.
+    struct Pair { uint8_t producer, consumer; std::vector<uint32_t> refs; };
+    std::vector<Pair> pairs;
+    for (size_t i = 0; i < n; ++i) {
+        if (!out[i].ok()) { continue; }
+        for (const auto &link : sourceLinks(entries, i)) {
+            const auto producer = signalLoop(entries[link.target]);
+            const auto consumer = entries[i].loop;
+            if (producer == consumer) { continue; }
+            size_t p = 0;
+            while (p < pairs.size() && (pairs[p].producer != producer || pairs[p].consumer != consumer)) { ++p; }
+            if (p == pairs.size()) { pairs.push_back({producer, consumer, {}}); }
+            auto &refs = pairs[p].refs;
+            bool found = false;
+            for (const auto ref : refs) { found = found || ref == link.value; }
+            if (!found) { refs.push_back(link.value); }
+            if (refs.size() > config.link_values) { out[i] = Status::fail(Result::NoMemory, Detail::Capacity); }
+        }
+    }
+
     // 2. Cycles, among the entries still valid.
     std::vector<std::vector<size_t>> ref_edges(n);
     std::vector<std::vector<size_t>> tick_edges(n); // a → b: a ticks before b
@@ -209,6 +259,11 @@ size_t validateLayout(std::span<const LayoutEntry> entries, const ValidationConf
             if (link.ticks_after) {
                 tick_edges[i].push_back(link.target);
             } else {
+                tick_edges[link.target].push_back(i);
+            }
+        }
+        for (const auto &link : sourceLinks(entries, i)) {
+            if (out[link.target].ok() && signalLoop(entries[link.target]) == entries[i].loop) {
                 tick_edges[link.target].push_back(i);
             }
         }

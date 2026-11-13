@@ -40,6 +40,7 @@ enum class ItemFlag : uint8_t {
     Testgen = 0x10, ///< an input a test signal may drive
     Gpio = 0x20,    ///< a pin: a u8 `reboot_required` param; `kNoGpio` names no pin
     RefTicksAfter = 0x40, ///< a wiring param whose target ticks after this instance (YAML `ref_order: after`)
+    Source = 0x80, ///< a packed signal/input reference with generated value and age signals
 };
 
 /// Bits of `TypeDesc::loops`: the real-time requirements a type allows.
@@ -144,6 +145,30 @@ inline constexpr uint8_t kNoGpio = 0xFF;
 
 /// The value of an unwired `ref` param.
 inline constexpr uint32_t kUnwired = 0;
+
+/// Source references occupy all four bytes; zero means disconnected.
+constexpr uint32_t sourceRef(uint8_t type, uint8_t instance, uint16_t id)
+{
+    return (static_cast<uint32_t>(type) << 24U) | (static_cast<uint32_t>(instance) << 16U) | id;
+}
+constexpr uint8_t sourceRefType(uint32_t value) { return static_cast<uint8_t>(value >> 24U); }
+constexpr uint8_t sourceRefInstance(uint32_t value) { return static_cast<uint8_t>(value >> 16U); }
+constexpr uint16_t sourceRefId(uint32_t value) { return static_cast<uint16_t>(value); }
+
+/// Find a generated source signal by its canonical suffix, without allocating.
+constexpr const ItemDesc *sourceSignal(const TypeDesc &type, const ItemDesc &param, const char *suffix)
+{
+    for (const auto &item : type.items) {
+        if (item.kind != ItemKind::Signal) { continue; }
+        size_t n = 0;
+        while (param.name[n] && item.name[n] == param.name[n]) { ++n; }
+        if (param.name[n]) { continue; }
+        size_t s = 0;
+        while (suffix[s] && item.name[n + s] == suffix[s]) { ++s; }
+        if (!suffix[s] && !item.name[n + s]) { return &item; }
+    }
+    return nullptr;
+}
 
 /// The value of a wiring (`ref`) param that points at (type, instance):
 /// `type << 8 | instance` in the low 16 bits, the upper 16 bits zero. No

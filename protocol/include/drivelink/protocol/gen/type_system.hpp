@@ -30,13 +30,15 @@ inline constexpr uint16_t kLimitsSubGroups = 0x0012;
 inline constexpr uint16_t kLimitsCmdGroups = 0x0013;
 /// param limits.group_entries
 inline constexpr uint16_t kLimitsGroupEntries = 0x0014;
+/// param limits.link_values
+inline constexpr uint16_t kLimitsLinkValues = 0x0015;
 
 // Retired ids, never reused: 0x0001 control.rate_hz, 0x0002 sensor.rate_hz
 
 namespace detail {
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 7> kItems{{
+inline constexpr std::array<ItemDesc, 8> kItems{{
     ItemDesc{
         .id = 0x0003,
         .kind = ItemKind::Param,
@@ -163,6 +165,26 @@ inline constexpr std::array<ItemDesc, 7> kItems{{
         .type = ValueType::U16,
         .flags = flagBits(ItemFlag::ReadOnly),
         .name = "limits.group_entries",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0015,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::ReadOnly),
+        .name = "limits.link_values",
         .unit = "",
         .description = "",
         .min_bits = 0x00000000,

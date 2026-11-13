@@ -133,7 +133,7 @@ def main():
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 4' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 5' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
@@ -168,7 +168,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 4
+                assert cli('info')['protocol_version'] == 5
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
                 # More than the PTY's kernel buffer: no external reader must
@@ -177,7 +177,7 @@ def main():
                 # Submit REBOOT without draining the filled slave. Its reply
                 # deadline must cancel the effect and recover the same PTY,
                 # rather than close the published path or run a stale handler.
-                payload = bytes((4, 201, 1, 8))
+                payload = bytes((5, 201, 1, 8))
                 header = bytes((1, len(payload), 0))
                 crc = 0
                 for byte in header:
@@ -192,7 +192,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 4
+                assert cli('info')['protocol_version'] == 5
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire
@@ -210,6 +210,39 @@ def main():
             cli('set', f'5:{extra}:1=400'); cli('save'); cli('reboot')
             assert cli('get', f'5:{extra}:1')['typed_values'] == [400]
             cli('remove', '112', str(motor)); cli('remove', '5', str(extra))
+            cli('save'); cli('reboot'); assert len(cli('instances')) == 2
+            # Source params and their generated signals are discovered through
+            # ordinary item descriptors; both same-loop and cross-loop samples
+            # stream through the existing subscription family.
+            items = {item['name']: item for item in cli('items', '115')}
+            assert items['feedback']['is_source'] and items['feedback']['flags'] & 128
+            assert items['feedback.value']['value_type'] == 5
+            assert items['feedback.age_us']['value_type'] == 3
+            assert cli('get', '0:0:21')['typed_values'] == [32]
+            assert cli('set', '0:0:21=1', code=5)['detail'] == 7
+            feedback = cli('add', '113', 'source_feedback', '0')['instance']
+            imu = cli('add', '114', 'source_imu', '1')['instance']
+            fusion = cli('add', '115', 'fusion', '0')['instance']
+            feedback_ref = (113 << 24) | (feedback << 16) | 256
+            imu_ref = (114 << 24) | (imu << 16) | 256
+            assert cli('set', f'115:{fusion}:1={feedback_ref}', f'115:{fusion}:2={imu_ref}')['pending_reboot']
+            cli('remove', '114', str(imu), code=5)
+            cli('save'); cli('reboot')
+            assert cli('get', f'115:{fusion}:1', f'115:{fusion}:2')['typed_values'] == [feedback_ref, imu_ref]
+            cli('sub-config', '0', '0', '10', *(f'115:{fusion}:{i}' for i in range(256,261)))
+            sample = cli('sub-stream', '0')['typed_values']
+            assert sample[1] == 0 and 0 <= sample[3] < 4294967295
+            assert abs(sample[4] - (sample[0]+sample[2])) < 1e-5
+            cli('cmd-config', '0', '0')
+            cli('arm'); cli('disarm')
+            assert cli('sub-stream', '0')['typed_values'][3] < 4294967295
+            cli('cmd-clear', '0')
+            cli('sub-clear', '0')
+            cli('set', f'115:{fusion}:2=0'); cli('save'); cli('reboot')
+            cli('sub-config', '0', '0', '10', f'115:{fusion}:259')
+            assert cli('sub-stream', '0')['typed_values'] == [4294967295]
+            cli('sub-clear', '0'); cli('remove', '115', str(fusion))
+            cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             print('PASS CLI discovery, typed params, actions, status, diag, persistence, failed SAVE, crash recovery, locking and transports')
         finally:

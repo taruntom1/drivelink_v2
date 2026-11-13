@@ -329,7 +329,7 @@ NUMERIC_TYPES = ("u8", "u16", "u32", "i32", "f32")
 INT_RANGES = {"u8": (0, 0xFF), "u16": (0, 0xFFFF), "u32": (0, 0xFFFFFFFF), "i32": (-(2**31), 2**31 - 1)}
 # Flag names in descriptor order. `persist` and `testgen` are set from their own keys.
 # `gpio` and `ref_ticks_after` come from the `gpio` and `ref_order` keys.
-FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen", "gpio", "ref_ticks_after")
+FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen", "gpio", "ref_ticks_after", "source")
 LISTED_FLAGS = {"param": {"reboot_required", "read_only", "locked_while_armed"}, "signal": set(), "input": set(), "action": set()}
 PLACEMENTS = ("loop", "paused")
 BLOBS = ("none", "in", "out", "both")
@@ -585,7 +585,29 @@ def load_items(f: str, name: str, raw_items: Any, allowed_kinds: tuple[str, ...]
     where = f"{f}: type {name}"
     if not isinstance(raw_items, list):
         fail(where, "items must be a list")
-    items = [load_item(f, name, raw) for raw in raw_items]
+    items = []
+    for raw in raw_items:
+        if not isinstance(raw, dict) or raw.get("kind") != "source":
+            items.append(load_item(f, name, raw))
+            continue
+        where = f"{f}: source {raw.get('name')!r}"
+        if name == SYSTEM_TYPE or name == "loop" or name.split(".")[0] in ("actuator", "controller"):
+            fail(where, "sources are not allowed on this type")
+        check_keys(where, raw,
+                   {"id", "kind", "name", "type", "value_id", "age_id", "unit", "description", "values", "persist"},
+                   {"id", "kind", "name", "type", "value_id", "age_id"})
+        param = load_item(f, name, {"id": raw["id"], "kind": "param", "name": raw["name"],
+                                  "type": "u32", "flags": ["reboot_required"],
+                                  "persist": raw.get("persist", True),
+                                  "description": raw.get("description", "")})
+        param["flags"].append("source")
+        value = {"id": raw["value_id"], "kind": "signal", "name": str(raw["name"]) + ".value",
+                 "type": raw["type"], "unit": raw.get("unit", "")}
+        if "values" in raw:
+            value["values"] = raw["values"]
+        age = {"id": raw["age_id"], "kind": "signal", "name": str(raw["name"]) + ".age_us",
+               "type": "u32", "unit": "us"}
+        items.extend((param, load_item(f, name, value), load_item(f, name, age)))
 
     seen_ids: dict[int, str] = {}
     live_names: dict[str, int] = {}

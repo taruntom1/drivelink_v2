@@ -72,8 +72,8 @@ TEST_CASE("Descriptor hash is set, and the diag table comes through")
     CHECK(kDescriptorHash != 0);
     CHECK(diag::kCodeTable.size() == diag::kSlotCount);
     CHECK(diag::kSlotCount > 0);
-    // System and three mock types, ordered by type id.
-    REQUIRE(kTypeTable.size() == 5);
+    // System, loop and four mock types, ordered by type id.
+    REQUIRE(kTypeTable.size() == 6);
     CHECK(kTypeTable[0] == &system::kDesc);
 }
 

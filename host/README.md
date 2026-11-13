@@ -71,7 +71,7 @@ layout, loop rates and system status rate. It never sends the legacy motor comma
 this smoke script with motors or sensors attached.
 
 
-F4b uses core v4 for arming, fast DISARM and read-only runtime limits. The CLI
+F4b uses core v5 for arming, fast DISARM and read-only runtime limits. The CLI
 adds bounded command/keepalive runs and CSV subscriptions; see cli/README.md.
 The library exposes arm/disarm/acknowledgeFault wrappers, and Session routes
 system DISARM over MSG_TYPE 0x03. Command values stay explicit and finite.

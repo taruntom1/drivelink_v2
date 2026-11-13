@@ -1,11 +1,12 @@
-# Core protocol v4 (F4b)
+# Core protocol v5 (F4c)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
-Firmware, host library, CLI and vdev use v4 together; older peers are
+F4c adds source params and their generated value/age signals.
+Firmware, host library, CLI and vdev use v5 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 4.
+`core_response` (0x41). All integers are little-endian. Version is 5.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -18,6 +19,37 @@ Strings below are `length u16 | UTF-8 bytes` without a terminator, except
 layout command labels, which use a u8 length and 1..16 non-NUL bytes.
 Ref: `type u8 | instance u8 | item u16`. A scalar value is a 4-byte slot,
 with the type declared by its descriptor (IEEE binary32 for f32).
+
+## Sources (F4c)
+
+Item flag `Source` is 0x80. A source is an ordinary u32 param, persisted by
+default and `reboot_required`. Its value is `type << 24 | instance << 16 |
+item_id`; zero disconnects it. This packed numeric representation differs
+from both a Ref's serialized field order and existing instance wiring.
+The target must be a signal or input of the source's value type. Unknown
+targets, params/actions and type mismatches return `BadRef`. Removing a
+referenced instance returns `Referenced`.
+
+The generator adds signals `<param>.value` (the target's value type) and
+`<param>.age_us` (u32, microseconds). Hosts discover them by name; the CLI
+and host descriptor JSON also expose `is_source`. There is no source op.
+Both signals work with ordinary subscriptions and, from F7, capture.
+`age_us == 0xFFFFFFFF` means no valid sample; real ages saturate at
+0xFFFFFFFE. An invalid sample's value is not meaningful. Failed producers
+leave their consumers running, with invalid samples.
+
+Across loops, one snapshot contains all requested values from the same
+producer tick; the consumer gets the latest complete snapshot and its age
+at consumer tick start. A paused producer leaves its last snapshot in place
+and age increases. Same-loop sources sample just before the consumer ticks,
+after their producer, with age zero. Same-loop cycles return `WiringCycle`;
+cross-loop cycles are permitted. ARM/DISARM preserve sources. A consumer
+decides how much staleness is acceptable.
+
+`limits.link_values` (system 0x0015, read-only u16) is the maximum number of
+distinct target values per ordered pair of different loops (default 32).
+Repeated targets within a pair share one slot. Exceeding it returns
+`Capacity` and leaves the pending layout unchanged. This limit is not saved.
 
 ## System (family 1)
 

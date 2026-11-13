@@ -90,7 +90,7 @@ TEST_CASE("Subscriptions latch ordered typed storage on owning loops with divide
     f.c.loop(0).runTick(1);
     REQUIRE(f.g().takeStream(0,bytes)==24);
     drivelink::protocol::wire::Reader r(bytes.data(),24);
-    CHECK(r.readU8()==4);CHECK(r.readU8()==1);CHECK(r.readU16Le()==0);CHECK(r.readU64Le()>0);
+    CHECK(r.readU8()==drivelink::protocol::core_wire::kVersion);CHECK(r.readU8()==1);CHECK(r.readU16Le()==0);CHECK(r.readU64Le()>0);
     CHECK(r.readU32Le()==testmod::f(3.5F));CHECK(r.readU32Le()==1);CHECK(r.readU32Le()==0);CHECK(r.done());
     for(int i=0;i<6;++i) { f.c.loop(0).runTick(1); }
     CHECK(f.g().takeStream(0,{bytes.data(),4})==0); // too small retains the sample
@@ -200,10 +200,10 @@ TEST_CASE("Subscription samples retain config and epoch coherence during concurr
 }
 TEST_CASE("Group wire rejects malformed requests before any mutation and pages resources") {
     Groups f; core::CommandService service(f.c,{});std::array<uint8_t,1024> out{};
-    const std::array<uint8_t,6> list{4,1,5,6,0,0};
+    const std::array<uint8_t,6> list{drivelink::protocol::core_wire::kVersion,1,5,6,0,0};
     const auto n=service.handle(list,out);REQUIRE(n>11);CHECK(out[4]==0);CHECK(out[6]==16);CHECK(out[7]==0);
     const auto too_small=service.handle(list,{out.data(),14});CHECK(too_small==6);CHECK(out[5]==static_cast<uint8_t>(core::Detail::BufferTooSmall));
-    const std::array<uint8_t,13> config{4,1,5,1,0,0,1,0,1,fx::kTypeId,0,0,1};
+    const std::array<uint8_t,13> config{drivelink::protocol::core_wire::kVersion,1,5,1,0,0,1,0,1,fx::kTypeId,0,0,1};
     for(size_t length=4;length<config.size();++length) {
         CHECK(service.handle({config.data(),length},out)==6);CHECK(out[4]!=0);
     }
@@ -226,7 +226,7 @@ TEST_CASE("Groups support full 64-entry payloads, sparse loop ids and boot-only 
     std::array<uint8_t,core::kGroupStreamBytes> bytes{};
     CHECK(c.groups().takeStream(7,bytes)==268);
     refs.push_back(refs[0]);CHECK(c.groups().stageConfig(sub,7,19,1,refs).detail==core::Detail::BatchTooLarge);
-    std::vector<uint8_t> command(260);command[0]=4;command[1]=1;
+    std::vector<uint8_t> command(260);command[0]=drivelink::protocol::core_wire::kVersion;command[1]=1;
     REQUIRE(c.groups().receiveCommand(7,command,101));
     { core_os::RealtimeScope guard(true);c.groups().beginTick(19,true,100);c.groups().endTick(19,102); }
     REQUIRE(c.save().ok());
@@ -253,7 +253,7 @@ TEST_CASE("Small payload group limits fit complete LIST records and telemetry") 
     std::array<uint8_t,128> bytes{};CHECK(c.groups().takeStream(0,bytes)==116);
     refs.push_back(refs[0]);refs.push_back(refs[1]);CHECK(c.groups().stageConfig(sub,0,0,1,refs).detail==core::Detail::BatchTooLarge);
     core::CommandService service(c,{"test","test",128,false});
-    std::array<uint8_t,6> request{4,1,5,6,0,0};
+    std::array<uint8_t,6> request{drivelink::protocol::core_wire::kVersion,1,5,6,0,0};
     const auto length=service.handle(request,bytes);
     REQUIRE(length==123);CHECK(bytes[4]==0);CHECK(bytes[10]==1);
     CHECK(bytes[18]==26); // the full 26-ref record is present, not truncated

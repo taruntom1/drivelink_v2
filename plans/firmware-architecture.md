@@ -491,7 +491,7 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
   ```
 
   The generator expands it into three items of the type. On the wire they are an ordinary param and two ordinary signals:
-  - the param `left` (id `0x0010`): a `u32` flagged `reboot_required` and `Source` (`ItemFlag` `0x80`, the last free bit). Its value is a packed `Ref` to a signal or input of the declared value type, in any loop (its own included); 0 means not connected. F4c fixes the bit layout of the packed `Ref` in `defs.hpp`.
+  - the param `left` (id `0x0010`): a `u32` flagged `reboot_required` and `Source` (`ItemFlag` `0x80`, the last free bit). Its value is a packed `Ref` to a signal or input of the declared value type, in any loop (its own included); 0 means not connected. The packed value is `type << 24 | instance << 16 | item_id`, with helpers in `defs.hpp`.
   - the signal `left.value` (id `0x0110`), of the declared value type: the sampled copy.
   - the signal `left.age_us` (id `0x0111`), a `u32` in µs: the age of that copy.
 - **What the host sees.** There is no op for sources. The host reads a source's state as it reads any signal:
@@ -512,7 +512,7 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
   - A link is a **triple buffer**: three value arrays and one atomic index. At the end of its tick (step 8) the producer loop copies the bound signal storage and its tick timestamp into the back array and swaps the index. At step 5 the consumer loop takes the latest array with one atomic exchange and copies the values into the bound `Sampled<T>`s.
   - Both sides are wait-free. Neither waits, retries or takes a lock, whatever the two loops' cores and priorities are. A seqlock was rejected: a reader that preempts the writer on the same core would spin.
   - One snapshot is one producer tick, so values from one loop are coherent with each other (a whole quaternion, both wheel positions).
-  - The links are allocated at boot from the layout. A link holds at most `CORE_MAX_LINK_VALUES` values (Kconfig, default 32); a layout that needs more is invalid (`Capacity`). The work per tick is fixed after boot.
+  - The links are allocated at boot from the layout. Identical target refs share a value slot within a pair. A link holds at most `CORE_MAX_LINK_VALUES` distinct values (Kconfig, default 32); a layout that needs more is invalid (`Capacity`). The work per tick is fixed after boot.
 - **The same loop.** A source in the producer's own loop is copied directly just before the consumer's tick, with age 0. It adds a tick-order edge (the producer ticks first), and a cycle through such edges is rejected (`WiringCycle`).
 - **Latest wins.** There is no queue. A consumer slower than its producer misses samples; one that needs every sample runs in the producer's loop.
 - **Staleness is the consumer's business.** The age grows while the producer loop is paused, slow or stalled. The core sets no maximum age; a consumer that needs one has its own param.

@@ -73,6 +73,6 @@ Reconfigure/reload group metadata explicitly after a mutation. The bounded
 Session event queue carries subscriptions as well as status and diagnostics.
 The cached, lock-free device/time model remains H1 work.
 
-Arming wrappers use core v4: arm(), disarm() and acknowledgeFault(). Session
+Arming wrappers use core v5: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
 read-only system params; Client::groups retains convenience capacity fields.

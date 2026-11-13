@@ -42,6 +42,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/config_blob.cpp
     ${COMPONENTS_DIR}/core/src/command_service.cpp
     ${COMPONENTS_DIR}/core/src/group_service.cpp
+    ${COMPONENTS_DIR}/core/src/source_service.cpp
     ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
     ${COMPONENTS_DIR}/core/src/safety.cpp
@@ -107,6 +108,7 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_defs.cpp
     tests/test_core_commands.cpp
     tests/test_core_groups.cpp
+    tests/test_core_sources.cpp
     tests/test_core_safety.cpp
     tests/test_configurable_loops.cpp
     tests/test_core_os.cpp

@@ -27,7 +27,16 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v4 before any requested mutation.
+vdev. Every connection checks core v5 before any requested mutation.
+
+F4c source parameters have `is_source: true` in item JSON (flag 0x80).
+Configure them through `set`, using the numeric packed reference
+`type << 24 | instance << 16 | item_id`, then `save` and `reboot`.
+For example, `set 115:0:2=1912602880` connects fusion.mock instance 0's
+IMU source to imu.mock instance 0's yaw (type 114, signal 256).
+Discover and subscribe to `<name>.value` and `<name>.age_us` on the consumer
+loop normally. Age 4294967295 means no valid sample; zero disconnects a
+source parameter. Sources stay sampled while disarmed.
 
 Default output is readable key/value text. With `--json`, stdout holds only
 `{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.

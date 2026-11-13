@@ -72,6 +72,14 @@ std::vector<size_t> sortBy(std::span<const LayoutEntry> entries, const std::vect
                 before[i].push_back(link.target); // the target comes first
             }
         }
+        if (tick) {
+            for (const auto &link : sourceLinks(entries, i)) {
+                if (link.target != kNoEntry && include[link.target] &&
+                    signalLoop(entries[link.target]) == entries[i].loop) {
+                    before[i].push_back(link.target);
+                }
+            }
+        }
     }
     return stableSort(include, before);
 }

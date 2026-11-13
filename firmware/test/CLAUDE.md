@@ -105,3 +105,11 @@ The default-off bench stall command supports bare-board monitor/WDT checks.
 with one temporary actuator mock. A bench-enabled build additionally runs
 `--bench --wdt` to test stalls in real-time/background loops and the Task WDT
 reset; inspect COM4 for the panic. It restores the saved layout and settings.
+
+F4c adds native source binding/validation, ordering, capacity, persistence,
+failed-producer, age/freshness and concurrent triple-buffer coherence tests.
+Host integration discovers source descriptors and streams fusion values and
+ages. `smoke_sources_firmware.py --port COM3` checks sources on the bare board
+and compares the longest control tick with zero and sixteen linked values
+in otherwise identical mock layouts. It requires an original layout with
+loops only and restores it. Use COM4 concurrently to inspect stack marks.

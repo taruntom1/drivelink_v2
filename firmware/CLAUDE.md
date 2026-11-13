@@ -110,6 +110,10 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
 - `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
+- F4c adds source bindings (`Sampled<T>`) and boot-allocated cross-loop triple
+  buffers. Source storage belongs to the consumer loop and survives arm
+  transitions. `CORE_MAX_LINK_VALUES` bounds each ordered loop pair; see the
+  core README for ownership, sampling and age rules.
 - `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). Record macros queue records; real-time counts and latched conditions update fixed atomic state. `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
 
 ## Concurrency rules

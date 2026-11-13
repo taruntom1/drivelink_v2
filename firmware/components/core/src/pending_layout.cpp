@@ -256,6 +256,9 @@ Status PendingLayout::removeInstance(uint8_t type_id, uint8_t instance)
                     return Status::fail(Result::InvalidArgument, Detail::Referenced);
                 }
             }
+            for (const auto &link : sourceLinks(v, j)) {
+                if (link.target == index) { return Status::fail(Result::InvalidArgument, Detail::Referenced); }
+            }
         }
         m_entries.erase(m_entries.begin() + static_cast<std::ptrdiff_t>(index));
         return Status::success();

@@ -16,7 +16,7 @@ A failed PTY drain cancels/drops queued replies and effects, retaining the maste
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v4, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v5, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock

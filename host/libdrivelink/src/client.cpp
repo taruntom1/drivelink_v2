@@ -173,6 +173,7 @@ Json Client::pages(uint8_t family, uint8_t op, const Bytes &prefix)
                 j["value_type"] = r.readU8();
                 j["flags"] = r.readU8();
                 const auto limits = r.readU8();
+                j["is_source"] = (j["flags"].get<unsigned>() & 0x80U) != 0;
                 j["min_bits"] = r.readU32Le();
                 j["max_bits"] = r.readU32Le();
                 j["default_bits"] = r.readU32Le();

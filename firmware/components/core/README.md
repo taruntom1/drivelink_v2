@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v4](../../../docs/protocol/core.md).
+[core v5](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -100,6 +100,35 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 | `CORE_MAX_LOOPS` | 4 | 1–8 |
 
 `CoreConfig::gpio_allowed_mask` is the ESP32-S3 policy minus the uart_comm TX/RX pins (`CONFIG_UART_COMM_TX_PIN` / `_RX_PIN`). `crash_clear_delay_us` is 30 s.
+
+## Sources (F4c)
+
+Modules bind each source with `ctx.bindSource(id, &sample)`, where sample is
+`Sampled<T>` (`core/sampled.hpp`): value, age_us, valid and fresh. This also
+binds the generated value/age signals. Binding the three items individually
+is insufficient. Failed/disconnected producers yield invalid samples.
+
+`SourceService` resolves and allocates after module startup, before loop
+tasks are enabled. Same-loop edges affect tick order, not creation or
+dependency order; sources sample immediately before the consumer ticks.
+Cross-loop edges group by ordered loop pair and deduplicate target refs.
+The producer uses `BoundSignal`/`latchSignals` for end-of-tick snapshots.
+
+Each pair owns three arrays and one lock-free atomic middle index with a
+dirty bit. Producer and consumer exclusively own their back/front arrays;
+acquire/release exchanges transfer complete arrays through the middle.
+Neither side retries, waits or locks. The consumer retains the last snapshot
+and updates age until a new one arrives. Fresh is true only when taking a
+new snapshot; same-loop copies are fresh every tick. Producer tick-start time
+defines age; valid ages saturate at 0xFFFFFFFE, invalid age is 0xFFFFFFFF.
+Arm transitions preserve sample storage.
+
+`CORE_MAX_LINK_VALUES` and `CoreConfig::link_values` cap distinct values per
+pair, default 32 (range 1 to 64), advertised by `limits.link_values`.
+Same-loop copies consume no pair capacity. Three packed arrays cost 12 bytes
+per value, plus timestamps, resolved bindings and consumer mappings. All
+storage is allocated at boot. Sources may target built-in loop statistics,
+sampled on the owning loop as for subscriptions.
 
 ## Rules
 

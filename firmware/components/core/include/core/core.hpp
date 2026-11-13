@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/source_service.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -202,6 +204,7 @@ private:
     std::array<std::array<char, 16>, kMaxLoops> m_task_names{};
     ParamService m_params;
     GroupService m_groups;
+    SourceService m_sources;
     PendingLayout m_pending;
     core_os::OneShotTimer m_crash_clear;
     core_os::PeriodicTimer m_monitor;
