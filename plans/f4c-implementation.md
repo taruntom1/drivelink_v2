@@ -1,6 +1,6 @@
 # F4c implementation plan
 
-Status: approved on 2026-11-13. Based on `origin/firmware_overhaul`
+Status: implemented and verified on 2026-11-13; ready for review. Based on `origin/firmware_overhaul`
 at `717d96e` (F4b PR #47 merged). Codex planning, implementation and an
 independent Codex review are approved by the user for this step.
 

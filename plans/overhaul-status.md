@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F4c: source items and cross-loop links, F4b PR #47 is merged.
+- **Next step:** F5a: motor module types, after the F4c PR is merged.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
 ## Keeping this file short
@@ -27,28 +27,24 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F4c
+## Handoff for F5a
 
-F4b adds arming, fast DISARM, the independent monitor, panic-reset Task WDT,
-latched diagnostics and the five read-only limits. Firmware, host, CLI and
-vdev now use core wire v4; diag remains v3 and NVS formats are unchanged.
-The bare board is restored to normal firmware with bench commands disabled.
+F4c adds generated source params/value/age signals, `Sampled<T>`, same-loop
+sampling and cross-loop snapshots, and `fusion.mock`. Core is wire v5 across
+firmware/host/CLI/vdev; diag remains v3 and NVS formats are unchanged.
+The bare board has normal firmware and its original loops-only layout.
 
-- F4c's Source flag is another wire change: bump core from v4 to v5 across
-  firmware/host/CLI/vdev and the protocol docs.
-- Add `limits.link_values` at the next system id, 0x0015. Follow the boot
-  shadow initialization in Core::initializeLimits; the five existing limits
-  are not persisted. GROUP LIST no longer carries capacity fields.
-- Loop arm transitions reset bound inputs only. Sources must retain their
-  state through ARM/DISARM. Reuse F4a's end-of-tick latch machinery.
-- The monitor CAS-claims the exact arm generation it evaluated; preserve
-  this when changing tick ordering. An unavailable command receipt snapshot
-  is unknown, so it never proves a timeout. Paused loops retain heartbeat.
-- The diagnostic observer is single-device and fenced at shutdown. Native
-  tests can select manual scheduling; vdev uses the real tasks and monitor.
-- Finite command values and explicit sends remain the host contract. CLI
-  cmd-run/keepalive and typed CSV are implemented; semantic NaN-to-hold
-  mapping remains for the later host model, as the host plan permits.
+- Sources are persisted structural params. Their reference encoding differs
+  from instance wiring; use the helpers in `defs.hpp`.
+- Source links are built after instances start and before tick entries cache
+  consumer indices, with loop callbacks gated. Preserve that boot ordering.
+- ARM/DISARM reset bound inputs only. Source storage must retain its state.
+  Actuator/controller source declarations remain forbidden pending a user
+  safety decision. F5a adds none.
+- Keep the monitor's exact-arm-generation claim when touching loop ordering.
+  An unavailable receipt snapshot is unknown; paused loops retain heartbeat.
+- `feedback.mock` still uses the concrete mock actuator interface and reads
+  its previous-tick state. F5a introduces the real interfaces.
 
 ## Steps
 
@@ -68,7 +64,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | merged | [#41](https://github.com/taruntom1/drivelink_v2/pull/41) |
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id; core wire v3, host/CLI/vdev | no | high | merged |[#44](https://github.com/taruntom1/drivelink_v2/pull/44) |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | merged | [#47](https://github.com/taruntom1/drivelink_v2/pull/47) |
-| F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | in progress | |
+| F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | in review | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
 | F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | high | planned | |
 | F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | high | planned | |
@@ -88,13 +84,6 @@ Each note is deleted by the step that uses it.
 
 - **GUI design follow-ups.** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour. It was proposed before F3b landed and must be reconciled with the current core before a wire change is scheduled. [todo-layout-ops.md](todo-layout-ops.md) is closed: the loop at `ADD_INSTANCE` is built, and the GUI follows the firmware's `Referenced` refusal. The GUI design is being brought in line with F3d's loops and F4c's planned sources in phase G7b of [gui-design.md](gui-design.md). That phase found two gaps, both settled on 2026-11-13 and scheduled below: the device's limits (F4b) and a source's value and age as signals (F4c). No firmware changes are authorised by the GUI design sessions.
 
-- **F4c**
-  - Reuse core::BoundSignal and latchSignals from F4a for end-of-tick snapshots.
-  - **A source is three items** (plan: "Sources", "Declaration" and "What the host sees"). `kind: source` in the YAML expands into the param (flag `Source`, `ItemFlag` `0x80`, the last free bit) and the signals `<name>.value` and `<name>.age_us`. There is no source op.
-    - Generator: the expansion, the name rule, unique ids for all three, and tests in `tools/gen/tests`. `docs/protocol/definitions.md` gets the new kind.
-    - `age_us` is `0xFFFFFFFF` with no valid sample and saturates at `0xFFFFFFFE`.
-    - The flag bit is a wire change: bump the core version, and update `docs/protocol/core.md`, the host library and the CLI in the same PR.
-  - Add `limits.link_values` (`CORE_MAX_LINK_VALUES`) beside the limits F4b added.
 - **F5**
   - `feedback.mock` casts its ref to the concrete mock actuator and reads the previous tick's values. Real actuator and feedback interfaces replace that.
   - Removing the legacy motor streams (F5b) frees two command group channels.
@@ -119,9 +108,9 @@ Each note is deleted by the step that uses it.
   - `firmware/test/uart_comm/smoke_main_firmware.py`: the legacy managers. It creates no motor.
   - `firmware/test/uart_comm/smoke_core_firmware.py`: the core with mock instances, which it removes again. `--safe-mode` needs a `CONFIG_CORE_BENCH_CRASH=y` build; flash the normal firmware again afterwards.
   - `host/test/hardware_smoke.py`: the same through the CLI. It refuses to run with pending edits, and restores the layout and rates it found.
-- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F4b/core v4 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
+- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F4c/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
-- **Latest stack marks** (F4b, one temporary actuator mock; bytes free; stacks 4096 unless given): main 1200 (4608), uart_rx 2756, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1988, time_sync_task 1912, diag 1780, esp_timer 3248, core_cfg 4020 (6144), core_loop_0 3072, core_loop_1 3256.
+- **Latest stack marks** (F4c, a 16-value control-to-sensor link, eight feedback mocks and eight fusion mocks; bytes free; stacks 4096 unless given): main 1200 (4608), uart_rx 3188, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1780, time_sync_task 2008, diag 1748, esp_timer 3344, core_cfg 4068 (6144), core_loop_0 3072, core_loop_1 3160.
 - **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board.
 
 ## Other traps
@@ -138,7 +127,7 @@ Each note is deleted by the step that uses it.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
-- **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a and F4b are explicitly approved for Codex planning/build and an independent Codex review at high effort.
+- **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a, F4b and F4c are explicitly approved for Codex planning/build and an independent Codex review at high effort.
 
 ## Decision log
 
@@ -162,10 +151,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | 2026-11-13 | F3d | The stall rule stays: a stall of any loop disarms, real-time or not | No safety rule is loosened (user decision) | yes |
 | 2026-11-13 | F3d | At most 4 loops by default (Kconfig, up to 8); `rate_hz` 1–2000 for every loop; `control` + `sensor` are the factory layout | User decision | yes |
 | 2026-11-13 | F3d | Loop priority is capped at 20; every real-time loop task joins the Task WDT; safe mode starts no loop task; the status stream carries a loop id with each overrun count | The monitor (esp_timer task, 22) must preempt every loop; a bad loop config can be what crashes; loop ids can have gaps. Proposed with the design and not objected to | yes |
-| 2026-11-13 | F4c | A source whose producer is missing does not stop its consumer; the consumer runs and sees `valid == false` | A fusion module can go on with what it has (user decision) | yes |
 | 2026-11-13 | F4b | The device reports its limits as read-only system params (`limits.*`), not in `GET_INFO`. F4b adds the loop, instance and group limits; later steps add their own | No new op and no wire format change; a host can say "4 of 4 loops" before it sends an op. Kept out of F4a, which was already in progress (user decision) | yes |
-| 2026-11-13 | F4c | A source's sampled value and its age are ordinary signals generated from a `kind: source` item; the param carries a new `Source` flag (`0x80`); `age_us` of `0xFFFFFFFF` means no valid sample. No source status op | Groups, capture and plots work on them unchanged, and no second path from a loop to the config task is needed (user decision) | yes |
-| 2026-11-13 | F3d, F4c | Two new steps: F3d (loops and the flag) before F4a, and F4c (sources) after F4b | F4a, F4b and F5 are then built on the loop table; F4c reuses F4a's latch code | yes |
 | 2026-11-13 | tooling | `tools/validate.py` is the one list of checks; CI calls it with `--only`, and a step's new test suite is added to it. Checks run in sequence, the WSL build directory is outside `/tmp`, and a compiler crash is retried once | In F4a three IDF builds at once made a timing test fail, WSL lost a `/tmp` build directory and the no-log build needed a manual retry; the commands were repeated in CI, two guides and the skill (user decision) | n/a |
 | 2026-11-13 | tooling | The main firmware builds only `main`, `esp_vfs_console` and what they require (`set(COMPONENTS ...)` in `firmware/CMakeLists.txt`), as the HIL app does. `esp_vfs_console` is named because nothing requires it and the console would otherwise fall back to the ROM output | 701 build steps in place of 1133, and `esp_lcd`, whose compile crashed the Windows compiler, is no longer built. The binary differs only in `esp_err_to_name`, which loses the names of components that are not built | n/a |
 
@@ -182,3 +168,4 @@ One row per run. The stack marks and what was never run are in "Hardware notes".
 | 2026-11-13 | F3c | CLI serial smoke (`host/test/hardware_smoke.py`); legacy smoke; console stack marks | Pass |
 | 2026-11-13 | F3d | CLI serial smoke: third loop and mock, SAVE/reboot/reload, live rate change, actions, status ids, restoration; all task stack marks above 1 KB. Bench build: three panics, safe mode with zero loops, EXIT_SAFE_MODE and cleanup; normal firmware restored; normal core and legacy smoke passed | Pass |
 | 2026-11-13 | F4b | Normal firmware: legacy/core/CLI smoke; mock ARM/commands/fast DISARM, stale mailboxes, armed refusals, blockers/fault ACK, watchdog re-arm, read-only limits; every measured stack above 1 KB (minimum 1200). Bench: 150 ms stalls of both loops and recovery; Task WDT panic names core_loop_0, then reboot. Forced reconfigure, normal firmware restored; bench commands refused; final legacy/core/safety smoke and layout/settings restoration passed | Pass |
+| 2026-11-13 | F4c | Source value/age smoke; matched 35 s control-loop runs with 0/16 linked values (106/94 us max, zero overruns); all stacks >1 KB (minimum 1200). Legacy/core/CLI/safety smoke passed; core v5/source descriptors/limit verified; original layout, rates, watchdog and idle groups restored | Pass |
