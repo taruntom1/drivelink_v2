@@ -1,6 +1,6 @@
 ---
 name: gui-design-step
-description: Continue the DriveLink PC GUI design in Figma (phases G0 to G8) from where the last session stopped. Use when the user says to continue, resume or start the next phase of the GUI design, names a phase id (G3, G4 ...), or asks to change the GUI designs, wireframes or design system. Optional argument is the phase id; without one, take the next step in plans/gui-design-status.md.
+description: Continue the DriveLink PC GUI design in Figma (phases G0 to G8, and the G7b loop rework) from where the last session stopped. Use when the user says to continue, resume or start the next phase of the GUI design, names a phase id (G3, G4 ...), or asks to change the GUI designs, wireframes or design system. Optional argument is the phase id; without one, take the next step in plans/gui-design-status.md.
 ---
 
 # Continue the GUI design
@@ -12,13 +12,14 @@ The GUI design is design work only, in Figma. One session can run one phase or p
 - Design only: no QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`.
 - A firmware or protocol need found while designing becomes a `plans/todo-<topic>.md` file plus a line in the Notes of `plans/overhaul-status.md`, only after the user agrees. Wire changes are the user's decision.
 - Decisions are the user's. Ask with options and a recommendation (AskUserQuestion, recommended option first, at most 4 questions per round). Record every answer in `plans/gui-design.md`.
-- Commit and push to `claude/gui-design`. Open a PR only when the user asks; it goes into `firmware_overhaul`, never `main`.
+- Commit and push to the design branch named in the status file's handoff note. Open a PR only when the user asks; it goes into `firmware_overhaul`, never `main`.
 
 ## 1. Orient
 
 1. Git:
    - `git fetch origin`.
-   - If the branch `claude/gui-design` exists on origin, switch to it and pull. Otherwise create it from `origin/firmware_overhaul` and say so.
+   - Read the "Branch" line of the handoff note in `plans/gui-design-status.md` on `origin/firmware_overhaul` (`git show origin/firmware_overhaul:plans/gui-design-status.md`). If that branch exists on origin and is not merged, switch to it and pull.
+   - Otherwise create a new branch from `origin/firmware_overhaul`, say so, and write its name into the handoff note. Never start from an older design branch: it lacks the newer firmware and design records.
    - If the session sits on a branch with unrelated work, stop and tell the user.
 2. Read:
    - all of `plans/gui-design-status.md` (state, next step, handoff note, Figma ids, working notes)
@@ -60,5 +61,5 @@ Before finishing, update:
 
 ## 5. Finish
 
-1. Commit the plan and status changes with a message that says what changed and why, and push `claude/gui-design`.
+1. Commit the plan and status changes with a message that says what changed and why, and push the design branch.
 2. Tell the user what was built, with the Figma link, what they should review, and what is open. Ask whether the phase is accepted; the next phase starts after that, in this session or a new one with `/gui-design-step`.

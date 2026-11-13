@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G6 accepted; G7 built on design branch; PR #39 merged then reverted by #40).
+Last updated: 2026-11-13 (G7b loops and sources rework planned; G7 still in review; PR #42 merged).
 
 ## Where things stand
 
@@ -18,24 +18,35 @@ Last updated: 2026-11-13 (G6 accepted; G7 built on design branch; PR #39 merged 
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | in review | 11 Calibration screens on Custom panels, 2 retained 1080p Light checks; awaiting acceptance |
-| G8 Prototype and handoff | planned | |
+| G7b Loops and sources rework | planned | Planned 2026-11-13 after firmware F3d. Brief and work list in gui-design.md, "G7b Loops and sources rework". Parts A to G; note here which are done |
+| G8 Prototype and handoff | planned | After G7b |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
 ## Next step
 
-1. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) was merged at design commit `5bf0612`, then reverted by PR [#40](https://github.com/taruntom1/drivelink_v2/pull/40). G7 commit `d6b7dee` is pushed only on `Codex/gui-design`, outside that merged PR. The user subsequently requested a replacement PR: [#42](https://github.com/taruntom1/drivelink_v2/pull/42) restores the G0–G6 records and adds G7. G6's design acceptance still stands.
-2. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised.
-3. After acceptance, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
+1. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised. G7 and G7b don't block each other: if the user wants to go straight to G7b, leave G7 `in review`.
+2. Build **G7b Loops and sources rework**. The brief is the section of that name in [gui-design.md](gui-design.md): read all of it first.
+   - Start with its four questions ("To ask the user before building"), recommendation first, and record the answers in the Decisions table.
+   - Then build its work list in order: A design system, B new Layout frames, C existing Layout frames, D Device and its remote copies, E Monitor and the custom panel, F records outside the screens, G checks and record.
+   - A session may stop after any part. Write in the state table which parts are done, and add the new Figma ids below.
+3. After G7 and G7b are accepted, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
 
 ## Handoff note
 
-- **Branch:** `Codex/gui-design`, cut from `origin/firmware_overhaul` at `01a9a1e` on 2026-11-13. Design records and helpers carried from `origin/claude/gui-design` (`66d806a`); preserve the newer firmware/host work. PR [#39](https://github.com/taruntom1/drivelink_v2/pull/39) merged through `5bf0612` and was reverted by [#40](https://github.com/taruntom1/drivelink_v2/pull/40) during G7. Further pushes do not update that closed PR. Replacement PR [#42](https://github.com/taruntom1/drivelink_v2/pull/42) is open into firmware_overhaul at the user's request; it restores the earlier records and adds G7, which remains in review.
+- **Branch:** `claude/gui-loop-rework`, cut from `origin/firmware_overhaul` at `28a97e3` on 2026-11-13. That commit has firmware F3d (configurable loops) and every GUI record up to G7 (PR [#42](https://github.com/taruntom1/drivelink_v2/pull/42), merged). Work on this branch. If it has been merged or is gone, cut a new one from `origin/firmware_overhaul` and write its name here. Don't use `origin/claude/gui-design` or `Codex/gui-design`: both are older than F3d.
+- **G7b in one paragraph:** the firmware now has configurable loops. A loop is an instance of the built-in `loop` type, edited on the Layout screen; types need a real-time loop, forbid one, or take any; removes with dependents are refused by the device. Sources (reading a signal across loops) are planned in the firmware and designed now as provisional. The sample device gains a third loop, `fusion`, with `odom`. The brief in gui-design.md has the firmware facts, the decisions, four open questions and the frame-by-frame work list.
+- **G7b traps:**
+  - Every frame that shows the instance tree or the Device loop table must show the three-loop sample device: all G4 frames, all G7 frames, every Device frame and the G6 frames cloned from it. Do it as one scripted pass per page (find the tree or the table card by name, add the rows), then screenshot each frame.
+  - Adding a loop means adding rows in each frame. As far as the records say, the trees and the loop table are rows of G2 instances placed in each frame, not one shared component; this was not checked in Figma, so confirm it in Orient.
+  - Loop names and the loop count come from the device. Nothing may assume `control` and `sensor`.
+  - The mock actuator and feedback now need a real-time loop, so "sim_motor in the sensor loop" (wiring picker frame `85:4111`) is no longer a possible state.
+  - Read the built loop behaviour in `docs/protocol/core.md` and `docs/protocol/types/loop.md` (reading is fine; the scope rule below is about not editing them).
 - **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [overhaul-status.md](overhaul-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
 - **G4 rules to keep:** pending (reboot-required) is violet and never looks live; a refused layout op is not staged and its row says why, naming the clashing instance; ARM blocked by the layout shows as ArmButton "Arm disabled" with the reason in the status bar, not as Fault; there is no per-change undo, only Discard all.
-- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) and [todo-layout-ops.md](todo-layout-ops.md) (G4: the loop at `ADD_INSTANCE`, remove with dependents). Both are in the Notes of overhaul-status.md.
+- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) is open and in the Notes of overhaul-status.md. [todo-layout-ops.md](todo-layout-ops.md) (G4) is closed: the firmware has the loop at `ADD_INSTANCE` and refuses a remove with dependents.
 - **G3 rules to keep:** the scrim of a modal starts under the status bar (DISARM stays live); DISARM is enabled whenever there is a link; refused-while-armed buttons are disabled with a Tooltip saying why.
 - **Rename** assumes `SET_NAME` applies at once and sets `nvs_dirty` (an open question in todo-device-name.md; not yet put to the firmware side).
 - **G5 accepted:** gain of 0 and negative gains follow the Decisions table; Auto re-run on by default was explicitly accepted 2026-11-13. Keep the documented 1080p issues open for handoff.
@@ -130,6 +141,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-13 | loop design (firmware session) | After firmware F3d: compared the designs with the built loops and the planned sources; user decisions (loops edited on Layout, Remove follows the firmware, sources designed as provisional, third sample loop `fusion`); wrote the G7b brief in gui-design.md, updated the sample device and the state inventory, closed todo-layout-ops.md. Nothing built in Figma |
 | 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
 | 2026-11-13 | gui design 5 | Opened PR #39 into firmware_overhaul; started G7 orientation and discussion. Custom panels page is empty; G4 Calibration slot inspected. Layout, file workflow and orientation preview await user decisions |
 | 2026-11-13 | gui design 5 | G7 choices recorded: dashboard, local file review before explicit Apply, numeric values plus graphic. Added G2 CalibrationLevel and OrientationPreview, 11 Calibration screens, all 1080p Light checks and 2 retained copies. Fixed generic signal columns, paused values, retry wording and compact file controls. G7 awaiting acceptance on the design branch. Discovered #39 had merged through 5bf0612 and been reverted by #40; corrected PR metadata to its merged scope and preserved the revert |
