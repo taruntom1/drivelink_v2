@@ -44,6 +44,10 @@ public:
         return !(expected & (kArmed | kStopping)) &&
             word.compare_exchange_strong(expected, (expected + kEpoch) & ~kFault, std::memory_order_acq_rel);
     }
+    bool claimStop(uint32_t expected) {
+        if (expected & kStopping) { return false; }
+        return word.compare_exchange_strong(expected, expected | kStopping, std::memory_order_acq_rel);
+    }
     DisarmReason reason() const { return static_cast<DisarmReason>(m_reason.load(std::memory_order_relaxed)); }
 private:
     std::atomic<uint32_t> m_arm_low{0}, m_arm_high{0}, m_reason{0};

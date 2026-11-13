@@ -208,3 +208,7 @@ CommandService admits the test request; it is not a deployment operation.
 
 Diagnostic report-slot exhaustion does not change safety recovery: fixed
 per-code/instance overflow bits retain active conditions until cleared.
+
+Before raising a timed-out or stalled condition, the monitor CAS-claims the
+exact arm generation it evaluated. A concurrent disarm/re-arm discards the old
+observation, so the new ARM always receives its own watchdog grace interval.

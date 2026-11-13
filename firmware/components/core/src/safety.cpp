@@ -36,8 +36,8 @@ Status Core::acknowledgeFault() {
 void Core::monitor(int64_t now) {
     uint32_t word = 0; int64_t armed_at = 0;
     if (!m_arm.snapshot(word, armed_at)) { return; }
-    const bool armed = (word & ArmState::kArmed) && !(word & ArmState::kFault);
-    bool stalled = false;
+    const bool armed = (word & ArmState::kArmed) && !(word & (ArmState::kFault | ArmState::kStopping));
+    bool stalled = false, stop_claimed = false;
     for (size_t i = 0; i < m_config.max_loops; ++i) {
         auto *loop = m_loops[i]; if (!loop) { continue; }
         auto &hb = m_heartbeats[i];
@@ -49,7 +49,10 @@ void Core::monitor(int64_t now) {
         if (armed && now - hb.advanced_us > static_cast<int64_t>(3U * loop->periodUs() + 5000U)) {
             // Publish the stopping gate before raising: a re-arm cannot
             // release the force while this callback is applying it.
-            m_arm.word.fetch_or(ArmState::kStopping, std::memory_order_acq_rel);
+            if (!stop_claimed) {
+                if (!m_arm.claimStop(word)) { return; } // a disarm/re-arm invalidated this observation
+                stop_claimed = true;
+            }
             core_os::raiseDiag(codes::kLoopStalled, loop->id());
             hb.stalled = true; stalled = true;
         }
@@ -65,18 +68,17 @@ void Core::monitor(int64_t now) {
         // A contended nonblocking read is unknown, never proof of timeout.
         expired = available && now - latest >= m_watchdog_us.load(std::memory_order_relaxed);
         if (expired) {
-            m_arm.word.fetch_or(ArmState::kStopping, std::memory_order_acq_rel);
+            if (!m_arm.claimStop(word)) { return; }
+            stop_claimed = true;
             core_os::raiseDiag(codes::kWatchdogTimeout);
             core_os::clearDiag(codes::kWatchdogTimeout);
         }
     }
     const auto after = m_arm.ticket();
-    bool stop_claimed = stalled || expired;
     if (!stop_claimed && !(after & ArmState::kArmed)) {
         // Repeat while disarmed: even a stale transition hook on another
         // core cannot leave a released force after that loop stops running.
-        auto expected = after;
-        stop_claimed = m_arm.word.compare_exchange_strong(expected, after | ArmState::kStopping, std::memory_order_acq_rel);
+        stop_claimed = m_arm.claimStop(after);
     }
     if (stop_claimed) {
         for (size_t i = 0; i < m_actuator_count; ++i) { m_actuators[i]->emergencyStop(); }

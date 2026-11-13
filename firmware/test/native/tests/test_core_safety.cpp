@@ -72,6 +72,18 @@ TEST_CASE("ARM tickets lose to every intervening disarm, even while disarmed") {
         CHECK(racing.status()==core::ArmStatus::Fault);
     }
 }
+TEST_CASE("An expired monitor observation cannot stop a freshly re-armed epoch") {
+    core::ArmState arm; REQUIRE(arm.commit(arm.ticket(),100));
+    const auto evaluated = arm.ticket(); // monitor observed this epoch at its deadline
+    arm.disarm(); REQUIRE(arm.commit(arm.ticket(),500));
+    CHECK_FALSE(arm.claimStop(evaluated)); CHECK(arm.status()==core::ArmStatus::Armed);
+    REQUIRE(arm.claimStop(arm.ticket())); // current observations can claim a stop
+    CHECK_FALSE(arm.claimStop(arm.ticket())); // a second owner cannot clear its gate
+    arm.disarm(core::DisarmReason::Watchdog);
+    CHECK_FALSE(arm.commit(arm.ticket(),600)); // force application still owns the gate
+    arm.word.fetch_and(~core::ArmState::kStopping);
+    REQUIRE(arm.commit(arm.ticket(),700));
+}
 TEST_CASE("ARM requires a current command group and all interlocks") {
     Safety f(false);
     CHECK(f.c.arm().detail==core::Detail::NoCommandGroup);
