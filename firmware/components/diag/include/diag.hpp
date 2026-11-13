@@ -9,7 +9,8 @@
 ///   DIAG_ERROR(code, esp_err, arg0, arg1, "fmt", ...)   task context only
 ///   DIAG_WARN (code, esp_err, arg0, arg1, "fmt", ...)   task context only
 ///   DIAG_COUNT(code) / DIAG_COUNT_N(code, n)            any context, real-time safe
-///   DIAG_CLEAR(code)                                    task context only
+///   DIAG_RAISE(code)                                    latched, real-time safe
+///   DIAG_CLEAR(code)                                    latched: real-time safe; records: task only
 ///
 /// The macros check the code's kind and severity at compile time, so the
 /// code must be a constant. DIAG_ERROR / DIAG_WARN log with the file's `TAG`.
@@ -48,7 +49,7 @@ using DisarmFn = void (*)(void *, Code);
 void setDisarmHandler(void *ctx, DisarmFn fn);
 
 /// Clear a code's active bit and, if it was set, queue a Cleared event.
-/// Use DIAG_CLEAR. Task context only.
+/// Use DIAG_CLEAR. Latched codes use atomic dirty bits; record codes are task-only.
 void clear(Code code, uint8_t instance = 255);
 uint8_t activeErrorCount();
 
