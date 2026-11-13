@@ -1,6 +1,6 @@
 # F6 implementation plan
 
-State: approved by the user on 2026-11-13; implemented and independently reviewed; bare-board checks passed; PR preparation.
+State: approved by the user on 2026-11-13; implemented and independently reviewed; bare-board checks passed; [PR #55](https://github.com/taruntom1/drivelink_v2/pull/55) in review.
 
 ## Approved pre-plan decisions
 
