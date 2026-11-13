@@ -22,6 +22,7 @@ enum class Source : uint8_t {
     Imu = 0x12,
     ActuatorPwmDir = 0x21,
     FeedbackQuadrature = 0x22,
+    ImuBno055 = 0x30,
     ActuatorMock = 0x70,
     FeedbackMock = 0x71,
     ImuMock = 0x72,
@@ -56,7 +57,7 @@ namespace codes {
 
 namespace system {
 /// A manager failed to start. It is left out, and the rest of the firmware keeps running.
-/// arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu). arg1: unused.
+/// arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6). arg1: unused.
 inline constexpr Code kManagerStartFailed{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, false, "ManagerStartFailed", false, false};
 /// time_sync started, but its periodic sync task did not. esp_err gives the reason.
 /// arg0: unused. arg1: unused.
@@ -79,7 +80,7 @@ inline constexpr Code kDiscardedBytes{7, Source::UartComm, 0x0006, Severity::War
 /// A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.
 inline constexpr Code kHeaderCrcError{8, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false, "HeaderCrcError", false, false};
 /// A stream write was skipped because its slot was busy.
-inline constexpr Code kStreamSkipped{45, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
+inline constexpr Code kStreamSkipped{31, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
 } // namespace uart_comm
 
 namespace diag {
@@ -120,17 +121,17 @@ inline constexpr Code kNvsWriteFailed{19, Source::Core, 0x0008, Severity::Error,
 /// arg0: what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved). arg1: unused.
 inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false, "NvsInitFailed", false, false};
 /// The core command queue was full.
-inline constexpr Code kCommandDropped{43, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
+inline constexpr Code kCommandDropped{29, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
 /// A core reply could not be queued for transmission.
-inline constexpr Code kResponseDropped{44, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
+inline constexpr Code kResponseDropped{30, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
 /// A loop tick took longer than its period; instance identifies the loop.
-inline constexpr Code kLoopOverBudget{46, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
+inline constexpr Code kLoopOverBudget{32, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
 /// A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.
-inline constexpr Code kCommandFrameRejected{47, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
+inline constexpr Code kCommandFrameRejected{33, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
 /// A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required.
-inline constexpr Code kLoopStalled{48, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
+inline constexpr Code kLoopStalled{34, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
 /// No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.
-inline constexpr Code kWatchdogTimeout{49, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
+inline constexpr Code kWatchdogTimeout{35, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
 } // namespace core
 
 namespace time_sync {
@@ -144,86 +145,58 @@ inline constexpr Code kSyncFailed{22, Source::TimeSync, 0x0002, Severity::Warnin
 inline constexpr Code kBadResponseFrame{23, Source::TimeSync, 0x0003, Severity::Warning, CodeKind::Counter, false, "BadResponseFrame", false, false};
 } // namespace time_sync
 
-namespace imu {
-/// The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
-/// arg0: stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot. arg1: unused.
-inline constexpr Code kInitFailed{24, Source::Imu, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
-/// The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
-/// arg0: I2C port. arg1: BNO055 I2C address.
-inline constexpr Code kFallbackToMock{25, Source::Imu, 0x0002, Severity::Warning, CodeKind::Record, false, "FallbackToMock", false, false};
-/// SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.
-/// arg0: requested operation mode. arg1: unused.
-inline constexpr Code kModeSwitchFailed{26, Source::Imu, 0x0003, Severity::Error, CodeKind::Record, false, "ModeSwitchFailed", false, false};
-/// The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.
-/// arg0: cause: 1 manager mutex busy, 2 sampling timer did not restart. arg1: unused.
-inline constexpr Code kStreamReenableFailed{27, Source::Imu, 0x0004, Severity::Error, CodeKind::Record, false, "StreamReenableFailed", false, false};
-/// ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.
-/// arg0: unused. arg1: unused.
-inline constexpr Code kCalibrationReadFailed{28, Source::Imu, 0x0005, Severity::Error, CodeKind::Record, false, "CalibrationReadFailed", false, false};
-/// ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.
-/// arg0: unused. arg1: unused.
-inline constexpr Code kCalibrationApplyFailed{29, Source::Imu, 0x0006, Severity::Error, CodeKind::Record, false, "CalibrationApplyFailed", false, false};
-/// SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
-/// arg0: requested sample period (us). arg1: unused.
-inline constexpr Code kTimerRestartFailed{30, Source::Imu, 0x0007, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
-/// The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.
-/// arg0: wait without a tick (ms). arg1: unused.
-inline constexpr Code kSamplerStalled{31, Source::Imu, 0x0008, Severity::Warning, CodeKind::Record, true, "SamplerStalled", false, false};
-/// Sample periods that were missed because the stream task ran late.
-inline constexpr Code kSampleLate{32, Source::Imu, 0x0009, Severity::Warning, CodeKind::Counter, false, "SampleLate", false, false};
-/// Samples skipped because a configure operation held the BNO055.
-inline constexpr Code kDeviceBusy{33, Source::Imu, 0x000A, Severity::Warning, CodeKind::Counter, false, "DeviceBusy", false, false};
-/// Samples that failed to read from the BNO055.
-inline constexpr Code kReadError{34, Source::Imu, 0x000B, Severity::Warning, CodeKind::Counter, false, "ReadError", false, false};
-/// Samples that could not be encoded into a stream packet.
-inline constexpr Code kEncodeError{35, Source::Imu, 0x000C, Severity::Warning, CodeKind::Counter, false, "EncodeError", false, false};
-/// A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
-inline constexpr Code kConfigQueueFull{36, Source::Imu, 0x000D, Severity::Warning, CodeKind::Counter, false, "ConfigQueueFull", false, false};
-/// A configure response could not be queued for UART transmission and was dropped.
-inline constexpr Code kResponseTxDropped{37, Source::Imu, 0x000E, Severity::Warning, CodeKind::Counter, false, "ResponseTxDropped", false, false};
-} // namespace imu
-
 namespace actuator_pwm_dir {
 /// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
 /// arg0: stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{40, Source::ActuatorPwmDir, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{26, Source::ActuatorPwmDir, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required.
-inline constexpr Code kDriverFault{52, Source::ActuatorPwmDir, 0x0002, Severity::Error, CodeKind::Latched, true, "DriverFault", false, true};
+inline constexpr Code kDriverFault{38, Source::ActuatorPwmDir, 0x0002, Severity::Error, CodeKind::Latched, true, "DriverFault", false, true};
 } // namespace actuator_pwm_dir
 
 namespace feedback_quadrature {
 /// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
 /// arg0: stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{41, Source::FeedbackQuadrature, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{27, Source::FeedbackQuadrature, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required.
-inline constexpr Code kReadFailed{53, Source::FeedbackQuadrature, 0x0002, Severity::Error, CodeKind::Latched, true, "ReadFailed", false, true};
+inline constexpr Code kReadFailed{39, Source::FeedbackQuadrature, 0x0002, Severity::Error, CodeKind::Latched, true, "ReadFailed", false, true};
 } // namespace feedback_quadrature
+
+namespace imu_bno055 {
+/// Instance failed to start; esp_err carries the underlying bus or driver error.
+/// arg0: stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages 0x100 through 0x103 retain their meaning. arg1: unused.
+inline constexpr Code kInitFailed{40, Source::ImuBno055, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+/// The latest sensor read failed; numeric values are retained and valid is false. Clears after a complete successful sample.
+inline constexpr Code kReadFailed{41, Source::ImuBno055, 0x0002, Severity::Warning, CodeKind::Latched, true, "ReadFailed", false, false};
+/// A mode or calibration bus operation failed. esp_err carries the first bus error.
+/// arg0: action id. arg1: actual mode (255 when mode restoration failed).
+inline constexpr Code kActionFailed{42, Source::ImuBno055, 0x0003, Severity::Error, CodeKind::Record, false, "ActionFailed", false, false};
+} // namespace imu_bno055
 
 namespace actuator_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{38, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{24, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT.
-inline constexpr Code kFaultInjected{50, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
+inline constexpr Code kFaultInjected{36, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
 /// A mock diagnostic action raised an arm-blocking condition.
-inline constexpr Code kArmBlocked{51, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
+inline constexpr Code kArmBlocked{37, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
 } // namespace actuator_mock
 
 namespace feedback_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{39, Source::FeedbackMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{25, Source::FeedbackMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 } // namespace feedback_mock
 
 namespace imu_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{42, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{28, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 } // namespace imu_mock
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 54;
+inline constexpr size_t kSlotCount = 43;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -251,20 +224,6 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::time_sync::kInitFailed,
     codes::time_sync::kSyncFailed,
     codes::time_sync::kBadResponseFrame,
-    codes::imu::kInitFailed,
-    codes::imu::kFallbackToMock,
-    codes::imu::kModeSwitchFailed,
-    codes::imu::kStreamReenableFailed,
-    codes::imu::kCalibrationReadFailed,
-    codes::imu::kCalibrationApplyFailed,
-    codes::imu::kTimerRestartFailed,
-    codes::imu::kSamplerStalled,
-    codes::imu::kSampleLate,
-    codes::imu::kDeviceBusy,
-    codes::imu::kReadError,
-    codes::imu::kEncodeError,
-    codes::imu::kConfigQueueFull,
-    codes::imu::kResponseTxDropped,
     codes::actuator_mock::kInitFailed,
     codes::feedback_mock::kInitFailed,
     codes::actuator_pwm_dir::kInitFailed,
@@ -281,6 +240,9 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::actuator_mock::kArmBlocked,
     codes::actuator_pwm_dir::kDriverFault,
     codes::feedback_quadrature::kReadFailed,
+    codes::imu_bno055::kInitFailed,
+    codes::imu_bno055::kReadFailed,
+    codes::imu_bno055::kActionFailed,
 }};
 
 } // namespace drivelink::protocol::defs::diag

@@ -28,7 +28,7 @@
 #include "drivelink/protocol/gen/types.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "imu_bmo_055.hpp"
+#include "mod_imu_bno055/modules.hpp"
 #include "time_sync.hpp"
 #include "uart_comm.hpp"
 
@@ -43,8 +43,8 @@ namespace {
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the loop timers, the safety monitor and
 // the IMU sampling timer).
-constexpr std::array<const char *, 9> kLoggedTasks = {
-    "main", "uart_rx", "uart_tx", "imu_cfg", "imu_stream", "time_sync_task", "diag", "esp_timer", "core_cfg",
+constexpr std::array<const char *, 7> kLoggedTasks = {
+    "main", "uart_rx", "uart_tx", "time_sync_task", "diag", "esp_timer", "core_cfg",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -75,9 +75,9 @@ void logStackHighWater(const core::Core *core = nullptr)
 
 /// The module types the core can instantiate. F3b adds the first ones. Each
 /// desc must be its generated kTypeTable entry (checked in startCore()).
-const std::array<const core::ModuleType *, 7> kModuleTypes{
+const std::array<const core::ModuleType *, 8> kModuleTypes{
     mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0],
-    mod_motor::kHardwareTypes[0], mod_motor::kHardwareTypes[1]};
+    mod_motor::kHardwareTypes[0], mod_motor::kHardwareTypes[1], &mod_imu_bno055::kType};
 
 /// `core.NvsInitFailed` arg0 values. Part of the diag contract
 /// (protocol/defs/diag_codes.yaml): never renumber.
@@ -207,19 +207,6 @@ extern "C" void app_main(void)
         DIAG_ERROR(diag::codes::system::kManagerStartFailed, ESP_FAIL, diag::kManagerIdTimeSync, 0,
                    "Time sync failed to start; continuing without it");
         time_sync_obj.reset();
-    }
-
-    imu_bmo_055::ManagerConfig imu_cfg{};
-    imu_cfg.use_mock_data = false;
-
-    std::optional<imu_bmo_055::ImuBno055Manager> imu_manager;
-    imu_manager.emplace(uart, imu_cfg);
-    if (imu_manager->isValid()) {
-        started_mask |= diag::kStartedImu;
-    } else {
-        DIAG_ERROR(diag::codes::system::kManagerStartFailed, ESP_FAIL, diag::kManagerIdImu, 0,
-                   "IMU manager failed to start; continuing without it");
-        imu_manager.reset();
     }
 
     if (time_sync_obj) {

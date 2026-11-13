@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xB56C7A98;
+inline constexpr uint32_t kDescriptorHash = 0x2FC53D33;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -150,22 +150,16 @@ inline constexpr uint8_t kCoreCommand = 0x01;
 inline constexpr uint8_t kDisarm = 0x03;
 /// command, ESP to host. time_sync request, sent by the ESP. Legacy, removed in F8.
 inline constexpr uint8_t kTimeSyncRequest = 0x20;
-/// command, host to ESP. IMU configure command. Legacy, removed in F6.
-inline constexpr uint8_t kImuConfigure = 0x22;
 /// command, host to ESP. diag query: GetInfo, GetEntries, Clear.
 inline constexpr uint8_t kDiagQuery = 0x23;
 /// response, ESP to host. Answer to a core command.
 inline constexpr uint8_t kCoreResponse = 0x41;
-/// response, ESP to host. IMU configure response. Legacy, removed in F6.
-inline constexpr uint8_t kImuConfigureResponse = 0x42;
 /// response, host to ESP. time_sync response, sent by the host. Legacy, removed in F8.
 inline constexpr uint8_t kTimeSyncResponse = 0x60;
 /// response, ESP to host. Answer to a diag query.
 inline constexpr uint8_t kDiagQueryResponse = 0x63;
 /// stream, ESP to host. System status stream, also the heartbeat.
 inline constexpr uint8_t kStatusStream = 0x80;
-/// stream, ESP to host. IMU telemetry stream. Legacy, removed in F6.
-inline constexpr uint8_t kImuStream = 0xBF;
 /// event, ESP to host. diag events: Record, CounterDelta, Cleared, Boot.
 inline constexpr uint8_t kDiagEvent = 0xC0;
 /// event, ESP to host. Core events: capture done, test signal done, layout applied, OTA state, arm state change.
@@ -173,18 +167,15 @@ inline constexpr uint8_t kCoreEvent = 0xC1;
 } // namespace msg
 
 /// Every MSG_TYPE in the registry, by value.
-inline constexpr std::array<uint8_t, 13> kAllMsgTypes = {{
+inline constexpr std::array<uint8_t, 10> kAllMsgTypes = {{
     msg::kCoreCommand,
     msg::kDisarm,
     msg::kTimeSyncRequest,
-    msg::kImuConfigure,
     msg::kDiagQuery,
     msg::kCoreResponse,
-    msg::kImuConfigureResponse,
     msg::kTimeSyncResponse,
     msg::kDiagQueryResponse,
     msg::kStatusStream,
-    msg::kImuStream,
     msg::kDiagEvent,
     msg::kCoreEvent,
 }};
@@ -193,7 +184,7 @@ inline constexpr std::array<uint8_t, 13> kAllMsgTypes = {{
 inline constexpr uint8_t kSubGroupChannelFirst = 0x81;
 inline constexpr size_t kSubGroupChannelCount = 31;
 inline constexpr uint8_t kCmdGroupChannelFirst = 0xA0;
-inline constexpr size_t kCmdGroupChannelCount = 31;
+inline constexpr size_t kCmdGroupChannelCount = 32;
 
 namespace detail {
 
@@ -226,14 +217,11 @@ static_assert(detail::msgTypesUnique(), "two MSG_TYPEs share a value");
 static_assert(isCommand(msg::kCoreCommand), "core_command is outside its class range");
 static_assert(isCommand(msg::kDisarm), "disarm is outside its class range");
 static_assert(isCommand(msg::kTimeSyncRequest), "time_sync_request is outside its class range");
-static_assert(isCommand(msg::kImuConfigure), "imu_configure is outside its class range");
 static_assert(isCommand(msg::kDiagQuery), "diag_query is outside its class range");
 static_assert(isResponse(msg::kCoreResponse), "core_response is outside its class range");
-static_assert(isResponse(msg::kImuConfigureResponse), "imu_configure_response is outside its class range");
 static_assert(isResponse(msg::kTimeSyncResponse), "time_sync_response is outside its class range");
 static_assert(isResponse(msg::kDiagQueryResponse), "diag_query_response is outside its class range");
 static_assert(isStream(msg::kStatusStream), "status_stream is outside its class range");
-static_assert(isStream(msg::kImuStream), "imu_stream is outside its class range");
 static_assert(isEvent(msg::kDiagEvent), "diag_event is outside its class range");
 static_assert(isEvent(msg::kCoreEvent), "core_event is outside its class range");
 static_assert(kSubGroupChannelFirst >= kStreamMin && kSubGroupChannelFirst + kSubGroupChannelCount - 1 <= kStreamMax, "sub_groups is outside the stream class");

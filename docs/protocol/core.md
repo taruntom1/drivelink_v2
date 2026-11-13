@@ -138,8 +138,7 @@ are rejected. A response must fit before any SET is attempted.
 
 All groups are boot-allocated resources, with independent subscription and
 command IDs. They survive reconnects but are never persisted. Limits are
-CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..31 while the legacy
-IMU stream holds 0xBF), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
+CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..32), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
 limit is min(configured limit, 64, floor((max_payload - 19)/4)), so both a
 complete LIST record and telemetry fit. A 128-byte build advertises 27. The channel is
 registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +
@@ -350,3 +349,10 @@ ARM/DISARM reset controller state and receipts, holding zero duty/velocity or
 measured position; they preserve encoder position and source storage. See
 `firmware/components/mod_motor/README.md` for implementation contracts. These
 are discovered module behaviors over core v5; diag remains v3 and NVS unchanged.
+
+## IMU module (F6)
+
+The new [IMU contract](imu.md) uses ordinary descriptors, subscription groups,
+paused actions and persistent parameters. The internal paused-action parameter
+transaction changes no wire encoding. Core stays v5 and diag stays v3. The
+legacy IMU messages/stream are removed and all 32 command channels are usable.

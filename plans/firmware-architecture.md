@@ -231,7 +231,7 @@ The id blocks per kind (`0x00xx`, `0x01xx`, …) are a readability convention on
 | `0x81–0x9F` | stream ESP → host | Subscription groups 0–30 |
 | `0xA0–0xBF` | stream host → ESP | Command groups 0–31 |
 
-The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. Until their managers are ported, the legacy entries stay there: time_sync `0x20` / `0x60` (until F8), IMU `0x22` / `0x42` and stream `0xBF` (until F6). F5b removed the motor entries (`0x21` / `0x61`, streams `0xBD` / `0xBE`), so the command groups have 31 channels (`0xA0`–`0xBE`) until F6 frees `0xBF`. **The time ping's `0x02` / `0x42` enter the registry in F8**, because the legacy IMU configure response holds `0x42` until F6.
+The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. The remaining legacy entries are time_sync `0x20` / `0x60`, until F8. F5b removed the motor entries (`0x21` / `0x61`, streams `0xBD` / `0xBE`); F6 removed IMU `0x22` / `0x42` and stream `0xBF`. Command groups now have 32 channels (`0xA0`–`0xBF`). **The time ping's `0x02` / `0x42` enter the registry in F8**; F6 leaves `0x42` free.
 
 ### Core command header
 
@@ -612,7 +612,7 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F4 Groups and arming | The read-only `limits.*` system params (F4b). Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
 | F4c Sources | Source items (`kind: source`: the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair snapshot buffers, `Sampled<T>`, and a `fusion.mock` type that reads `feedback.mock` and `imu.mock` across loops. | vdev: the fusion mock's output is streamed with the expected ages; on hardware the control loop's longest tick is measured with and without a 16-value link |
 | F5 Motor stack as modules | Split `motor_controller` into the actuator, feedback and controller types, with YAML, `emergencyStop()`, `onArmTransition()` and bumpless mode switching. The mock motor gains quantization, deadband, saturation, delay and noise. Delete `motor_manager`. | Velocity and position control through groups on vdev and on the bare board with mocks; the monitor stops the mock motors in the loop-stall test; nothing remains of the old motor protocol. Deferred to HW: the same on real motors |
-| F6 IMU module | `imu.bno055` on the `sensor` loop, behind a bus interface with a fake BNO055 in the native tests, with calibration actions (`calibration_read`, `calibration_write`, `calibration_apply`, all `runs_in: paused`). Delete `imu_bmo_055`. | Native tests pass against the fake bus; on the bare board a missing sensor fails cleanly and the calibration actions work on `imu.mock`. Deferred to HW: IMU signals in subscription groups and calibration on a real BNO055 |
+| F6 IMU module | `imu.bno055` on the `sensor` loop, behind a bus interface with a fake BNO055 in the native tests, with calibration actions (`calibration_read`, `calibration_write`, `calibration_apply`, all `runs_in: paused`), persistent typed calibration committed by SAVE/restored at boot, and a paused live mode action. Delete `imu_bmo_055`. | Native tests pass against the fake bus; on the bare board a missing sensor fails cleanly and the calibration actions work on `imu.mock`. Deferred to HW: IMU signals in subscription groups and calibration on a real BNO055 |
 | F7 Capture and test signals | The capture and testgen families, PSRAM enabled (caps alloc only). Evaluate `SPIRAM_XIP_FROM_PSRAM`. | A step response and a chirp, captured at 1 kHz on the bare board with the mock motor and their inputs. Deferred to HW: the same on a real motor |
 | F8 Time | The ping on `0x02`, with TX-time stamping in the TX task. Delete `time_sync`. | The host's offset and drift estimate is stable over the bench's USB-UART adapter (USB-UART adapters add up to 1 ms of USB frame jitter; their target is a stable estimate, not a jitter bound). Deferred to HW: jitter below 100 µs over the Pi's GPIO UART |
 | F9 OTA | The partition table (NVS unchanged), the OTA family with sequential and idempotent writes, and rollback. | Updating with the CLI, a retried chunk is acknowledged, and rollback when `CONFIRM` isn't sent |
@@ -752,3 +752,29 @@ The vdev does not register them.
   actuator, `pullup` on the encoder (user decision).
 - **PWM resolution.** The `MOTOR_HAL_TIMER_RESOLUTION_HZ` default is 10 MHz
   (400 steps at 25 kHz, 0.25% duty) instead of 1 MHz (2.5%).
+
+## F6 implementation decisions (2026-11-13)
+
+User-approved details are in `f6-implementation.md`. Calibration persists as
+ordinary typed params through explicit SAVE; boot applies a valid saved blob
+before startup mode selection. The core commits bounded own-instance, hookless
+live-param updates from successful paused actions while the loop is still
+paused, preserving its existing shadows and A/B transaction formats.
+
+The register driver is instance-owned over a read/write/delay bus seam; device
+ports and pins are exclusive. Supported bus settings are 100–400 kHz and
+10–20 ms requested timeouts, tick-rounded per IDF wait. FIFO progress/recovery
+can exceed one such wait and still trigger the ordinary monitor. No safety
+exemption is added. Full mode/signal coverage is retained with explicit units,
+coordinate convention, per-mode availability and sample validity/age/count.
+
+Runtime health/read faults invalidate samples and report a warning without
+directly disarming; consumers choose their response. Internal initialization
+failure fails startup and therefore gates ARM. A sensor-only reset never
+produces fresh valid data until configuration is restored. See
+`docs/protocol/imu.md` for health/recovery and blob/SIC details.
+
+Real NDOF calibration testing waits for levels 3/3/3/3 and performs exact
+application/boot-readback checks in CONFIG, because fusion automatically
+recalibrates offsets/radii. The bare-board missing-sensor and mock checks
+suffice for F6; physical signal/calibration quality remains deferred to HW.

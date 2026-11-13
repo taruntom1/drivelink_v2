@@ -41,7 +41,7 @@ menu "DriveLink core"
     config CORE_COMMAND_GROUPS
         int "Command group pool size"
         default 8
-        range 1 31
+        range 1 32
     config CORE_GROUP_ENTRIES
         int "Maximum entries per group"
         default 64

@@ -152,3 +152,16 @@ as current. Native tests verify the exact watchdog deadline. On the CH343, a
 CLI command or stream operation takes hundreds of milliseconds; the smoke feeds
 before mode writes and reuses its held-position sample to avoid an unintended
 watchdog gap. It never raises the firmware watchdog beyond its existing range.
+
+## IMU smoke (F6)
+
+`python host/test/imu_smoke.py --cli <cli> --endpoint <endpoint>` exercises
+`imu.mock` discovery, typed signal groups, paused calibration actions, rejection,
+SAVE/reboot restore and modes; integration runs it on vdev. It requires and
+restores a clean loops-only layout with idle groups. `--modules real
+--missing-sensor --sda 8 --scl 9` checks the bare board's failed start. With a
+BNO055 attached, use `--modules real --sda 8 --scl 9 --calibration-wait 300`;
+move the sensor as prompted until all four levels reach 3. Exact profile
+comparisons run in CONFIG to avoid automatic recalibration. See
+`docs/protocol/imu.md` for the blob, timing and quality contract. Windows uses
+the same Qt MinGW PATH as other host binaries.

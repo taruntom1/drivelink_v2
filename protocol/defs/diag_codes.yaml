@@ -37,7 +37,7 @@ codes:
     severity: error
     kind: record
     clears: false
-    arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu)
+    arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6)
     arg1: unused
     description: A manager failed to start. It is left out, and the rest of the firmware keeps running.
 
@@ -329,6 +329,7 @@ codes:
 
   # ── imu ──────────────────────────────────────────────────────────────
   - source: imu
+    retired: true
     code: 0x0001
     name: InitFailed
     severity: error
@@ -339,6 +340,7 @@ codes:
     description: The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 
   - source: imu
+    retired: true
     code: 0x0002
     name: FallbackToMock
     severity: warning
@@ -349,6 +351,7 @@ codes:
     description: The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
 
   - source: imu
+    retired: true
     code: 0x0003
     name: ModeSwitchFailed
     severity: error
@@ -359,6 +362,7 @@ codes:
     description: SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.
 
   - source: imu
+    retired: true
     code: 0x0004
     name: StreamReenableFailed
     severity: error
@@ -369,6 +373,7 @@ codes:
     description: The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.
 
   - source: imu
+    retired: true
     code: 0x0005
     name: CalibrationReadFailed
     severity: error
@@ -379,6 +384,7 @@ codes:
     description: ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.
 
   - source: imu
+    retired: true
     code: 0x0006
     name: CalibrationApplyFailed
     severity: error
@@ -389,6 +395,7 @@ codes:
     description: ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.
 
   - source: imu
+    retired: true
     code: 0x0007
     name: TimerRestartFailed
     severity: error
@@ -399,6 +406,7 @@ codes:
     description: SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
 
   - source: imu
+    retired: true
     code: 0x0008
     name: SamplerStalled
     severity: warning
@@ -409,6 +417,7 @@ codes:
     description: The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.
 
   - source: imu
+    retired: true
     code: 0x0009
     name: SampleLate
     severity: warning
@@ -416,6 +425,7 @@ codes:
     description: Sample periods that were missed because the stream task ran late.
 
   - source: imu
+    retired: true
     code: 0x000A
     name: DeviceBusy
     severity: warning
@@ -423,6 +433,7 @@ codes:
     description: Samples skipped because a configure operation held the BNO055.
 
   - source: imu
+    retired: true
     code: 0x000B
     name: ReadError
     severity: warning
@@ -430,6 +441,7 @@ codes:
     description: Samples that failed to read from the BNO055.
 
   - source: imu
+    retired: true
     code: 0x000C
     name: EncodeError
     severity: warning
@@ -437,6 +449,7 @@ codes:
     description: Samples that could not be encoded into a stream packet.
 
   - source: imu
+    retired: true
     code: 0x000D
     name: ConfigQueueFull
     severity: warning
@@ -444,6 +457,7 @@ codes:
     description: A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
 
   - source: imu
+    retired: true
     code: 0x000E
     name: ResponseTxDropped
     severity: warning
@@ -516,3 +530,33 @@ codes:
   - {source: actuator_mock, code: 3, name: ArmBlocked, severity: warning, kind: latched, blocks_arm: true, description: "A mock diagnostic action raised an arm-blocking condition."}
   - {source: actuator_pwm_dir, code: 2, name: DriverFault, severity: error, kind: latched, disarms: true, description: "An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required."}
   - {source: feedback_quadrature, code: 2, name: ReadFailed, severity: error, kind: latched, disarms: true, description: "Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required."}
+
+  # F6 instance diagnostics
+  - source: imu_bno055
+    code: 1
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: 'stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages
+      0x100 through 0x103 retain their meaning'
+    arg1: unused
+    description: Instance failed to start; esp_err carries the underlying bus or driver
+      error.
+  - source: imu_bno055
+    code: 2
+    name: ReadFailed
+    severity: warning
+    kind: latched
+    description: The latest sensor read failed; numeric values are retained and valid
+      is false. Clears after a complete successful sample.
+  - source: imu_bno055
+    code: 3
+    name: ActionFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: action id
+    arg1: actual mode (255 when mode restoration failed)
+    description: A mode or calibration bus operation failed. esp_err carries the first
+      bus error.

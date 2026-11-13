@@ -48,6 +48,9 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/mod_motor/src/velocity_estimator.cpp
     ${COMPONENTS_DIR}/mod_motor/src/pwm_dir.cpp
     ${COMPONENTS_DIR}/mod_motor/src/quadrature.cpp
+    ${COMPONENTS_DIR}/mod_imu_bno055/src/state.cpp
+    ${COMPONENTS_DIR}/mod_imu_bno055/src/driver.cpp
+    ${COMPONENTS_DIR}/mod_imu_bno055/src/module.cpp
     ${COMPONENTS_DIR}/mod_motor/src/hardware_types.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
     ${COMPONENTS_DIR}/core/src/safety.cpp
@@ -67,7 +70,6 @@ set(CORE_SOURCES
 # Legacy firmware sources under test. Add a file here only if it builds
 # without ESP-IDF (beyond the shims).
 set(FIRMWARE_SOURCES
-    ${COMPONENTS_DIR}/imu_bmo_055/src/imu_protocol.cpp
     ${COMPONENTS_DIR}/time_sync/src/time_sync_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_table.cpp
@@ -128,9 +130,10 @@ set(TEST_SOURCES
     tests/test_pid.cpp
     tests/test_motor_modules.cpp
     tests/test_motor_hardware.cpp
+    tests/test_imu_modules.cpp
+    tests/fake_imu_bus.cpp
     tests/fake_motor_hw.cpp
     tests/test_velocity_estimator.cpp
-    tests/test_imu_protocol.cpp
     tests/test_time_sync_protocol.cpp
     tests/test_diag_protocol.cpp
     tests/test_diag_table.cpp
@@ -144,11 +147,10 @@ target_include_directories(native_tests PRIVATE
     ${COMPONENTS_DIR}/core_os/include
     ${COMPONENTS_DIR}/core_os/backend/native/include
     ${COMPONENTS_DIR}/core/include
+    ${COMPONENTS_DIR}/mod_imu_bno055/include
     ${COMPONENTS_DIR}/mod_mock/include
     ${COMPONENTS_DIR}/mod_motor/include
     ${COMPONENTS_DIR}/pid/include
-    ${COMPONENTS_DIR}/imu_bmo_055/include
-    ${COMPONENTS_DIR}/imu_bmo_055/priv_include
     ${COMPONENTS_DIR}/time_sync/priv_include
     ${COMPONENTS_DIR}/diag/include
     ${COMPONENTS_DIR}/diag/priv_include
@@ -159,7 +161,6 @@ target_include_directories(native_tests PRIVATE ${GEN_FIXTURE_INCLUDE})
 # Third-party headers: no warnings from them.
 target_include_directories(native_tests SYSTEM PRIVATE
     third_party/doctest
-    ${COMPONENTS_DIR}/imu_bmo_055/vendor
 )
 
 # Same warning set as the IDF build, and warnings are errors.

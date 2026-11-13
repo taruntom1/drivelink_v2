@@ -113,6 +113,11 @@ public:
     /// `WrongKind`.
     Status get(std::span<const Ref> refs, std::span<uint32_t> values);
 
+    /// Config caller only, while this record's loop has acknowledged Paused.
+    /// Validate the whole update, then publish bindings/shadows together.
+    /// Hooked, structural and read-only params are deliberately unsupported.
+    Status applyPaused(const detail::InstanceRecord &record, std::span<const ActionParamUpdate> updates);
+
     /// How long `set()` waits for a loop: 3 periods plus 5 ms.
     static uint32_t stagingTimeoutUs(uint32_t period_us) { return (3U * period_us) + 5000U; }
 

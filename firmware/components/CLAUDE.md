@@ -105,3 +105,11 @@ tests). Bind first and take hardware last in `start()`. An output that the
 monitor forces must not share a read-modify-write force register with another
 output (one MCPWM operator per actuator). A type's diag code 1 is its
 `InitFailed`, which the core reports in place of `core.InstanceStartFailed`.
+
+F6 adds a non-real-time bus seam in `mod_imu_bno055`. Only that module
+acquires I2C; its type forbids real-time loops. Steady-state reads allocate
+nothing. A successful paused action may request up to 24 internal parameter
+updates through `ActionOut`; the core validates the entire batch, checks the
+owning acknowledged pause, updates hookless live bindings and shadows, and
+marks persistence dirty before resuming the loop. There is no wire metadata
+change and no direct module access to the config shadow.

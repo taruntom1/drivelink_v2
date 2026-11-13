@@ -21,7 +21,7 @@ A `CLAUDE.md` in a directory loads by itself when you work there. Open the other
 | Tests: what the native tests cover, adding a source to them, HIL tests, smoke scripts, CI | [firmware/test/CLAUDE.md](test/CLAUDE.md) |
 | `uart_comm` internals: RX framing, the TX paths, limits | [firmware/components/uart_comm/CLAUDE.md](components/uart_comm/CLAUDE.md) |
 | The core: boot, loops, layout, params, NVS | [core/README.md](components/core/README.md), [core_os/README.md](components/core_os/README.md), [mod_mock/README.md](components/mod_mock/README.md) |
-| `imu_bmo_055`, `time_sync`: their loops and wire format | [firmware/components/legacy-managers.md](components/legacy-managers.md) |
+| `time_sync`: its loop and wire format | [firmware/components/legacy-managers.md](components/legacy-managers.md) |
 | The wire format | `docs/protocol/` (`framing.md`, `core.md`, `diag.md`, `registry.md`, `diag-codes.md`) and [protocol/CLAUDE.md](../protocol/CLAUDE.md) |
 | The definition YAMLs and the generator | `docs/protocol/definitions.md` |
 
@@ -105,7 +105,8 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is the header-only PID kernel that `mod_motor`'s cascade controller uses.
 - `mod_motor` holds the motor module types (`actuator.pwm_dir`, `feedback.quadrature`, `controller.cascade_pid`); `mod_mock` holds the mocks. See their READMEs.
-- `imu_bmo_055` and `time_sync` are the legacy protocol-facing managers. Each registers UART callbacks, owns its tasks, and keeps its payload codec in a pure module.
+- `time_sync` is the remaining legacy protocol-facing manager. It registers UART callbacks, owns its task, and keeps its payload codec in a pure module.
+- `mod_imu_bno055` is the F6 non-real-time IMU module: pure register logic and calibration/state over an instance-owned bus, with an IDF I2C backend. See its README and `docs/protocol/imu.md`.
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) is the pure wire library: CRC, framing, the frame `Scanner`, `wire_codec`, and the generated registry, diag code table and descriptor format.
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
@@ -199,8 +200,7 @@ A change is done when all of the following are true:
 ### Files not to edit
 
 - **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. Everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
-- **Vendor code:** `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver.
-- **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
+- **Naming:** `mod_imu_bno055` fixes the legacy `imu_bmo_055` spelling. Its register driver is instance-owned and pure.
 
 F4a groups are preallocated and use single-attempt atomic slot ownership;
 loops never wait for RX or configuration. Group snapshots read plain signals
@@ -216,3 +216,10 @@ from creation and is released only by ARM. See
 and fresh-command contracts. F5b removed `motor_manager`, `motor_controller`,
 the legacy motor wire protocol and the HAL/PID APIs only they used: motors run
 only as core modules.
+
+F6 removes the legacy IMU manager and its tasks/codec. `imu.bno055` runs only in
+a non-real-time loop; bus waits can still trip the unchanged stall monitor.
+Calibration actions stage typed params, explicit SAVE persists them, and boot
+restores them. The core commits successful paused-action parameter updates
+while the owning loop remains paused; hooks/structural/read-only writes are
+excluded. See `docs/protocol/imu.md` and the core README.

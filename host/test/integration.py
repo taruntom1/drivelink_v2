@@ -246,6 +246,8 @@ def main():
             cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             from motor_smoke import run as motor_smoke
+            from imu_smoke import run as imu_smoke
+            imu_smoke(args.cli, url)
             # The loop-stall scenario needs the bench stall: restart the same
             # state with --allow-crash, on the same transport.
             kill()

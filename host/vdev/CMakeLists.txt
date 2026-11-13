@@ -8,6 +8,7 @@ foreach(source IN LISTS CORE_SOURCES)
 endforeach()
 add_library(drivelink_native_core STATIC ${SOURCES}
   ${COMPONENTS}/mod_mock/src/modules.cpp
+  ${COMPONENTS}/mod_imu_bno055/src/state.cpp
   ${COMPONENTS}/mod_motor/src/controller.cpp
   ${COMPONENTS}/mod_motor/src/velocity_estimator.cpp
   ${COMPONENTS}/core_os/backend/native/src/realtime_native.cpp
@@ -20,6 +21,7 @@ add_library(drivelink_native_core STATIC ${SOURCES}
 target_include_directories(drivelink_native_core PUBLIC
   ${COMPONENTS}/core/include ${COMPONENTS}/mod_mock/include
   ${COMPONENTS}/mod_motor/include ${COMPONENTS}/pid/include
+  ${COMPONENTS}/mod_imu_bno055/include
   ${COMPONENTS}/core_os/include ${COMPONENTS}/core_os/backend/native/include
   ${COMPONENTS}/diag/include ${COMPONENTS}/diag/priv_include)
 target_link_libraries(drivelink_native_core PUBLIC drivelink::protocol Threads::Threads)

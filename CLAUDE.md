@@ -4,7 +4,7 @@ This file is the repo map and holds the rules that cross areas. Each area has it
 
 ## What this is
 
-DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) that drives motors, reads encoders and sensors and runs the control loops, plus host software that talks to the board over a binary UART protocol. F5a-1 adds motor interfaces, a cascade PID controller and realistic mocks alongside F4c sources over core wire v5 in firmware and vdev, and F5a-2 the real PWM+DIR actuator and quadrature encoder modules (firmware only); the rest follows [plans/host-architecture.md](plans/host-architecture.md).
+DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The core has configurable loops, groups, safety, sources, motor modules and the F6 `imu.bno055` module with persistent calibration, over core wire v5. Only the legacy `time_sync` manager remains, until F8. The host follows [plans/host-architecture.md](plans/host-architecture.md).
 
 ## Repo map
 
@@ -44,7 +44,7 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
   - New components get a short README (purpose, API, rules) when they land.
   - There are no `review/` statuses or `TODO.md` to update.
 - **Legacy code.**
-  - `imu_bmo_055` and `time_sync` keep working until their phase ports them (`motor_manager` was removed in F5b).
+  - `time_sync` keeps working until F8 ports it (`motor_manager` was removed in F5b, `imu_bmo_055` in F6).
   - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
   - Their wire format is defined by their code and native tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
 - **Roles.** The session plans, builds and reviews the step itself (Opus 5.5, high). It spawns an independent review agent (Opus, at the step's review effort) only when the step needs one: wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff. `/overhaul-step` has the details.
