@@ -38,6 +38,27 @@ From the repository root, `python tools/validate.py --only host-win host-linux`
 runs both sequences above with the right toolchain for each, the Linux one
 inside WSL (see firmware/test/CLAUDE.md, "Validation").
 
+Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)
+include the integration test's stdout and PASS lines. Validation runs the
+other CTest tests normally, then `host-integration` once with `-V`.
+To inspect it manually from `host/superbuild`, run
+`ctest --preset windows-mingw -V -R '^host-integration$' --no-tests=error`
+(use preset `linux` on Linux).
+
+Manual Python fallback, from the repository root in PowerShell: use absolute
+executable paths and keep Qt's MinGW runtime on PATH in the same shell:
+
+```powershell
+$env:PATH = 'C:\Qt\Tools\mingw1310_64\bin;' + $env:PATH
+$cli = (Resolve-Path 'host/superbuild/build/windows-mingw/cli/drivelink-cli.exe').Path
+$vdev = (Resolve-Path 'host/superbuild/build/windows-mingw/vdev/drivelink-vdev.exe').Path
+python host/test/integration.py --cli $cli --vdev $vdev
+```
+
+On Linux, for a preset build from the repository root:
+`python3 host/test/integration.py --cli "$(realpath host/superbuild/build/linux/cli/drivelink-cli)" --vdev "$(realpath host/superbuild/build/linux/vdev/drivelink-vdev)"`.
+For a WSL build outside the repo, use its absolute build path instead.
+
 By hand in WSL, use a build directory on the Linux filesystem, because
 extracting dependencies on `/mnt/c` meets Windows rename locks:
 `cmake --preset linux -B ~/.cache/drivelink/build`. Do not use `/tmp`: WSL

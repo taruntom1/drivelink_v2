@@ -174,7 +174,9 @@ def plan_host(preset, configure_preset, jobs, env=None):
     return [
         Step('configure', ['cmake', '--preset', configure_preset], superbuild, env),
         Step('build', ['cmake', '--build', '--preset', preset, '--parallel', jobs], superbuild, env),
-        Step('test', ['ctest', '--preset', preset], superbuild, env),
+        Step('test', ['ctest', '--preset', preset, '-E', '^host-integration$'], superbuild, env),
+        Step('integration (verbose)', ['ctest', '--preset', preset, '-V', '-R', '^host-integration$',
+                                      '--no-tests=error'], superbuild, env),
         Step('installed packages', [python(), 'host/test/install_smoke.py', '--build',
                                     f'host/superbuild/build/{preset}'], ROOT, env),
     ]
@@ -219,7 +221,10 @@ def plan_host_linux(jobs):
     return [
         inside('configure', superbuild, 'cmake', '--preset', 'linux-no-gui', '-B', build),
         inside('build', superbuild, 'cmake', '--build', build, '--parallel', jobs),
-        inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure'),
+        inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure',
+               '-E', '^host-integration$'),
+        inside('integration (verbose)', superbuild, 'ctest', '--test-dir', build, '-V',
+               '-R', '^host-integration$', '--no-tests=error'),
         inside('installed packages', ROOT, 'python3', 'host/test/install_smoke.py', '--build', build),
     ]
 

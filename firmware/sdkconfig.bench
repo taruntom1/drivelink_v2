@@ -1,0 +1,2 @@
+# Used only by tools/bench_fw.py in the isolated build_bench directory.
+CONFIG_CORE_BENCH_CRASH=y
