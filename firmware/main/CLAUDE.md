@@ -22,5 +22,7 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 - **Stack log.** main logs every task's stack high-water mark each `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off). Non-loop task names are a list in `main.cpp`: add new tasks to it. Loop tasks are logged by walking the core loop table and using each id.
   - It uses `xTaskGetHandle` and `uxTaskGetStackHighWaterMark()`. The second takes no kernel lock.
   - Never use `uxTaskGetSystemState()`: it scans every stack inside a critical section and stalls the control loop on the other core.
-- **Bench-only options** in `Kconfig.projbuild`, both default off and never committed on:
+- **Bench-only options** in `Kconfig.projbuild`, default off in normal firmware:
   - `CONFIG_CORE_BENCH_CRASH` enables BenchCrash for the safe-mode check and BenchStall for monitor/Task WDT checks. Normal builds reject the op.
+  - From the repository root, run `python tools/bench_fw.py bench` on the bare board, then `python tools/bench_fw.py normal` after the checks. Both export IDF and flash COM3 (`--port` overrides it); full output is in `build/bench_fw/<mode>.log`. `bench` uses the committed `firmware/sdkconfig.bench` fragment and isolated, git-ignored `firmware/build_bench/`, without touching `firmware/sdkconfig`. `normal` reconfigures and builds, then refuses to flash if `firmware/build/config/sdkconfig.h` enables `CONFIG_CORE_BENCH_CRASH`. Still verify bench commands are refused on the board after restoration.
+  - `--dry-run` after either subcommand prints the commands without exporting IDF, building or flashing. This helper never runs as part of validation; its hardware-free tests run under `gen`.

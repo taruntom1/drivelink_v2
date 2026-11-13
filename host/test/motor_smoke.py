@@ -175,7 +175,8 @@ class Stream:
             if status['arm_state'] != 1 or time.monotonic() >= deadline:
                 break
             time.sleep(.05)
-        assert status['arm_state'] == 0 and status['last_disarm_reason'] == 2, observed
+        assert status['arm_state'] == 0 and status['last_disarm_reason'] == 2, {
+            'count': len(observed), 'last_frames': observed[-3:]}
 
 
 def loop0_overruns(status):
@@ -219,11 +220,14 @@ def stall_check(cli, io, values, stall_ms, loop_rate, real=False, motor=None):
             fault = next((f for f in frames if f['arm_state'] == 2), None)
         if fault is not None and loop0_overruns(frames[-1]) >= loop0_overruns(fault) + jump:
             break
-    assert fault is not None, ('no Fault after the stall request', frames[-3:])
-    assert fault['last_disarm_reason'] == 4, ('Fault, but not LoopStalled', fault)
+    assert fault is not None, ('no Fault after the stall request',
+                               {'count': len(frames), 'last_frames': frames[-3:]})
+    assert fault['last_disarm_reason'] == 4, ('Fault, but not LoopStalled',
+                                            {'count': len(frames), 'last_frames': frames[-3:]})
     assert loop0_overruns(frames[-1]) >= loop0_overruns(fault) + jump, (
         'the stall\'s overruns were already counted when Fault was reported: not provably '
-        'the monitor during the stall', fault, frames[-1])
+        'the monitor during the stall', 'fault_overruns', loop0_overruns(fault),
+        {'count': len(frames), 'last_frames': frames[-3:]})
     after, deadline = None, time.monotonic() + 5
     while time.monotonic() < deadline:  # skip samples queued from before the stall
         after = io.sample()

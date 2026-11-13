@@ -4,6 +4,7 @@ Normal: --port COM3. Bench build: add --bench; --wdt also tests panic-reset.
 Nothing may be attached to the board. Do not run alongside another port owner.
 """
 import argparse
+from collections import deque
 import struct
 import time
 
@@ -24,6 +25,7 @@ def set_one(c, ref, value):
 
 def wait_frame(c, kind, predicate, timeout=2, keepalive=None):
     end = time.monotonic() + timeout
+    count, last = 0, deque(maxlen=3)
     while time.monotonic() < end:
         if keepalive:
             keepalive()
@@ -31,9 +33,12 @@ def wait_frame(c, kind, predicate, timeout=2, keepalive=None):
             msg, p = c.proto.read_frame(timeout=min(.03, max(.001, end-time.monotonic())))
         except TimeoutError:
             continue
+        count += 1
+        last.append((msg, p.hex()))
         if msg == kind and predicate(p):
             return p
-    raise TimeoutError(f'expected frame {kind:#x} did not arrive')
+    raise TimeoutError(f'expected frame {kind:#x} did not arrive; '
+                       f'count={count}, last_frames={list(last)}')
 
 
 def state(c, expected, reason=None, **kwargs):
