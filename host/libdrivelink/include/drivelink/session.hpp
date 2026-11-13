@@ -58,6 +58,9 @@ class Session
     Session &operator=(const Session &) = delete;
     Reply request(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
     Bytes diagRequest(uint8_t op, std::span<const uint8_t> body = {});
+    // Queue a command-group payload without waiting for a peer. False means
+    // the bounded stream queue is full. Request traffic retains its own limit.
+    bool sendCommandGroup(uint8_t group, std::span<const uint8_t> payload);
     bool nextEvent(Frame &frame, std::chrono::milliseconds timeout);
     uint64_t droppedEvents() const;
     void setMaxPayload(uint16_t cap);

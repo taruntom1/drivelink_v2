@@ -15,6 +15,9 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   action REF [ARG...] [--blob HEX]
   save | revert | factory-reset | reboot | exit-safe-mode
   status [COUNT] | events [COUNT] | diag-info | diag-entries | diag-clear
+  groups | sub-config GROUP LOOP DIVIDER [REF...] | cmd-config GROUP LOOP [REF...]
+  sub-enable GROUP true|false | sub-clear GROUP | cmd-clear GROUP
+  sub-stream GROUP [COUNT] | cmd-send GROUP COUNTER [VALUE...]
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
@@ -253,6 +256,70 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             result["typed_values"].push_back(valueJson(d["results"][i]["value_type"], result["values"][i]));
         }
         return result;
+    }
+    if (cmd == "groups") { count(0); return client.groups(); }
+    if (cmd == "sub-config" || cmd == "cmd-config") {
+        const bool sub = cmd == "sub-config";
+        const size_t first = sub ? 4 : 3;
+        if (args.size() < first) { usage("missing group configuration arguments"); }
+        const auto group = static_cast<uint8_t>(id(1, 255));
+        const auto loop = static_cast<uint8_t>(id(2, 254));
+        std::vector<Ref> refs;
+        for (size_t i = first; i < args.size(); ++i) { refs.push_back(parseRef(args[i])); }
+        return sub ? client.subConfigure(group, loop, static_cast<uint16_t>(id(3, 65535)), refs) :
+            client.cmdConfigure(group, loop, refs);
+    }
+    if (cmd == "sub-enable") {
+        count(2);
+        if (args[2] != "true" && args[2] != "false") { usage("sub-enable expects true or false"); }
+        return client.subEnable(static_cast<uint8_t>(id(1, 255)), args[2] == "true");
+    }
+    if (cmd == "sub-clear" || cmd == "cmd-clear") {
+        count(1); return client.groupClear(static_cast<uint8_t>(id(1, 255)), cmd == "cmd-clear");
+    }
+    if (cmd == "sub-stream" || cmd == "cmd-send") {
+        const bool send = cmd == "cmd-send";
+        if ((send && args.size() < 3) || (!send && (args.size() < 2 || args.size() > 3))) {
+            usage(send ? "cmd-send GROUP COUNTER [VALUE...]" : "sub-stream GROUP [COUNT]");
+        }
+        const auto group_id = id(1, 255);
+        Json group;
+        const auto listing = client.groups();
+        for (const auto &g : listing["groups"]) {
+            if (g["id"] == group_id && g["kind"] == (send ? "command" : "subscription")) { group = g; break; }
+        }
+        if (group.is_null() || !group["configured"].get<bool>()) { usage("group is not configured"); }
+        Json descriptors = Json::array();
+        for (const auto &ref : group["refs"]) { descriptors.push_back(client.item({ref["type"], ref["instance"], ref["item"]})); }
+        if (send) {
+            if (args.size() != 3 && args.size() - 3 != descriptors.size()) { usage("command values must match the configured refs"); }
+            std::vector<uint32_t> values;
+            for (size_t i = 3; i < args.size(); ++i) {
+                const auto &d = descriptors[i - 3];
+                const auto &ref = group["refs"][i - 3];
+                const Json enums = d["value_type"] == 6 ? client.enums(ref["type"], ref["item"]) : Json::array();
+                values.push_back(parseValue(d, args[i], enums));
+            }
+            if (!client.command(static_cast<uint8_t>(group_id), group["epoch"], static_cast<uint16_t>(id(2, 65535)), values)) {
+                throw Error(ErrorKind::Connection, "command stream queue full");
+            }
+            // An ordered read drains the frame before this short-lived session
+            // closes. The command stream itself has no acknowledgement.
+            client.info(); return {{"sent", true}, {"epoch", group["epoch"]}};
+        }
+        const auto n = args.size() == 3 ? id(2, 1000000) : 1;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (uint32_t i = 0; i < n;) {
+            Frame frame;
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (remaining.count() <= 0 || !session.nextEvent(frame, remaining)) { throw Error(ErrorKind::Timeout, "no subscription sample received"); }
+            if (frame.type != group["channel"]) { continue; }
+            auto sample = decodeSubscription(frame, group, descriptors);
+            if (sample.is_null()) { continue; }
+            emit(sample, json); ++i;
+            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        }
+        return nullptr;
     }
     if (cmd == "status" || cmd == "events")
     {

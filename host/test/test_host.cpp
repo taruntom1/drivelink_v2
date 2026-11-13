@@ -38,7 +38,7 @@ void sendFrame(Socket &socket, uint8_t type, const Bytes &payload)
 }
 void answer(Socket &socket, const Bytes &request, const Bytes &body = {})
 {
-    Bytes data{2, request[1], request[2], request[3], 0, 0};
+    Bytes data{3, request[1], request[2], request[3], 0, 0};
     data.insert(data.end(), body.begin(), body.end());
     sendFrame(socket, 0x41, data);
 }
@@ -326,14 +326,14 @@ TEST_CASE("diagnostic event decoding preserves instance identity and exact lengt
     CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["instance"] == 7);
 }
 
-TEST_CASE("status v2 carries sparse loop ids and rejects duplicate ids and bad counts")
+TEST_CASE("status v3 carries sparse loop ids and rejects duplicate ids and bad counts")
 {
     FakeDevice device([](Socket &socket) {
         std::array<uint8_t,1> byte{};asio::error_code ec;
         socket.read_some(asio::buffer(byte),ec);
     });
     Session session(device.endpoint()); Client client(session);
-    Bytes payload(18,0); payload[0]=2; payload[17]=2;
+    Bytes payload(18,0); payload[0]=3; payload[17]=2;
     payload.insert(payload.end(), {3,1,0,0,0, 19,9,0,0,0, 0});
     auto status=client.event({128,payload});
     CHECK(status["overruns"][0]["loop_id"]==3);
@@ -344,11 +344,11 @@ TEST_CASE("status v2 carries sparse loop ids and rejects duplicate ids and bad c
     payload[17]=2;payload.push_back(0);CHECK_THROWS_AS(client.event({128,payload}),Error);
 }
 
-TEST_CASE("GET_INFO v2 validates sparse ids, loop flags and duplicate loop identities")
+TEST_CASE("GET_INFO v3 validates sparse ids, loop flags and duplicate loop identities")
 {
     auto body=[](bool duplicate, bool bad_flags) {
         Bytes bytes(256);protocol::wire::Writer w(bytes.data(),bytes.size());
-        w.appendU8(2);protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"build");
+        w.appendU8(3);protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"build");
         w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);w.appendU8(2);w.appendU8(0);w.appendU8(2);
         w.appendU8(3);protocol::core_wire::string(w,"first");w.appendU32Le(1000);w.appendU8(1);
         w.appendU8(duplicate?3:19);protocol::core_wire::string(w,"second");w.appendU32Le(100);w.appendU8(bad_flags?2:0);
@@ -363,4 +363,52 @@ TEST_CASE("GET_INFO v2 validates sparse ids, loop flags and duplicate loop ident
     const auto info=client.info();CHECK(info["loops"][0]["realtime"]==true);
     CHECK(info["loops"][1]["id"]==19);CHECK(info["loops"][1]["realtime"]==false);
     CHECK_THROWS_AS(client.info(),Error);CHECK_THROWS_AS(client.info(),Error);
+}
+
+TEST_CASE("command payloads and subscription decoding preserve types and reject malformed streams")
+{
+    const std::array<uint32_t,2> values{std::bit_cast<uint32_t>(1.5F), 42};
+    const auto payload=commandPayload(255,65535,values);
+    CHECK(payload==Bytes{3,255,255,255,0,0,192,63,42,0,0,0});
+    CHECK(commandPayload(1,0,{}).size()==4);
+    std::array<uint32_t,65> too_many{};CHECK_THROWS_AS(commandPayload(1,0,too_many),Error);
+    Json group={{"channel",129},{"id",0},{"epoch",255},{"kind","subscription"},{"configured",true},
+        {"refs",Json::array({Json::object(),Json::object()})}};
+    Json descriptors=Json::array({{{"value_type",5}},{{"value_type",3}}});
+    Frame frame{129,Bytes{3,255,255,255,1,0,0,0,0,0,0,0,0,0,192,63,42,0,0,0}};
+    const auto decoded=decodeSubscription(frame,group,descriptors);
+    CHECK(decoded["counter"]==65535);CHECK(decoded["timestamp_us"]==1);
+    CHECK(decoded["typed_values"]==Json::array({1.5,42}));
+    frame.payload[1]=254;CHECK(decodeSubscription(frame,group,descriptors).is_null());
+    frame.payload[1]=255;frame.type=130;CHECK(decodeSubscription(frame,group,descriptors).is_null());frame.type=129;
+    for(size_t n=0;n<20;++n) {
+        Frame truncated{129,Bytes(frame.payload.begin(),frame.payload.begin()+n)};
+        CHECK_THROWS_AS(decodeSubscription(truncated,group,descriptors),Error);
+    }
+    frame.payload.push_back(0);CHECK_THROWS_AS(decodeSubscription(frame,group,descriptors),Error);
+    frame.payload.pop_back();frame.payload[0]=2;CHECK_THROWS_AS(decodeSubscription(frame,group,descriptors),Error);
+}
+
+TEST_CASE("host groups validate pages and mutations and send stream frames on the same session")
+{
+    FakeDevice device([](Socket &socket) {
+        // Two pages, one slot each; a configured subscription then empty command.
+        answer(socket,readFrame(socket),{1,1,64,2,0,1,0,1, 0,0,3,19,7,2,0,1,112,0,0,1});
+        answer(socket,readFrame(socket),{1,1,64,2,0,255,255,1, 1,0,0,255,0,1,0,0});
+        answer(socket,readFrame(socket),{8,129});
+        answer(socket,readFrame(socket),{9,130}); // wrong channel for group zero
+        const auto command=readFrame(socket);
+        if(command!=Bytes{3,8,99,0,42,0,0,0}) { throw std::runtime_error("bad command payload"); }
+        answer(socket,readFrame(socket)); // drain barrier
+        // A non-progressing page must fail rather than loop forever.
+        answer(socket,readFrame(socket),{1,1,64,2,0,0,0,0});
+    });
+    Session session(device.endpoint());Client client(session);
+    const auto listing=client.groups();CHECK(listing["groups"].size()==2);
+    CHECK(listing["groups"][0]["loop"]==19);CHECK(listing["groups"][0]["refs"][0]["item"]==256);
+    CHECK(client.subEnable(0,true)["epoch"]==8);
+    CHECK_THROWS_AS(client.subEnable(0,false),Error);
+    const std::array<uint32_t,1> values{42};REQUIRE(client.command(0,8,99,values));
+    client.system(5);
+    CHECK_THROWS_AS(client.groups(),Error);
 }

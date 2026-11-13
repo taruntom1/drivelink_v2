@@ -95,7 +95,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
-- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command and action services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
+- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
 - `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). The `DIAG_*` macros latch a slot and queue a record, and `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
 
 ## Concurrency rules
@@ -183,3 +183,7 @@ A change is done when all of the following are true:
 - **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. Everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
 - **Vendor code:** `firmware/components/imu_bmo_055/vendor/bno055.c` / `bno055.h` are the Bosch driver.
 - **Naming:** the component and namespace are spelled `imu_bmo_055`, but the part is the BNO055.
+
+F4a groups are preallocated and use single-attempt atomic slot ownership;
+loops never wait for RX or configuration. Group snapshots read plain signals
+only on their owning loop. Command inputs stay gated disarmed until F4b.

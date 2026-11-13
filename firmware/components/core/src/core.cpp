@@ -87,6 +87,8 @@ Core::Core(const CoreConfig &config)
       m_table(static_cast<size_t>(m_config.max_instances) + m_config.max_loops + 1U),
       m_tasks(std::make_unique<core_os::PeriodicTask[]>(m_config.max_loops)),
       m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
+      m_groups(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.subscription_groups,
+               m_config.command_groups, m_config.group_entries),
       m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops})
 {
     m_params.setPendingLayout(&m_pending);
@@ -359,6 +361,7 @@ void Core::createLoop(detail::InstanceRecord &record)
     m_owned_loops[slot] = std::make_unique<Loop>(record.instance, record.label, instance.realtime,
         m_config.max_instances, periodUsFromHz(instance.rate), &instance.signals);
     m_loops[slot] = m_owned_loops[slot].get();
+    m_loops[slot]->setGroups(&m_groups);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
     const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,
         m_loops[slot]->periodUs(), &Loop::taskEntry, m_loops[slot], instance.realtime);

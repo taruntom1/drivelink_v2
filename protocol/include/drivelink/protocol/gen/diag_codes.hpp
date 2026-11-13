@@ -122,6 +122,8 @@ inline constexpr Code kCommandDropped{50, Source::Core, 0x0100, Severity::Warnin
 inline constexpr Code kResponseDropped{51, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
 /// A loop tick took longer than its period; instance identifies the loop.
 inline constexpr Code kLoopOverBudget{53, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
+/// A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.
+inline constexpr Code kCommandFrameRejected{54, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
 } // namespace core
 
 namespace motor_manager {
@@ -219,7 +221,7 @@ inline constexpr Code kInitFailed{49, Source::ImuMock, 0x0001, Severity::Error, 
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 54;
+inline constexpr size_t kSlotCount = 55;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -277,6 +279,7 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::core::kResponseDropped,
     codes::uart_comm::kStreamSkipped,
     codes::core::kLoopOverBudget,
+    codes::core::kCommandFrameRejected,
 }};
 
 } // namespace drivelink::protocol::defs::diag

@@ -148,5 +148,12 @@ wire_enums:
     Get: 1
     Set: 2
     GetPending: 3
+  GroupOp:
+    SubConfig: 1
+    SubEnable: 2
+    SubClear: 3
+    CmdConfig: 4
+    CmdClear: 5
+    List: 6
   ActionOp:
     Run: 1

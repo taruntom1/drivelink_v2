@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/core_config.hpp"
+#include "core/group_service.hpp"
 #include "core/instance.hpp"
 #include "core/instance_table.hpp"
 #include "core/loop.hpp"
@@ -138,6 +139,7 @@ public:
     bool nvsDirty() const { return m_params.nvsDirty(); }
 
     ParamService &params() { return m_params; }
+    GroupService &groups() { return m_groups; }
     Loop &loop(uint8_t id) { return *findLoop(id); } ///< known running loop only
     Loop *findLoop(uint8_t id) const;
     Loop *loopAt(size_t slot) const { return slot < m_config.max_loops ? m_loops[slot] : nullptr; }
@@ -186,6 +188,7 @@ private:
     std::unique_ptr<core_os::PeriodicTask[]> m_tasks;
     std::array<std::array<char, 16>, kMaxLoops> m_task_names{};
     ParamService m_params;
+    GroupService m_groups;
     PendingLayout m_pending;
     core_os::OneShotTimer m_crash_clear;
     core_os::KvStore *m_store = nullptr;

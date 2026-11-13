@@ -13,6 +13,8 @@
 
 namespace core {
 
+class GroupService;
+
 inline constexpr uint8_t kFactoryControlLoop = 0;
 inline constexpr uint8_t kFactorySensorLoop = 1;
 inline constexpr size_t kMaxLoops = 8;
@@ -79,12 +81,15 @@ public:
     ///   1. increment the heartbeat
     ///   3. swap in a staged batch (Ready → Applying, copy, hooks, Applied,
     ///      signal the config task)
+    ///   5. swap group configs and consume command mailboxes (disarmed in F4a)
     ///   7. tick() each instance in list order (the wiring's tick order, fixed at
 ///      boot)
+    ///   8. latch due subscription groups on this loop
     ///   9. update the statistics
     /// Real-time: no lock, no logging, no allocation, no blocking, and the
     /// work is bounded (kMaxBatchEntries copies plus the instances).
     void runTick(uint32_t elapsed);
+    void setGroups(GroupService *groups) { m_groups = groups; } // boot only
 
     /// `core_os::TickFn` for the loop's PeriodicTask: `ctx` is the Loop.
     static void taskEntry(void *ctx, uint32_t elapsed);
@@ -123,6 +128,7 @@ private:
     const bool m_realtime;
     std::atomic<bool> m_enabled{false};
     LoopStats *m_published;
+    GroupService *m_groups = nullptr;
 
     std::unique_ptr<Instance *[]> m_instances;
     const size_t m_capacity;

@@ -285,7 +285,7 @@ The rules follow the protocol conventions:
     - If it times out, the config task withdraws the batch with a compare-and-swap on the slot and answers `Busy`. Either way the outcome is definite.
   - **Batches for other loops.** A batch for the instances of any loop is applied the same way, at that loop's next tick. The params of a loop instance itself (its rate) are applied on the config task, like system params.
 - **Groups** are device resources:
-  - All of them are allocated at boot at the maximum size (64 entries, so about 270 B each; about 4.3 KB for 8 + 8 groups) and never freed.
+  - All of them are allocated at boot at the maximum size (64 entries; packed values alone are about 4.3 KB for 8 + 8 groups, with additional RAM for resolved bindings, staged configurations and mailboxes) and never freed.
   - `SUB_CONFIG` and `CMD_CONFIG` write a new configuration that the loop swaps in at a tick boundary, and they bump the group's **epoch** (u8). `CMD_CLEAR` and `SUB_CLEAR` disable a group, also through the swap.
   - Group limits come from Kconfig. The defaults are 8 subscription groups and 8 command groups, each with at most 64 entries and within `MAX_PAYLOAD`.
   - Groups are not persisted. The host sets them up after each connect, and the Boot event tells it when to do that again.
@@ -658,3 +658,14 @@ CPU load uses idle runtime deltas, with 0xFF for an unavailable sample. Status r
 The diagnostic runtime uses 254 fixed sparse slots, including generated
 non-instance slots; exhaustion is counted. Safety flag metadata is present,
 while arming/latching/DIAG_RAISE behavior stays in F4b.
+
+### F4a implementation decisions
+
+Core wire v3 adds group operations/streams; NVS formats do not change. Group
+wire bodies and epoch behavior are specified in docs/protocol/core.md. An input
+has one command-group owner (AlreadyBound on overlap). Group staging uses a
+bounded atomic ownership claim and a tick-boundary acknowledgement; a rebind
+to another loop is committed by the old loop before the new one accesses it.
+The device stays disarmed through F4a. F4b connects command application and
+receipt times to its arm state and watchdog. NaN is rejected on the wire;
+host NaN-to-hold conversion waits for arming/hold semantics.

@@ -130,6 +130,74 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             (h.op==3?m_core.getPending(refs,values):m_core.params().get(refs,values));
         if(st.accepted()) { w.appendU8(n);for(auto v:values) { w.appendU32Le(v); } }return st;
     }
+    case defs::Family::Group: {
+        auto &groups = m_core.groups();
+        const auto op = static_cast<defs::GroupOp>(h.op);
+        if (op == defs::GroupOp::List) {
+            const auto start = r.readU16Le();
+            const auto subs = groups.capacity(GroupKind::Subscription);
+            const auto cmds = groups.capacity(GroupKind::Command);
+            const auto total = subs + cmds;
+            if (!r.done() || start > total) { return bad(); }
+            if (w.remaining() < 8) { return bad(Detail::BufferTooSmall); }
+            w.appendU8(static_cast<uint8_t>(subs)); w.appendU8(static_cast<uint8_t>(cmds));
+            w.appendU8(groups.entryCapacity());
+            page(w, static_cast<uint16_t>(total), cw::kEnd, 0);
+            uint16_t next = start; uint8_t count = 0;
+            for (; next < total; ++next) {
+                const bool sub = next < subs;
+                const auto kind = sub ? GroupKind::Subscription : GroupKind::Command;
+                const auto id = static_cast<uint8_t>(sub ? next : next - subs);
+                const auto &g = *groups.info(kind, id);
+                if (w.remaining() < 8 + 4U * g.count) { break; }
+                w.appendU8(sub ? 0 : 1); w.appendU8(id);
+                w.appendU8((g.configured ? 1 : 0) | (g.enabled ? 2 : 0));
+                w.appendU8(g.loop); w.appendU8(g.epoch); w.appendU16Le(g.divider); w.appendU8(g.count);
+                for (size_t i = 0; i < g.count; ++i) {
+                    w.appendU8(g.refs[i].type); w.appendU8(g.refs[i].instance); w.appendU16Le(g.refs[i].id);
+                }
+                ++count;
+            }
+            if (next < total && count == 0) { return bad(Detail::BufferTooSmall); }
+            const auto cursor = next < total ? next : cw::kEnd;
+            w.patchU8(5, static_cast<uint8_t>(cursor)); w.patchU8(6, static_cast<uint8_t>(cursor >> 8));
+            w.patchU8(7, count);
+            return {};
+        }
+        const auto id = r.readU8();
+        const auto kind = op == defs::GroupOp::CmdConfig || op == defs::GroupOp::CmdClear ?
+            GroupKind::Command : GroupKind::Subscription;
+        if (w.remaining() < 2) { return bad(Detail::BufferTooSmall); }
+        Status st;
+        switch (op) {
+        case defs::GroupOp::SubConfig:
+        case defs::GroupOp::CmdConfig: {
+            const auto loop = r.readU8();
+            const uint16_t divider = kind == GroupKind::Subscription ? r.readU16Le() : 1;
+            const auto count = r.readU8();
+            if (!r.ok() || count > kMaxGroupEntries || r.remaining() != 4U * count) { return bad(); }
+            for (size_t i = 0; i < count; ++i) { m_refs[i] = ref(r); }
+            st = groups.configure(kind, id, loop, divider, {m_refs.data(), count}, m_core.params().armed());
+            break;
+        }
+        case defs::GroupOp::SubEnable: {
+            const auto enabled = r.readU8();
+            if (!r.done() || enabled > 1) { return bad(); }
+            st = groups.enable(id, enabled != 0); break;
+        }
+        case defs::GroupOp::SubClear:
+        case defs::GroupOp::CmdClear:
+            if (!r.done()) { return bad(); }
+            st = groups.clear(kind, id, m_core.params().armed()); break;
+        default: return bad(Detail::Unsupported);
+        }
+        if (st.ok()) {
+            w.appendU8(groups.info(kind, id)->epoch);
+            w.appendU8(static_cast<uint8_t>((kind == GroupKind::Subscription ? defs::kSubGroupChannelFirst :
+                defs::kCmdGroupChannelFirst) + id));
+        }
+        return st;
+    }
     case defs::Family::Describe: {
         const auto op=static_cast<defs::DescribeOp>(h.op);
         uint8_t type=0;uint16_t item_id=0;

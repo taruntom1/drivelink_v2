@@ -19,6 +19,15 @@ from __future__ import annotations
 import struct
 import time
 
+CORE_PROTOCOL_VERSION = 3
+
+
+def command_group_payload(epoch: int, counter: int, values: tuple[int, ...] = ()) -> bytes:
+    """Core v3 command stream; values are descriptor-typed raw u32 slots."""
+    if len(values) > 64:
+        raise ValueError("at most 64 group entries")
+    return struct.pack("<BBH", CORE_PROTOCOL_VERSION, epoch, counter) + struct.pack("<" + "I" * len(values), *values)
+
 try:
     import serial  # used only in annotations; the self-test runs without pyserial
 except ImportError:
@@ -286,6 +295,14 @@ def _frames(data: bytes, count: int) -> list[tuple[int, bytes]]:
 
 
 def _self_test() -> None:
+    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("03ffffff0000c03f2a000000")
+    assert len(command_group_payload(0, 0)) == 4
+    assert len(command_group_payload(0, 0, (0,) * 64)) == 260
+    try:
+        command_group_payload(0, 0, (0,) * 65)
+        raise AssertionError("expected a group length rejection")
+    except ValueError:
+        pass
     # Back-to-back frames, some holding a false preamble, one of maximum size.
     payloads = [b"\x01", b"\xAA\xAA\xAA", b"", bytes(range(32)), b"\xAA" * 16, bytes(MAX_PAYLOAD)]
     got = _frames(b"".join(encode_frame(0x41, x) for x in payloads), len(payloads))

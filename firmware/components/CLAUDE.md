@@ -83,3 +83,7 @@ instance identity by overwriting existing code args.
 F3d loop tasks use persisted loop parameters, not per-loop Kconfig task options.
 Only realtime loops join the Task WDT. Native real-time tests fail on allocation
 or blocking core_os calls during ticks; fixture observations must be preallocated.
+
+F4a group access transfers slot ownership with one atomic claim and never
+waits or spins in a loop/RX path. Configuration shadows belong only to the
+config caller; signals and inputs are accessed only by the owning loop.

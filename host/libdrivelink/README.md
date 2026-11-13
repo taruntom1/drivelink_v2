@@ -13,7 +13,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v2 and sets the device's maximum receive payload; the scanner's hard limit is
+v3 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 
@@ -57,3 +57,18 @@ Consumers use `find_package(drivelink REQUIRED)` and link
 cannot be substituted without rebuilding the library and its consumers.
 Asio headers stay private. `package.xml` lets colcon discover the CMake package;
 the superbuild is ignored by colcon. No project license grant has been added.
+
+Group services are `groups`, `subConfigure`, `cmdConfigure`, `subEnable` and
+`groupClear`. Mutations return epoch/channel; LIST includes all slots and refs.
+`command` queues typed slot bits with an epoch/counter; an empty list is a
+keepalive. It never waits for a peer and has no stream acknowledgement. The
+bounded queue can refuse a send. Retain the session until writes drain; the
+short-lived CLI uses an ordered read before closing. Device command validation
+and the arming gate still apply. F4a sends no automatic keepalives or ARM.
+
+`commandPayload` is a pure encoder. `decodeSubscription(frame, group,
+descriptors)` checks exact lengths and converts values in configured order;
+it returns null for a stale epoch/channel. Resolve descriptors from the device.
+Reconfigure/reload group metadata explicitly after a mutation. The bounded
+Session event queue carries subscriptions as well as status and diagnostics.
+The cached, lock-free device/time model remains H1 work.
