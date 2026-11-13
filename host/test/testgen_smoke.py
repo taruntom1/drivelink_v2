@@ -45,6 +45,9 @@ def run(cli_path, endpoint, loop_rate=1000, real=None, stack_wait=0, report=None
         cli('testgen-start', 0, target, 'invalid', 0, amplitude, 0, 0, 1000, 1, code=2)
         cli('testgen-start', 0, target, 'step', 'nan', amplitude, 0, 0, 1000, 1, code=2)
         assert cli('testgen-start', 0, target, 'step', 0, amplitude, 0, 0, 1000, 1, code=5)['result'] == 7
+        if endpoint.startswith('tcp://'):
+            from testgen_cli_failure import run as lost_arm_reply
+            lost_arm_reply(cli_path, endpoint, target)
         columns = [target, f'{pid}:258', f'{pid}:257', f'{pid}:256',
                    f'{pid}:260', '5:0:256', '5:0:258', '5:0:257']
 

@@ -417,7 +417,8 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         InterruptScope interrupt_scope;
         bool owns_arm = false;
         try {
-            client.arm(); owns_arm = true;
+            owns_arm = true; // ARM may apply even if its reply is lost.
+            client.arm();
             uint16_t counter = 0;
             const auto feed = [&] {
                 if (!client.command(group_id, group["epoch"], counter++)) { throw Error(ErrorKind::Connection, "keepalive queue full"); }
