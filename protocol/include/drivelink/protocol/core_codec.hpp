@@ -10,6 +10,15 @@ inline constexpr uint8_t kVersion = 3;
 inline constexpr uint16_t kEnd = 0xFFFF;
 inline constexpr size_t kRequestHeader = 4;
 inline constexpr size_t kResponseHeader = 6;
+// LIST must fit one whole group: response header, pool/page header, record
+// header, then four bytes per Ref. This is tighter than the stream prefix.
+inline constexpr size_t kGroupListOverhead = kResponseHeader + 8 + 8;
+constexpr uint8_t groupEntryCapacity(size_t payload, uint8_t requested)
+{
+    const size_t available = payload > kGroupListOverhead ? (payload - kGroupListOverhead) / 4 : 0;
+    const size_t bounded = requested < 64 ? requested : 64;
+    return static_cast<uint8_t>(bounded < available ? bounded : available);
+}
 struct Header { uint8_t seq = 0, family = 0xFF, op = 0xFF; };
 inline bool decodeHeader(wire::Reader &r, Header &h)
 {

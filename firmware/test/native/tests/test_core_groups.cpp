@@ -168,6 +168,36 @@ TEST_CASE("Group RX and telemetry slots remain coherent under concurrent use") {
     }
     done.store(true);rx.join();
 }
+TEST_CASE("Subscription samples retain config and epoch coherence during concurrent handoffs") {
+    Groups f;
+    world().created[0]->position=3.F;world().created[1]->position=7.F;
+    std::atomic<bool> done{false};
+    auto run=[&](uint8_t loop) {
+        while(!done.load()) {
+            { core_os::RealtimeScope guard(true);f.g().beginTick(loop);f.g().endTick(loop,100); }
+            std::this_thread::yield();
+        }
+    };
+    std::thread first(run,0),second(run,1);
+    std::array<uint8_t,core::kGroupStreamBytes> bytes{};
+    unsigned swaps=0,samples=0;
+    for(unsigned attempt=0;attempt<10000 && swaps<100;++attempt) {
+        const auto loop=static_cast<uint8_t>(swaps%2);
+        const core::Ref signal{fx::kTypeId,loop,fx::kPosition};
+        const auto status=f.g().configure(sub,0,loop,1,{&signal,1});
+        if(!status.ok()) {
+            CHECK(status.result==core::Result::Busy);
+            std::this_thread::yield();continue;
+        }
+        ++swaps;
+        if(f.g().takeStream(0,bytes) && bytes[1]==f.g().info(sub,0)->epoch) {
+            drivelink::protocol::wire::Reader r(bytes.data()+12,4);
+            CHECK(r.readU32Le()==testmod::f(loop==0?3.F:7.F));++samples;
+        }
+    }
+    done.store(true);first.join();second.join();
+    CHECK(swaps==100);CHECK(samples>0);
+}
 TEST_CASE("Group wire rejects malformed requests before any mutation and pages resources") {
     Groups f; core::CommandService service(f.c,{});std::array<uint8_t,1024> out{};
     const std::array<uint8_t,6> list{3,1,5,6,0,0};
@@ -203,4 +233,36 @@ TEST_CASE("Groups support full 64-entry payloads, sparse loop ids and boot-only 
     core::Core reboot(testConfig(32));REQUIRE(bootCore(reboot,store).ok());
     CHECK_FALSE(reboot.groups().info(sub,7)->configured);CHECK_FALSE(reboot.groups().info(cmd,7)->configured);
     CHECK(reboot.groups().info(sub,7)->epoch==0);
+}
+
+TEST_CASE("Small payload group limits fit complete LIST records and telemetry") {
+    namespace cw=drivelink::protocol::core_wire;
+    CHECK(cw::groupEntryCapacity(0,64)==0);CHECK(cw::groupEntryCapacity(128,64)==26);
+    CHECK(cw::groupEntryCapacity(277,64)==63);CHECK(cw::groupEntryCapacity(278,64)==64);
+    CHECK(cw::groupEntryCapacity(1024,255)==64);CHECK(cw::groupEntryCapacity(128,8)==8);
+    reset();core_os::KvStore store;auto cfg=testConfig();
+    cfg.group_entries=cw::groupEntryCapacity(128,64);
+    core::Core c(cfg);std::vector<Inst> layout;std::vector<core::Ref> refs;
+    for(uint8_t i=0;i<13;++i) {
+        layout.push_back({fx::kTypeId,i,0,"m"+std::to_string(i)});
+        refs.push_back({fx::kTypeId,i,fx::kVelocitySp});refs.push_back({fx::kTypeId,i,fx::kRaw});
+    }
+    bootWith(c,store,layout);
+    REQUIRE(c.groups().stageConfig(sub,0,0,1,refs).ok());c.loop(0).runTick(1);
+    REQUIRE(c.groups().complete(sub,0,0).ok());
+    std::array<uint8_t,128> bytes{};CHECK(c.groups().takeStream(0,bytes)==116);
+    refs.push_back(refs[0]);CHECK(c.groups().stageConfig(sub,0,0,1,refs).detail==core::Detail::BatchTooLarge);
+    core::CommandService service(c,{"test","test",128,false});
+    std::array<uint8_t,6> request{3,1,5,6,0,0};
+    const auto length=service.handle(request,bytes);
+    REQUIRE(length==126);CHECK(bytes[4]==0);CHECK(bytes[8]==26);CHECK(bytes[13]==1);
+    CHECK(bytes[21]==26); // the full 26-ref record is present, not truncated
+    unsigned listed=1;uint16_t cursor=bytes[11]|static_cast<uint16_t>(bytes[12])<<8;
+    while(cursor!=cw::kEnd) {
+        request[4]=static_cast<uint8_t>(cursor);request[5]=static_cast<uint8_t>(cursor>>8);
+        REQUIRE(service.handle(request,bytes)>14);REQUIRE(bytes[4]==0);
+        listed+=bytes[13];const uint16_t next=bytes[11]|static_cast<uint16_t>(bytes[12])<<8;
+        REQUIRE((next==cw::kEnd || next>cursor));cursor=next;
+    }
+    CHECK(listed==16);
 }

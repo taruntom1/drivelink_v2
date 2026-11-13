@@ -38,6 +38,9 @@ menu "DriveLink core"
         int "Maximum entries per group"
         default 64
         range 1 64
+        help
+            The effective limit is capped by the UART payload size so a whole
+            group LIST record and a telemetry sample both fit in one frame.
 
     config CORE_COMMAND_QUEUE_DEPTH
         int "Core command queue depth"

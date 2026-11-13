@@ -311,4 +311,3 @@ bool GroupService::lastCommandUs(uint8_t id, int64_t &received_us) const
     return true;
 }
 } // namespace core
-

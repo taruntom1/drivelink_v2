@@ -148,7 +148,9 @@ metadata, bounded RX command mailboxes, and latest subscription samples.
 Defaults are eight subscription groups and eight command groups, each with up
 to 64 refs. Kconfig CORE_SUBSCRIPTION_GROUPS (1..31), CORE_COMMAND_GROUPS
 (1..29) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
-are statically checked. All storage is allocated at construction, including
+are statically checked. The effective entry limit is capped by the payload
+(22 + 4*n bytes for a complete LIST record), so 128-byte builds advertise 26
+entries. All storage is allocated at construction, including
 two resolved binding tables per slot and one config scratch table. Memory is
 larger than just the packed wire values: bindings, staged configurations,
 metadata and transport mailboxes also consume RAM.
