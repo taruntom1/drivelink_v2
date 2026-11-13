@@ -27,7 +27,7 @@ Enter plan mode and write a short step plan:
 - **Scope:** what this PR does, and what it leaves for later steps. If the step is too big for one reviewable PR, propose splitting it into rows such as `F3a-1` and `F3a-2`.
 - **Changes:** the files and components touched.
 - **Tests:** which existing tests change, and which new ones are added (host or native tests for every piece of pure logic).
-- **Hardware check:** needed or not. If it is, say what the session runs on the bare board, or what the user will be asked to run.
+- **Hardware check:** needed or not. If it is, say what the session runs on the bare board, which checks are deferred (motors, IMU, robot) and the scripts written for them, or what the user will be asked to run.
 - **Review:** whether an independent review agent is needed (see stage 4), and why.
 - **Plan deviations:**
   - Internal choices you will make and log.
@@ -68,7 +68,8 @@ Verify each finding, yours or the agent's, against the code. Fix the ones that h
 ## 5. Hardware check (only if the step needs one)
 
 - **Bare bench board** (nothing attached: boot checks, HIL pytest, mock modules, smoke tests, OTA): the session builds, flashes and runs it itself, after the review. Stop and tell the user if a port is missing or the board doesn't respond. The board's ports are in the status file's hardware notes.
-- **Anything attached** (motors, a real IMU, the robot, a Pi or a PC): don't run it yourself. Set the step to `waiting on hardware`, and give the user a short script:
+- **Motors, a real IMU or the robot:** deferred, because the bench has none. Follow "Deferred hardware checks" in the status file: write the script, dry-run it against vdev or the bare board with mocks, and add its row there. The step doesn't wait for it.
+- **A Pi or a PC** (or deferred hardware the user says has arrived): don't run it yourself. Set the step to `waiting on hardware`, and give the user a short script:
   - what to build and flash, with exact commands
   - what to run
   - what output or behavior means pass or fail

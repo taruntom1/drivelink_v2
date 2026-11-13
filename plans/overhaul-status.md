@@ -5,7 +5,8 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F5a: motor module types, after the F4c PR is merged.
+- **Next step:** F5a: motor module types.
+- **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware`.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
 ## Keeping this file short
@@ -45,10 +46,20 @@ The bare board has normal firmware and its original loops-only layout.
   An unavailable receipt snapshot is unknown; paused loops retain heartbeat.
 - `feedback.mock` still uses the concrete mock actuator interface and reads
   its previous-tick state. F5a introduces the real interfaces.
+- **No motors.** The board check is instance setup on real pins plus the mock
+  modules. There is no bench-only pin or LEDC readback self-check. Velocity and
+  position control and the loop-stall stop on a real motor are written as a
+  deferred script (see "Deferred hardware checks") and dry-run against vdev or
+  the bare board with mocks.
+- **A more realistic mock motor.** Because the mock is the only plant the
+  controller meets before HW, F5a adds to it, each set by a param: encoder
+  quantization (counts, not a smooth position), a deadband, duty saturation, a
+  one-tick delay and optional noise. The controller and bumpless mode-switch
+  tests run against these effects.
 
 ## Steps
 
-States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. A step session may split its step further. Then it adds rows here, for example F3a-1 and F3a-2.
+States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. A step session may split its step further. Then it adds rows here, for example F3a-1 and F3a-2. `waiting on hardware` is unused while the deferred-check rule holds: "deferred" in the hardware column means a script in "Deferred hardware checks", not a wait.
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
@@ -64,19 +75,20 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | merged | [#41](https://github.com/taruntom1/drivelink_v2/pull/41) |
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id; core wire v3, host/CLI/vdev | no | high | merged |[#44](https://github.com/taruntom1/drivelink_v2/pull/44) |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | merged | [#47](https://github.com/taruntom1/drivelink_v2/pull/47) |
-| F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | in review | [#48](https://github.com/taruntom1/drivelink_v2/pull/48) |
-| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
-| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | high | planned | |
-| F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | high | planned | |
-| F7a | Capture family, PSRAM (caps alloc only) | yes: capture | high | planned | |
-| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | yes: motors | high | planned | |
-| F8 | Time ping with TX stamping; delete `time_sync` | yes: time jitter | high | planned | |
-| F9 | OTA: partition table, OTA family, rollback | yes: OTA and rollback | high | planned | |
-| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, merge `firmware_overhaul` into `main` | yes: full smoke test | high | planned | |
+| F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | merged | [#48](https://github.com/taruntom1/drivelink_v2/pull/48) |
+| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch; a more realistic mock motor | bare board: instances on real pins, mocks; deferred: motors | high | planned | |
+| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test | bare board: loop-stall stop with mocks; deferred: motors | high | planned | |
+| F6 | `imu.bno055` module behind a bus interface, with a fake BNO055 bus in the native tests; calibration actions; delete `imu_bmo_055` | bare board: missing-sensor path, calibration actions on `imu.mock`; deferred: IMU | high | planned | |
+| F7a | Capture family, PSRAM (caps alloc only) | bare board: capture of mock signals | high | planned | |
+| F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | bare board: step and chirp on the mock motor at 1 kHz; deferred: on a motor | high | planned | |
+| F8 | Time ping with TX stamping; delete `time_sync` | bare board: stable estimate over the CH343; deferred: Pi GPIO-UART jitter | high | planned | |
+| F9 | OTA: partition table, OTA family, rollback | bare board: OTA and rollback | high | planned | |
+| F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, tag `main`'s last legacy commit `legacy-final`, merge `firmware_overhaul` into `main` marked as not yet run on motors or an IMU | bare board: full smoke test | high | planned | |
+| HW | Hardware campaign: run every open row of "Deferred hardware checks"; fixes go to `main` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
 | H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | high | planned | |
-| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | yes: bench tuning | high | planned | |
+| H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | vdev; deferred: bench tuning | high | planned | |
 | H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | high | planned | |
-| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | yes: robot | high | planned | |
+| H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | deferred: robot | high | planned | |
 
 ## Notes for later steps
 
@@ -89,12 +101,28 @@ Each note is deleted by the step that uses it.
   - Removing the legacy motor streams (F5b) frees two command group channels.
 - **F6**
   - Removing the IMU manager frees `0x42` and the `0xBF` channel.
+  - The driver's register traffic goes through a small bus interface. A native test plays the BNO055 from its datasheet: chip id, mode switches, calibration status, a NACK and a timeout. It covers init, the calibration actions and the error paths. On the bare board only the missing-sensor path is checked.
+- **F10**
+  - Before the merge, tag `main`'s last legacy commit `legacy-final`. Say in `README`/`firmware/CLAUDE.md` that the new firmware has not run on motors or an IMU until HW closes the deferred checks.
 - **F7b**
   - Decide whether the test signal generator stays one per loop, now that the number of loops varies.
 - **F8**
   - The time ping (`0x02` / `0x42`) is not in the registry yet.
 - **H1**
   - The F3c host slice has no module-specific code and no cached device or time model.
+
+## Deferred hardware checks
+
+There are no motors or IMU on the bench. A check that needs them doesn't block its step:
+
+- **The step writes the script now** (under `firmware/test/uart_comm/` or `host/test/`) and dry-runs it against vdev or the bare board with mock modules, so the script is known to work. It runs with real modules through a flag, not a second script.
+- **It adds a row here:** the step, the script and its command, the hardware it needs, what it checks and what result means pass.
+- **When hardware arrives,** the step in progress pauses at a clean point and the rows for that hardware run before any further step. Otherwise they run in the HW step after F10.
+- **A motor script starts with the first-run procedure:** wheels off the ground, a current-limited supply, a low duty cap and a hand on the power switch.
+- **A row is deleted** once it has passed, with a line in "Hardware test results".
+
+| Step | Script and command | Needs | Checks | Pass |
+|---|---|---|---|---|
 
 ## Hardware notes
 
@@ -111,7 +139,7 @@ Each note is deleted by the step that uses it.
 - **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F4c/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
 - **Latest stack marks** (F4c, a 16-value control-to-sensor link, eight feedback mocks and eight fusion mocks; bytes free; stacks 4096 unless given): main 1200 (4608), uart_rx 3188, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1780, time_sync_task 2008, diag 1748, esp_timer 3344, core_cfg 4068 (6144), core_loop_0 3072, core_loop_1 3160.
-- **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board.
+- **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board. None of these are expected before HW; see "Deferred hardware checks".
 
 ## Other traps
 
@@ -123,7 +151,7 @@ Each note is deleted by the step that uses it.
 
 - **Plan and build** every step in one session on **Opus 5.5 at high effort**. The session that wrote the plan writes the code; there is no implementation subagent and no model switch after the plan is approved.
 - **Review.** The session reviews its own diff. It also spawns an independent review agent, always on **Opus** at the step's review effort, when the step needs one (wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff). The PR says which was done and why.
-- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the session after the review, with no help from you. Checks that need motors, a real IMU, the robot, a Pi or a PC are run by you from a script, and the step waits in `waiting on hardware`.
+- **Hardware checks** that run on the bare bench board (HIL pytest, mock modules, smoke tests, OTA) are flashed and run by the session after the review, with no help from you. Checks that need motors, a real IMU or the robot are deferred (see "Deferred hardware checks"); the step merges without them. A check that needs only a Pi or a PC is run by you from a script, and the step waits in `waiting on hardware`.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
@@ -135,6 +163,11 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
+| 2026-11-13 | F5–F10 | Checks that need motors, an IMU or the robot are deferred, not waited for. Each step merges on native, vdev and bare-board checks, and writes and dry-runs a script for each deferred check. A new HW step after F10 runs them; if hardware arrives earlier, the step in progress pauses and they run then | No motors or IMU are available; the user chose not to block the overhaul on them | yes |
+| 2026-11-13 | F5b, F6 | `motor_manager` and `imu_bmo_055` are still deleted in F5b and F6, before any hardware check | They ran only in mock mode on this branch, so keeping them proves nothing; `main` and git history keep them (user decision) | n/a |
+| 2026-11-13 | F10 | `main`'s last legacy commit is tagged `legacy-final`, then `firmware_overhaul` merges, marked as not yet run on motors or an IMU | User decision; the tag is the fallback firmware | yes |
+| 2026-11-13 | F5, F6 | To make up for no hardware: F5a makes the mock motor more realistic (quantization, deadband, saturation, one-tick delay, optional noise); F6 tests the BNO055 driver against a fake bus. Review effort stays high; F5 has no bench pin self-check | User decision | yes |
+| 2026-11-13 | HW | The first motor run uses a procedure, not new firmware: wheels off the ground, a current-limited supply, a low duty cap, a hand on the power switch. The GPIO e-stop and driver-enable pin stay later options | User decision | yes |
 | 2026-11-13 | F4c | Codex plans/builds with an independent Codex review at high effort; the F4c implementation plan including core v5 and packed source references is approved | Explicit user approval in this session | yes |
 | 2026-11-13 | F4b | Codex plans/builds with an independent Codex review at high effort; the F4b plan including core v4 is approved | Explicit user approval in this session | yes |
 | 2026-11-13 | F4b | GROUP LIST capacities move to read-only limits params; fast DISARM reuses the ordinary system header | One wire path for capacities; the F4b plan was approved | yes |
