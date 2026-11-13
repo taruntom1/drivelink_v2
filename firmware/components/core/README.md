@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v3](../../../docs/protocol/core.md).
+[core v4](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -170,10 +170,45 @@ Telemetry can skip a tick when its slot is busy, and pending samples overwrite
 older samples. Unsent packets already copied to a transport can retain the old
 epoch; consumers must filter it.
 
-F4a's device command gate is always disarmed. Native tests can call beginTick
-with an explicit arm instant to verify application rules. F4b must connect its
-state machine, invalidate commands on transitions, and use receipt times only
-after the ARM instant. lastCommandUs uses one nonblocking slot claim and returns
+F4b connects the device arm state and ARM instant to beginTick. Transitions
+reset inputs and reject pre-arm values. lastCommandUs uses one nonblocking slot claim and returns
 false when unavailable, with the output unchanged. A monitor must distinguish
 that unavailable snapshot from a successful timestamp of zero (no frame), and
 must not conclude timeout from contention. No 64-bit atomic is required on ESP32.
+
+
+## F4b safety ownership
+
+`Core::arm()`, `disarm()`, `acknowledgeFault()`, `armStatus()` and
+`lastDisarmReason()` implement the arming contract in docs/protocol/core.md.
+`ArmState` packs the commit state, fault latch and disarm epoch in lock-free
+32-bit atomics; ParamService reads the same armed bit. The ARM instant is
+published as two atomic words and used only with a coherent state snapshot.
+The config caller serializes ARM and ACK; RX and diag can disarm concurrently.
+
+Loop-owned transition hooks reset bound inputs before commands are consumed.
+Module `onArmTransition` hooks run on their owning loop, without allocation,
+blocking or logging. `emergencyStop` is callable concurrently from the monitor
+and shutdown: actuators must use a hardware force or atomic state, never a
+write to ordinary loop-owned storage. The mock's force is atomic and independent
+of its duty input. A monitor stop gate serializes ARM commits with applying
+forces, and the force is repeated while disarmed to cover stale loop releases.
+
+The boot-built actuator list and loop table are immutable while monitoring.
+The monitor owns heartbeat observation times; all other inputs it reads are
+atomic or a bounded GroupService receipt snapshot. It does no OS wait and
+allocates nothing. The timer's stop fences callbacks before Core storage is
+released. The single-device diagnostic observer is installed before enabling
+loops and detached after stopping them, with in-flight callbacks fenced.
+
+The core initializes read-only limit shadows from its normalized configuration
+both before system binding and after NVS loading. They are never persisted.
+BenchStall deliberately violates the tick budget only when a bench-enabled
+CommandService admits the test request; it is not a deployment operation.
+
+Diagnostic report-slot exhaustion does not change safety recovery: fixed
+per-code/instance overflow bits retain active conditions until cleared.
+
+Before raising a timed-out or stalled condition, the monitor CAS-claims the
+exact arm generation it evaluated. A concurrent disarm/re-arm discards the old
+observation, so the new ARM always receives its own watchdog grace interval.

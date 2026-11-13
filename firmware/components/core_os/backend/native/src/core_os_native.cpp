@@ -16,6 +16,8 @@
 #include "core_os/native_diag.hpp"
 #include "core_os/periodic_task.hpp"
 #include "core_os/realtime.hpp"
+#include "diag_table.hpp"
+#include "diag_observer.hpp"
 
 namespace core_os {
 
@@ -29,6 +31,7 @@ const Clock::time_point s_epoch = Clock::now();
 std::atomic<int64_t> s_boot_offset{0};
 std::atomic<int32_t> s_start_after{-1};
 std::atomic<int32_t> s_period_after{-1};
+std::atomic<bool> s_manual_scheduling{false};
 
 } // namespace
 
@@ -37,6 +40,8 @@ int64_t nowUs()
     return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - s_epoch).count()-s_boot_offset.load();
 }
 namespace native {
+void setManualScheduling(bool manual) { s_manual_scheduling.store(manual); }
+bool manualScheduling() { return s_manual_scheduling.load(); }
 void failPeriodicStartAfter(int32_t successes) { s_start_after.store(successes); }
 void failNextPeriodChange() { s_period_after.store(0); }
 void failPeriodChangeAfter(int32_t successes) { s_period_after.store(successes); }
@@ -129,6 +134,7 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
         m_state.period_changed = false;
     }
     m_state.running.store(true);
+    if (native::manualScheduling()) { return kOk; }
 
     detail::PeriodicTaskState *state = &m_state;
     m_state.thread = std::thread([state]() {
@@ -223,6 +229,8 @@ struct DiagRecord {
 void *s_diag_ctx=nullptr;
 native::ReportSink s_report_sink=nullptr;
 native::CountSink s_count_sink=nullptr;
+diag::detail::SlotTable s_diag_table;
+diag::detail::DisarmObserver s_diag_observer;
 
 DiagRecord &diagRecord()
 {
@@ -239,6 +247,10 @@ uint32_t key(DiagCode code, uint8_t instance = 255)
 
 void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
+    const auto slot = s_diag_table.resolve(code.slot, instance);
+    if (slot >= diag::detail::kRuntimeSlots) { s_diag_table.safetyOverflow(code,instance); }
+    s_diag_table.raise(slot, code.clears);
+    s_diag_observer.notify(code);
     if(s_report_sink) { s_report_sink(s_diag_ctx,{code,err,arg0,arg1,instance});return; }
     DiagRecord &r = diagRecord();
     std::lock_guard<std::mutex> lock(r.mutex);
@@ -247,6 +259,9 @@ void reportDiag(DiagCode code, Err err, uint32_t arg0, uint32_t arg1, uint8_t in
 
 void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 {
+    if (!n) { return; }
+    s_diag_table.add(s_diag_table.resolve(code.slot, instance), n);
+    s_diag_observer.notify(code);
     if(s_count_sink) { s_count_sink(s_diag_ctx,code,n,instance);return; }
     DiagRecord &r = diagRecord();
     const uint32_t identity = key(code, instance);
@@ -259,7 +274,28 @@ void countDiag(DiagCode code, uint32_t n, uint8_t instance)
     }
 }
 
+void raiseDiag(DiagCode code, uint8_t instance) {
+    const auto slot = s_diag_table.resolve(code.slot, instance);
+    if (slot >= diag::detail::kRuntimeSlots) { s_diag_table.safetyOverflow(code,instance); }
+    if (s_diag_table.latch(slot)) { s_diag_table.markDirty(slot); }
+    s_diag_observer.notify(code);
+}
+void clearDiag(DiagCode code, uint8_t instance) {
+    const auto slot = s_diag_table.resolve(code.slot, instance);
+    if (slot >= diag::detail::kRuntimeSlots) { s_diag_table.safetyOverflow(code,instance,false); return; }
+    if (s_diag_table.clearActive(slot)) { s_diag_table.markDirty(slot, 2); }
+}
+bool diagBlocksArm() { return s_diag_table.activeSafety(false); }
+bool diagDisarmsActive() { return s_diag_table.activeSafety(true); }
+void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn) {
+    s_diag_observer.disable();
+    while (!s_diag_observer.idle()) { std::this_thread::yield(); }
+    if (fn) { s_diag_observer.install(ctx, fn); }
+}
+
 namespace native {
+
+diag::detail::SlotTable &diagTable() { return s_diag_table; }
 
 void setDiagSinks(void *ctx,ReportSink report,CountSink count) { s_diag_ctx=ctx;s_report_sink=report;s_count_sink=count; }
 
@@ -298,6 +334,11 @@ void resetRecordedDiag()
     std::lock_guard<std::mutex> lock(r.mutex);
     r.reports.clear();
     for (auto &counter : r.counters) { counter.value.store(0); counter.identity.store(0); }
+    s_diag_table.clearOccurred(); s_diag_table.resetCounts();
+    s_diag_table.resetSafetyOverflow();
+    for (size_t slot = 0; slot < diag::detail::kRuntimeSlots; ++slot) {
+        s_diag_table.clearActive(slot); (void)s_diag_table.takeDirty(slot);
+    }
 }
 
 } // namespace native

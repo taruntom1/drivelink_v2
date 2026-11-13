@@ -8,6 +8,10 @@
 #include "esp_task_wdt.h"
 #include "core_os/realtime.hpp"
 
+#if !defined(CONFIG_ESP_TASK_WDT_EN) || !defined(CONFIG_ESP_TASK_WDT_INIT) || !defined(CONFIG_ESP_TASK_WDT_PANIC)
+#error "Core real-time loops require the initialized, panic-reset Task WDT"
+#endif
+
 static const char *const TAG = "core_os_task";
 
 namespace core_os {

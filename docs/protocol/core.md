@@ -1,11 +1,11 @@
-# Core protocol v3 (F4a)
+# Core protocol v4 (F4b)
 
-F4a adds subscription and command groups to the configurable-loop core.
-Firmware, host library, CLI and vdev use v3 together; older peers are
+F4b adds arming, faults, the independent safety monitor and runtime limits.
+Firmware, host library, CLI and vdev use v4 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 3.
+`core_response` (0x41). All integers are little-endian. Version is 4.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -21,7 +21,7 @@ with the type declared by its descriptor (IEEE binary32 for f32).
 
 ## System (family 1)
 
-All requests have empty bodies. GET_INFO (1) answers:
+Requests have empty bodies except the bench stall described below. GET_INFO (1) answers:
 `protocol_version u8 | firmware_version string | build_id string |
 descriptor_hash u32 | capture_capacity u32 | max_payload u16 |
 running_instances u8 | flags u8 | loop_count u8`, followed by
@@ -36,8 +36,7 @@ safe_mode 8. Capture capacity is 0 until F7.
 SAVE (5), REVERT (6), FACTORY_RESET (7), REBOOT (8), EXIT_SAFE_MODE (9)
 wrap the core operations. Reset, reboot and exit safe mode reply, wait for
 command TX to drain, then reboot. A drain timeout cancels the reboot and
-logs the failure; a host may retry REBOOT. ARM, DISARM and ACK_FAULT remain
-Unsupported until F4b. BenchCrash (254) responds and aborts only in an
+logs the failure; a host may retry REBOOT. BenchCrash (254) responds and aborts only in an
 explicit `CONFIG_CORE_BENCH_CRASH=y` test build. Normal builds reject it.
 
 ## Layout (family 2)
@@ -109,8 +108,8 @@ All groups are boot-allocated resources, with independent subscription and
 command IDs. They survive reconnects but are never persisted. Limits are
 CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..29 while legacy
 channels are reserved), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
-limit is min(configured limit, 64, floor((max_payload - 22)/4)), so both a
-complete LIST record and telemetry fit. A 128-byte build advertises 26. The channel is
+limit is min(configured limit, 64, floor((max_payload - 19)/4)), so both a
+complete LIST record and telemetry fit. A 128-byte build advertises 27. The channel is
 registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +
 command ID. No legacy channel is used.
 
@@ -141,10 +140,11 @@ uses the group. The caller waits up to three owning-loop periods plus 5 ms;
 if the loop has not claimed the swap it is withdrawn (`Busy/Withdrawn`), with
 no change. A claimed swap completes definitely. A paused/stalled loop can
 therefore refuse a mutation. Command CONFIG/CLEAR are refused while armed;
-subscription changes are allowed. F4a exposes no device arming path.
+subscription changes are allowed.
 
-LIST starts with `subscription_capacity u8, command_capacity u8,
-entry_capacity u8`, then the usual `total u16, next u16, count u8` page header.
+LIST starts with the usual `total u16, next u16, count u8` page header.
+Read capacities through the read-only system params `limits.sub_groups`,
+`limits.cmd_groups` and `limits.group_entries`. There is no capacity prefix.
 It lists every slot, subscriptions first, then commands, each in ascending ID:
 `kind u8 (0 subscription, 1 command), group u8, flags u8, loop u8, epoch u8,
 divider u16, n u8, n * Ref`. Flags are configured=1, enabled=2. Empty slots
@@ -175,11 +175,9 @@ replacing pending values. RX never writes module storage.
 
 The loop consumes the latest accepted values at its start boundary only when
 armed and their receipt time is strictly after the current ARM instant. Old
-values are discarded while disarmed; a keepalive never revives them. F4a always
-passes the disarmed gate, so command streams cannot change device inputs.
-F4b supplies the arm state, transitions and watchdog. The low-level host API
-uses typed slot bits; NaN remains rejected. Host NaN-to-hold conversion is
-deferred until the arming/hold behavior exists.
+values are discarded while disarmed; a keepalive never revives them.
+The low-level host API uses typed slot bits; NaN remains rejected. Host
+NaN-to-hold conversion remains for later semantic device modeling.
 
 ## Action (family 8)
 
@@ -204,8 +202,9 @@ arm_state u8 | flags u8 | active_error_count u8 | cpu_load[2] u8 |
 loop_count u8 | loop_count * (loop_id u8, overruns u32) | last_disarm_reason u8`
 (19 + 5 * loop_count bytes, at most 59).
 Epoch is 0. Counter wraps at 65536. Only running loops are included; safe mode
-has loop_count zero. Loop IDs may have gaps. Flags follow the architecture plan. Until F4b the device is disarmed
-and safety-only fields are zero. CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
+has loop_count zero. Loop IDs may have gaps. Flags: fault_latched 1, blocks_arm_active 2, pending_reboot 4, nvs_dirty 8,
+testgen_running 16 (reserved until F7), safe_mode 32. Capture state occupies
+bits 6..7 (reserved until F7). CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
 It is 0xFF until the first interval, or when measurement is disabled or the
 runtime clock is not ESP timer. CORE_STATUS_CPU_LOAD defaults on and selects
 runtime statistics; reads take constant work without stack scans. Active errors come from instance-aware diag state.
@@ -230,3 +229,68 @@ The layout blob format is 2; instance blobs retain format 1. Pre-F3d layouts
 are discarded in favor of the factory layout, without migrating their modules.
 Loop task startup failure leaves that loop Failed and dependent modules
 DependencyMissing; unrelated loops and the config link stay available.
+
+
+## Arming and safety (F4b)
+
+ARM (system op 2), DISARM (3), ACK_FAULT (4) have empty bodies and empty
+successful responses. States in status are Disarmed 0, Armed 1, Fault 2.
+ARM requires a running, valid layout with no failed instances or pending
+reboot, no safe mode, no active `blocks_arm`/`disarms` code, no fault latch,
+and at least one currently configured command group. An empty group counts.
+Repeated ARM while already Armed succeeds without extending watchdog grace.
+
+Refusals use Fault with FaultLatched (38), BlocksArm (39), LayoutInvalid (40),
+StartFailed (32), SafeMode (29), or RebootPending (45). NoCommandGroup (41)
+uses InvalidArgument. A concurrent disarm/stop uses Busy/DisarmRaced (42).
+A monitor that cannot start fails Core startup with Fault/MonitorUnavailable (44).
+ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
+(43) while a disarming condition remains active. Recovery alone never clears
+the fault latch. DISARM never acknowledges a fault.
+
+Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
+`version=4 | seq | family=1 | op=3`, with no body. Its response is the normal
+six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
+handled directly on UART RX, bypassing the config queue. Malformed requests
+apply nothing. A lost response never undoes the stop.
+
+Every disarm invalidates an in-flight ARM ticket, even when already disarmed.
+At the next tick each loop resets its bound inputs and calls
+`onArmTransition(false)`; on ARM it also calls `onArmTransition(true)`.
+An intervening disarm is preserved when disarm/re-arm both occur between
+loop ticks. Command values must have arrived strictly after the ARM instant;
+a prefix-only keepalive updates receipt time without reviving older values.
+
+The 10 ms monitor runs independently on esp_timer's task. All running loops,
+including non-real-time loops and sparse loop ids, are monitored. No heartbeat
+advance for more than three periods plus 5 ms raises `core.LoopStalled` for
+that loop, disarms and latches Fault. Heartbeat recovery clears the active
+condition even while disarmed, after which ACK_FAULT is possible. Paused
+loops continue their heartbeat; real-time paused actions are refused armed.
+
+`system.watchdog_ms` (item 4, u16, persisted, locked armed) defaults to 200 ms
+and clamps to 20..1000. Any valid command-group frame received after ARM feeds
+the watchdog. Until the first such frame, ARM grants one watchdog interval.
+An unavailable nonblocking receipt snapshot defers the check. Expiry raises
+and clears `core.WatchdogTimeout`, disarms without Fault and permits re-arm.
+Rejected frames never feed it. Status `last_disarm_reason` is Boot 0,
+Explicit 1, Watchdog 2, Fault 3, LoopStalled 4, Shutdown 5.
+
+On a detected stall or timeout the monitor calls `emergencyStop()` on every
+actuator. It repeats the force while disarmed, without depending on a loop
+transition. A stop gate prevents a concurrent ARM commit during those calls.
+Real-time loop tasks also feed the panic-reset Task WDT after each completed
+tick, providing a backstop when esp_timer itself cannot run.
+
+The five read-only, non-persisted u16 system params are `limits.loops` (16),
+`limits.instances` (17), `limits.sub_groups` (18), `limits.cmd_groups` (19)
+and `limits.group_entries` (20). Values come from the normalized runtime
+configuration, overriding YAML defaults and stored data at boot. Instance
+capacity counts modules separately from loop capacity. SET returns ReadOnly;
+SAVE omits all five.
+
+BenchStall (system op 253) takes `loop u8 | duration_ms u16`, 1..10000 ms.
+Like BenchCrash it requires the default-off `CONFIG_CORE_BENCH_CRASH` test
+build (vdev: `--allow-crash`). It schedules deliberate busy work in that loop,
+withholding its Task WDT feed. It is for bare-board monitor/WDT verification;
+normal builds answer Unsupported. No layout or NVS format changes are involved.

@@ -5,6 +5,18 @@
 #include <cstring>
 
 namespace core {
+size_t fastDisarm(Core &core, std::span<const uint8_t> request, std::span<uint8_t> response) {
+    namespace cw = drivelink::protocol::core_wire;
+    cw::Header h;
+    drivelink::protocol::wire::Reader r(request.data(), request.size());
+    const bool valid = cw::decodeHeader(r, h) && r.done() &&
+        h.family == static_cast<uint8_t>(defs::Family::System) && h.op == static_cast<uint8_t>(defs::SystemOp::Disarm);
+    if (response.size() < cw::kResponseHeader) { return 0; }
+    if (valid) { core.disarm(); }
+    drivelink::protocol::wire::Writer w(response.data(), response.size());
+    cw::response(w, h, valid ? Result::Ok : Result::InvalidArgument, valid ? Detail::None : Detail::BadValue);
+    return w.size();
+}
 namespace cw = drivelink::protocol::core_wire;
 namespace wire = drivelink::protocol::wire;
 namespace {
@@ -36,6 +48,14 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
 {
     switch (static_cast<defs::Family>(h.family)) {
     case defs::Family::System: {
+        if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::BenchStall) {
+            const auto loop = r.readU8(); const auto ms = r.readU16Le();
+            if (!r.done() || !ms || ms > 10000) { return bad(); }
+            if (!m_info.bench_crash) { return bad(Detail::Unsupported); }
+            auto *target = m_core.findLoop(loop);
+            if (!target) { return bad(Detail::LoopMismatch); }
+            target->benchStall(static_cast<uint32_t>(ms) * 1000U); return {};
+        }
         if (!r.done()) { return bad(); }
         switch (static_cast<defs::SystemOp>(h.op)) {
         case defs::SystemOp::GetInfo:
@@ -58,6 +78,9 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
             m_after=AfterReply::Crash;return {};
         case defs::SystemOp::Save:return m_core.save();
+        case defs::SystemOp::Arm:return m_core.arm();
+        case defs::SystemOp::Disarm:m_core.disarm();return {};
+        case defs::SystemOp::AckFault:return m_core.acknowledgeFault();
         case defs::SystemOp::Revert:return m_core.revert();
         case defs::SystemOp::FactoryReset: {
             auto st=m_core.factoryReset();if(st.ok()) { m_after=AfterReply::Reboot; } return st;
@@ -139,9 +162,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             const auto cmds = groups.capacity(GroupKind::Command);
             const auto total = subs + cmds;
             if (!r.done() || start > total) { return bad(); }
-            if (w.remaining() < 8) { return bad(Detail::BufferTooSmall); }
-            w.appendU8(static_cast<uint8_t>(subs)); w.appendU8(static_cast<uint8_t>(cmds));
-            w.appendU8(groups.entryCapacity());
+            if (w.remaining() < 5) { return bad(Detail::BufferTooSmall); }
             page(w, static_cast<uint16_t>(total), cw::kEnd, 0);
             uint16_t next = start; uint8_t count = 0;
             for (; next < total; ++next) {
@@ -160,8 +181,8 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             }
             if (next < total && count == 0) { return bad(Detail::BufferTooSmall); }
             const auto cursor = next < total ? next : cw::kEnd;
-            w.patchU8(5, static_cast<uint8_t>(cursor)); w.patchU8(6, static_cast<uint8_t>(cursor >> 8));
-            w.patchU8(7, count);
+            w.patchU8(2, static_cast<uint8_t>(cursor)); w.patchU8(3, static_cast<uint8_t>(cursor >> 8));
+            w.patchU8(4, count);
             return {};
         }
         const auto id = r.readU8();

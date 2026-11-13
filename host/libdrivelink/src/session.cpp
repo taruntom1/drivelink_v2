@@ -315,8 +315,9 @@ struct Session::Impl
                 throw Error(ErrorKind::Connection, "sequence IDs exhausted after timeouts; reconnect");
             }
             const auto seq = static_cast<uint8_t>(sequence++ % 256);
-            Bytes payload{static_cast<uint8_t>(kind == msg::kCoreCommand ? p::core_wire::kVersion : 3), seq};
-            if (kind == msg::kCoreCommand)
+            const bool core_kind = kind != msg::kDiagQuery;
+            Bytes payload{static_cast<uint8_t>(core_kind ? p::core_wire::kVersion : 3), seq};
+            if (core_kind)
             {
                 payload.push_back(family);
             }
@@ -331,7 +332,7 @@ struct Session::Impl
             waiting = true;
             ready = false;
             protocol_error = false;
-            expected_type = kind == msg::kCoreCommand ? msg::kCoreResponse : msg::kDiagQueryResponse;
+            expected_type = core_kind ? msg::kCoreResponse : msg::kDiagQueryResponse;
             expected_seq = seq;
             expected_family = family;
             expected_op = op;
@@ -409,7 +410,7 @@ Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body
 {
     const bool read_only = (family == 1 && op == 1) || family == 3 || (family == 2 && op == 1) ||
                            (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6);
-    auto data = m_impl->exchange(msg::kCoreCommand, family, op, body, read_only);
+    auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
     return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
 }
 bool Session::sendCommandGroup(uint8_t group, std::span<const uint8_t> payload)

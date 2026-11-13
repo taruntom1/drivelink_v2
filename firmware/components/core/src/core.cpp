@@ -35,6 +35,12 @@ public:
     bool start(InstanceContext &ctx) override
     {
         ctx.bindParam(sys::kStatusRateHz, &m_status_rate_hz);
+        ctx.bindParam(sys::kWatchdogMs, &m_watchdog_ms);
+        ctx.bindParam(sys::kLimitsLoops, &m_limits[0]);
+        ctx.bindParam(sys::kLimitsInstances, &m_limits[1]);
+        ctx.bindParam(sys::kLimitsSubGroups, &m_limits[2]);
+        ctx.bindParam(sys::kLimitsCmdGroups, &m_limits[3]);
+        ctx.bindParam(sys::kLimitsGroupEntries, &m_limits[4]);
         return true;
     }
 
@@ -42,6 +48,8 @@ public:
 
 private:
     uint16_t m_status_rate_hz = 10;
+    uint16_t m_watchdog_ms = 200;
+    std::array<uint16_t, 5> m_limits{};
 };
 
 void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
@@ -92,13 +100,25 @@ Core::Core(const CoreConfig &config)
       m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops})
 {
     m_params.setPendingLayout(&m_pending);
+    m_params.useArmWord(&m_arm.word);
+    m_actuators = std::make_unique<Instance *[]>(m_config.max_instances);
     std::unique_ptr<detail::InstanceRecord> record =
         makeRecord(sys::kDesc, drivelink::protocol::defs::kSystemTypeId, 0, kNoLoop, "system", nullptr);
     record->object = std::make_unique<SystemInstance>();
+    initializeLimits(*record);
     m_system_ok = startInstance(*record).ok();
     if (m_system_ok) {
         (void)m_table.add(std::move(record)); // the table has room: it was just made
     }
+}
+
+void Core::initializeLimits(detail::InstanceRecord &record) {
+    const std::array<std::pair<uint16_t, uint32_t>, 5> values{{
+        {sys::kLimitsLoops, m_config.max_loops}, {sys::kLimitsInstances, m_config.max_instances},
+        {sys::kLimitsSubGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Subscription))},
+        {sys::kLimitsCmdGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Command))},
+        {sys::kLimitsGroupEntries, m_groups.entryCapacity()}}};
+    for (const auto &[id, value] : values) { record.shadow[record.itemIndex(id)] = value; }
 }
 
 Core::~Core()
@@ -221,6 +241,7 @@ Status Core::boot(core_os::KvStore &store)
         m_complete_gen = cfg.gen;
         detail::InstanceRecord &system = systemRecord();
         persist::applyPairs(*system.desc, cfg.system, system.shadow.get());
+        initializeLimits(system);
         for (size_t i = 0; i < system.desc->items.size(); ++i) {
             const defs::ItemDesc &item = system.desc->items[i];
             if (item.kind == defs::ItemKind::Param && system.bindings[i].bound) {
@@ -343,6 +364,10 @@ Status Core::boot(core_os::KvStore &store)
     for (const size_t i : tickOrder(entries, include)) {
         detail::InstanceRecord &record = *records[i];
         (void)loop(record.loop).addInstance(record.object.get()); // sized for max_instances
+        loop(record.loop).addInputs(record);
+        if (defs::inCategory(record.desc->name, "actuator")) {
+            m_actuators[m_actuator_count++] = record.object.get();
+        }
     }
 
     // 7. Clear the crash counter after a while of normal running.
@@ -362,6 +387,7 @@ void Core::createLoop(detail::InstanceRecord &record)
         m_config.max_instances, periodUsFromHz(instance.rate), &instance.signals);
     m_loops[slot] = m_owned_loops[slot].get();
     m_loops[slot]->setGroups(&m_groups);
+    m_loops[slot]->setArmState(&m_arm);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
     const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,
         m_loops[slot]->periodUs(), &Loop::taskEntry, m_loops[slot], instance.realtime);
@@ -379,6 +405,27 @@ Status Core::start()
     if (m_started) {
         return m_running ? Status::success() : Status::fail(Result::Busy, Detail::NotAtBoot);
     }
+    const auto now = core_os::nowUs();
+    for (size_t i = 0; i < m_config.max_loops; ++i) {
+        m_heartbeats[i].advanced_us = now;
+        if (m_loops[i]) { m_heartbeats[i].value = m_loops[i]->heartbeat(); }
+    }
+    core_os::setDiagDisarmHandler(this, [](void *ctx, core_os::DiagCode code) {
+        auto *self = static_cast<Core *>(ctx);
+        const bool watchdog = code.source == diag_codes::core::kWatchdogTimeout.source &&
+                              code.code == diag_codes::core::kWatchdogTimeout.code;
+        const bool stalled = code.source == diag_codes::core::kLoopStalled.source &&
+                             code.code == diag_codes::core::kLoopStalled.code;
+        self->m_arm.disarm(watchdog ? DisarmReason::Watchdog : stalled ? DisarmReason::LoopStalled : DisarmReason::Fault, !watchdog);
+    });
+    m_observing = true;
+    if (core_os::diagDisarmsActive()) { m_arm.disarm(DisarmReason::Fault, true); }
+    if (!m_safe_mode && m_monitor.start("core_monitor", 10000, [](void *ctx) {
+        static_cast<Core *>(ctx)->monitor(core_os::nowUs());
+    }, this) != core_os::kOk) {
+        core_os::setDiagDisarmHandler(nullptr, nullptr); m_observing = false;
+        return Status::fail(Result::Fault, Detail::MonitorUnavailable);
+    }
     for (size_t i = 0; i < m_config.max_loops; ++i) {
         if (m_loops[i]) { m_loops[i]->enable(true); }
     }
@@ -389,11 +436,17 @@ Status Core::start()
 
 void Core::stop()
 {
+    m_arm.word.fetch_or(ArmState::kStopping, std::memory_order_acq_rel);
+    m_arm.disarm(DisarmReason::Shutdown);
+    m_monitor.stop();
+    for (size_t i = 0; i < m_actuator_count; ++i) { m_actuators[i]->emergencyStop(); }
     for (size_t i = 0; i < m_config.max_loops; ++i) {
         if (m_loops[i]) { m_loops[i]->enable(false); }
         m_tasks[i].stop();
     }
+    for (size_t i = 0; i < m_actuator_count; ++i) { m_actuators[i]->emergencyStop(); }
     m_running = false;
+    if (m_observing) { core_os::setDiagDisarmHandler(nullptr, nullptr); m_observing = false; }
 }
 
 size_t Core::loopSlot(uint8_t id) const
@@ -646,6 +699,9 @@ uint32_t Core::loopStackHighWater(uint8_t id) const
 bool Core::applySystemParam(void *ctx, const Ref &ref, uint32_t bits)
 {
     auto *self = static_cast<Core *>(ctx);
+    if (ref.type == defs::kSystemTypeId && ref.id == sys::kWatchdogMs) {
+        self->m_watchdog_us.store(bits * 1000U, std::memory_order_relaxed); return true;
+    }
     if (ref.type != defs::kLoopTypeId || ref.id != defs::loop::kRateHz) { return true; }
     const size_t slot = self->loopSlot(ref.instance);
     if (slot == self->m_config.max_loops) { return true; } // offline configuration

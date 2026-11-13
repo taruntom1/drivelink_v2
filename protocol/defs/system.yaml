@@ -16,3 +16,9 @@ items:
   - {id: 0x0001, name: control.rate_hz, retired: true}
   - {id: 0x0002, name: sensor.rate_hz, retired: true}
   - {id: 0x0003, kind: param, name: status.rate_hz, type: u16, unit: Hz, min: 1, max: 100, default: 10}
+  - {id: 0x0004, kind: param, name: watchdog_ms, type: u16, unit: ms, min: 20, max: 1000, default: 200, flags: [locked_while_armed]}
+  - {id: 0x0010, kind: param, name: limits.loops, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0011, kind: param, name: limits.instances, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0012, kind: param, name: limits.sub_groups, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0013, kind: param, name: limits.cmd_groups, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0014, kind: param, name: limits.group_entries, type: u16, default: 0, flags: [read_only], persist: false}

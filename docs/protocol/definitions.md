@@ -173,3 +173,9 @@ key is rejected. Generated loop-mask bits remain 0x01 (real-time) and 0x02
 (other loops). `loop.yaml` is a built-in type reserved by loop_type_id; it omits
 realtime because its instances run in no loop. Its settings and signals are
 ordinary discovered items. The factory layout assigns per-instance defaults.
+
+
+F4b diagnostic definitions also accept `kind: latched`: an argument-free
+active condition for DIAG_RAISE, cleared on recovery. Its generated `clears`
+metadata is true. `arg0`/`arg1` are forbidden. `blocks_arm` and `disarms` are
+boolean code metadata; their runtime behavior is specified in [diag.md](diag.md).

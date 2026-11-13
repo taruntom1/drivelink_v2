@@ -1,5 +1,6 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
+#include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/wire_codec.hpp"
 #include <algorithm>
 
@@ -91,9 +92,9 @@ Json Client::info()
     Reader r(reply.body.data(), reply.body.size());
     Json j;
     j["protocol_version"] = r.readU8();
-    if (j["protocol_version"] != 3)
+    if (j["protocol_version"] != protocol::core_wire::kVersion)
     {
-        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v3");
+        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v4");
     }
     j["firmware_version"] = string(r);
     j["build_id"] = string(r);
@@ -303,6 +304,11 @@ Json Client::get(std::span<const Ref> refs, bool pending)
 {
     return values(accepted(4, pending ? 3 : 1, refBody(refs)), refs.size());
 }
+Json Client::benchStall(uint8_t loop, uint16_t duration_ms) {
+    const auto reply = accepted(1,253,Bytes{loop,static_cast<uint8_t>(duration_ms),static_cast<uint8_t>(duration_ms>>8)});
+    if (!reply.body.empty()) { malformed(); }
+    return {{"ok",true}};
+}
 Json Client::set(std::span<const Ref> refs, std::span<const uint32_t> data)
 {
     if (refs.size() != data.size())
@@ -432,7 +438,7 @@ Json Client::event(const Frame &frame) const
     const auto version = r.readU8();
     if (frame.type == protocol::defs::msg::kStatusStream)
     {
-        if (version != 3)
+        if (version != protocol::core_wire::kVersion)
         {
             malformed();
         }

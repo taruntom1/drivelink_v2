@@ -4,13 +4,16 @@
 #include "esp_timer.h"
 
 #include "diag_internal.hpp"
+#include "diag_observer.hpp"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 
 namespace diag {
 
 namespace {
 
 detail::SlotTable s_table;
+detail::DisarmObserver s_observer;
 
 StaticQueue_t s_queue_storage;
 uint8_t s_queue_buffer[CONFIG_DIAG_RECORD_QUEUE_DEPTH * sizeof(detail::QueuedEvent)];
@@ -40,8 +43,9 @@ void init()
 void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {
     const auto slot=s_table.resolve(code.slot,instance);
-    if(slot>=detail::kRuntimeSlots) { s_table.add(codes::diag::kRecordDropped.slot,1);return; }
+    if(slot>=detail::kRuntimeSlots) { s_table.safetyOverflow(code,instance);s_observer.notify(code);s_table.add(codes::diag::kRecordDropped.slot,1);return; }
     s_table.raise(slot, code.clears);
+    s_observer.notify(code);
 
     detail::QueuedEvent ev{};
     ev.timestamp_us = detail::wallClockUs();
@@ -56,17 +60,35 @@ void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t inst
 
 void count(Code code, uint32_t n, uint8_t instance)
 {
+    if (!n) { return; }
     const auto slot=s_table.resolve(code.slot,instance);
-    if(slot>=detail::kRuntimeSlots) { s_table.add(codes::diag::kRecordDropped.slot,1);return; }
+    if(slot>=detail::kRuntimeSlots) { s_observer.notify(code);s_table.add(codes::diag::kRecordDropped.slot,1);return; }
     s_table.add(slot, n);
+    s_observer.notify(code);
+}
+
+void raise(Code code, uint8_t instance) {
+    const auto slot = s_table.resolve(code.slot, instance);
+    if (slot >= detail::kRuntimeSlots) { s_table.safetyOverflow(code,instance); s_observer.notify(code); s_table.add(codes::diag::kRecordDropped.slot, 1); return; }
+    if (s_table.latch(slot)) { s_table.markDirty(slot); }
+    s_observer.notify(code);
+}
+bool blocksArm() { return s_table.activeSafety(false); }
+bool disarmsActive() { return s_table.activeSafety(true); }
+void setDisarmHandler(void *ctx, DisarmFn fn) {
+    s_observer.disable();
+    while (!s_observer.idle()) { vTaskDelay(1); }
+    if (fn) { s_observer.install(ctx, fn); }
 }
 
 void clear(Code code, uint8_t instance)
 {
     const auto slot=s_table.resolve(code.slot,instance);
+    if (slot >= detail::kRuntimeSlots) { s_table.safetyOverflow(code,instance,false); return; }
     if (!s_table.clearActive(slot)) {
         return;
     }
+    if (code.kind == CodeKind::Latched) { s_table.markDirty(slot, 2); return; }
     detail::QueuedEvent ev{};
     ev.timestamp_us = detail::wallClockUs();
     ev.slot = static_cast<uint8_t>(slot);

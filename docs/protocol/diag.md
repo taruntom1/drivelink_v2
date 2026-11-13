@@ -38,4 +38,20 @@ instance identities claim remaining slots atomically, without allocation or
 blocking. Slots persist until reboot. Exhaustion is counted as RecordDropped.
 Records and clear events retry while the TX pool is full; queries can be
 lost and are counted. Code metadata is served by describe.GET_CODES and is
-covered by the descriptor hash. Arming/latching behavior arrives in F4b.
+covered by the descriptor hash.
+
+F4b adds diagnostic code kind Latched (2) alongside Record (0) and Counter
+(1), as served by core GET_CODES. Latched codes have an active bit and no
+args. DIAG_RAISE and recovery update atomics and dirty bits; the reporter
+sends ordinary Record/Cleared events with zero args and its observation time.
+Repeated occurrences may coalesce, retaining both raise and clear when they
+happen before a scan. Counts and current state remain queryable. No diag
+packet format changed, so diag remains v3.
+
+Every occurrence of a `disarms` code synchronously notifies the arm interlock,
+independently of event queue or TX availability. It latches Fault except for
+WatchdogTimeout. Active `blocks_arm` or `disarms` conditions refuse ARM;
+active disarming conditions also refuse ACK_FAULT. Clear queries never clear
+active conditions or acknowledge Fault. If report slots are exhausted, fixed overflow bitmaps still track each
+safety code/instance until its condition clears. Reporting loss never drops
+the arm/ACK interlock, and recovery does not require a reboot.

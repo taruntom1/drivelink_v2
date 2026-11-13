@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core_os/diag_sink.hpp"
+namespace diag::detail { class SlotTable; }
 
 namespace core_os::native {
 
@@ -35,5 +36,7 @@ uint64_t counterTotal(DiagCode code, uint8_t instance = 255);
 
 /// Forget everything recorded.
 void resetRecordedDiag();
+// Same atomic state used by the native safety interlock and vdev reporter.
+diag::detail::SlotTable &diagTable();
 
 } // namespace core_os::native

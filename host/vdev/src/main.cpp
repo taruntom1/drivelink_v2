@@ -73,7 +73,7 @@ struct DirectoryLock
 };
 struct Diagnostics
 {
-    diag::detail::SlotTable slots;
+    diag::detail::SlotTable &slots = core_os::native::diagTable();
     std::mutex mutex;
     struct Record
     {
@@ -93,7 +93,6 @@ struct Diagnostics
             ++dropped;
             return;
         }
-        slots.raise(slot, r.code.clears);
         std::lock_guard lock(mutex);
         if (count == records.size())
         {
@@ -192,13 +191,13 @@ struct Server
             core_os::native::setResetWasCrash(false);
         }
         core_os::native::resetBootClock();
+        core_os::native::resetRecordedDiag();
         diag = std::make_unique<Diagnostics>();
         core_os::native::setDiagSinks(
             diag.get(), [](void *ctx, const auto &r) { static_cast<Diagnostics *>(ctx)->report(r); },
             [](void *ctx, core_os::DiagCode code, uint32_t n, uint8_t inst)
             {
-                auto &d = *static_cast<Diagnostics *>(ctx);
-                d.slots.add(d.slots.resolve(code.slot, inst), n);
+                (void)ctx; (void)code; (void)n; (void)inst;
             });
         core::CoreConfig config;
         config.gpio_allowed_mask &= ~((1ULL << 43) | (1ULL << 44));
@@ -223,7 +222,12 @@ struct Server
     }
     void receive(Peer &from, const p::Scanner::Frame &frame)
     {
-        if (frame.msg_type == msg::kCoreCommand)
+        if (frame.msg_type == msg::kDisarm)
+        {
+            const auto n = core::fastDisarm(*core, {frame.payload, frame.len}, reply);
+            from.send(msg::kCoreResponse, reply.data(), n);
+        }
+        else if (frame.msg_type == msg::kCoreCommand)
         {
             const auto n = commands->handle({frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
@@ -335,8 +339,9 @@ struct Server
                 w.appendU8(0);
                 w.appendU16Le(counter++);
                 w.appendU64Le(now);
-                w.appendU8(0);
-                w.appendU8((core->pendingReboot() ? 4 : 0) | (core->nvsDirty() ? 8 : 0) |
+                w.appendU8(static_cast<uint8_t>(core->armStatus()));
+                w.appendU8((core->armStatus() == core::ArmStatus::Fault ? 1 : 0) | (core->blocksArm() ? 2 : 0) |
+                           (core->pendingReboot() ? 4 : 0) | (core->nvsDirty() ? 8 : 0) |
                            (core->safeMode() ? 32 : 0));
                 w.appendU8(diag->activeErrors());
                 w.appendU8(255);
@@ -346,7 +351,7 @@ struct Server
                     const auto *loop = core->loopAt(i); if (!loop) { continue; }
                     w.appendU8(loop->id()); w.appendU32Le(loop->stats().overruns);
                 }
-                w.appendU8(0);
+                w.appendU8(static_cast<uint8_t>(core->lastDisarmReason()));
                 peer->send(msg::kStatusStream, reply.data(), w.size(), core::AfterReply::None, true);
             }
             const auto violations = core_os::realtimeViolations();
@@ -355,6 +360,26 @@ struct Server
                 last_rt_violations = violations;
             }
             // Records remain pending until queued. No unbounded recording vector.
+            for (size_t slot = 0; slot < diag::detail::kRuntimeSlots; ++slot) {
+                auto dirty = diag->slots.takeDirty(slot);
+                if (!dirty) { continue; }
+                const auto &code = diag::kCodeTable[diag->slots.codeSlot(slot)];
+                const bool active = diag->slots.read(slot).state & dp::kStateActive;
+                for (const auto bit : {active ? 2U : 1U, active ? 1U : 2U}) {
+                    if (!(dirty & bit)) { continue; }
+                    size_t n;
+                    if (bit == 1) {
+                        dp::RecordEvent ev{static_cast<uint64_t>(now), static_cast<uint8_t>(code.severity),
+                            static_cast<uint8_t>(code.source), diag->slots.instance(slot), code.code, 0, 0, 0};
+                        n = dp::encodeRecordEvent(diag->sequence, 0, ev, reply.data(), reply.size());
+                    } else {
+                        dp::ClearedEvent ev{static_cast<uint64_t>(now), static_cast<uint8_t>(code.source), diag->slots.instance(slot), code.code};
+                        n = dp::encodeClearedEvent(diag->sequence, 0, ev, reply.data(), reply.size());
+                    }
+                    if (!peer->send(msg::kDiagEvent, reply.data(), n)) { diag->slots.markDirty(slot, dirty); break; }
+                    ++diag->sequence; dirty &= ~bit;
+                }
+            }
             std::lock_guard lock(diag->mutex);
             if (diag->count)
             {

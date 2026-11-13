@@ -35,6 +35,7 @@ struct CoreLink::Impl {
     std::array<uint8_t,CONFIG_CORE_COMMAND_QUEUE_DEPTH*sizeof(uart_comm::RxFrame)> queue_bytes{};
     QueueHandle_t queue=nullptr;
     uart_comm::CallbackRegistration registration;
+    uart_comm::CallbackRegistration disarm_registration;
     std::array<uart_comm::CallbackRegistration, defs::kCmdGroupChannelCount> command_registrations;
     std::array<uint8_t, kGroupStreamBytes> group_stream{};
     core_os::PeriodicTask task;
@@ -82,8 +83,9 @@ struct CoreLink::Impl {
         next_status=now+1000000/hz;
         drivelink::protocol::wire::Writer w(status.data(),status.size());
         w.appendU8(drivelink::protocol::core_wire::kVersion);w.appendU8(0);w.appendU16Le(counter++);w.appendU64Le(static_cast<uint64_t>(now));
-        w.appendU8(0); // disarmed until F4b
-        w.appendU8((core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0));
+        w.appendU8(static_cast<uint8_t>(core.armStatus()));
+        w.appendU8((core.armStatus()==ArmStatus::Fault?1:0)|(core.blocksArm()?2:0)|
+            (core.pendingReboot()?4:0)|(core.nvsDirty()?8:0)|(core.safeMode()?32:0));
         w.appendU8(diag::activeErrorCount());
         std::array<uint8_t,2> load{255,255};
 #if CONFIG_CORE_STATUS_CPU_LOAD && CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER && !CONFIG_FREERTOS_SMP && !CONFIG_FREERTOS_UNICORE
@@ -97,7 +99,7 @@ struct CoreLink::Impl {
             const auto *loop=core.loopAt(i);if (!loop) { continue; }
             w.appendU8(loop->id());w.appendU32Le(loop->stats().overruns);
         }
-        w.appendU8(0);
+        w.appendU8(static_cast<uint8_t>(core.lastDisarmReason()));
         const auto err=uart.sendData(msg::kStatusStream,status.data(),w.size());
         if(err!=ESP_OK && err!=ESP_ERR_TIMEOUT) { ESP_LOGW(TAG,"status send failed: %s",esp_err_to_name(err)); }
     }
@@ -109,6 +111,12 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     auto err=uart.openStream(msg::kStatusStream,d.status.size());
     if(err!=ESP_OK) { ESP_LOGE(TAG,"status setup: %s",esp_err_to_name(err));return; }
     auto *impl=&d;
+    err=uart.registerCallback(msg::kDisarm, [impl](const uart_comm::RxFrame &f) {
+        std::array<uint8_t, 6> reply{};
+        const auto n = fastDisarm(impl->core, {f.payload, f.len}, reply);
+        if (impl->uart.sendCommand(msg::kCoreResponse, reply.data(), n) != ESP_OK) { DIAG_COUNT(diag::codes::core::kResponseDropped); }
+    }, d.disarm_registration);
+    if(err!=ESP_OK) { ESP_LOGE(TAG,"disarm callback: %s",esp_err_to_name(err));return; }
     for (size_t i=0;i<core.groups().capacity(GroupKind::Subscription);++i) {
         err=uart.openStream(static_cast<uint8_t>(defs::kSubGroupChannelFirst+i),12+4*core.groups().entryCapacity());
         if(err!=ESP_OK) { ESP_LOGE(TAG,"group stream setup: %s",esp_err_to_name(err));return; }
@@ -121,6 +129,13 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
         if(err!=ESP_OK) { ESP_LOGE(TAG,"group callback setup: %s",esp_err_to_name(err));return; }
     }
     err=uart.registerCallback(msg::kCoreCommand,[impl](const uart_comm::RxFrame &f) {
+        if (f.len >= 4 && f.payload[2] == static_cast<uint8_t>(defs::Family::System) &&
+            f.payload[3] == static_cast<uint8_t>(defs::SystemOp::Disarm)) {
+            std::array<uint8_t, 6> reply{};
+            const auto n=fastDisarm(impl->core, {f.payload, f.len}, reply);
+            if(impl->uart.sendCommand(msg::kCoreResponse,reply.data(),n)!=ESP_OK) { DIAG_COUNT(diag::codes::core::kResponseDropped); }
+            return;
+        }
         if(xQueueSend(impl->queue,&f,0)==pdTRUE) { return; }
         DIAG_COUNT(diag::codes::core::kCommandDropped);
         drivelink::protocol::core_wire::Header h;
@@ -136,7 +151,7 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     if(err!=core_os::kOk) { ESP_LOGE(TAG,"core task: %s",esp_err_to_name(err));return; }
     d.valid=true;
 }
-CoreLink::~CoreLink() { for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
+CoreLink::~CoreLink() { m_impl->disarm_registration.reset();for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
 bool CoreLink::isValid() const { return m_impl->valid; }
 uint32_t CoreLink::stackHighWater() const { return m_impl->task.stackHighWaterMark(); }
 }

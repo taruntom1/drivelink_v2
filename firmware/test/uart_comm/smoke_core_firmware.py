@@ -13,9 +13,9 @@ class Client:
         self.serial=serial.Serial(port,921600,timeout=.1)
         self.proto=UartCommProto(self.serial)
         self.seq=0
-    def request(self,family,op,body=b"",accepted=(0,)):
+    def request(self,family,op,body=b"",accepted=(0,),msg_type=0x01):
         self.seq=(self.seq+1)&255
-        self.proto.send_command(0x01,bytes((CORE_PROTOCOL_VERSION,self.seq,family,op))+body)
+        self.proto.send_command(msg_type,bytes((CORE_PROTOCOL_VERSION,self.seq,family,op))+body)
         deadline=time.monotonic()+4
         while time.monotonic()<deadline:
             kind,p=self.proto.read_frame(timeout=max(.01,deadline-time.monotonic()))
@@ -56,8 +56,8 @@ class Client:
             assert next_>cursor;cursor=next_
     def reboot(self):
         self.request(1,8);time.sleep(.7);return self.connect()
-    def add(self,type_,label):
-        name=label.encode();p=self.request(2,2,bytes((type_,255,len(name)))+name)
+    def add(self,type_,label,loop=255):
+        name=label.encode();p=self.request(2,2,bytes((type_,loop,len(name)))+name)
         return p[0]
     def action(self,type_,inst,id_,values=(0,0,0,0),blob=b""):
         return self.request(8,1,struct.pack("<BBH4IH",type_,inst,id_,*values,len(blob))+blob)
@@ -81,8 +81,8 @@ def main():
         c.request(1,5);info=c.reboot();assert info["count"]==original["count"]+3
         half=struct.unpack("<I",struct.pack("<f",.5))[0]
         c.action(112,actuator,768,(half,0,0,0));time.sleep(.15)
-        out=c.action(112,actuator,768,(half,0,0,0));assert struct.unpack_from("<f",out)[0]>0
-        out=c.action(113,feedback,768);assert struct.unpack_from("<f",out)[0]>0
+        out=c.action(112,actuator,768,(half,0,0,0));assert struct.unpack_from("<f",out)[0]==0
+        out=c.action(113,feedback,768);assert struct.unpack_from("<f",out)[0]==0
         out=c.action(112,actuator,769,blob=b"echo");assert out[18:]==b"echo"
         c.action(114,imu,768);c.action(114,imu,769)
         print("PASS layout, persistence, loop/paused actions and mocks",flush=True)

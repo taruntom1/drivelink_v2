@@ -92,3 +92,16 @@ F4a adds native group tests for config/withdrawal, epoch wrapping, typed
 command rejection and atomicity, sparse loop ids, 64-entry limits, subscription
 dividers and concurrent mailbox coherence. Host integration exercises CLI
 groups on vdev and verifies disarmed commands do not alter mock inputs.
+
+
+F4b adds deterministic safety tests with native manual scheduling: ARM/disarm
+races, command freshness across arm epochs, latched recovery/ACK, watchdog
+feeds and grace, sparse non-real-time stalls, emergency force without a loop
+transition, read-only limits/persistence, and sparse diagnostic exhaustion.
+Host integration covers arming/refusals, command/keepalive runs and typed CSV.
+The default-off bench stall command supports bare-board monitor/WDT checks.
+
+`smoke_safety_firmware.py --port COM3` checks normal arming/watchdog behavior
+with one temporary actuator mock. A bench-enabled build additionally runs
+`--bench --wdt` to test stalls in real-time/background loops and the Task WDT
+reset; inspect COM4 for the panic. It restores the saved layout and settings.

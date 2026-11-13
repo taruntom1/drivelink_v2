@@ -13,7 +13,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v3 and sets the device's maximum receive payload; the scanner's hard limit is
+v4 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 
@@ -72,3 +72,7 @@ it returns null for a stale epoch/channel. Resolve descriptors from the device.
 Reconfigure/reload group metadata explicitly after a mutation. The bounded
 Session event queue carries subscriptions as well as status and diagnostics.
 The cached, lock-free device/time model remains H1 work.
+
+Arming wrappers use core v4: arm(), disarm() and acknowledgeFault(). Session
+routes system DISARM through the fast-path MSG_TYPE. Group capacities are
+read-only system params; Client::groups retains convenience capacity fields.

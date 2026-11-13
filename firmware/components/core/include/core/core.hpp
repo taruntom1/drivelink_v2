@@ -18,8 +18,10 @@
 #include "core/registry.hpp"
 #include "core/status.hpp"
 #include "core_os/kv_store.hpp"
+#include "core_os/diag_sink.hpp"
 #include "core_os/one_shot.hpp"
 #include "core_os/periodic_task.hpp"
+#include "core_os/periodic_timer.hpp"
 #include "core_os/types.hpp"
 
 namespace core {
@@ -125,6 +127,15 @@ public:
     /// is the caller's job.
     Status exitSafeMode();
     Status runAction(Ref ref, const ActionArgs &args, ActionOut &out);
+    Status arm();
+    void disarm(DisarmReason reason = DisarmReason::Explicit) { m_arm.disarm(reason); }
+    Status acknowledgeFault();
+    ArmStatus armStatus() const { return m_arm.status(); }
+    DisarmReason lastDisarmReason() const { return m_arm.reason(); }
+    bool blocksArm() const { return core_os::diagBlocksArm(); }
+    // Timer-owned. Public for deterministic native tests; never call in
+    // parallel with its timer, or before boot has fixed the loop table.
+    void monitor(int64_t now_us);
 
     // -- state ------------------------------------------------------------------
 
@@ -179,8 +190,10 @@ private:
     void createObject(detail::InstanceRecord &record);
     detail::InstanceRecord &systemRecord() const { return m_table.at(0); }
     Status layoutOpAllowed() const;
+    void initializeLimits(detail::InstanceRecord &record);
 
     const CoreConfig m_config;
+    ArmState m_arm;
     Registry m_registry;
     detail::InstanceTable m_table;
     std::array<Loop *, kMaxLoops> m_loops{};
@@ -191,6 +204,13 @@ private:
     GroupService m_groups;
     PendingLayout m_pending;
     core_os::OneShotTimer m_crash_clear;
+    core_os::PeriodicTimer m_monitor;
+    std::atomic<uint32_t> m_watchdog_us{200000};
+    struct Heartbeat { uint32_t value = 0; int64_t advanced_us = 0; bool stalled = false; };
+    std::array<Heartbeat, kMaxLoops> m_heartbeats{};
+    std::unique_ptr<Instance *[]> m_actuators;
+    size_t m_actuator_count = 0;
+    bool m_observing = false;
     core_os::KvStore *m_store = nullptr;
     uint32_t m_newest_gen = 0; ///< the newest generation in NVS; SAVE writes a newer one
     /// The complete generation in NVS (the one loaded or last saved), 0 if

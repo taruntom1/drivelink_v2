@@ -34,6 +34,16 @@ void Loop::taskEntry(void *ctx, uint32_t elapsed)
     if (loop->m_enabled.load(std::memory_order_acquire)) { loop->runTick(elapsed); }
 }
 
+void Loop::addInputs(const detail::InstanceRecord &record) {
+    for (size_t i = 0; i < record.desc->items.size(); ++i) {
+        const auto &item = record.desc->items[i];
+        if (item.kind == defs::ItemKind::Input) { m_inputs.push_back({item.type, record.bindings[i].ptr, item.default_bits}); }
+    }
+}
+void Loop::resetInputs() {
+    for (const auto &input : m_inputs) { storeValue(input.type, input.ptr, input.bits); }
+}
+
 void Loop::runTick(uint32_t elapsed)
 {
     core_os::RealtimeScope guard(m_realtime);
@@ -41,8 +51,29 @@ void Loop::runTick(uint32_t elapsed)
 
     // 1. Heartbeat (read by the safety monitor from F4b).
     m_heartbeat.fetch_add(1U, std::memory_order_relaxed);
+    // Only the disabled-by-default bench command can schedule this. Busy
+    // work deliberately withholds the Task WDT feed to test its backstop.
+    const auto stall_us = m_bench_stall_us.exchange(0, std::memory_order_acq_rel);
+    if (stall_us) {
+        const auto until = core_os::nowUs() + stall_us;
+        while (core_os::nowUs() < until) {}
+    }
 
     if (m_action.state.load(std::memory_order_acquire) == ActionState::Paused) { return; }
+    uint32_t arm_word = 0; int64_t armed_at = 0;
+    const bool coherent = !m_arm || m_arm->snapshot(arm_word, armed_at);
+    arm_word &= ~ArmState::kStopping;
+    const bool armed = coherent && (arm_word & ArmState::kArmed) && !(arm_word & ArmState::kFault);
+    // An intervening disarm must be observed even when the host re-armed
+    // before this loop woke. Disarm resets precede every arm release.
+    if (coherent && arm_word != m_seen_arm) {
+        resetInputs();
+        for (size_t i = 0; i < m_count; ++i) { m_instances[i]->onArmTransition(false); }
+        if (armed) {
+            for (size_t i = 0; i < m_count; ++i) { m_instances[i]->onArmTransition(true); }
+        }
+        m_seen_arm = arm_word;
+    }
     // 3. Staged param batch.
     applyStaged();
 
@@ -59,8 +90,8 @@ void Loop::runTick(uint32_t elapsed)
         m_action.completed.signal();
     }
 
-    // 5. Group swaps and command mailboxes. Disarmed until F4b.
-    if (m_groups) { m_groups->beginTick(m_id); }
+    // 5. Group swaps and post-ARM command mailboxes.
+    if (m_groups) { m_groups->beginTick(m_id, armed, armed_at); }
 
     // 7. Instances, in the wiring's tick order (the list order, set at boot).
     const uint32_t period_us = m_period_us.load(std::memory_order_relaxed);

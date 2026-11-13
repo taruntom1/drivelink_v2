@@ -34,6 +34,7 @@ enum class Severity : uint8_t {
 enum class CodeKind : uint8_t {
     Record = 0,
     Counter = 1,
+    Latched = 2,
 };
 
 /// One code: its slot in the diag table and its fixed attributes.
@@ -124,6 +125,10 @@ inline constexpr Code kResponseDropped{51, Source::Core, 0x0101, Severity::Warni
 inline constexpr Code kLoopOverBudget{53, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
 /// A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.
 inline constexpr Code kCommandFrameRejected{54, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
+/// A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required.
+inline constexpr Code kLoopStalled{55, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
+/// No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.
+inline constexpr Code kWatchdogTimeout{56, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
 } // namespace core
 
 namespace motor_manager {
@@ -205,6 +210,10 @@ namespace actuator_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
 inline constexpr Code kInitFailed{47, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+/// A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT.
+inline constexpr Code kFaultInjected{57, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
+/// A mock diagnostic action raised an arm-blocking condition.
+inline constexpr Code kArmBlocked{58, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
 } // namespace actuator_mock
 
 namespace feedback_mock {
@@ -221,7 +230,7 @@ inline constexpr Code kInitFailed{49, Source::ImuMock, 0x0001, Severity::Error, 
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 55;
+inline constexpr size_t kSlotCount = 59;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -280,6 +289,10 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::uart_comm::kStreamSkipped,
     codes::core::kLoopOverBudget,
     codes::core::kCommandFrameRejected,
+    codes::core::kLoopStalled,
+    codes::core::kWatchdogTimeout,
+    codes::actuator_mock::kFaultInjected,
+    codes::actuator_mock::kArmBlocked,
 }};
 
 } // namespace drivelink::protocol::defs::diag

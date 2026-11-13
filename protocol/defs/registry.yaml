@@ -112,6 +112,14 @@ wire_enums:
     ReservedType: 35
     DuplicateType: 36
     NoFactory: 37
+    FaultLatched: 38
+    BlocksArm: 39
+    LayoutInvalid: 40
+    NoCommandGroup: 41
+    DisarmRaced: 42
+    FaultActive: 43
+    MonitorUnavailable: 44
+    RebootPending: 45
   Family:
     System: 1
     Layout: 2
@@ -132,6 +140,7 @@ wire_enums:
     FactoryReset: 7
     Reboot: 8
     ExitSafeMode: 9
+    BenchStall: 253
     BenchCrash: 254
   LayoutOp:
     ListInstances: 1

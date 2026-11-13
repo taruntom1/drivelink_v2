@@ -2,10 +2,19 @@
 #include "drivelink/protocol/gen/registry.hpp"
 #include <iostream>
 #include <map>
+#include <thread>
+#include <csignal>
 
 namespace
 {
 using namespace drivelink;
+volatile std::sig_atomic_t interrupted = 0;
+struct InterruptScope {
+    using Handler = void (*)(int);
+    Handler previous;
+    InterruptScope() : previous(std::signal(SIGINT, [](int) { interrupted = 1; })) { interrupted = 0; }
+    ~InterruptScope() { std::signal(SIGINT, previous); }
+};
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
   info | types | items TYPE | enums TYPE ITEM | codes
@@ -14,10 +23,14 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   get REF... | get-pending REF... | set REF=VALUE...
   action REF [ARG...] [--blob HEX]
   save | revert | factory-reset | reboot | exit-safe-mode
+  arm | disarm | ack-fault
   status [COUNT] | events [COUNT] | diag-info | diag-entries | diag-clear
   groups | sub-config GROUP LOOP DIVIDER [REF...] | cmd-config GROUP LOOP [REF...]
   sub-enable GROUP true|false | sub-clear GROUP | cmd-clear GROUP
   sub-stream GROUP [COUNT] | cmd-send GROUP COUNTER [VALUE...]
+  sub-csv GROUP COUNT | cmd-run GROUP PERIOD_MS COUNT [VALUE...]
+  keepalive GROUP PERIOD_MS COUNT
+  bench-stall LOOP DURATION_MS (bench-enabled firmware only)
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
@@ -150,7 +163,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         count(0);
         return client.discard();
     }
-    const std::map<std::string, uint8_t> ops{{"save", 5},   {"revert", 6},         {"factory-reset", 7},
+    const std::map<std::string, uint8_t> ops{{"arm", 2}, {"disarm", 3}, {"ack-fault", 4}, {"save", 5}, {"revert", 6}, {"factory-reset", 7},
                                              {"reboot", 8}, {"exit-safe-mode", 9}, {"bench-crash", 254}};
     if (auto it = ops.find(cmd); it != ops.end())
     {
@@ -162,6 +175,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         count(0);
         return client.diagInfo();
     }
+    if (cmd == "bench-stall") { count(2); return client.benchStall(static_cast<uint8_t>(id(1,254)),static_cast<uint16_t>(id(2,10000))); }
     if (cmd == "diag-entries")
     {
         count(0);
@@ -277,9 +291,13 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     if (cmd == "sub-clear" || cmd == "cmd-clear") {
         count(1); return client.groupClear(static_cast<uint8_t>(id(1, 255)), cmd == "cmd-clear");
     }
-    if (cmd == "sub-stream" || cmd == "cmd-send") {
-        const bool send = cmd == "cmd-send";
-        if ((send && args.size() < 3) || (!send && (args.size() < 2 || args.size() > 3))) {
+    if (cmd == "sub-stream" || cmd == "sub-csv" || cmd == "cmd-send" || cmd == "cmd-run" || cmd == "keepalive") {
+        const bool repeat = cmd == "cmd-run" || cmd == "keepalive";
+        const bool csv = cmd == "sub-csv";
+        const bool send = cmd == "cmd-send" || repeat;
+        if (csv && json) { usage("sub-csv writes CSV; omit --json"); }
+        if ((repeat && args.size() < 4) || (cmd == "keepalive" && args.size() != 4) ||
+            (send && !repeat && args.size() < 3) || (!send && (args.size() < 2 || args.size() > 3))) {
             usage(send ? "cmd-send GROUP COUNTER [VALUE...]" : "sub-stream GROUP [COUNT]");
         }
         const auto group_id = id(1, 255);
@@ -292,13 +310,38 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         Json descriptors = Json::array();
         for (const auto &ref : group["refs"]) { descriptors.push_back(client.item({ref["type"], ref["instance"], ref["item"]})); }
         if (send) {
-            if (args.size() != 3 && args.size() - 3 != descriptors.size()) { usage("command values must match the configured refs"); }
+            const size_t first = repeat ? 4 : 3;
+            if (args.size() != first && args.size() - first != descriptors.size()) { usage("command values must match the configured refs"); }
             std::vector<uint32_t> values;
-            for (size_t i = 3; i < args.size(); ++i) {
-                const auto &d = descriptors[i - 3];
-                const auto &ref = group["refs"][i - 3];
+            for (size_t i = first; i < args.size(); ++i) {
+                const auto &d = descriptors[i - first];
+                const auto &ref = group["refs"][i - first];
                 const Json enums = d["value_type"] == 6 ? client.enums(ref["type"], ref["item"]) : Json::array();
                 values.push_back(parseValue(d, args[i], enums));
+            }
+            if (repeat) {
+                InterruptScope interrupt_scope;
+                const auto period = id(2, 1000), n = id(3, 1000000);
+                const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1})["values"][0].get<uint32_t>();
+                if (!period || !n || period * 2 >= limit) { usage("period must be less than half watchdog_ms, and count must be positive"); }
+                bool owns_arm = false;
+                try {
+                    if (cmd == "cmd-run") { client.arm(); owns_arm = true; }
+                    auto next = std::chrono::steady_clock::now();
+                    uint32_t sent = 0;
+                    while (sent < n && !interrupted) {
+                        if (!client.command(static_cast<uint8_t>(group_id), group["epoch"], static_cast<uint16_t>(sent), values)) {
+                            throw Error(ErrorKind::Connection, "command stream queue full");
+                        }
+                        ++sent;
+                        next += std::chrono::milliseconds(period); std::this_thread::sleep_until(next);
+                    }
+                    if (owns_arm) { client.disarm(); } else { client.info(); }
+                    return {{"sent", sent}, {"interrupted", interrupted != 0}};
+                } catch (...) {
+                    if (owns_arm) { try { client.disarm(); } catch (...) {} }
+                    throw;
+                }
             }
             if (!client.command(static_cast<uint8_t>(group_id), group["epoch"], static_cast<uint16_t>(id(2, 65535)), values)) {
                 throw Error(ErrorKind::Connection, "command stream queue full");
@@ -308,6 +351,13 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             client.info(); return {{"sent", true}, {"epoch", group["epoch"]}};
         }
         const auto n = args.size() == 3 ? id(2, 1000000) : 1;
+        if (csv) {
+            std::cout << "timestamp_us,counter";
+            for (const auto &ref : group["refs"]) {
+                std::cout << ',' << ref["type"].get<unsigned>() << ':' << ref["instance"].get<unsigned>() << ':' << ref["item"].get<unsigned>();
+            }
+            std::cout << '\n';
+        }
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         for (uint32_t i = 0; i < n;) {
             Frame frame;
@@ -316,7 +366,12 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             if (frame.type != group["channel"]) { continue; }
             auto sample = decodeSubscription(frame, group, descriptors);
             if (sample.is_null()) { continue; }
-            emit(sample, json); ++i;
+            if (csv) {
+                std::cout << sample["timestamp_us"] << ',' << sample["counter"];
+                for (const auto &value : sample["typed_values"]) { std::cout << ',' << value; }
+                std::cout << '\n';
+            } else { emit(sample, json); }
+            ++i;
             deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         }
         return nullptr;

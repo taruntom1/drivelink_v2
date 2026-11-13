@@ -55,8 +55,8 @@ public:
     Status complete(GroupKind kind, uint8_t id, uint32_t timeout_us);
 
     bool receiveCommand(uint8_t id, std::span<const uint8_t> payload, int64_t received_us);
-    // The device uses the disarmed default in F4a. F4b will supply its arm
-    // state and arm instant; pre-arm mailboxes are never applied.
+    // Device loops supply their coherent arm state and arm instant; pre-arm
+    // mailboxes are never applied.
     void beginTick(uint8_t loop, bool armed = false, int64_t armed_at_us = 0);
     void endTick(uint8_t loop, int64_t timestamp_us);
     size_t takeStream(uint8_t id, std::span<uint8_t> payload);

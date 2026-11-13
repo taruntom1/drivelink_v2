@@ -669,3 +669,25 @@ to another loop is committed by the old loop before the new one accesses it.
 The device stays disarmed through F4a. F4b connects command application and
 receipt times to its arm state and watchdog. NaN is rejected on the wire;
 host NaN-to-hold conversion waits for arming/hold semantics.
+
+
+### F4b implementation decisions
+
+Core wire v4 removes GROUP LIST's F4a capacity prefix: the five limits are
+read-only system params, and host convenience results obtain capacities by GET.
+The user approved this consolidation and core v4 with the F4b plan.
+DISARM on MSG_TYPE 0x03 uses the ordinary four-byte system DISARM header and
+responds on core_response. Both DISARM encodings bypass the firmware queue.
+
+The ARM commit word packs state/fault/stopping bits and the disarm epoch in a
+32-bit lock-free atomic, with a coherent split-word ARM timestamp. The monitor
+uses a prebuilt actuator list and repeats emergency forces while disarmed;
+ARM cannot commit while forces are being applied. Native/vdev share the real
+atomic diagnostic state. Latched delivery coalesces repeats, retaining raise
+and clear when both precede a reporter scan. Fixed overflow bitmaps (32 bytes per generated safety code) retain active
+conditions and their recovery even if the sparse reporting table is exhausted.
+
+Mock diagnostic actions and a default-off BenchStall (guarded by the existing
+bench crash option) exercise these paths without motors. There is no NVS
+format change. Automatic NaN-to-hold mapping remains for later host modeling,
+as permitted by the host plan; the explicit command API still rejects NaN.

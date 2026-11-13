@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v3 before any requested mutation.
+vdev. Every connection checks core v4 before any requested mutation.
 
 Default output is readable key/value text. With `--json`, stdout holds only
 `{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.
@@ -49,5 +49,24 @@ and `cmd-config GROUP LOOP REF...` return the new epoch/channel. Use
 resources. `sub-stream GROUP [COUNT]` prints typed samples and filters stale
 epochs. `cmd-send GROUP COUNTER [VALUE...]` parses configured input types; no
 values means keepalive. It drains its frame with an ordered GET_INFO before
-closing; the stream itself has no acknowledgement. F4a remains disarmed, so
+closing; the stream itself has no acknowledgement. Commands received while disarmed are ignored, so
 sending command values cannot change device inputs. NaN/Inf are rejected.
+
+
+F4b adds `arm`, `disarm` (MSG_TYPE 0x03), and `ack-fault`. ARM failures include
+the device result/detail; acknowledging a fault never clears its active cause.
+`cmd-run GROUP PERIOD_MS COUNT [VALUE...]` validates typed values, arms, sends
+repeated frames and disarms when done or on SIGINT/error. The period must be
+less than half watchdog_ms. With no values it sends prefix-only keepalives.
+`keepalive GROUP PERIOD_MS COUNT` sends those frames without arming or taking
+ownership of an existing arm session. Both workflows stop on connection errors;
+command streams have no acknowledgement, so status/diag supervision is separate.
+NaN remains rejected; automatic hold conversion needs semantic device modeling
+in the later host work.
+
+`sub-csv GROUP COUNT` writes timestamp_us, counter and descriptor-typed values
+to stdout as CSV. Redirect to a file; omit --json. `sub-stream` retains NDJSON.
+Read group capacities through `get 0:0:18 0:0:19 0:0:20`; GROUP LIST has no
+capacity prefix, while the Client::groups JSON convenience fields remain.
+`bench-stall LOOP DURATION_MS` is refused by normal firmware and vdev. A
+bench-enabled firmware / vdev --allow-crash schedules a deliberate loop stall.

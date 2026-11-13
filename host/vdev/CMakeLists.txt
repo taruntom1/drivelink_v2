@@ -1,6 +1,6 @@
 set(COMPONENTS ${CMAKE_CURRENT_LIST_DIR}/../../firmware/components)
 set(CORE_SOURCES
-  config_blob command_service group_service core crc32 instance layout_validation loop loop_instance
+  config_blob command_service group_service core safety crc32 instance layout_validation loop loop_instance
   param_service pending_layout persistence registry value wiring_order)
 set(SOURCES)
 foreach(source IN LISTS CORE_SOURCES)
@@ -10,6 +10,7 @@ add_library(drivelink_native_core STATIC ${SOURCES}
   ${COMPONENTS}/mod_mock/src/modules.cpp
   ${COMPONENTS}/core_os/backend/native/src/realtime_native.cpp
     ${COMPONENTS}/core_os/backend/native/src/core_os_native.cpp
+  ${COMPONENTS}/core_os/backend/native/src/periodic_timer_native.cpp
   ${COMPONENTS}/core_os/backend/native/src/kv_store_native.cpp
   ${COMPONENTS}/core_os/backend/native/src/native_file.cpp
   ${COMPONENTS}/diag/src/diag_protocol.cpp

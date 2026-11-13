@@ -91,6 +91,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 **Build traps:**
 - **Only what `main` requires is built.** `firmware/CMakeLists.txt` sets `COMPONENTS main esp_vfs_console`, so an IDF component is compiled only when a `REQUIRES` or `PRIV_REQUIRES` chain from `main` reaches it. A missing requirement fails the build with a header that is not found. A component that is only linked in drops out without an error: `esp_vfs_console` is named because without it the console leaves the USB-Serial-JTAG driver for the ROM's output routine. After changing a requirement, compare `idf.py -C firmware size-components` with the output from before.
 - **A changed Kconfig default doesn't reach an existing `sdkconfig`.** After a pull that changes one, delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
+- **Restoring an older sdkconfig.** A copied backup may retain its old timestamp, so Ninja can leave the bench settings in generated headers. Run `idf.py -C firmware reconfigure build flash` when restoring normal firmware; check `firmware/build/config/sdkconfig.h` and verify bench commands are refused on the board.
 - **Zero warnings.** The builds have none today, and CI fails on any.
 - **One build at a time.** In F4a three IDF builds ran together, and a timing-sensitive native test failed under the load. `tools/validate.py` runs everything in sequence; do the same by hand.
 - **A compiler crash in an IDF file.** Cold builds on this machine used to stop with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. The firmware no longer compiles that file. If another IDF file crashes the compiler, run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
@@ -109,7 +110,7 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
 - `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
-- `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). The `DIAG_*` macros latch a slot and queue a record, and `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
+- `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). Record macros queue records; real-time counts and latched conditions update fixed atomic state. `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
 
 ## Concurrency rules
 
@@ -167,7 +168,7 @@ Every protocol on top of the `uart_comm` frame follows these rules:
 - Check every ESP-IDF return value, and log failures with `esp_err_to_name`.
 - **Report errors to the host through diag** (the codes are listed in `docs/protocol/diag-codes.md`):
   - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
-  - Frequent faults are counted with `DIAG_COUNT`. It is the only diag macro allowed on real-time paths.
+  - Frequent events are counted with `DIAG_COUNT`; recoverable active conditions use `DIAG_RAISE` on `kind: latched` codes. These atomic paths and latched `DIAG_CLEAR` are allowed on real-time paths.
   - Each new code goes in `protocol/defs/diag_codes.yaml`, then regenerate. Call sites write `diag::codes::<source>::k<Name>`, through the hand-written shim `firmware/components/diag/include/diag_codes.hpp`.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
   - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`.

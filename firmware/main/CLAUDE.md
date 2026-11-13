@@ -23,4 +23,4 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
   - It uses `xTaskGetHandle` and `uxTaskGetStackHighWaterMark()`. The second takes no kernel lock.
   - Never use `uxTaskGetSystemState()`: it scans every stack inside a critical section and stalls the control loop on the other core.
 - **Bench-only options** in `Kconfig.projbuild`, both default off and never committed on:
-  - `CONFIG_CORE_BENCH_CRASH` compiles in the BenchCrash system op, for the safe-mode check. Normal builds reject the op.
+  - `CONFIG_CORE_BENCH_CRASH` enables BenchCrash for the safe-mode check and BenchStall for monitor/Task WDT checks. Normal builds reject the op.

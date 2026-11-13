@@ -31,6 +31,10 @@ class Client
     Json label(uint8_t type, uint8_t instance, const std::string &label);
     Json discard();
     Json system(uint8_t op);
+    Json arm() { return system(2); }
+    Json disarm() { return system(3); }
+    Json acknowledgeFault() { return system(4); }
+    Json benchStall(uint8_t loop, uint16_t duration_ms);
     Json get(std::span<const Ref> refs, bool pending = false);
     Json set(std::span<const Ref> refs, std::span<const uint32_t> values);
     Json action(Ref ref, std::array<uint32_t, 4> args = {}, std::span<const uint8_t> blob = {});

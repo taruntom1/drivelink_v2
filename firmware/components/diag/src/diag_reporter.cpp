@@ -78,6 +78,7 @@ struct Reporter::Impl {
     bool sendEvent(const uint8_t *payload, size_t len);
     void sendBoot();
     void drainEvents();
+    void drainLatched();
     void handleQueries();
     void handleQuery(const uart_comm::RxFrame &frame);
     size_t encodeInfo(uint8_t *out, size_t cap) const;
@@ -179,6 +180,7 @@ void Reporter::Impl::taskLoop()
             }
             if (!boot_pending) {
                 drainEvents();
+                drainLatched();
             }
         }
 
@@ -267,6 +269,35 @@ void Reporter::Impl::drainEvents()
             return; // TX queue full: keep the event queued and retry later
         }
         detail::popEvent();
+    }
+}
+
+void Reporter::Impl::drainLatched() {
+    auto &table = detail::table();
+    for (size_t slot = 0; slot < detail::kRuntimeSlots; ++slot) {
+        auto dirty = table.takeDirty(slot);
+        if (!dirty) { continue; }
+        const auto &code = kCodeTable[table.codeSlot(slot)];
+        const auto now = detail::wallClockUs();
+        const bool active = table.read(slot).state & protocol::kStateActive;
+        // Coalesce repeated occurrences, retaining both transitions when a
+        // raise and recovery happen before the reporter wakes (watchdog).
+        for (const auto bit : {active ? 2U : 1U, active ? 1U : 2U}) {
+            if (!(dirty & bit)) { continue; }
+            size_t len;
+            if (bit == 1) {
+                protocol::RecordEvent ev{}; ev.timestamp_us = now;
+                ev.severity = static_cast<uint8_t>(code.severity); ev.source = static_cast<uint8_t>(code.source);
+                ev.instance = table.instance(slot); ev.code = code.code;
+                len = protocol::encodeRecordEvent(seq, 0, ev, tx_buf.data(), tx_buf.size());
+            } else {
+                protocol::ClearedEvent ev{}; ev.timestamp_us = now;
+                ev.source = static_cast<uint8_t>(code.source); ev.instance = table.instance(slot); ev.code = code.code;
+                len = protocol::encodeClearedEvent(seq, 0, ev, tx_buf.data(), tx_buf.size());
+            }
+            if (!sendEvent(tx_buf.data(), len)) { table.markDirty(slot, dirty); return; }
+            dirty &= ~bit;
+        }
     }
 }
 
