@@ -30,6 +30,8 @@ plans/host-architecture.md; F3c is the first service slice, not the full H1 mode
 - Definition of done: host unit/integration and installed-package smoke pass
   on Linux and MinGW locally; host-linux CI passes, existing required firmware,
   generator and native checks pass, and docs/status update in the same PR.
+  `python tools/validate.py full` runs all of these locally (`host-win`,
+  `host-linux` through WSL, and the rest); `quick` leaves out IDF and WSL.
 
 The CLI supports readable output and `--json`; stdout in JSON mode contains
 only envelopes/NDJSON. Errors include an exit code, device result and detail.

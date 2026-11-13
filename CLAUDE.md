@@ -15,6 +15,7 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 | `protocol/defs/` | The definitions (YAML): `registry.yaml` (MSG_TYPEs, stream channel ranges), `diag_codes.yaml`, `system.yaml` (the system items, type `0x00`) and, from F3b, one file per module type. The source of everything under `protocol/include/drivelink/protocol/gen/` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
 | `docs/protocol/` | The wire spec, the generated registry and diag code tables, and the definitions guide | Updated in the same commit as any wire change |
 | `tools/gen/` | The generator: `python tools/gen/gen.py [--check]` turns `protocol/defs/` into the generated headers and docs. Its tests: `python -m unittest discover -s tools/gen/tests` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
+| `tools/validate.py` | The list of validation checks, run locally (`quick`, `full`) and by CI (`--only`). Never touches hardware | [firmware/test/CLAUDE.md](firmware/test/CLAUDE.md) ("Validation") |
 | `plans/` | The overhaul plans and `overhaul-status.md` | |
 | `.github/workflows/` | CI | |
 
@@ -23,7 +24,7 @@ DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) tha
 ## Cross-cutting rules
 
 - **Host and firmware change together.** There is no backward compatibility on the wire. Any protocol change updates the firmware, the host code that speaks it, and `docs/protocol/` in one change.
-- **Definition of done** is per area. For the firmware it is the list in `firmware/CLAUDE.md` ("Definition of done"): zero-warning builds, current generated files, passing native tests, docs in the same commit. CI checks it.
+- **Definition of done** is per area. For the firmware it is the list in `firmware/CLAUDE.md` ("Definition of done"): zero-warning builds, current generated files, passing native tests, docs in the same commit. `python tools/validate.py full` checks the builds and tests locally, and CI runs the same checks through the same script.
 - **Paths.** Paths in `firmware/CLAUDE.md` are relative to the repository root, and firmware commands run from the root with `-C firmware`.
 
 ## Firmware overhaul in progress (temporary, removed in F10)

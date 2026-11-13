@@ -42,14 +42,12 @@ The session builds the step itself, right after the approval, with no model swit
 
 - Follow the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
 - Don't improve legacy code that a later phase deletes, unless it blocks this step.
-- Before moving on, all of these must pass with zero warnings:
-  - `idf.py -C firmware build`
-  - the nolog variant (from inside `firmware/`: `idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build`)
-  - `idf.py -C firmware/test/uart_comm build`
-  - `python tools/gen/gen.py --check` and the generator's tests (`python -m unittest discover -s tools/gen/tests`)
-  - the native tests (`firmware/test/native`)
-
-  The PowerShell recipe for exporting IDF on this machine is in `firmware/CLAUDE.md`. Add any test suites the step introduces (vdev, host superbuild).
+- Validate with `python tools/validate.py` from the repository root (the guide is in `firmware/test/CLAUDE.md`, "Validation"):
+  - While building, run `quick` (generator, native tests, Windows host tests), or one check with `--only`.
+  - Before moving on, `full` must pass with nothing skipped: the three zero-warning IDF builds, the generator checks, the native tests and the host tests on Windows and Linux.
+  - It runs the checks one at a time and sets up each toolchain itself. Start it once, in the background, and wait for it. Never start a second build or test run beside it.
+  - A rerun skips the checks whose code is unchanged, so after a fix just run `full` again.
+  - A test suite the step introduces becomes a `Check` in `tools/validate.py`, and CI calls it by name.
 - If something in the plans turns out wrong while building:
   - A small internal choice: decide, and log it in the decision log.
   - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user, then update the plan document in this PR.
@@ -65,7 +63,7 @@ When you spawn one: a `general-purpose` agent on `git diff origin/firmware_overh
 - the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
 - the brief above
 
-Verify each finding, yours or the agent's, against the code. Fix the ones that hold up, rerun the checks, and note any you rejected, with the reason, for the PR description.
+Verify each finding, yours or the agent's, against the code. Fix the ones that hold up, run `python tools/validate.py full` again, and note any you rejected, with the reason, for the PR description.
 
 ## 5. Hardware check (only if the step needs one)
 
@@ -89,6 +87,7 @@ Record the result in the status file's hardware table, with the date, the step, 
 3. Commit with a message that says what changed and why, then push.
 4. Open the PR with `gh pr create --base firmware_overhaul`. The description covers:
    - the step id and what was done
+   - the validation: the text of `build/validate/summary.txt` from the last `full` run
    - the plan deviations
    - the review: self-review only or with a review agent (and why), and the findings you rejected
    - the hardware result
