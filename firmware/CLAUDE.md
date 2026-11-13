@@ -89,10 +89,11 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 ```
 
 **Build traps:**
+- **Only what `main` requires is built.** `firmware/CMakeLists.txt` sets `COMPONENTS main esp_vfs_console`, so an IDF component is compiled only when a `REQUIRES` or `PRIV_REQUIRES` chain from `main` reaches it. A missing requirement fails the build with a header that is not found. A component that is only linked in drops out without an error: `esp_vfs_console` is named because without it the console leaves the USB-Serial-JTAG driver for the ROM's output routine. After changing a requirement, compare `idf.py -C firmware size-components` with the output from before.
 - **A changed Kconfig default doesn't reach an existing `sdkconfig`.** After a pull that changes one, delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
 - **Zero warnings.** The builds have none today, and CI fails on any.
 - **One build at a time.** In F4a three IDF builds ran together, and a timing-sensitive native test failed under the load. `tools/validate.py` runs everything in sequence; do the same by hand.
-- **A compiler crash in an IDF file.** On this machine the first no-log build of a fresh worktree stops with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. It happened in F4a and in every cold no-log build since, also with nothing else running. It is not our code: the same compile passes when repeated, alone or under load. Run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
+- **A compiler crash in an IDF file.** Cold builds on this machine used to stop with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. The firmware no longer compiles that file. If another IDF file crashes the compiler, run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
 - **A new pure source file** must also be added to `firmware/test/native/CMakeLists.txt` (see [firmware/test/CLAUDE.md](test/CLAUDE.md)).
 
 ## Architecture
