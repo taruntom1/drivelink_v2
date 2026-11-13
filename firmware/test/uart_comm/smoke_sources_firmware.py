@@ -24,8 +24,10 @@ def main():
     c = Client(args.port)
     created = []
     modified = False
+    add_failed = False
     original = c.connect()
     assert not original['flags'] & 11, original
+    assert original['flags'] & 4, 'requires a saved layout loaded from NVS'
     assert original['count'] == len(original['loops']), 'requires a loops-only layout'
     assert len(original['loops']) >= 2, 'requires two loops'
     assert not wait_frame(c, 0x80, lambda p: p[0] == CORE_PROTOCOL_VERSION)[13] & 8, 'unsaved edits'
@@ -46,9 +48,16 @@ def main():
             break
 
     def add(type_, label, loop):
-        nonlocal modified
+        nonlocal modified, add_failed
         modified = True
-        instance = c.add(type_,label,loop)
+        try:
+            instance = c.add(type_,label,loop)
+        except BaseException:
+            # ADD may have applied even if its response was lost. Both add
+            # phases start from the saved original layout and never SAVE
+            # until every allocated id is known.
+            add_failed = True
+            raise
         created.append((type_,instance))
         return instance
 
@@ -67,7 +76,16 @@ def main():
         return list(struct.unpack_from('<'+'I'*count,p,12))
 
     def cleanup():
-        nonlocal modified
+        nonlocal modified, add_failed
+        if add_failed:
+            # Never commit an unidentified temporary instance. Discard every
+            # pending add and reboot directly into the saved original layout.
+            c.request(2,5)
+            info = c.reboot()
+            assert info['count'] == original['count'] and info['loops'] == original['loops'], info
+            created.clear()
+            add_failed = modified = False
+            return
         # Consumers first, so producer removal respects Referenced.
         for type_, instance in sorted(created, key=lambda entry: entry[0] != 115):
             c.request(2,3,bytes((type_,instance)),accepted=(0,2))
