@@ -4,7 +4,8 @@
 # (firmware/test/native). src/idf/core_config_idf.cpp is the only file that
 # reads Kconfig.
 idf_component_register(
-    SRCS "src/command_service.cpp"
+    SRCS "src/capture_service.cpp"
+         "src/command_service.cpp"
          "src/group_service.cpp"
          "src/source_service.cpp"
          "src/config_blob.cpp"

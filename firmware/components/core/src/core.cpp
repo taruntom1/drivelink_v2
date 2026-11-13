@@ -1,4 +1,5 @@
 #include "core/core.hpp"
+#include "core_os/capture_memory.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -42,6 +43,7 @@ public:
         ctx.bindParam(sys::kLimitsCmdGroups, &m_limits[3]);
         ctx.bindParam(sys::kLimitsGroupEntries, &m_limits[4]);
         ctx.bindParam(sys::kLimitsLinkValues, &m_limits[5]);
+        ctx.bindParam(sys::kLimitsCaptureRefs, &m_limits[6]);
         return true;
     }
 
@@ -50,7 +52,7 @@ public:
 private:
     uint16_t m_status_rate_hz = 10;
     uint16_t m_watchdog_ms = 200;
-    std::array<uint16_t, 6> m_limits{};
+    std::array<uint16_t, 7> m_limits{};
 };
 
 void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
@@ -87,6 +89,7 @@ CoreConfig normalized(CoreConfig config)
     config.max_loops = std::clamp<uint8_t>(config.max_loops, 1, kMaxLoops);
     config.max_instances = std::clamp<uint16_t>(config.max_instances, 1, 64);
     config.link_values = std::clamp<uint16_t>(config.link_values, 1, 64);
+    config.capture_refs = std::clamp<uint8_t>(config.capture_refs, 1, static_cast<uint8_t>(kMaxCaptureRefs));
     return config;
 }
 
@@ -99,6 +102,8 @@ Core::Core(const CoreConfig &config)
       m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
       m_groups(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.subscription_groups,
                m_config.command_groups, m_config.group_entries),
+      m_capture(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.capture_refs,
+                core_os::captureCapacity(m_config.capture_max_bytes)),
       m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values})
 {
     m_params.setPendingLayout(&m_pending);
@@ -115,11 +120,12 @@ Core::Core(const CoreConfig &config)
 }
 
 void Core::initializeLimits(detail::InstanceRecord &record) {
-    const std::array<std::pair<uint16_t, uint32_t>, 6> values{{
+    const std::array<std::pair<uint16_t, uint32_t>, 7> values{{
         {sys::kLimitsLoops, m_config.max_loops}, {sys::kLimitsInstances, m_config.max_instances},
         {sys::kLimitsSubGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Subscription))},
         {sys::kLimitsCmdGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Command))},
-        {sys::kLimitsGroupEntries, m_groups.entryCapacity()}, {sys::kLimitsLinkValues, m_config.link_values}}};
+        {sys::kLimitsGroupEntries, m_groups.entryCapacity()}, {sys::kLimitsLinkValues, m_config.link_values},
+        {sys::kLimitsCaptureRefs, m_capture.refCapacity()}}};
     for (const auto &[id, value] : values) { record.shadow[record.itemIndex(id)] = value; }
 }
 
@@ -399,6 +405,7 @@ void Core::createLoop(detail::InstanceRecord &record)
     m_loops[slot] = m_owned_loops[slot].get();
     m_loops[slot]->setGroups(&m_groups);
     m_loops[slot]->setSources(&m_sources);
+    m_loops[slot]->setCapture(&m_capture);
     m_loops[slot]->setArmState(&m_arm);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
     const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,

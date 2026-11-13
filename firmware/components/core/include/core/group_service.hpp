@@ -19,6 +19,11 @@ struct BoundSignal {
     int64_t *receipt_us = nullptr;
 };
 void latchSignals(std::span<const BoundSignal> signals, std::span<uint32_t> values);
+// Resolve a bound signal or input (inputs only when `inputs_only`) of a
+// running instance owned by `loop`. A loop instance owns its own statistics.
+// Shared by groups and capture; config callers only.
+Status bindSignal(const detail::InstanceTable &table, const Ref &ref, uint8_t loop, bool inputs_only,
+                  BoundSignal &out);
 
 struct GroupInfo {
     bool configured = false;

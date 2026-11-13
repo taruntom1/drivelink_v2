@@ -256,7 +256,7 @@ The rules follow the protocol conventions:
 | `0x03` describe | `GET_TYPES` (paged), `GET_ITEMS(type, start)` (paged: every item with its kind and descriptor), `GET_ENUM(type, item)`, `GET_CODES(start)` (paged diag code descriptors: source, code, name, severity, kind, flags) |
 | `0x04` param | `GET(n × Ref)`, `SET(n × (Ref, value))` (atomic batch), `GET_PENDING` (staged `reboot_required` values) |
 | `0x05` group | `SUB_CONFIG(group, loop, divider, n × Ref)`, `SUB_ENABLE`, `SUB_CLEAR`, `CMD_CONFIG(group, loop, n × Ref)`, `CMD_CLEAR`, `LIST` |
-| `0x06` capture | `CONFIG(loop, divider, samples, pre_trigger, trigger, n × Ref)`, `ARM`, `ABORT`, `STATUS`, `READ(offset, len)` |
+| `0x06` capture | `CONFIG(loop, divider, samples, pre_trigger, trigger, n × Ref)`, `ARM`, `ABORT`, `STATUS`, `READ(first, count)`, `TRIGGER` (F7a: forces the trigger in any mode) |
 | `0x07` testgen | `START(target Ref, waveform, params)`, `STOP`, `STATUS` |
 | `0x08` action | `RUN(Ref, args[4], blob)` → `result, detail, out[4], blob` |
 | `0x09` ota | `BEGIN(size, sha256)`, `WRITE(offset, chunk)`, `FINISH`, `ABORT`, `CONFIRM` |
@@ -292,9 +292,9 @@ The rules follow the protocol conventions:
   - A subscription group may contain signals and inputs. A command group may contain only inputs (otherwise `WrongKind`).
 - **Ops refused while armed:** `SAVE`, `FACTORY_RESET`, `REBOOT`, `ota.*`, all layout ops, `CMD_CONFIG` and `CMD_CLEAR` for a group in an armed loop, and `paused` actions on instances in a real-time loop.
 - **Capture `trigger`:**
-  - `manual`
-  - `testgen_start`
-  - `input_change(Ref)`
+  - `manual` (fired by the `TRIGGER` op, which also forces any other kind)
+  - `testgen_start` (refused until F7b)
+  - `value_change(Ref)`: a signal or an input whose value differs from the previous sample (F7a; the plan had `input_change`, inputs only)
   - `threshold(Ref, rising|falling, value)`
 
 ### Streams
@@ -545,14 +545,15 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
 
 **Capture**
 - Up to `capture.max_refs` signals or inputs (default 16) from one loop, at a divider of its rate. Capturing the input next to the response is what a step-response plot needs.
-- Stored in a ring of `samples × n × 4` bytes, plus a `u64` start timestamp; the samples are evenly spaced.
+- Stored in a ring of `samples × n × 4` bytes. STATUS reports the trigger sample's tick timestamp, the loop period at ARM and the trigger index, so sample i is at `t_trigger + (i - trigger_index) × period × divider`. An `irregular` flag says that spacing broke (a tick more than 1.5 periods late, a paused loop, a rate change). A trigger before the pre-trigger history is full is accepted, with the shorter history (F7a).
 - The ring is allocated at `CONFIG` time, which is configure time, with `heap_caps_malloc(MALLOC_CAP_SPIRAM)`. The reconfiguration frees and reallocates it only while no capture is armed.
 - **PSRAM config:**
   - Octal PSRAM, 80 MHz, with `CONFIG_SPIRAM_USE_CAPS_ALLOC`. Nothing else lands in PSRAM by accident, which plain `malloc` could cause with `SPIRAM_USE_MALLOC`.
   - `CONFIG_SPIRAM_IGNORE_NOTFOUND=y`, so a board without PSRAM boots and falls back to an internal ring of 32 KB.
   - `GET_INFO` reports the capacity.
+  - **Atomics (F7a, user decision).** With PSRAM, IDF builds the S3 with `-mdisable-hardware-atomics`: atomics become IRAM helper calls that use S32C1I on internal RAM and a critical section only on PSRAM addresses. The lock-free asserts use `core_os::lockFreeAtomic<T>()`, and no atomic or shared state may live in PSRAM.
 - **Access from the loop.** The control loop writes `n` values per due tick into PSRAM through the cache. That is fixed work, and it never allocates. During a flash write the cache is disabled anyway, and the loop is stalled.
-- States: `Idle → Armed → Triggered → Done`. A `Done` event goes out on `0xC1`. `READ` pages through the samples in chunks of 512 B or less.
+- States: `Idle → Armed → Triggered → Done`. A `Done` event goes out on `0xC1` (F7a: core events are `version u8, event u8, body`; CaptureDone is the only one so far). `READ` pages through the samples in chunks of 512 B or less. The capacity in bytes is the smaller of `CORE_CAPTURE_MAX_KB` and the largest free PSRAM block at boot; `limits.capture_refs` is the ref limit.
 - Capture may run while disarmed (sensors only), as long as no testgen is running.
 
 **Test signal generator**

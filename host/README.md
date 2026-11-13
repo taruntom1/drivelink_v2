@@ -165,3 +165,15 @@ move the sensor as prompted until all four levels reach 3. Exact profile
 comparisons run in CONFIG to avoid automatic recalibration. See
 `docs/protocol/imu.md` for the blob, timing and quality contract. Windows uses
 the same Qt MinGW PATH as other host binaries.
+
+## Capture smoke (F7a)
+
+`python host/test/capture_smoke.py --cli <cli> --endpoint <endpoint>
+[--loop-rate 1000] [--expect-psram]` adds three `actuator.mock` instances to
+the control loop and checks a step response captured around a threshold
+trigger on the commanded duty, a manual capture forced with `capture-trigger`
+at a divider (with the CaptureDone event), ABORT and the WrongState refusals,
+and the longest control tick with a 1-ref and a 16-ref capture. Sample spacing
+is proven from the captured loop tick counter. Integration runs it on vdev at
+200 Hz; on the bare board use `--endpoint serial://COM3 --expect-psram`. It
+requires and restores a clean loops-only layout with idle groups.

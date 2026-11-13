@@ -23,3 +23,4 @@ items:
   - {id: 0x0013, kind: param, name: limits.cmd_groups, type: u16, default: 0, flags: [read_only], persist: false}
   - {id: 0x0014, kind: param, name: limits.group_entries, type: u16, default: 0, flags: [read_only], persist: false}
   - {id: 0x0015, kind: param, name: limits.link_values, type: u16, default: 0, flags: [read_only], persist: false}
+  - {id: 0x0016, kind: param, name: limits.capture_refs, type: u16, default: 0, flags: [read_only], persist: false}

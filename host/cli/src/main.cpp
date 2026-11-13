@@ -1,5 +1,7 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -31,6 +33,11 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   sub-csv GROUP COUNT | cmd-run GROUP PERIOD_MS COUNT [VALUE...]
   keepalive GROUP PERIOD_MS COUNT
   bench-stall LOOP DURATION_MS (bench-enabled firmware only)
+  capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...
+    TRIGGER: manual | value_change REF | threshold REF rising|falling VALUE
+  capture-arm | capture-trigger | capture-abort | capture-status
+  capture-wait [TIMEOUT_MS]   (until done: the CaptureDone event, if seen, and STATUS)
+  capture-read [--csv]   (a done capture; CSV time is relative to the trigger)
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
@@ -375,6 +382,112 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         }
         return nullptr;
+    }
+    if (cmd == "capture-config")
+    {
+        if (args.size() < 7) { usage("capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF..."); }
+        const auto loop = static_cast<uint8_t>(id(1, 254));
+        const auto divider = static_cast<uint16_t>(id(2, 65535));
+        const auto samples = id(3, UINT32_MAX), pre = id(4, UINT32_MAX);
+        CaptureTrigger trigger;
+        trigger.kind = parseCaptureTrigger(args[5]);
+        size_t next = 6;
+        if (trigger.kind == 2 || trigger.kind == 3)
+        {
+            if (args.size() < next + (trigger.kind == 3 ? 4U : 2U)) { usage("missing trigger arguments"); }
+            trigger.ref = parseRef(args[next++]);
+            if (trigger.kind == 3)
+            {
+                const auto &edge = args[next++];
+                if (edge != "rising" && edge != "falling") { usage("edge must be rising or falling"); }
+                trigger.edge = edge == "falling" ? 1 : 0;
+                const auto d = client.item(trigger.ref);
+                const Json enums = d["value_type"] == 6 ? client.enums(trigger.ref.type, trigger.ref.item) : Json::array();
+                trigger.value = parseValue(d, args[next++], enums);
+            }
+        }
+        std::vector<Ref> refs;
+        for (; next < args.size(); ++next) { refs.push_back(parseRef(args[next])); }
+        if (refs.empty()) { usage("capture-config needs at least one REF"); }
+        return client.captureConfig(loop, divider, samples, pre, trigger, refs);
+    }
+    if (cmd == "capture-arm") { count(0); return client.captureArm(); }
+    if (cmd == "capture-trigger") { count(0); return client.captureTrigger(); }
+    if (cmd == "capture-abort") { count(0); return client.captureAbort(); }
+    if (cmd == "capture-status") { count(0); return client.captureStatus(); }
+    if (cmd == "capture-wait")
+    {
+        if (args.size() > 2) { usage("capture-wait [TIMEOUT_MS]"); }
+        const auto timeout = std::chrono::milliseconds(args.size() == 2 ? id(1, 3600000) : 10000);
+        // Events queue from connect, so one after this STATUS is never missed.
+        auto status = client.captureStatus();
+        Json event = nullptr;
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        auto next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (status["state"] != "done")
+        {
+            if (status["state"] == "idle") { usage("capture is idle"); }
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (remaining.count() <= 0) { throw Error(ErrorKind::Timeout, "capture did not complete"); }
+            // Re-read STATUS on the event, or every 500 ms so a lost event never
+            // stalls the wait; other stream frames (status at 10 Hz) are skipped.
+            Frame frame;
+            const auto until_poll = std::chrono::duration_cast<std::chrono::milliseconds>(next_poll - std::chrono::steady_clock::now());
+            const auto slice = std::max(std::chrono::milliseconds(1), std::min(remaining, until_poll));
+            const bool got = session.nextEvent(frame, slice);
+            if (got && frame.type == protocol::defs::msg::kCoreEvent) { event = client.event(frame); }
+            else if (std::chrono::steady_clock::now() < next_poll) { continue; }
+            status = client.captureStatus();
+            next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        }
+        // STATUS can report done just before the device sends the event.
+        const auto grace = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (event.is_null())
+        {
+            const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(grace - std::chrono::steady_clock::now());
+            Frame frame;
+            if (left.count() <= 0 || !session.nextEvent(frame, left)) { break; }
+            if (frame.type == protocol::defs::msg::kCoreEvent) { event = client.event(frame); }
+        }
+        return {{"event", event}, {"status", status}};
+    }
+    if (cmd == "capture-read")
+    {
+        if (args.size() > 2 || (args.size() == 2 && args[1] != "--csv")) { usage("capture-read [--csv]"); }
+        client.info(); // learn the payload limit for paging
+        auto data = client.captureData();
+        Json descriptors = Json::array();
+        for (const auto &ref : data["refs"]) { descriptors.push_back(client.item({ref["type"], ref["instance"], ref["item"]})); }
+        const auto trigger_index = data["trigger_index"].get<int64_t>();
+        const auto period = data["sample_period_us"].get<int64_t>();
+        Json rows = Json::array();
+        for (size_t i = 0; i < data["data"].size(); ++i)
+        {
+            Json typed = Json::array();
+            for (size_t k = 0; k < descriptors.size(); ++k)
+            {
+                typed.push_back(valueJson(descriptors[k]["value_type"], data["data"][i][k]));
+            }
+            rows.push_back({{"index", i}, {"time_us", (static_cast<int64_t>(i) - trigger_index) * period},
+                            {"typed_values", typed}});
+        }
+        if (args.size() == 2)
+        {
+            std::cout << "index,time_us";
+            for (const auto &ref : data["refs"]) {
+                std::cout << ',' << ref["type"].get<unsigned>() << ':' << ref["instance"].get<unsigned>() << ':' << ref["item"].get<unsigned>();
+            }
+            std::cout << '\n';
+            for (const auto &row : rows)
+            {
+                std::cout << row["index"] << ',' << row["time_us"];
+                for (const auto &value : row["typed_values"]) { std::cout << ',' << value; }
+                std::cout << '\n';
+            }
+            return nullptr;
+        }
+        data["rows"] = rows;
+        return data;
     }
     if (cmd == "status" || cmd == "events")
     {

@@ -1,4 +1,5 @@
 #include "core/loop.hpp"
+#include "core/capture_service.hpp"
 #include "core/group_service.hpp"
 #include "core/source_service.hpp"
 
@@ -115,6 +116,7 @@ void Loop::runTick(uint32_t elapsed)
     // 8. Tick-owned plain storage, including loop statistics from the previous
     // tick, is sampled on its owning loop before publishing this tick stats.
     if (m_groups) { m_groups->endTick(m_id, start_us); }
+    if (m_capture) { m_capture->sample(m_id, start_us, period_us); }
     if (m_sources) { m_sources->endTick(m_id, start_us); }
 
     // 9. Statistics.

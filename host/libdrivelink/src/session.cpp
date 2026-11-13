@@ -409,7 +409,8 @@ void Session::close()
 Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body)
 {
     const bool read_only = (family == 1 && op == 1) || family == 3 || (family == 2 && op == 1) ||
-                           (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6);
+                           (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6) ||
+                           (family == 6 && (op == 4 || op == 5));
     auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
     return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
 }

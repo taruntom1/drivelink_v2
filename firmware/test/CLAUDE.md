@@ -156,3 +156,13 @@ when a native loop owns the group slot at the single publish attempt. Retries
 are bounded; timeouts, opaque action Busy responses and expected refusals are
 never retried. `tools/tests/test_host_retry.py` covers these boundaries under
 the existing `gen` check. Production CLI/SDK mutation retry policy is unchanged.
+
+F7a adds `test_core_capture.cpp`: CONFIG validation without side effects,
+capacity/`NoMemory` injection, pre-trigger history, early triggers, typed
+threshold edges, value change on an uncaptured signal, dividers and the loop
+tick counter, irregular detection, disarm, ABORT against a recording thread,
+the wire ops/READ paging/STATUS and the done event. Thread tests drive
+`CaptureService::sample` in a real-time scope directly: a whole preempted
+`runTick` can overrun and count `LoopOverBudget`, which the native sink
+records (an allocation the guard reports). `host/test/capture_smoke.py` runs on
+vdev in host integration and on the bare board.

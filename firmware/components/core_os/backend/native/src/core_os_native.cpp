@@ -2,6 +2,7 @@
 // recording diag sink. Built by firmware/test/native (and later the vdev).
 
 #include <chrono>
+#include <cstdlib>
 #include <map>
 #include <utility>
 #include <tuple>
@@ -9,6 +10,7 @@
 #include <array>
 #include "core_os/native_task.hpp"
 
+#include "core_os/capture_memory.hpp"
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "core_os/event.hpp"
@@ -32,8 +34,27 @@ std::atomic<int64_t> s_boot_offset{0};
 std::atomic<int32_t> s_start_after{-1};
 std::atomic<int32_t> s_period_after{-1};
 std::atomic<bool> s_manual_scheduling{false};
+std::atomic<size_t> s_capture_capacity{4U * 1024U * 1024U};
+std::atomic<bool> s_capture_fail_next{false};
 
 } // namespace
+
+// The native device has 4 MiB of "PSRAM" unless a test says otherwise.
+size_t captureCapacity(size_t limit_bytes)
+{
+    const size_t available = s_capture_capacity.load();
+    return available < limit_bytes ? available : limit_bytes;
+}
+void *captureAlloc(size_t bytes)
+{
+    if (s_capture_fail_next.exchange(false)) { return nullptr; }
+    return std::malloc(bytes ? bytes : 1);
+}
+void captureFree(void *ring) { std::free(ring); }
+namespace native {
+void setCaptureCapacity(size_t bytes) { s_capture_capacity.store(bytes); }
+void failNextCaptureAlloc() { s_capture_fail_next.store(true); }
+}
 
 int64_t nowUs()
 {

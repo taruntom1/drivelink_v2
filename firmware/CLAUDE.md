@@ -223,3 +223,16 @@ Calibration actions stage typed params, explicit SAVE persists them, and boot
 restores them. The core commits successful paused-action parameter updates
 while the owning loop remains paused; hooks/structural/read-only writes are
 excluded. See `docs/protocol/imu.md` and the core README.
+
+F7a adds the capture family and enables PSRAM (`sdkconfig.defaults`: octal,
+80 MHz, `CONFIG_SPIRAM_USE_CAPS_ALLOC`, `CONFIG_SPIRAM_IGNORE_NOTFOUND`). PSRAM
+is caps-alloc only: nothing lands there unless asked, and today only the
+capture ring asks (`core_os::captureAlloc`, at capture CONFIG). Never switch to
+`SPIRAM_USE_MALLOC`. A loop writes the ring through the cache; a flash write
+stalls it like any loop. See the core README ("Capture") and `docs/protocol/core.md`.
+- **Atomics with PSRAM.** With PSRAM on, IDF builds the S3 with
+  `-mdisable-hardware-atomics` (the hidden `STDATOMIC_S32C1I_SPIRAM_WORKAROUND`):
+  every atomic is a call into IDF's IRAM helpers, which use S32C1I on internal
+  RAM and a critical section on a PSRAM address. **No atomic or shared state may
+  live in PSRAM.** Lock-free checks use `core_os::lockFreeAtomic<T>()`
+  (`core_os/atomics.hpp`), not `is_always_lock_free`, which is false there.

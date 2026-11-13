@@ -2,11 +2,15 @@
 
 #include <cinttypes>
 
+#include "core_os/capture_memory.hpp"
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "core_os/event.hpp"
 #include "core_os/mutex.hpp"
 #include "diag.hpp"
+#include "esp_heap_caps.h"
+#include "esp_psram.h"
+#include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "tick_util.hpp"
@@ -18,6 +22,40 @@ namespace core_os {
 int64_t nowUs()
 {
     return esp_timer_get_time();
+}
+
+// -- Capture memory --------------------------------------------------------------
+// PSRAM is caps-alloc only (CONFIG_SPIRAM_USE_CAPS_ALLOC): nothing lands there
+// unless asked. A board without PSRAM (CONFIG_SPIRAM_IGNORE_NOTFOUND) has no
+// SPIRAM heap and falls back to a small internal ring.
+
+namespace {
+bool hasPsram()
+{
+#if CONFIG_SPIRAM
+    return esp_psram_is_initialized() && heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0;
+#else
+    return false; // esp_psram has no driver without CONFIG_SPIRAM
+#endif
+}
+} // namespace
+
+size_t captureCapacity(size_t limit_bytes)
+{
+    const size_t available = hasPsram() ? heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                                        : kCaptureFallbackBytes;
+    return available < limit_bytes ? available : limit_bytes;
+}
+
+void *captureAlloc(size_t bytes)
+{
+    const uint32_t caps = hasPsram() ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return heap_caps_malloc(bytes, caps);
+}
+
+void captureFree(void *ring)
+{
+    heap_caps_free(ring);
 }
 
 // -- Mutex ---------------------------------------------------------------------

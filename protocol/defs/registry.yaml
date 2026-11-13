@@ -108,6 +108,7 @@ wire_enums:
     FaultActive: 43
     MonitorUnavailable: 44
     RebootPending: 45
+    WrongState: 46
   Family:
     System: 1
     Layout: 2
@@ -152,5 +153,27 @@ wire_enums:
     CmdConfig: 4
     CmdClear: 5
     List: 6
+  CaptureOp:
+    Config: 1
+    Arm: 2
+    Abort: 3
+    Status: 4
+    Read: 5
+    Trigger: 6
+  CaptureTrigger:
+    Manual: 0
+    TestgenStart: 1
+    ValueChange: 2
+    Threshold: 3
+  CaptureEdge:
+    Rising: 0
+    Falling: 1
+  CaptureState:
+    Idle: 0
+    Armed: 1
+    Triggered: 2
+    Done: 3
+  CoreEvent:
+    CaptureDone: 1
   ActionOp:
     Run: 1

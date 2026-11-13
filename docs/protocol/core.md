@@ -1,12 +1,13 @@
-# Core protocol v5 (F4c)
+# Core protocol v6 (F7a)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
-F4c adds source params and their generated value/age signals.
-Firmware, host library, CLI and vdev use v5 together; older peers are
+F4c adds source params and their generated value/age signals. F7a (v6) adds
+the capture family, the core event stream and the status capture state.
+Firmware, host library, CLI and vdev use v6 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 5.
+`core_response` (0x41). All integers are little-endian. Version is 6.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -33,7 +34,7 @@ referenced instance returns `Referenced`.
 The generator adds signals `<param>.value` (the target's value type) and
 `<param>.age_us` (u32, microseconds). Hosts discover them by name; the CLI
 and host descriptor JSON also expose `is_source`. There is no source op.
-Both signals work with ordinary subscriptions and, from F7, capture.
+Both signals work with ordinary subscriptions and capture.
 `age_us == 0xFFFFFFFF` means no valid sample; real ages saturate at
 0xFFFFFFFE. An invalid sample's value is not meaningful. Failed producers
 leave their consumers running, with invalid samples.
@@ -63,7 +64,7 @@ can have gaps and is not its position in this list. Safe mode has zero running l
 `running_instances` includes running loop instances, excluding the system.
 The build id is the first 8 ELF SHA-256 bytes as 16 hex characters.
 Flags: pending_reboot 1, layout_invalid 2, config_loaded_from_nvs 4,
-safe_mode 8. Capture capacity is 0 until F7.
+safe_mode 8. Capture capacity is the largest capture ring in bytes (see Capture).
 
 SAVE (5), REVERT (6), FACTORY_RESET (7), REBOOT (8), EXIT_SAFE_MODE (9)
 wrap the core operations. Reset, reboot and exit safe mode reply, wait for
@@ -210,6 +211,89 @@ values are discarded while disarmed; a keepalive never revives them.
 The low-level host API uses typed slot bits; NaN remains rejected. Host
 NaN-to-hold conversion remains for later semantic device modeling.
 
+## Capture (family 6, F7a)
+
+One capture records up to `limits.capture_refs` (system 0x0016, read-only u16,
+`CORE_CAPTURE_MAX_REFS`, default 16, capped so STATUS fits the payload) signals
+or inputs of one loop into a ring of `samples × count × 4` bytes. The ring is
+allocated at CONFIG from PSRAM (internal RAM, at most 32 KB, on a board without
+PSRAM) and kept until the next CONFIG. GET_INFO's `capture_capacity` is the
+largest ring: the smaller of `CORE_CAPTURE_MAX_KB` and the largest free PSRAM
+block at boot. Captures are not persisted, survive DISARM and record while
+disarmed; a reboot leaves the capture unconfigured.
+
+| Op | Request body | Reply body |
+|---|---|---|
+| CONFIG (1) | `loop u8, divider u16, samples u32, pre_trigger u32, trigger, count u8, count * Ref` | empty |
+| ARM (2) | empty | empty |
+| ABORT (3) | empty | empty |
+| STATUS (4) | empty | see below |
+| READ (5) | `first u32, count u16` | `first u32, count u16, count * n * value u32` |
+| TRIGGER (6) | empty | empty |
+
+The trigger is always 10 bytes: `kind u8, Ref, edge u8, value u32`. Kinds:
+manual 0, testgen_start 1, value_change 2, threshold 3. Edges: rising 0,
+falling 1. Fields a kind does not use must be zero. `testgen_start` is refused
+(`Unsupported`) until the test signal generator lands (F7b). `value_change`
+fires when the trigger value's 4-byte slot differs from the previous sample's;
+`threshold` fires when the previous sample is below (rising) or above
+(falling) `value` and the current one reaches it, compared in the item's type
+(f32, i32, otherwise unsigned). `value` must be a valid encoding of that type
+(NaN/Inf and out-of-type values are rejected); it is not clamped to the item's
+limits. The trigger ref is a bound signal or input of a running instance in the
+capture loop, and need not be captured. Neither trigger can fire on the first
+sample after ARM. Both are evaluated only on recorded samples, so at a divider
+above 1 a value that changes and returns between two recorded samples is not
+seen. TRIGGER forces the next sample to be the trigger in any kind.
+
+CONFIG validates everything before it changes anything: the loop must be
+running (`LoopMismatch`); divider, samples and count at least 1, `pre_trigger <
+samples` (`BadValue`); count at most the limit (`BatchTooLarge`); refs unique
+(`DuplicateRef`; more than 64 on the wire is also `BatchTooLarge`) bound signals or inputs of running instances in that loop
+(group rules: `UnknownRef`, `WrongKind`, `LoopMismatch`, `DependencyMissing`);
+the ring within the capacity (`Capacity`). A failed allocation answers
+`NoMemory` and leaves the capture unconfigured. Captures in state Armed or
+Triggered refuse CONFIG and ARM; ARM needs a configured capture; TRIGGER needs
+Armed; READ needs Done. These state refusals answer InvalidArgument with detail
+`WrongState` (46), without disturbing the recording. CONFIG, ARM and ABORT
+answer `Busy/StagingBusy` in the unlikely case the capture's loop never lets go
+of the capture between ticks; nothing changed. ARM in Done re-records into the same ring. ABORT returns any
+state to Idle, keeping the configuration and discarding the recording.
+
+States: Idle 0, Armed 1, Triggered 2, Done 3. While Armed the ring keeps the
+latest samples. The loop records at the end of its tick (after the groups'
+latch), one sample every `divider` loop executions, starting with the first
+tick after ARM. The trigger sample is the first post-trigger sample. After
+`samples - pre_trigger` post-trigger samples the capture is Done and the
+CaptureDone event is sent. A trigger is accepted before `pre_trigger` samples
+exist: the capture then holds fewer samples, and STATUS reports the real
+trigger index. READ sample 0 is the oldest; at most 512 bytes of values per
+reply (and within the payload limit, else `BufferTooSmall`); a range past the
+recorded samples is `BadValue`.
+
+STATUS reply (44 + 4 * count bytes): `state u8, flags u8 (configured 1,
+irregular 2), loop u8, divider u16, samples u32, pre_trigger u32, trigger (10),
+recorded u32, trigger_index u32, period_us u32, trigger_timestamp_us u64,
+count u8, count * Ref`. An unconfigured capture has loop 0xFF, divider 1 and
+no refs. `recorded` is the valid samples in the ring (0 when Idle).
+`trigger_index` is 0xFFFFFFFF until triggered; while Triggered it is the
+trigger sample's current index among the `recorded` samples, final at Done. `period_us` is the loop period
+at ARM; samples are `period_us × divider` apart. `trigger_timestamp_us` is the
+start time of the trigger sample's tick (0 until triggered): sample i is at
+`trigger_timestamp_us + (i - trigger_index) × period_us × divider`.
+`irregular` means that spacing may not hold: some tick since ARM started more
+than 1.5 periods after the previous one (an overrun, a paused loop, a late
+wake), the loop's rate changed, or a tick was lost to a concurrent ABORT. It
+covers the whole time since ARM, including history no longer in the ring.
+
+## Core events (0xC1, F7a)
+
+Core events are reliable frames from the device: `version u8, event u8, body`.
+Event ids come from the generated `CoreEvent` enum. F7a sends only
+CaptureDone (1), once per completed capture: `recorded u32, trigger_index u32,
+flags u8` (the STATUS flags). CONFIG, ARM and ABORT drop an unsent CaptureDone. A host
+that was not connected learns the result from STATUS.
+
 ## Action (family 8)
 
 RUN (1): `Ref | args[4] u32 | blob_length u16 | blob bytes`.
@@ -234,8 +318,8 @@ loop_count u8 | loop_count * (loop_id u8, overruns u32) | last_disarm_reason u8`
 (19 + 5 * loop_count bytes, at most 59).
 Epoch is 0. Counter wraps at 65536. Only running loops are included; safe mode
 has loop_count zero. Loop IDs may have gaps. Flags: fault_latched 1, blocks_arm_active 2, pending_reboot 4, nvs_dirty 8,
-testgen_running 16 (reserved until F7), safe_mode 32. Capture state occupies
-bits 6..7 (reserved until F7). CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
+testgen_running 16 (reserved until F7b), safe_mode 32. Bits 6..7 are the
+capture state (Idle 0, Armed 1, Triggered 2, Done 3). CPU utilization is measured from per-core idle runtime deltas (0..100 percent).
 It is 0xFF until the first interval, or when measurement is disabled or the
 runtime clock is not ESP timer. CORE_STATUS_CPU_LOAD defaults on and selects
 runtime statistics; reads take constant work without stack scans. Active errors come from instance-aware diag state.
@@ -280,7 +364,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=4 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=6 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.
@@ -313,12 +397,13 @@ transition. A stop gate prevents a concurrent ARM commit during those calls.
 Real-time loop tasks also feed the panic-reset Task WDT after each completed
 tick, providing a backstop when esp_timer itself cannot run.
 
-The five read-only, non-persisted u16 system params are `limits.loops` (16),
+The read-only, non-persisted u16 system params are `limits.loops` (16),
 `limits.instances` (17), `limits.sub_groups` (18), `limits.cmd_groups` (19)
-and `limits.group_entries` (20). Values come from the normalized runtime
+and `limits.group_entries` (20), plus `limits.link_values` (21, F4c) and
+`limits.capture_refs` (22, F7a). Values come from the normalized runtime
 configuration, overriding YAML defaults and stored data at boot. Instance
 capacity counts modules separately from loop capacity. SET returns ReadOnly;
-SAVE omits all five.
+SAVE omits them all.
 
 BenchStall (system op 253) takes `loop u8 | duration_ms u16`, 1..10000 ms.
 Like BenchCrash it requires the default-off `CONFIG_CORE_BENCH_CRASH` test

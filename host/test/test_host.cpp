@@ -414,3 +414,61 @@ TEST_CASE("host groups validate pages and mutations and send stream frames on th
     client.system(5);
     CHECK_THROWS_AS(client.groups(),Error);
 }
+
+TEST_CASE("host capture decodes STATUS, pages READ within the payload and decodes the done event")
+{
+    // STATUS: done, configured, loop 3, divider 2, 3 samples, pre 1, threshold
+    // on 32:0:256 falling at 0, recorded 3, trigger 1, period 1000, ts 77, two refs.
+    auto status=[](uint8_t refs, uint8_t flags) {
+        Bytes b(64);protocol::wire::Writer w(b.data(),b.size());
+        w.appendU8(3);w.appendU8(flags);w.appendU8(3);w.appendU16Le(2);w.appendU32Le(3);w.appendU32Le(1);
+        w.appendU8(3);w.appendU8(32);w.appendU8(0);w.appendU16Le(256);w.appendU8(1);w.appendU32Le(0);
+        w.appendU32Le(3);w.appendU32Le(1);w.appendU32Le(1000);w.appendU64Le(77);w.appendU8(refs);
+        for(uint8_t i=0;i<refs;++i) { w.appendU8(32);w.appendU8(0);w.appendU16Le(static_cast<uint16_t>(256+i)); }
+        b.resize(w.size());return b;
+    };
+    auto page=[](uint32_t first,uint16_t count) {
+        Bytes b(6+8U*count);protocol::wire::Writer w(b.data(),b.size());
+        w.appendU32Le(first);w.appendU16Le(count);
+        for(uint32_t i=0;i<count;++i) { w.appendU32Le(first+i);w.appendU32Le(100+first+i); }
+        return b;
+    };
+    FakeDevice device([&](Socket &socket) {
+        answer(socket,readFrame(socket),status(2,3));
+        // GET_INFO advertises a 28-byte payload: two samples of two values per READ.
+        Bytes info(64);protocol::wire::Writer iw(info.data(),info.size());
+        iw.appendU8(protocol::core_wire::kVersion);protocol::core_wire::string(iw,"t");protocol::core_wire::string(iw,"b");
+        iw.appendU32Le(1);iw.appendU32Le(65536);iw.appendU16Le(28);iw.appendU8(0);iw.appendU8(0);iw.appendU8(0);
+        info.resize(iw.size());
+        answer(socket,readFrame(socket),info);
+        answer(socket,readFrame(socket),status(2,1));
+        for(uint32_t first:{0U,2U}) {
+            const auto request=readFrame(socket);
+            if(request.size()!=10 || request[4]!=first || request[8]!=(first==0?2:1)) { throw std::runtime_error("bad read"); }
+            answer(socket,request,page(first,first==0?2:1));
+        }
+        answer(socket,readFrame(socket),status(1,1)); // a valid one-ref status
+        answer(socket,readFrame(socket),page(0,1));    // two values for a one-ref capture
+        answer(socket,readFrame(socket),status(0,1));   // configured without refs
+    });
+    Session session(device.endpoint());Client client(session);
+    const auto s=client.captureStatus();
+    CHECK(s["state"]=="done");CHECK(s["irregular"]==true);CHECK(s["divider"]==2);
+    CHECK(s["trigger"]["kind"]=="threshold");CHECK(s["trigger"]["edge"]=="falling");
+    CHECK(s["trigger_index"]==1);CHECK(s["sample_period_us"]==2000);CHECK(s["refs"].size()==2);
+    CHECK(client.info()["max_payload"]==28);
+    const auto all=client.captureData(); // pages 0..1, then 2
+    CHECK(all["irregular"]==false);
+    CHECK(all["data"]==Json::array({Json::array({0,100}),Json::array({1,101}),Json::array({2,102})}));
+    CHECK(client.captureStatus()["refs"].size()==1);
+    CHECK_THROWS_AS(client.captureRead(0,1,1),Error);
+    CHECK_THROWS_AS(client.captureStatus(),Error);
+    Bytes event{protocol::core_wire::kVersion,1,3,0,0,0,1,0,0,0,2};
+    const auto done=client.event({protocol::defs::msg::kCoreEvent,event});
+    CHECK(done["name"]=="capture_done");CHECK(done["recorded"]==3);CHECK(done["irregular"]==true);
+    event[1]=2;CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
+    event[1]=1;event.push_back(0);CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
+    CaptureTrigger bad;bad.kind=4;const std::array<Ref,1> refs{{{32,0,256}}};
+    CHECK_THROWS_AS(client.captureConfig(0,1,10,0,bad,refs),Error);
+    CHECK_THROWS_AS(client.captureConfig(0,1,10,10,{},refs),Error);
+}

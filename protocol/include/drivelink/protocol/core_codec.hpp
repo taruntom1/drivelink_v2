@@ -6,7 +6,7 @@
 #include "drivelink/protocol/wire_codec.hpp"
 
 namespace drivelink::protocol::core_wire {
-inline constexpr uint8_t kVersion = 5;
+inline constexpr uint8_t kVersion = 6;
 inline constexpr uint16_t kEnd = 0xFFFF;
 inline constexpr size_t kRequestHeader = 4;
 inline constexpr size_t kResponseHeader = 6;
@@ -16,6 +16,15 @@ inline constexpr size_t kGroupListOverhead = kResponseHeader + 5 + 8;
 constexpr uint8_t groupEntryCapacity(size_t payload, uint8_t requested)
 {
     const size_t available = payload > kGroupListOverhead ? (payload - kGroupListOverhead) / 4 : 0;
+    const size_t bounded = requested < 64 ? requested : 64;
+    return static_cast<uint8_t>(bounded < available ? bounded : available);
+}
+// Capture STATUS: response header, 44 fixed bytes, then four bytes per Ref.
+inline constexpr size_t kCaptureStatusOverhead = kResponseHeader + 44;
+inline constexpr size_t kCaptureTriggerBytes = 10;
+constexpr uint8_t captureRefCapacity(size_t payload, uint8_t requested)
+{
+    const size_t available = payload > kCaptureStatusOverhead ? (payload - kCaptureStatusOverhead) / 4 : 0;
     const size_t bounded = requested < 64 ? requested : 64;
     return static_cast<uint8_t>(bounded < available ? bounded : available);
 }

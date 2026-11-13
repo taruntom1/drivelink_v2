@@ -4,7 +4,13 @@
 
 namespace diag::detail {
 using DisarmFn = void (*)(void *, Code);
+// ESP32-S3 with PSRAM builds atomics as IDF's IRAM helper calls, lock-free on
+// internal RAM (see core_os/atomics.hpp; diag cannot depend on core_os).
+#if defined(__XTENSA__) && !defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
+static_assert(ATOMIC_POINTER_LOCK_FREE >= 1 && sizeof(DisarmFn) <= 4);
+#else
 static_assert(std::atomic<DisarmFn>::is_always_lock_free);
+#endif
 // Registration is setup-only. Unregistration disables new callbacks before
 // waiting on the config caller; notifying never waits or takes an OS lock.
 class DisarmObserver {

@@ -9,5 +9,7 @@ idf_component_register(
          "backend/idf/src/periodic_timer_idf.cpp"
     INCLUDE_DIRS "include" "backend/idf/include"
     REQUIRES freertos rtos_util protocol esp_timer
-    PRIV_REQUIRES diag log nvs_flash esp_system
+    # esp_psram: the capture ring (F7a). Required here so the minimal firmware
+    # build (COMPONENTS main ...) builds it and loads its SPIRAM Kconfig.
+    PRIV_REQUIRES diag log nvs_flash esp_system esp_psram
 )

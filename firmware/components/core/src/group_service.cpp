@@ -46,6 +46,23 @@ void latchSignals(std::span<const BoundSignal> signals, std::span<uint32_t> valu
     }
 }
 
+Status bindSignal(const detail::InstanceTable &table, const Ref &ref, uint8_t loop, bool inputs_only,
+                  BoundSignal &out)
+{
+    const auto *rec = table.find(ref.type, ref.instance);
+    const auto index = rec ? rec->itemIndex(ref.id) : detail::kNoItem;
+    if (!rec || index == detail::kNoItem) { return bad(Detail::UnknownRef); }
+    const auto &item = rec->desc->items[index];
+    if (item.kind != defs::ItemKind::Input && (inputs_only || item.kind != defs::ItemKind::Signal)) {
+        return bad(Detail::WrongKind);
+    }
+    const uint8_t owner = rec->type_id == defs::kLoopTypeId ? rec->instance : rec->loop;
+    if (owner != loop) { return bad(Detail::LoopMismatch); }
+    if (rec->state != InstanceState::Running || !rec->bindings[index].bound) { return bad(Detail::DependencyMissing); }
+    out = {ref, &item, rec->bindings[index].ptr, rec->bindings[index].receipt_us};
+    return {};
+}
+
 struct GroupService::Impl {
     const detail::InstanceTable &table;
     std::span<Loop *> loops;
@@ -118,16 +135,8 @@ Status GroupService::stageConfig(GroupKind kind, uint8_t id, uint8_t loop, uint1
     cfg.info.count = static_cast<uint8_t>(refs.size());
     for (size_t i = 0; i < refs.size(); ++i) {
         const auto &ref = refs[i];
-        const auto *rec = d.table.find(ref.type, ref.instance);
-        const auto index = rec ? rec->itemIndex(ref.id) : detail::kNoItem;
-        if (!rec || index == detail::kNoItem) { return bad(Detail::UnknownRef); }
-        const auto &item = rec->desc->items[index];
-        if (item.kind != defs::ItemKind::Input && (kind == GroupKind::Command || item.kind != defs::ItemKind::Signal)) {
-            return bad(Detail::WrongKind);
-        }
-        const uint8_t owner = rec->type_id == defs::kLoopTypeId ? rec->instance : rec->loop;
-        if (owner != loop) { return bad(Detail::LoopMismatch); }
-        if (rec->state != InstanceState::Running || !rec->bindings[index].bound) { return bad(Detail::DependencyMissing); }
+        const auto bound = bindSignal(d.table, ref, loop, kind == GroupKind::Command, cfg.bindings[i]);
+        if (!bound.ok()) { return bound; }
         for (size_t j = 0; j < i; ++j) { if (sameRef(ref, refs[j])) { return bad(Detail::DuplicateRef); } }
         if (kind == GroupKind::Command) {
             for (size_t g = 0; g < d.cmd_count; ++g) {
@@ -139,7 +148,6 @@ Status GroupService::stageConfig(GroupKind kind, uint8_t id, uint8_t loop, uint1
             }
         }
         cfg.info.refs[i] = ref;
-        cfg.bindings[i] = {ref, &item, rec->bindings[index].ptr, rec->bindings[index].receipt_us};
     }
     return d.publish(*s);
 }

@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x2FC53D33;
+inline constexpr uint32_t kDescriptorHash = 0xA057D6C3;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -80,6 +80,7 @@ enum class Detail : uint8_t {
     FaultActive = 43,
     MonitorUnavailable = 44,
     RebootPending = 45,
+    WrongState = 46,
 };
 
 enum class Family : uint8_t {
@@ -136,6 +137,38 @@ enum class GroupOp : uint8_t {
     CmdConfig = 4,
     CmdClear = 5,
     List = 6,
+};
+
+enum class CaptureOp : uint8_t {
+    Config = 1,
+    Arm = 2,
+    Abort = 3,
+    Status = 4,
+    Read = 5,
+    Trigger = 6,
+};
+
+enum class CaptureTrigger : uint8_t {
+    Manual = 0,
+    TestgenStart = 1,
+    ValueChange = 2,
+    Threshold = 3,
+};
+
+enum class CaptureEdge : uint8_t {
+    Rising = 0,
+    Falling = 1,
+};
+
+enum class CaptureState : uint8_t {
+    Idle = 0,
+    Armed = 1,
+    Triggered = 2,
+    Done = 3,
+};
+
+enum class CoreEvent : uint8_t {
+    CaptureDone = 1,
 };
 
 enum class ActionOp : uint8_t {

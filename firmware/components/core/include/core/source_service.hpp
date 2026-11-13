@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include "core_os/atomics.hpp"
 #include <memory>
 #include <span>
 #include <vector>
@@ -11,7 +12,7 @@ namespace core {
 
 namespace detail {
 
-static_assert(std::atomic<uint8_t>::is_always_lock_free);
+static_assert(core_os::lockFreeAtomic<uint8_t>()); // see core_os/atomics.hpp
 
 /// Single producer/single consumer triple buffer. Only the middle index is
 /// shared. Acq_rel exchanges transfer exclusive ownership of complete arrays.

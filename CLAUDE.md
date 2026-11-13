@@ -4,7 +4,7 @@ This file is the repo map and holds the rules that cross areas. Each area has it
 
 ## What this is
 
-DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The core has configurable loops, groups, safety, sources, motor modules and the F6 `imu.bno055` module with persistent calibration, over core wire v5. Only the legacy `time_sync` manager remains, until F8. The host follows [plans/host-architecture.md](plans/host-architecture.md).
+DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The core has configurable loops, groups, safety, sources, motor modules and the F6 `imu.bno055` module with persistent calibration, and F7a capture into PSRAM, over core wire v6. Only the legacy `time_sync` manager remains, until F8. The host follows [plans/host-architecture.md](plans/host-architecture.md).
 
 ## Repo map
 

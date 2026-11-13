@@ -17,6 +17,7 @@ namespace core {
 
 class GroupService;
 class SourceService;
+class CaptureService;
 
 inline constexpr uint8_t kFactoryControlLoop = 0;
 inline constexpr uint8_t kFactorySensorLoop = 1;
@@ -95,6 +96,7 @@ public:
     void runTick(uint32_t elapsed);
     void setGroups(GroupService *groups) { m_groups = groups; } // boot only
     void setSources(SourceService *sources) { m_sources = sources; } // boot only
+    void setCapture(CaptureService *capture) { m_capture = capture; } // boot only
     void setArmState(ArmState *arm) { m_arm = arm; } // boot only
     void resetInputs();
     void benchStall(uint32_t duration_us) { m_bench_stall_us.store(duration_us, std::memory_order_release); }
@@ -138,6 +140,7 @@ private:
     LoopStats *m_published;
     GroupService *m_groups = nullptr;
     SourceService *m_sources = nullptr;
+    CaptureService *m_capture = nullptr;
     ArmState *m_arm = nullptr;
     uint32_t m_seen_arm = 0;
 
