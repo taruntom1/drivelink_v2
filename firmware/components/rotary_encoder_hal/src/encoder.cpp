@@ -65,6 +65,11 @@ static void log_rate_sample_error(esp_err_t ret)
 }
 
 Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
+    : Encoder(pin_a, pin_b, Options{})
+{
+}
+
+Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b, const Options &options)
     : m_impl(new detail::EncoderImpl{})
 {
     m_impl->spinlock = portMUX_INITIALIZER_UNLOCKED;
@@ -87,6 +92,20 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
                  pin_a, pin_b, esp_err_to_name(ret));
         m_impl->init_error = ret;
         return;
+    }
+
+    if (!options.pullup) {
+        ret = gpio_pullup_dis(pin_a);
+        if (ret == ESP_OK) {
+            ret = gpio_pullup_dis(pin_b);
+        }
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to disable pull-ups on pins %d/%d: %s",
+                     pin_a, pin_b, esp_err_to_name(ret));
+            detail::PcntPool::deallocate(m_impl->pcnt);
+            m_impl->init_error = ret;
+            return;
+        }
     }
 
     int count = 0;
@@ -143,6 +162,19 @@ int32_t Encoder::getCount() const
     int count = 0;
     pcnt_unit_get_count(m_impl->pcnt.unit, &count);
     return static_cast<int32_t>(count);
+}
+
+esp_err_t Encoder::readCount(int32_t &count) const
+{
+    if (!m_impl || !m_impl->valid) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    int value = 0;
+    const esp_err_t ret = pcnt_unit_get_count(m_impl->pcnt.unit, &value);
+    if (ret == ESP_OK) {
+        count = static_cast<int32_t>(value);
+    }
+    return ret;
 }
 
 Direction Encoder::getDirection() const

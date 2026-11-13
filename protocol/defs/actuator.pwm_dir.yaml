@@ -1,0 +1,10 @@
+type: actuator.pwm_dir
+type_id: 0x21
+realtime: required
+items:
+  - {id: 1, kind: param, name: pwm_pin, type: u8, flags: [reboot_required], gpio: true, description: "PWM output pin (speed). One MCPWM operator per instance; at most 6."}
+  - {id: 2, kind: param, name: dir_pin, type: u8, flags: [reboot_required], gpio: true, description: "Direction output pin; high for negative duty (before invert)."}
+  - {id: 3, kind: param, name: invert, type: bool, flags: [locked_while_armed], default: false, description: "Reverse the motor's direction."}
+  - {id: 4, kind: param, name: duty_limit, type: f32, min: 0, max: 1, default: 1, description: "Hard cap on the duty magnitude, applied after the controller."}
+  - {id: 256, kind: signal, name: applied_duty, type: f32, description: "Duty written to the driver after the force gate and the cap, before invert."}
+  - {id: 257, kind: signal, name: forced, type: bool, description: "The output is forced low (disarmed, monitor stop or driver fault)."}

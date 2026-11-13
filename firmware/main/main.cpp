@@ -76,8 +76,9 @@ void logStackHighWater(const core::Core *core = nullptr)
 
 /// The module types the core can instantiate. F3b adds the first ones. Each
 /// desc must be its generated kTypeTable entry (checked in startCore()).
-const std::array<const core::ModuleType *, 5> kModuleTypes{
-    mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0]};
+const std::array<const core::ModuleType *, 7> kModuleTypes{
+    mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0],
+    mod_motor::kHardwareTypes[0], mod_motor::kHardwareTypes[1]};
 
 /// `core.NvsInitFailed` arg0 values. Part of the diag contract
 /// (protocol/defs/diag_codes.yaml): never renumber.

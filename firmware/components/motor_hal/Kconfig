@@ -10,12 +10,13 @@ menu "Motor HAL Configuration"
 
     config MOTOR_HAL_TIMER_RESOLUTION_HZ
         int "MCPWM timer resolution in Hz"
-        default 1000000
+        default 10000000
         range 100000 80000000
         help
             The resolution of the MCPWM timer clock in Hz.
             Higher resolution gives finer duty cycle granularity.
-            With 1 MHz resolution and 25 kHz PWM, period = 40 ticks (2.5% granularity).
-            With 10 MHz and 25 kHz, period = 400 ticks (0.25% granularity).
+            With 10 MHz and 25 kHz, period = 400 ticks (0.25% granularity),
+            the default. With 1 MHz it is 40 ticks (2.5%), too coarse for
+            the low duty caps of a first motor run.
 
 endmenu

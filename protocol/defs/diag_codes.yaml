@@ -141,7 +141,7 @@ codes:
     kind: record
     clears: false
     arg0: type id << 8 | instance id
-    arg1: stage (the instance's own stage from fail(), or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound)
+    arg1: stage (the instance's own stage from fail() - controller.cascade_pid 1 missing or incompatible refs, 2 actuator already claimed - or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound)
     description: A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
 
   - source: core
@@ -461,6 +461,26 @@ codes:
     arg1: unused
     description: The module instance failed to start.
 
+  - source: actuator_pwm_dir
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+
+  - source: feedback_quadrature
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+
   - source: imu_mock
     code: 0x0001
     name: InitFailed
@@ -485,3 +505,5 @@ codes:
   - {source: core, code: 261, name: WatchdogTimeout, severity: warning, kind: latched, disarms: true, description: "No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible."}
   - {source: actuator_mock, code: 2, name: FaultInjected, severity: error, kind: latched, disarms: true, description: "A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT."}
   - {source: actuator_mock, code: 3, name: ArmBlocked, severity: warning, kind: latched, blocks_arm: true, description: "A mock diagnostic action raised an arm-blocking condition."}
+  - {source: actuator_pwm_dir, code: 2, name: DriverFault, severity: error, kind: latched, disarms: true, description: "An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required."}
+  - {source: feedback_quadrature, code: 2, name: ReadFailed, severity: error, kind: latched, disarms: true, description: "Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required."}

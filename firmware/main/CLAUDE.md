@@ -8,7 +8,7 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
 - Before the core, main initialises NVS (`core_os::nvsInit()`). A full partition or one from a newer NVS version is erased and initialised again. Both that and a failure are reported (`core.NvsInitFailed`, arg0 1 erased, 2 failed). The core boots either way.
 - The core:
-  - It is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from `mod_mock::kTypes` and `mod_motor::kTypes`; each desc is checked against `defs::kTypeTable`).
+  - It is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from `mod_mock::kTypes`, `mod_motor::kTypes` and `mod_motor::kHardwareTypes`; each desc is checked against `defs::kTypeTable`).
   - main calls `init()`, then `boot(store)`, then `start()`. The `KvStore` is a static in main. What `boot` does is in `firmware/components/core/README.md`.
   - If one of them fails, main reports `core.InitFailed` (arg0 the stage: 1 registry, 2 loop task with id in arg1, 3 retired, 4 boot) and continues without the core.
   - It logs `Core started: ...` with the running, failed and configured instance counts, safe mode, whether the config came from NVS, and each running loop's id, real-time flag and period.
@@ -18,7 +18,7 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 
 ## Rules
 
-- **The `main` task stack is small** (4608 bytes) and `app_main`'s locals are large. Build anything big on the heap, and check the `main` stack mark after adding something that `app_main` starts.
+- **The `main` task stack is small** (5632 bytes) and `app_main`'s locals are large. Build anything big on the heap, and check the `main` stack mark after adding something that `app_main` starts. Instance `start()` runs on it during boot: F5a-2's MCPWM/PCNT driver setup took it to 848 bytes free at 4608, so it was raised by 1 KB.
 - **Stack log.** main logs every task's stack high-water mark each `CONFIG_DRIVELINK_STACK_LOG_PERIOD_S` (30 s, 0 = off). Non-loop task names are a list in `main.cpp`: add new tasks to it. Loop tasks are logged by walking the core loop table and using each id.
   - It uses `xTaskGetHandle` and `uxTaskGetStackHighWaterMark()`. The second takes no kernel lock.
   - Never use `uxTaskGetSystemState()`: it scans every stack inside a critical section and stalls the control loop on the other core.

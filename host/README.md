@@ -93,9 +93,24 @@ Replace the endpoint with the vdev TCP URL to exercise the identical controller.
 The script checks SAVE/reload, velocity and position tracking, mode freshness,
 watchdog stop and re-arm, then restores layout and settings. `--report` writes
 sample traces and `--stack-wait 35` holds the mock layout for console stack
-sampling. Real-motor module setup remains F5a-2; `--modules real` currently
-refuses before mutating configuration. Follow the script's first-run procedure
-when F5a-2 enables it, and add the F5b stall scenario before HW.
+sampling.
+
+`--modules real` uses `actuator.pwm_dir` and `feedback.quadrature` over serial
+only (the vdev has no pins), with `--pwm-pin`, `--dir-pin`, `--enc-a`,
+`--enc-b`, scaling (`--cpr`, `--gear`), polarity (`--invert-motor`,
+`--invert-encoder`, `--no-pullup`), `--duty-cap` (default 0.2) and tuning,
+target and tolerance options. On the bare bench board:
+
+```powershell
+python host/test/motor_smoke.py --cli host/superbuild/build/windows-mingw/cli/drivelink-cli.exe --modules real --no-motor --pool-check --pwm-pin 4 --dir-pin 5 --enc-a 6 --enc-b 7
+```
+
+checks start on real pins, the hardware force through arm, disarm and the
+watchdog, the duty cap and a still count, then that a 5th encoder and a 7th
+actuator fail start and ARM is refused. Without `--no-motor` it runs a motor
+and needs `--confirm-first-run` (wheels off the ground, a current-limited
+supply, a low duty cap, a hand on the power switch). It checks the encoder
+polarity in open loop before any closed loop. F5b adds the stall scenario.
 
 Linux integration retains its serial PTY after the transport tests. Buffered
 status frames can survive between CLI sessions, so the motor smoke polls for

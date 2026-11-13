@@ -11,6 +11,8 @@
 #include "type_system.hpp"
 #include "type_loop.hpp"
 #include "type_controller_cascade_pid.hpp"
+#include "type_actuator_pwm_dir.hpp"
+#include "type_feedback_quadrature.hpp"
 #include "type_actuator_mock.hpp"
 #include "type_feedback_mock.hpp"
 #include "type_imu_mock.hpp"
@@ -19,10 +21,12 @@
 namespace drivelink::protocol::defs {
 
 /// The system type (0x00, from system.yaml) and every module type, by type id.
-inline constexpr std::array<const TypeDesc *, 7> kTypeTable{{
+inline constexpr std::array<const TypeDesc *, 9> kTypeTable{{
     &system::kDesc,
     &loop::kDesc,
     &controller_cascade_pid::kDesc,
+    &actuator_pwm_dir::kDesc,
+    &feedback_quadrature::kDesc,
     &actuator_mock::kDesc,
     &feedback_mock::kDesc,
     &imu_mock::kDesc,

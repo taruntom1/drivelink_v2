@@ -128,7 +128,7 @@ public:
     virtual void onArmTransition(bool armed) {}
     // Actuators only. Called by the safety monitor from the esp_timer task, never from the loop.
     // Must be non-blocking, take no lock, and force the output to zero in hardware
-    // (for pwm_dir: mcpwm_generator_set_force_level on both generators).
+    // (for pwm_dir: a continuous force-low of its one PWM generator; DIR is left alone).
     virtual void emergencyStop() {}
 };
 
@@ -367,7 +367,7 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 - **What it checks, while armed:**
   - each loop's heartbeat: every running loop of the layout, real-time or not. If it hasn't advanced for 3 periods, plus 5 ms, it records `core.LoopStalled` (flagged `disarms`).
   - the time of the last valid command frame against `system.watchdog_ms`. On a timeout it records `core.WatchdogTimeout`, which disarms but does not latch.
-- **What it does on either condition:** it sets the disarm flag and calls `emergencyStop()` on every actuator instance. For `actuator.pwm_dir` that forces both MCPWM generators low (`mcpwm_generator_set_force_level`), so the outputs stop even if the loop never runs again.
+- **What it does on either condition:** it sets the disarm flag and calls `emergencyStop()` on every actuator instance. For `actuator.pwm_dir` that forces its one PWM generator low (`mcpwm_generator_set_force_level`, continuous; DIR is left alone), so the output stops even if the loop never runs again. Each `actuator.pwm_dir` has an MCPWM operator of its own, because the two generators of an operator share one force register (F5a-2).
 - **Releasing the force.** On the next `ARM`, the loop releases the force level through `onArmTransition(true)`.
 - **Backstop.** Every real-time loop task is also subscribed to the Task WDT, with panic-reset, for when even the esp_timer task is stuck.
 - **Priority.** A loop's priority is at most 20, below the esp_timer task (22), so the monitor always preempts a loop.
@@ -701,8 +701,8 @@ F5a is split into two PRs/sessions. F5a-1 provides shared pure motor interfaces,
 `controller.cascade_pid` and realistic mocks; F5a-2 adds the real PWM+DIR actuator,
 quadrature feedback and real-pin setup checks. F5b still removes the legacy motor
 stack/streams and adds the loop-stall campaign. Real motor checks remain deferred.
-The PWM+DIR HAL has one PWM generator; F5a-2 must reconcile the earlier safety
-section's two-generator wording with that hardware before implementing force.
+The PWM+DIR HAL has one PWM generator; F5a-2 reconciled the safety section's
+earlier two-generator wording with it (below).
 
 The new controller implements a true position → bounded velocity target →
 velocity PID → bounded duty cascade, unlike the legacy position-to-duty PID.
@@ -722,3 +722,33 @@ metadata, hold zero duty/velocity or measured position, and preserve encoder
 position and source storage. These are module semantics over existing encodings.
 The old PID wrapper retains its original integration policy while sharing pure
 math with the new conditional-integration kernel.
+
+### F5a-2 implementation decisions
+
+`actuator.pwm_dir` (0x21) and `feedback.quadrature` (0x22) are pure module
+logic over a small driver seam (`mod_motor/hardware.hpp`); the device backend
+wraps `motor_hal` and `rotary_encoder_hal`, and the native tests use a fake.
+The vdev does not register them.
+
+- **Force.** The actuator forces its one PWM generator low (continuous force)
+  and leaves DIR alone. It is forced from creation, before its PWM actions are
+  set, and released only by `onArmTransition(true)` after a zero-duty write.
+  An atomic gate mirrors the force. Every stop bumps an atomic stop epoch, and
+  a release that a monitor stop raced stops again, so a stale release never
+  undoes a monitor stop (found by the independent review).
+- **One MCPWM operator per actuator** (6 at most). Both generators of an
+  operator share one force register that the driver updates read-modify-write;
+  sharing it would let one output's release undo another's monitor force.
+- **Reversal.** A nonzero duty is written only when the previous request had
+  the same sign or was zero, and `Motor::write` leaves DIR alone on a zero
+  write: the compare value applies at the next PWM period and DIR at once, so
+  DIR never flips under a live compare value of the other sign. A request that
+  alternates sign each tick writes zero.
+- **Failures.** Start failures use each type's `InitFailed` (stage 1 a pin
+  unset, 2 a driver error with its esp_err). Tick-time driver errors raise the
+  latched, disarming `actuator_pwm_dir.DriverFault` / `feedback_quadrature.ReadFailed`
+  (user decision). A failed read reports NaN, so the controller zeroes its duty.
+- **Params.** `invert` on both (locked while armed), `duty_limit` on the
+  actuator, `pullup` on the encoder (user decision).
+- **PWM resolution.** The `MOTOR_HAL_TIMER_RESOLUTION_HZ` default is 10 MHz
+  (400 steps at 25 kHz, 0.25% duty) instead of 1 MHz (2.5%).
