@@ -11,6 +11,9 @@ namespace core {
 /// `CORE_*` options, and native builds fill it directly. The defaults here
 /// match the Kconfig defaults.
 struct CoreConfig {
+    uint8_t subscription_groups = 8;
+    uint8_t command_groups = 8;
+    uint8_t group_entries = 64;
     uint8_t max_loops = 4;        ///< simultaneously configured loops, 1..8
     uint16_t max_instances = 16;   ///< module instances across all loops (loop capacity is separate)
     /// The pins a `gpio` param may name: bit n allows GPIO n. On the device

@@ -2,8 +2,8 @@
 
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
-F3d adds the built-in loop type and real-time flag. The wire contract is
-[core v2](../../../docs/protocol/core.md).
+F4a adds preallocated groups on the configurable loops. The wire contract is
+[core v3](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -55,7 +55,7 @@ Getters for F3b's `GET_INFO`: `safeMode()`, `layoutInvalid()`, `configLoadedFrom
 ## Loops and concurrency
 
 - **The loops.** Each built-in loop instance owns config-task params and tick-owned statistic signals. Its id is the loop id, its label the name, and its own loop is kNoLoop. `core_loop_<id>` tasks use persisted rate, core, priority, stack and real-time settings. Configured loop count defaults to at most 4, configurable up to 8; sparse ids are supported. Capacity for modules (default 16) is separate. The factory control loop is 1 kHz, real-time, core 1, priority 20; sensor is 100 Hz, non-real-time, core 0, priority 10. Each stack defaults to 4096 bytes. Live rate changes restart the timer from the config task. Every real-time task subscribes to the Task WDT; paused actions on it are refused while armed. A tick longer than its period counts core.LoopOverBudget using the loop id as diagnostic instance. All loop stalls remain subject to F4b's unchanged disarm rule.
-- **A tick:** the heartbeat, then the staged param batch, then a queued action, then each instance's `tick()` with `dt = elapsed × period`, then the stats. Instances tick in the wiring's tick order, fixed at boot (see Boot, step 6). Creation is always dependencies first.
+- **A tick:** the heartbeat, then the staged param batch, then a queued action, then group swaps/commands, each instance's `tick()` with `dt = elapsed × period`, subscription latching, then the stats. Instances tick in the wiring's tick order, fixed at boot (see Boot, step 6). Creation is always dependencies first.
 - **The staging slot.** A param batch reaches a loop only through its one staging slot, an atomic state (Empty → Filling → Ready → Applying → Applied) that the config task and the loop move with stores and compare-and-swaps. The config task waits on a `core_os::Event` for up to 3 periods plus 5 ms, then withdraws the batch (Ready → Empty). The loop never waits for the config task.
 - **The shadow.** The config task reads and returns param values from its own shadow copy, never from the storage the loop owns.
 - **The config task.** `CoreLink`'s `core_cfg` task is the one caller of the core's configuration calls. Its large buffers live in `Impl`, not on its stack.
@@ -140,3 +140,40 @@ recorders reserve their logs during setup. Vdev counts violations and reports
 changes on stderr. IDF uses a no-op guard; direct IDF blocking calls remain a
 review responsibility. Native Event::signal remains an allowed wake hint.
 Instance blobs retain format 1; layout format 2 retires pre-F3d layouts.
+
+## Groups (F4a)
+
+`groups()` exposes GroupService: configure/enable/clear, config-owned resource
+metadata, bounded RX command mailboxes, and latest subscription samples.
+Defaults are eight subscription groups and eight command groups, each with up
+to 64 refs. Kconfig CORE_SUBSCRIPTION_GROUPS (1..31), CORE_COMMAND_GROUPS
+(1..29) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
+are statically checked. The effective entry limit is capped by the payload
+(22 + 4*n bytes for a complete LIST record), so 128-byte builds advertise 26
+entries. All storage is allocated at construction, including
+two resolved binding tables per slot and one config scratch table. Memory is
+larger than just the packed wire values: bindings, staged configurations,
+metadata and transport mailboxes also consume RAM.
+
+Loop::runTick swaps group config and consumes command mailboxes after actions,
+then latches due subscriptions after module ticks and before updating stats.
+Loop-statistic storage is sampled only by that loop. `latchSignals` is the
+bounded scalar-list helper intended for F4c's source snapshots.
+
+Each slot uses a single-attempt atomic ownership claim for tick/RX/transport
+access; contenders drop work without waiting. Configuration uses a separate
+Ready/Applying/Applied handshake, with definite withdrawal like params. Loop
+routing is rechecked after a claim; a cross-loop rebind hands off through the
+old owner. No steady-state path allocates, spins or takes an OS lock. The
+config caller owns LIST shadows; readers never touch loop-owned scalar storage.
+Telemetry can skip a tick when its slot is busy, and pending samples overwrite
+older samples. Unsent packets already copied to a transport can retain the old
+epoch; consumers must filter it.
+
+F4a's device command gate is always disarmed. Native tests can call beginTick
+with an explicit arm instant to verify application rules. F4b must connect its
+state machine, invalidate commands on transitions, and use receipt times only
+after the ARM instant. lastCommandUs uses one nonblocking slot claim and returns
+false when unavailable, with the output unchanged. A monitor must distinguish
+that unavailable snapshot from a successful timestamp of zero (no frame), and
+must not conclude timeout from contention. No 64-bit atomic is required on ESP32.

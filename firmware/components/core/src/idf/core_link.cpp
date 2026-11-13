@@ -35,6 +35,8 @@ struct CoreLink::Impl {
     std::array<uint8_t,CONFIG_CORE_COMMAND_QUEUE_DEPTH*sizeof(uart_comm::RxFrame)> queue_bytes{};
     QueueHandle_t queue=nullptr;
     uart_comm::CallbackRegistration registration;
+    std::array<uart_comm::CallbackRegistration, defs::kCmdGroupChannelCount> command_registrations;
+    std::array<uint8_t, kGroupStreamBytes> group_stream{};
     core_os::PeriodicTask task;
     uart_comm::RxFrame frame{};
     std::array<uint8_t,CONFIG_UART_COMM_MAX_PAYLOAD> reply{};
@@ -64,6 +66,13 @@ struct CoreLink::Impl {
                 if(uart.waitTxIdle(1000)!=ESP_OK) { ESP_LOGE(TAG,"TX drain timed out; reboot cancelled");return; }
                 if(after==AfterReply::Crash) { esp_system_abort("bench crash command"); }
                 core_os::reboot();
+            }
+        }
+        for (size_t i=0;i<core.groups().capacity(GroupKind::Subscription);++i) {
+            const auto n=core.groups().takeStream(static_cast<uint8_t>(i),group_stream);
+            if (n) {
+                const auto err=uart.sendData(static_cast<uint8_t>(defs::kSubGroupChannelFirst+i),group_stream.data(),n);
+                if(err!=ESP_OK && err!=ESP_ERR_TIMEOUT) { DIAG_COUNT(diag::codes::core::kResponseDropped); }
             }
         }
         const auto now=core_os::nowUs();
@@ -100,6 +109,17 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     auto err=uart.openStream(msg::kStatusStream,d.status.size());
     if(err!=ESP_OK) { ESP_LOGE(TAG,"status setup: %s",esp_err_to_name(err));return; }
     auto *impl=&d;
+    for (size_t i=0;i<core.groups().capacity(GroupKind::Subscription);++i) {
+        err=uart.openStream(static_cast<uint8_t>(defs::kSubGroupChannelFirst+i),12+4*core.groups().entryCapacity());
+        if(err!=ESP_OK) { ESP_LOGE(TAG,"group stream setup: %s",esp_err_to_name(err));return; }
+    }
+    for (size_t i=0;i<core.groups().capacity(GroupKind::Command);++i) {
+        err=uart.registerCallback(static_cast<uint8_t>(defs::kCmdGroupChannelFirst+i),
+            [impl,i](const uart_comm::RxFrame &f) {
+                impl->core.groups().receiveCommand(static_cast<uint8_t>(i),{f.payload,f.len},core_os::nowUs());
+            },d.command_registrations[i]);
+        if(err!=ESP_OK) { ESP_LOGE(TAG,"group callback setup: %s",esp_err_to_name(err));return; }
+    }
     err=uart.registerCallback(msg::kCoreCommand,[impl](const uart_comm::RxFrame &f) {
         if(xQueueSend(impl->queue,&f,0)==pdTRUE) { return; }
         DIAG_COUNT(diag::codes::core::kCommandDropped);
@@ -116,7 +136,7 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     if(err!=core_os::kOk) { ESP_LOGE(TAG,"core task: %s",esp_err_to_name(err));return; }
     d.valid=true;
 }
-CoreLink::~CoreLink() { m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
+CoreLink::~CoreLink() { for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
 bool CoreLink::isValid() const { return m_impl->valid; }
 uint32_t CoreLink::stackHighWater() const { return m_impl->task.stackHighWaterMark(); }
 }

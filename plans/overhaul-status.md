@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F4a: subscription and command groups, after the F3d PR is merged.
+- **Next step:** F4b: arming, safety monitor and watchdog, after the F4a PR is merged.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
 ## Keeping this file short
@@ -27,33 +27,31 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F4a
+## Handoff for F4b
 
-F3d replaces the fixed pair with built-in loop instances (type 0x05), core wire
-v2 and layout blob format 2. Module and loop capacities are separate. The
-factory layout has control 0 and sensor 1; max_loops=1 creates only control.
+F4a adds preallocated GroupService resources and core wire v3 across firmware,
+host, CLI and vdev. NVS formats are unchanged. See docs/protocol/core.md and
+core/README.md for the wire, memory and ownership contract.
 
-- Iterate `Core::loopCapacity()` slots and skip null `loopAt(slot)` pointers;
-  a slot is not a loop id. Use `findLoop(id)` for host-supplied ids.
-- GET_INFO and status include only running loops. Safe mode has no loop task;
-  configured loops remain offline records and live param edits use shadows.
-- Module startup and tick ordering finish before Core::start releases task
-  gates. Task-start failure leaves that loop Failed and its modules
-  DependencyMissing; unrelated loops and the config link remain available.
-- Loop params share the system domain while running. Reboot-required params
-  use the pending layout. Groups must resolve their bound actual loop id.
-- Loop instance records have `loop=kNoLoop`, but their statistic signals belong
-  to their own loop id. Sample their bound plain storage on that owning loop;
-  config-task readers use Loop::stats() atomics. The independent review called
-  out this constraint for F4a.
-- The native real-time guard is automatic in tests; allocate fixture logs at
-  setup. Vdev counts guard violations and reports changes on stderr.
-- core.InitFailed stage 2 names a failed loop task in arg1; stage 3 is retired.
-  Loop task names are core_loop_<id>. Every real-time task joins the Task WDT.
-- A paused loop still counts its heartbeat. The refusal of paused actions on
-  any real-time loop while armed is the protection; retain it in F4b.
-- Before F4a starts, merge the F3d PR. Keep groups, arming/monitor and sources
-  in their existing F4a/F4b/F4c steps.
+- Device loops always call beginTick with the disarmed default. Connect the
+  real arm state/instant in F4b, implement transitions and clear old mailboxes.
+  Command values are only applied when received strictly after ARM; valid
+  prefix-only keepalives update receipt time without reviving stale values.
+- lastCommandUs returns a bool plus a timestamp: false means its nonblocking
+  snapshot was unavailable, not that no frame arrived. F4b must not conclude
+  timeout from an unavailable read. Reconfiguration clears the receipt time.
+- Config/clear refuse while armed for commands, and command inputs have one
+  group owner. Subscription mutations remain allowed. Empty command groups
+  can carry keepalives. ARM must still require a configured command group.
+- Core::loopCapacity/loopAt enumerate slots; skip nulls. Group bindings use
+  actual loop ids, with loop statistics sampled on their owning loop.
+- Paused loops count heartbeat; paused actions on any real-time loop remain
+  refused while armed. All running loops must participate in stall monitoring.
+- Host command() is explicit and nonblocking with a bounded queue. The CLI
+  cmd-send drains with an ordered read. Automatic keepalives, ARM/stream/CSV
+  workflows and NaN-to-hold conversion follow the arming/hold behavior.
+- No firmware was flashed for F4a (its planned check is native/vdev). The bench
+  board still runs F3d/core v2; rebuild and flash v3 before using the new host.
 
 ## Steps
 
@@ -70,8 +68,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3a-2 | Layout and pending copy, validation, NVS A/B, safe mode, boot in dependency order | bare board: boot, save/reload | high | merged | [#35](https://github.com/taruntom1/drivelink_v2/pull/35) |
 | F3b | System, layout, describe, param and action families; status stream; `GET_INFO`; diag redesign (wire v3); `mod_mock` | yes: mock instances on the board | high | merged | [#36](https://github.com/taruntom1/drivelink_v2/pull/36) |
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke | high | merged | [#37](https://github.com/taruntom1/drivelink_v2/pull/37) |
-| F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | in review | [#41](https://github.com/taruntom1/drivelink_v2/pull/41) |
-| F4a | Subscription and command groups (preallocated, epochs), bound to any loop id | no | high | planned | |
+| F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | merged | [#41](https://github.com/taruntom1/drivelink_v2/pull/41) |
+| F4a | Subscription and command groups (preallocated, epochs), bound to any loop id; core wire v3, host/CLI/vdev | no | high | in review |[#44](https://github.com/taruntom1/drivelink_v2/pull/44) |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | planned | |
 | F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | planned | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
@@ -93,20 +91,17 @@ Each note is deleted by the step that uses it.
 
 - **GUI design follow-ups.** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour. It was proposed before F3b landed and must be reconciled with the current core before a wire change is scheduled. [todo-layout-ops.md](todo-layout-ops.md) is closed: the loop at `ADD_INSTANCE` is built, and the GUI follows the firmware's `Referenced` refusal. The GUI design is being brought in line with F3d's loops and F4c's planned sources in phase G7b of [gui-design.md](gui-design.md). That phase found two gaps, both settled on 2026-11-13 and scheduled below: the device's limits (F4b) and a source's value and age as signals (F4c). No firmware changes are authorised by the GUI design sessions.
 
-- **F4a**
-  - The command groups have 29 channels (`kCmdGroupChannelCount`) while the legacy streams sit on `0xBD`–`0xBF`. The Kconfig group count must `static_assert` against it.
-  - The host's `Session` facade takes group services and stream decoding without a change to the transport.
-  - Write the "latch a list of bound signals at the end of the tick" code so that F4c's links can reuse it.
 - **F4b**
   - The armed checks already exist and are tested through `ParamService::setArmed()`: layout ops, SAVE, the reboot paths, paused actions and `locked_while_armed` params. Nothing sets it on the device yet, and ARM, DISARM and ACK_FAULT answer `Unsupported`.
   - `Instance` has no `onArmTransition` or `emergencyStop` yet.
   - Diag state has 254 fixed sparse identities. The `blocks_arm` and `disarms` flags are in the metadata with false defaults; the latch and arming behaviour is missing.
-  - The monitor walks the loop table. See the paused-loop heartbeat note in the F3d handoff.
+  - The monitor walks the loop table. See the paused-loop heartbeat note in the current handoff.
   - **Limits as read-only system params** (plan: "Limits" under the notes on the ops). Add to `system.yaml`: `limits.loops`, `limits.instances`, and the group limits F4a built (`limits.sub_groups`, `limits.cmd_groups`, `limits.group_entries`).
     - Each is `u16`, `read_only`, and takes its value from `CoreConfig` at boot. The system instance must write it into the record's shadow, because a param's boot value otherwise comes from its YAML default.
     - No wire format changes; the descriptor hash does. Test: `GET` returns the build's values, `SET` answers `ReadOnly`, and SAVE writes none of them.
     - First check how F4a exposed its group limits. If it reports them another way (for example in the group `LIST` reply), keep one way only and say so in the decision log.
 - **F4c**
+  - Reuse core::BoundSignal and latchSignals from F4a for end-of-tick snapshots.
   - **A source is three items** (plan: "Sources", "Declaration" and "What the host sees"). `kind: source` in the YAML expands into the param (flag `Source`, `ItemFlag` `0x80`, the last free bit) and the signals `<name>.value` and `<name>.age_us`. There is no source op.
     - Generator: the expansion, the name rule, unique ids for all three, and tests in `tools/gen/tests`. `docs/protocol/definitions.md` gets the new kind.
     - `age_us` is `0xFFFFFFFF` with no valid sample and saturates at `0xFFFFFFFE`.
@@ -155,7 +150,7 @@ Each note is deleted by the step that uses it.
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
-- **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d is also explicitly approved for Codex planning/build and an independent Codex review at high effort.
+- **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d and F4a are explicitly approved for Codex planning/build and an independent Codex review at high effort.
 
 ## Decision log
 
@@ -165,6 +160,9 @@ Choices that the plans don't cover or that change them, and that a later step mu
 |---|---|---|---|---|
 | 2026-11-12 | F2 | Every wire change bumps the version byte of the protocol it changes | User decision | yes |
 | 2026-11-12 | F3a | A step too large to review in one PR (about 4–5k lines) is split into rows; the session proposes the split in its plan | User decision | n/a |
+| 2026-11-13 | F4a | Codex plans/builds with an independent Codex review at high effort; core v3 group plan approved | Explicit user approval for F4a | yes |
+| 2026-11-13 | F4a | Command inputs have a single group owner; cross-loop rebinding hands off through the old loop; resolved/staged bindings add RAM beyond packed values | Internal implementation choices, documented with the group contract | yes |
+| 2026-11-13 | F4a | Device command inputs stay gated disarmed; host NaN-to-hold mapping follows arming/hold behavior | User-approved F4a/F4b boundary; non-finite wire values remain rejected | yes |
 | 2026-11-13 | F3d | Codex plans and builds this step, with an independent Codex review at high effort | Explicit user exception, limited to F3d | n/a |
 | 2026-11-13 | F3d | CORE_MAX_LOOPS=1 gets only the factory control loop | User decision during the pre-plan interview | yes |
 | 2026-11-13 | F3d | Built-in loop id 0x05; loop capacity separate from module capacity; layout format 2, instance format 1 | Keeps fixed diag source ids clear and preserves the existing module capacity | yes |

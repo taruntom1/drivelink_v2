@@ -91,9 +91,9 @@ Json Client::info()
     Reader r(reply.body.data(), reply.body.size());
     Json j;
     j["protocol_version"] = r.readU8();
-    if (j["protocol_version"] != 2)
+    if (j["protocol_version"] != 3)
     {
-        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v2");
+        throw Error(ErrorKind::Protocol, "incompatible core protocol; expected v3");
     }
     j["firmware_version"] = string(r);
     j["build_id"] = string(r);
@@ -432,7 +432,7 @@ Json Client::event(const Frame &frame) const
     const auto version = r.readU8();
     if (frame.type == protocol::defs::msg::kStatusStream)
     {
-        if (version != 2)
+        if (version != 3)
         {
             malformed();
         }

@@ -73,16 +73,39 @@ def main():
             assert cli('action', f'112:{motor}:768', '0.5')['typed_values'][0] > 0
             assert cli('action', f'112:{motor}:769', '--blob', '616263')['blob_hex'] == '616263'
             assert cli('status')['msg_type'] == 128
+            # Groups persist across sessions, but never across device reboots.
+            assert cli('groups')['subscription_capacity'] == 8
+            sub = cli('sub-config', '0', '0', '2', f'112:{motor}:256', f'112:{motor}:512')
+            assert sub == {'epoch': 1, 'channel': 129}
+            sample = cli('sub-stream', '0')
+            assert len(sample['typed_values']) == 2 and sample['epoch'] == 1
+            cli('sub-config', '1', '1', '1', f'114:{imu}:256')
+            assert cli('sub-stream', '1')['typed_values'][0] != 0
+            cli('sub-config', '2', '0', '1', '5:1:256', code=5)
+            cli('cmd-config', '0', '0', f'112:{motor}:256', code=5)  # signals cannot be commanded
+            command = cli('cmd-config', '0', '0', f'112:{motor}:512')
+            assert command == {'epoch': 1, 'channel': 160}
+            cli('cmd-config', '1', '0', f'112:{motor}:512', code=5)  # one writer per input
+            cli('cmd-send', '0', '65535', '1.0')
+            cli('cmd-send', '0', '0')  # keepalive
+            cli('cmd-send', '0', '1', 'NaN', code=2)
+            # F4a never arms: the command above must not alter the mock input.
+            assert cli('sub-stream', '0')['typed_values'][1] == 0.0
+            assert cli('sub-enable', '0', 'false')['epoch'] == 2
+            assert cli('sub-enable', '0', 'true')['epoch'] == 3
+            assert cli('sub-stream', '0')['epoch'] == 3
+            cli('sub-clear', '0'); cli('sub-clear', '1'); cli('cmd-clear', '0')
             cli('diag-info'); cli('diag-entries'); cli('diag-clear')
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 2' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 3' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
             assert len(cli('instances')) == 5
             assert cli('get', '5:0:1')['typed_values'] == [500]
+            assert all(not group['configured'] for group in cli('groups')['groups'])
             kill()
             # Commit one new-generation instance blob, then interrupt SAVE.
             # Reopening must still load the previous complete generation.
@@ -111,7 +134,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 2
+                assert cli('info')['protocol_version'] == 3
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
                 # More than the PTY's kernel buffer: no external reader must
@@ -120,7 +143,7 @@ def main():
                 # Submit REBOOT without draining the filled slave. Its reply
                 # deadline must cancel the effect and recover the same PTY,
                 # rather than close the published path or run a stale handler.
-                payload = bytes((2, 201, 1, 8))
+                payload = bytes((3, 201, 1, 8))
                 header = bytes((1, len(payload), 0))
                 crc = 0
                 for byte in header:
@@ -135,7 +158,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 2
+                assert cli('info')['protocol_version'] == 3
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire

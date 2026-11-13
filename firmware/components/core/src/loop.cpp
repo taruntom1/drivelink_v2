@@ -1,4 +1,5 @@
 #include "core/loop.hpp"
+#include "core/group_service.hpp"
 
 #include "core_os/clock.hpp"
 #include "core_os/realtime.hpp"
@@ -58,6 +59,9 @@ void Loop::runTick(uint32_t elapsed)
         m_action.completed.signal();
     }
 
+    // 5. Group swaps and command mailboxes. Disarmed until F4b.
+    if (m_groups) { m_groups->beginTick(m_id); }
+
     // 7. Instances, in the wiring's tick order (the list order, set at boot).
     const uint32_t period_us = m_period_us.load(std::memory_order_relaxed);
     const TickContext t{
@@ -68,6 +72,10 @@ void Loop::runTick(uint32_t elapsed)
     for (size_t i = 0; i < m_count; ++i) {
         m_instances[i]->tick(t);
     }
+
+    // 8. Tick-owned plain storage, including loop statistics from the previous
+    // tick, is sampled on its owning loop before publishing this tick stats.
+    if (m_groups) { m_groups->endTick(m_id, start_us); }
 
     // 9. Statistics.
     m_ticks.fetch_add(1U, std::memory_order_relaxed);

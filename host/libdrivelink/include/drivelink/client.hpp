@@ -39,10 +39,17 @@ class Client
     Json diagClear(uint8_t what = 3);
     Json event(const Frame &frame) const;
     Json item(Ref ref);
+    Json groups();
+    Json subConfigure(uint8_t group, uint8_t loop, uint16_t divider, std::span<const Ref> refs);
+    Json cmdConfigure(uint8_t group, uint8_t loop, std::span<const Ref> refs);
+    Json subEnable(uint8_t group, bool enabled);
+    Json groupClear(uint8_t group, bool command);
+    bool command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values = {});
 
   private:
     Reply accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
     Json pages(uint8_t family, uint8_t op, const Bytes &prefix = {});
+    Json groupMutation(uint8_t op, const Bytes &body);
     Session &m_session;
 };
 // Descriptor types use the existing ValueType wire encoding. These functions
@@ -53,4 +60,7 @@ Bytes parseHex(const std::string &text);
 std::string hex(std::span<const uint8_t> bytes);
 Ref parseRef(const std::string &text);
 uint32_t parseUnsigned(const std::string &text, uint32_t max = UINT32_MAX);
+Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> values);
+// Returns null for a stale epoch/channel. Descriptor order matches group refs.
+Json decodeSubscription(const Frame &frame, const Json &group, const Json &descriptors);
 } // namespace drivelink

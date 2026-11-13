@@ -60,5 +60,6 @@ Every code the firmware can report through `diag` (events on MSG_TYPE `0xC0`, en
 | `core` (0x04) | 0x0101 | ResponseDropped | warning | counter | no | - | - | A core reply could not be queued for transmission. |
 | `uart_comm` (0x02) | 0x0008 | StreamSkipped | warning | counter | no | - | - | A stream write was skipped because its slot was busy. |
 | `core` (0x04) | 0x0102 | LoopOverBudget | warning | counter | no | - | - | A loop tick took longer than its period; instance identifies the loop. |
+| `core` (0x04) | 0x0103 | CommandFrameRejected | warning | counter | no | - | - | A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog. |
 
 <!-- diag-codes:end -->

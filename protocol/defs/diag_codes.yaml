@@ -478,3 +478,5 @@ codes:
   - {source: uart_comm, code: 8, name: StreamSkipped, severity: warning, kind: counter, description: "A stream write was skipped because its slot was busy."}
 
   - {source: core, code: 258, name: LoopOverBudget, severity: warning, kind: counter, description: "A loop tick took longer than its period; instance identifies the loop."}
+
+  - {source: core, code: 259, name: CommandFrameRejected, severity: warning, kind: counter, description: "A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog."}

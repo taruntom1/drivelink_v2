@@ -26,24 +26,24 @@ TEST_CASE("Core wire rejects malformed commands before mutation") {
     Fixture f;
     CHECK(f.call({})==6);CHECK(f.out[2]==255);CHECK(f.out[3]==255);
     CHECK(f.call({1,7,2,2,112,0,1,'a'})==6);CHECK(f.core.pendingLayout().entries().empty());
-    CHECK(f.call({2,7,2,2,112,0,1,'a',0})==6);CHECK(f.out[4]!=0);
-    CHECK(f.call({2,7,2,2,112,0,1,'a'},6)==6);CHECK(f.core.pendingLayout().entries().empty());
-    CHECK(f.call({2,7,2,2,112,255,1,'a'})==7);CHECK(f.out[4]==0);CHECK(f.out[6]==0);
-    CHECK(f.call({2,7,4,3,1,112,0,2,0})==11);
+    CHECK(f.call({3,7,2,2,112,0,1,'a',0})==6);CHECK(f.out[4]!=0);
+    CHECK(f.call({3,7,2,2,112,0,1,'a'},6)==6);CHECK(f.core.pendingLayout().entries().empty());
+    CHECK(f.call({3,7,2,2,112,255,1,'a'})==7);CHECK(f.out[4]==0);CHECK(f.out[6]==0);
+    CHECK(f.call({3,7,4,3,1,112,0,2,0})==11);
     CHECK(f.out[4]==0);CHECK(f.out[9]==0x20);CHECK(f.out[10]==0x41);
-    CHECK(f.call({2,7,2,1,0,0,0})>11);CHECK(f.out[6]==2); // factory loop records
-    CHECK(f.call({2,7,2,1,1,0,0})>11);CHECK(f.out[6]==3); // factory loops and pending mock
-    CHECK(f.call({2,7,2,1,1,4,0})==6);CHECK(f.out[4]!=0); // invalid cursor
+    CHECK(f.call({3,7,2,1,0,0,0})>11);CHECK(f.out[6]==2); // factory loop records
+    CHECK(f.call({3,7,2,1,1,0,0})>11);CHECK(f.out[6]==3); // factory loops and pending mock
+    CHECK(f.call({3,7,2,1,1,4,0})==6);CHECK(f.out[4]!=0); // invalid cursor
 }
 TEST_CASE("Every wire reboot path is refused while armed") {
     Fixture f;
     f.core.params().setArmed(true);
     for(uint8_t op : {uint8_t{7},uint8_t{8},uint8_t{9}}) {
-        CHECK(f.call({2,1,1,op})==6);
+        CHECK(f.call({3,1,1,op})==6);
         CHECK(f.out[4]==static_cast<uint8_t>(core::Result::Armed));
         CHECK(f.service.takeAfterReply()==core::AfterReply::None);
     }
-    CHECK(f.call({2,1,1,254})==6);
+    CHECK(f.call({3,1,1,254})==6);
     CHECK(f.out[5]==static_cast<uint8_t>(core::Detail::Unsupported));
     CHECK(f.service.takeAfterReply()==core::AfterReply::None);
 }
@@ -53,7 +53,7 @@ TEST_CASE("Core describe fits whole descriptors and makes paging progress") {
         size_t cursor=0;
         do {
             const uint8_t lo=static_cast<uint8_t>(cursor),hi=static_cast<uint8_t>(cursor>>8);
-            const auto n=f.call({2,9,3,2,type->type_id,lo,hi},drivelink::protocol::defs::kDescriptorMinPayload);
+            const auto n=f.call({3,9,3,2,type->type_id,lo,hi},drivelink::protocol::defs::kDescriptorMinPayload);
             REQUIRE(f.out[4]==0);REQUIRE(n>11);
             const size_t next=f.out[8]|(f.out[9]<<8);
             REQUIRE((next==65535 || next>cursor));
@@ -113,17 +113,17 @@ TEST_CASE("Action completion events are wake hints, not timeout evidence") {
 TEST_CASE("SET and ACTION envelopes reject wrong counts and trailing bytes") {
     Fixture f;
     const auto before=f.core.nvsDirty();
-    f.call({2,1,4,2,1,0,0,1,0});CHECK(f.out[4]!=0);
-    f.call({2,1,4,2,0,42});CHECK(f.out[4]!=0);
-    f.call({2,1,4,1,65});CHECK(f.out[4]!=0);
+    f.call({3,1,4,2,1,0,0,1,0});CHECK(f.out[4]!=0);
+    f.call({3,1,4,2,0,42});CHECK(f.out[4]!=0);
+    f.call({3,1,4,1,65});CHECK(f.out[4]!=0);
     CHECK(f.core.nvsDirty()==before);
-    f.call({2,1,8,1,112,0,0,3});CHECK(f.out[4]!=0);
-    std::array<uint8_t,27> action{2,1,8,1,112,0,0,3};
+    f.call({3,1,8,1,112,0,0,3});CHECK(f.out[4]!=0);
+    std::array<uint8_t,27> action{3,1,8,1,112,0,0,3};
     action[24]=2; // declares two blob bytes, but only one follows
     f.service.handle(action,f.out);
     CHECK(f.out[4]==static_cast<uint8_t>(core::Result::InvalidArgument));
     CHECK(f.out[5]==static_cast<uint8_t>(core::Detail::BadValue));
-    f.call({2,1,4,3,1,0,0,3,0});REQUIRE(f.out[4]==0);CHECK(f.out[6]==1);
+    f.call({3,1,4,3,1,0,0,3,0});REQUIRE(f.out[4]==0);CHECK(f.out[6]==1);
 }
 
 TEST_CASE("CPU load samples idle deltas with wrap and clamps delayed accounting") {

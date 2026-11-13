@@ -1,11 +1,11 @@
-# Core protocol v2 (F3d)
+# Core protocol v3 (F4a)
 
-F3d makes loops built-in layout instances, adds the real-time flag to discovery,
-and carries explicit loop IDs in status. Firmware, host library, CLI and vdev
-use v2 together; a v1 peer is incompatible. Diagnostic framing remains v3.
+F4a adds subscription and command groups to the configurable-loop core.
+Firmware, host library, CLI and vdev use v3 together; older peers are
+incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 2.
+`core_response` (0x41). All integers are little-endian. Version is 3.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -102,6 +102,84 @@ module batches must name a single actual loop ID. Reboot-required params and
 pending-only instances use the pending domain. Pending writes answer PendingReboot. Values outside numeric
 limits are clamped and returned; invalid types, NaN/Inf, enums and wiring
 are rejected. A response must fit before any SET is attempted.
+
+## Group (family 5)
+
+All groups are boot-allocated resources, with independent subscription and
+command IDs. They survive reconnects but are never persisted. Limits are
+CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..29 while legacy
+channels are reserved), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
+limit is min(configured limit, 64, floor((max_payload - 22)/4)), so both a
+complete LIST record and telemetry fit. A 128-byte build advertises 26. The channel is
+registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +
+command ID. No legacy channel is used.
+
+| Op | Request body |
+|---|---|
+| SUB_CONFIG (1) | `group u8, loop u8, divider u16, count u8, count * Ref` |
+| SUB_ENABLE (2) | `group u8, enabled u8` (exactly 0 or 1) |
+| SUB_CLEAR (3) | `group u8` |
+| CMD_CONFIG (4) | `group u8, loop u8, count u8, count * Ref` |
+| CMD_CLEAR (5) | `group u8` |
+| LIST (6) | `start u16` |
+
+Successful mutations return `epoch u8, channel u8`. CONFIG enables the group;
+SUB_ENABLE requires a configured group. Divider is 1..65535 loop executions
+(skipped timer periods do not advance it). Zero-entry groups are allowed,
+including a command group used only for keepalives. References are unique,
+bound signals or inputs from running instances on the named loop; command
+groups accept only inputs. A loop instance's statistic signals belong to its
+own ID, despite its record having no parent loop. Offline and pending-only
+instances cannot be bound. An input can belong to only one command group
+(`AlreadyBound`); subscriptions may overlap.
+
+Each mutation swaps at a tick boundary, increments a wrapping u8 epoch, resets
+the divider phase, and discards old command and telemetry mailboxes. CLEAR
+leaves an unconfigured slot with its advanced epoch. For a cross-loop rebind,
+the old loop commits the handoff and relinquishes access before the new loop
+uses the group. The caller waits up to three owning-loop periods plus 5 ms;
+if the loop has not claimed the swap it is withdrawn (`Busy/Withdrawn`), with
+no change. A claimed swap completes definitely. A paused/stalled loop can
+therefore refuse a mutation. Command CONFIG/CLEAR are refused while armed;
+subscription changes are allowed. F4a exposes no device arming path.
+
+LIST starts with `subscription_capacity u8, command_capacity u8,
+entry_capacity u8`, then the usual `total u16, next u16, count u8` page header.
+It lists every slot, subscriptions first, then commands, each in ascending ID:
+`kind u8 (0 subscription, 1 command), group u8, flags u8, loop u8, epoch u8,
+divider u16, n u8, n * Ref`. Flags are configured=1, enabled=2. Empty slots
+have flags=0, loop=0xFF, divider=1, n=0. Command divider is always 1. Pages
+contain whole entries and never truncate a reference list.
+
+### Group streams
+
+Subscription payload: `version u8, epoch u8, counter u16, timestamp_us u64,
+n * value u32` (12 + 4*n bytes). Values follow configuration order and descriptor
+types. Samples are latched together at the end of the owning loop's tick.
+The timestamp is that tick's start time. Loop statistics reflect the previous
+completed tick. Latest samples replace unsent ones. Counter increments for
+each published sample, wraps at 65536, and stays continuous across mutations.
+The host drops a frame with a stale epoch before interpreting its values.
+An 8-bit epoch cannot distinguish frames retained across 256 mutations;
+clients must not retain frames across epoch reuse or device reboot.
+
+Command payload: `version u8, epoch u8, counter u16, n * value u32`
+(4 + 4*n bytes); a prefix-only frame is a keepalive for any configured group.
+Counters are informational and do not enforce order. CONFIG order defines
+value types. All values are validated before publishing the mailbox: invalid
+bool/narrow integer/enum, non-finite f32, wrong version, epoch or exact length,
+unconfigured ID or a busy mailbox rejects the whole frame and increments
+core.CommandFrameRejected. Valid numeric values outside descriptor limits
+are clamped, as with params. Keepalives update the receipt time without
+replacing pending values. RX never writes module storage.
+
+The loop consumes the latest accepted values at its start boundary only when
+armed and their receipt time is strictly after the current ARM instant. Old
+values are discarded while disarmed; a keepalive never revives them. F4a always
+passes the disarmed gate, so command streams cannot change device inputs.
+F4b supplies the arm state, transitions and watchdog. The low-level host API
+uses typed slot bits; NaN remains rejected. Host NaN-to-hold conversion is
+deferred until the arming/hold behavior exists.
 
 ## Action (family 8)
 

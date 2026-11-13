@@ -60,3 +60,8 @@ saved layouts, factory fallback, task failures, live rate rollback and the nativ
 real-time guard). The guard fails unexpected violations automatically; deliberate
 violation tests explicitly suppress its failure sink. Native and vdev link the
 C allocator wrappers alongside the C++ allocation overrides.
+
+F4a adds native group tests for config/withdrawal, epoch wrapping, typed
+command rejection and atomicity, sparse loop ids, 64-entry limits, subscription
+dividers and concurrent mailbox coherence. Host integration exercises CLI
+groups on vdev and verifies disarmed commands do not alter mock inputs.

@@ -30,6 +30,7 @@ struct Session::Impl
     std::deque<Frame> events;
     std::deque<std::shared_ptr<Bytes>> writes;
     uint64_t dropped = 0;
+    size_t pending_streams = 0; // guarded by mutex, including posted writes
     uint16_t max_payload = p::kMaxPayload;
     std::array<bool, 256> retired{};
     unsigned sequence = 0;
@@ -173,7 +174,7 @@ struct Session::Impl
         if (waiting && f.msg_type == expected_type && f.len >= 2 && f.payload[1] == expected_seq)
         {
             const bool core = expected_type == msg::kCoreResponse;
-            if (f.payload[0] != (core ? 2 : 3) || f.len < (core ? 6U : 4U))
+            if (f.payload[0] != (core ? p::core_wire::kVersion : 3) || f.len < (core ? 6U : 4U))
             {
                 protocol_error = true;
                 cv.notify_all();
@@ -273,6 +274,11 @@ struct Session::Impl
                 fail(ec.message());
                 return;
             }
+            if (bytes->at(3) >= p::defs::kCmdGroupChannelFirst &&
+                bytes->at(3) < p::defs::kCmdGroupChannelFirst + p::defs::kCmdGroupChannelCount) {
+                std::lock_guard guard(mutex);
+                --pending_streams;
+            }
             writes.pop_front();
             if (!writes.empty())
             {
@@ -309,7 +315,7 @@ struct Session::Impl
                 throw Error(ErrorKind::Connection, "sequence IDs exhausted after timeouts; reconnect");
             }
             const auto seq = static_cast<uint8_t>(sequence++ % 256);
-            Bytes payload{static_cast<uint8_t>(kind == msg::kCoreCommand ? 2 : 3), seq};
+            Bytes payload{static_cast<uint8_t>(kind == msg::kCoreCommand ? p::core_wire::kVersion : 3), seq};
             if (kind == msg::kCoreCommand)
             {
                 payload.push_back(family);
@@ -402,9 +408,36 @@ void Session::close()
 Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body)
 {
     const bool read_only = (family == 1 && op == 1) || family == 3 || (family == 2 && op == 1) ||
-                           (family == 4 && (op == 1 || op == 3));
+                           (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6);
     auto data = m_impl->exchange(msg::kCoreCommand, family, op, body, read_only);
     return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
+}
+bool Session::sendCommandGroup(uint8_t group, std::span<const uint8_t> payload)
+{
+    auto &d = *m_impl;
+    std::lock_guard lock(d.mutex);
+    if (d.closed) { throw Error(ErrorKind::Connection, d.failure); }
+    if (group >= protocol::defs::kCmdGroupChannelCount || payload.size() < 4 ||
+        payload.size() > d.max_payload || payload.size() > 260 || (payload.size() - 4) % 4) {
+        throw Error(ErrorKind::Usage, "invalid command group payload");
+    }
+    if (d.pending_streams >= 8) { return false; }
+    auto bytes = std::make_shared<Bytes>(protocol::frameSize(payload.size()));
+    protocol::encodeFrame(bytes->data(), bytes->size(),
+        static_cast<uint8_t>(protocol::defs::kCmdGroupChannelFirst + group), payload.data(), payload.size());
+    ++d.pending_streams;
+    asio::post(d.io, [&d, bytes] {
+        {
+            std::lock_guard guard(d.mutex);
+            if (d.closed) { return; }
+        }
+        if (d.writes.size() >= 16) {
+            std::lock_guard guard(d.mutex); --d.pending_streams; return;
+        }
+        d.writes.push_back(bytes);
+        if (d.writes.size() == 1) { d.write(); }
+    });
+    return true;
 }
 Bytes Session::diagRequest(uint8_t op, std::span<const uint8_t> body)
 {

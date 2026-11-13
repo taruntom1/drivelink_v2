@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xE9775805;
+inline constexpr uint32_t kDescriptorHash = 0xC12BC7B2;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -118,6 +118,15 @@ enum class ParamOp : uint8_t {
     Get = 1,
     Set = 2,
     GetPending = 3,
+};
+
+enum class GroupOp : uint8_t {
+    SubConfig = 1,
+    SubEnable = 2,
+    SubClear = 3,
+    CmdConfig = 4,
+    CmdClear = 5,
+    List = 6,
 };
 
 enum class ActionOp : uint8_t {

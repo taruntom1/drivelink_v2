@@ -90,7 +90,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - OTA (stream the image, confirm after reconnect)
   - diag (decode events, query entries, name codes from the code descriptors the device serves)
   - arming (arm with conditions reported, `DISARM` through the fast-path MSG_TYPE, `ACK_FAULT`)
-  - command groups that send a keepalive frame when the client has nothing to command, and map NaN to "hold"
+  - command groups with prefix-only keepalives; automatic keepalives and NaN-to-hold mapping follow the arming/hold behavior (F4b or later); F4a exposes explicit sends and rejects non-finite values
 - **Growth.** The first slice (transport, session, the core families) and `drivelink-cli` are built in firmware phase F3 and grow with each firmware phase. H1 adds the time model, the device model and the remaining services.
 - **Threading.**
   - One I/O thread (Asio) does all the reading and writing.

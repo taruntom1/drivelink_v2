@@ -228,6 +228,12 @@ struct Server
             const auto n = commands->handle({frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
         }
+        else if (frame.msg_type >= p::defs::kCmdGroupChannelFirst &&
+                 frame.msg_type < p::defs::kCmdGroupChannelFirst + p::defs::kCmdGroupChannelCount)
+        {
+            core->groups().receiveCommand(frame.msg_type - p::defs::kCmdGroupChannelFirst,
+                {frame.payload, frame.len}, core_os::nowUs());
+        }
         else if (frame.msg_type == msg::kDiagQuery)
         {
             query(from, frame);
@@ -313,6 +319,10 @@ struct Server
         }
         if (peer && !peer->closed)
         {
+            for (size_t i=0;i<core->groups().capacity(core::GroupKind::Subscription);++i) {
+                const auto n=core->groups().takeStream(static_cast<uint8_t>(i),reply);
+                if (n) { peer->send(static_cast<uint8_t>(p::defs::kSubGroupChannelFirst+i),reply.data(),n,core::AfterReply::None,true); }
+            }
             const auto now = core_os::nowUs();
             if (now >= next_status)
             {
@@ -467,9 +477,17 @@ bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply af
     {
         return false;
     }
-    if (stream && output.size() > 1 && output.back().stream)
-    {
-        output.pop_back();
+    if (stream) {
+        // The front buffer may be in flight. Replace only a pending sample
+        // of this channel; interleaved groups retain independent latest slots.
+        for (size_t i = 1; i < output.size(); ++i) {
+            if (output[i].stream && output[i].bytes->at(3) == type) {
+                auto bytes = std::make_shared<Bytes>(p::frameSize(n));
+                p::encodeFrame(bytes->data(), bytes->size(), type, data, n);
+                output[i].bytes = std::move(bytes);
+                return true;
+            }
+        }
     }
     if (output.size() >= 64)
     {

@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v2 before any requested mutation.
+vdev. Every connection checks core v3 before any requested mutation.
 
 Default output is readable key/value text. With `--json`, stdout holds only
 `{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.
@@ -42,3 +42,12 @@ Use the returned id rather than assuming 2. Add modules with `add TYPE LABEL LOO
 SAVE/reboot applies additions, removals and reboot-required settings. `info`
 reports running loop ids/flags; status overruns are objects with loop_id and
 overruns. Safe mode reports no running loops, while instances lists offline config.
+
+Groups: `groups` lists slots and limits. `sub-config GROUP LOOP DIVIDER REF...`
+and `cmd-config GROUP LOOP REF...` return the new epoch/channel. Use
+`sub-enable GROUP true|false`, `sub-clear GROUP`, or `cmd-clear GROUP` to change
+resources. `sub-stream GROUP [COUNT]` prints typed samples and filters stale
+epochs. `cmd-send GROUP COUNTER [VALUE...]` parses configured input types; no
+values means keepalive. It drains its frame with an ordered GET_INFO before
+closing; the stream itself has no acknowledgement. F4a remains disarmed, so
+sending command values cannot change device inputs. NaN/Inf are rejected.

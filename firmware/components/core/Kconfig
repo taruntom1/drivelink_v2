@@ -26,6 +26,22 @@ menu "DriveLink core"
             Loop tasks are configured by persisted loop instance parameters.
             With a limit of one, the factory layout contains only control.
 
+    config CORE_SUBSCRIPTION_GROUPS
+        int "Subscription group pool size"
+        default 8
+        range 1 31
+    config CORE_COMMAND_GROUPS
+        int "Command group pool size"
+        default 8
+        range 1 29
+    config CORE_GROUP_ENTRIES
+        int "Maximum entries per group"
+        default 64
+        range 1 64
+        help
+            The effective limit is capped by the UART payload size so a whole
+            group LIST record and a telemetry sample both fit in one frame.
+
     config CORE_COMMAND_QUEUE_DEPTH
         int "Core command queue depth"
         default 8
