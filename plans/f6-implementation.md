@@ -81,3 +81,7 @@ Design reference: [Bosch BNO055 datasheet, revision 1.8](https://www.bosch-senso
   real mode and an explicit full-calibration precondition.
 - Handwritten additions remain one reviewable PR; generated descriptor growth
   and legacy/vendor deletion account for most of the overall diff.
+- CI then exposed an existing group-slot contention rejection before the IMU
+  scenario. A bounded test-only retry handles group StagingBusy/Withdrawn;
+  production CLI/SDK policy is unchanged. New harness unit tests and focused
+  independent review cover no-effect retries versus unknown outcomes.

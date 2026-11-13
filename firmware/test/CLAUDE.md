@@ -149,3 +149,10 @@ The deferred `--modules real --calibration-wait 300` run waits for 3/3/3/3,
 then checks exact profile application and boot restore in CONFIG.
 `--stack-wait` holds the layout for a short COM4 capture; close COM4 before
 cleanup reboots (see the status file's driver trap).
+
+Host integration's test-only helper retries `Withdrawn` and group-only
+`StagingBusy` rejections, which guarantee no effect. The latter can occur
+when a native loop owns the group slot at the single publish attempt. Retries
+are bounded; timeouts, opaque action Busy responses and expected refusals are
+never retried. `tools/tests/test_host_retry.py` covers these boundaries under
+the existing `gen` check. Production CLI/SDK mutation retry policy is unchanged.

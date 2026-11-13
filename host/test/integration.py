@@ -35,14 +35,15 @@ def main():
                 process = None
 
         def cli(*command, code=0, endpoint=None):
-            # Native loop threads are not real-time. Withdrawn guarantees no
-            # effect, so this harness can repeat it. Production CLI/Session
-            # never retries a mutation or its timeout.
+            # Native loops can own a slot at the publish attempt. Retry only
+            # explicit no-effect staging rejections in this test harness.
+            # Production CLI/Session never retries a mutation or its timeout.
+            from motor_smoke import retryable_rejection
             for attempt in range(10):
                 completed = subprocess.run([args.cli, '--endpoint', endpoint or url, '--json', *command],
                                            capture_output=True, text=True, timeout=20)
                 result = json.loads(completed.stdout)
-                if code == 0 and completed.returncode == 5 and result.get('result') == 5 and result.get('detail') == 15 and attempt < 9:
+                if code == 0 and completed.returncode == 5 and retryable_rejection(command,result) and attempt < 9:
                     time.sleep(.02)
                     continue
                 break

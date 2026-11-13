@@ -51,6 +51,9 @@ timing contracts live in `docs/protocol/imu.md`; its README covers the API.
 - **Tests:** `host/test/imu_smoke.py` has mock, real missing-sensor and real
   calibrated-sensor modes. All restore the saved loops-only layout/settings.
   Bare-board mock persistence/modes and missing-sensor/ARM refusal passed.
+  CI exposed lawful group-slot contention in the existing host integration:
+  its test-only helper now retries group `StagingBusy` as well as `Withdrawn`.
+  Unknown outcomes/timeouts and opaque action Busy responses are not retried.
 - **Review:** independent Codex review at high effort; all findings fixed
   (health/startup validation, subscription limit, bus bounds/tick rounding,
   stale smoke status, automatic calibration and temperature-unit mask).
@@ -168,6 +171,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
+| 2026-11-13 | F6 | Test harnesses retry group-only Busy/StagingBusy rejections (in addition to Withdrawn), bounded to ten attempts; production SDK/CLI stays unchanged | CI's existing sub-enable scenario raced a loop's atomic slot claim. The rejection occurs before mutation; unit tests and independent review confirm timeouts/actions/expected refusals are not broadened | n/a |
 | 2026-11-13 | F6 | Codex plans/builds and independent Codex review at high effort. Calibration is staged as typed persistent params and committed by explicit SAVE/restored at boot; runtime health/read faults invalidate data and warn, with consumer-selected response; preserve all modes/signals | Explicit user decisions before plan approval; fixed bounded paused-action updates retain existing shadows/A/B formats | yes |
 | 2026-11-13 | F6 | Instance-owned register driver; exclusive I2C port/pins; supported 100–400 kHz, requested 10–20 ms rounded per IDF wait; health/unit/mode checks gate samples/startup; real profile comparisons run in CONFIG after levels 3/3/3/3 | Removes the Bosch singleton, enforces supported timing, prevents reset/error data appearing fresh, and accounts for automatic calibration (independent review) | yes |
 | 2026-11-13 | tooling | Capture integration PASS lines in both host validation logs; use `tools/bench_fw.py` for isolated bench builds and guarded normal restoration; bound smoke failure frames; apply the skill's token-efficiency rules | F5b repeated manual builds, hidden test stdout, large failure output, host-clock traps and duplicated review searches. Self-review only: tooling/diagnostics, unchanged firmware runtime and test pass criteria; helper help/dry runs and fail-closed tests, no flash | n/a |
