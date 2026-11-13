@@ -32,9 +32,16 @@ python ../test/install_smoke.py --build build/windows-mingw
 ```
 
 The binaries are under `build/<preset>/cli/` and `build/<preset>/vdev/`.
-Keep the same MinGW runtime DLLs on PATH when running them. In WSL, use a Linux
-filesystem build directory (`cmake --preset linux -B /tmp/drivelink-build`)
-if extracting dependencies on `/mnt/c` encounters Windows rename locks.
+Keep the same MinGW runtime DLLs on PATH when running them.
+
+From the repository root, `python tools/validate.py --only host-win host-linux`
+runs both sequences above with the right toolchain for each, the Linux one
+inside WSL (see firmware/test/CLAUDE.md, "Validation").
+
+By hand in WSL, use a build directory on the Linux filesystem, because
+extracting dependencies on `/mnt/c` meets Windows rename locks:
+`cmake --preset linux -B ~/.cache/drivelink/build`. Do not use `/tmp`: WSL
+keeps it in RAM and loses it when the idle VM stops.
 
 ## Try the virtual device
 

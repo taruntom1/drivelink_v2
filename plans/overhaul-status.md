@@ -175,6 +175,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | 2026-11-13 | F4b | The device reports its limits as read-only system params (`limits.*`), not in `GET_INFO`. F4b adds the loop, instance and group limits; later steps add their own | No new op and no wire format change; a host can say "4 of 4 loops" before it sends an op. Kept out of F4a, which was already in progress (user decision) | yes |
 | 2026-11-13 | F4c | A source's sampled value and its age are ordinary signals generated from a `kind: source` item; the param carries a new `Source` flag (`0x80`); `age_us` of `0xFFFFFFFF` means no valid sample. No source status op | Groups, capture and plots work on them unchanged, and no second path from a loop to the config task is needed (user decision) | yes |
 | 2026-11-13 | F3d, F4c | Two new steps: F3d (loops and the flag) before F4a, and F4c (sources) after F4b | F4a, F4b and F5 are then built on the loop table; F4c reuses F4a's latch code | yes |
+| 2026-11-13 | tooling | `tools/validate.py` is the one list of checks; CI calls it with `--only`, and a step's new test suite is added to it. Checks run in sequence, the WSL build directory is outside `/tmp`, and a compiler crash is retried once | In F4a three IDF builds at once made a timing test fail, WSL lost a `/tmp` build directory and the no-log build needed a manual retry; the commands were repeated in CI, two guides and the skill (user decision) | n/a |
 
 ## Hardware test results
 

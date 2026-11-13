@@ -48,12 +48,39 @@ The ports and the state of the bench board are in `plans/overhaul-status.md` ("H
 
 The host library, CLI and vdev have their own unit and integration tests under `host/test`, built by `host/superbuild`. See `host/README.md`.
 
+## Validation (`tools/validate.py`)
+
+One script holds the list of checks and their commands. CI calls it with `--only`, so a check runs the same way locally and in CI. It needs only Python 3 (with PyYAML for `gen` and `native`), and runs from the repository root in any shell.
+
+| Check | What it runs | Toolchain it sets up |
+|---|---|---|
+| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py` | The Python that runs the script |
+| `native` | Configure, build and ctest of `firmware/test/native` | `g++`, `cmake` and `ninja` from `PATH` (Strawberry on this machine) |
+| `host-win` | The `windows-mingw` preset: build, ctest, `install_smoke.py`. Windows only | Qt's MinGW, CMake and Ninja, first on `PATH` |
+| `host-linux` | The `linux` preset: build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`) |
+| `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of `firmware/CLAUDE.md` |
+
+- **Modes.** `quick` is `gen`, `native` and the host check of this OS. `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
+- **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
+- **Unchanged checks are skipped.** A check that passed shows as `pass (unchanged)` until a file it covers changes. `--force` runs it anyway.
+  - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns only `gen`. Any other change reruns every check.
+  - The state is `build/validate/state.json`. Toolchain changes are not seen: use `--force` after one.
+- **Build directories** are the ones the commands in `firmware/CLAUDE.md` and `host/README.md` use, so they stay warm between runs. The WSL build is in `~/.cache/drivelink/<worktree>/host-linux` inside the distro. That is on the Linux filesystem (no rename locks) and not in `/tmp`, which WSL keeps in RAM and loses when the idle VM stops. Delete it there when the worktree is gone.
+- **ccache.** On Windows the IDF export turns on ccache, so the first IDF build of a new worktree mostly reuses another worktree's objects. A cached object replays its warnings, so the warning scan still sees them.
+- **Warnings.** The scan sees only the files compiled in that run. After a run that found warnings, the next run deletes that app's build directory and compiles everything. So fix the warning; a rerun never makes it go away. CI always builds from clean.
+- **Compiler crashes.** A step that fails with `internal compiler error` in its output runs once more (see "Build traps" in `firmware/CLAUDE.md`). If it then passes, the result says `pass (after one retry of a compiler crash)`. Nothing else is retried: a failing test fails the check.
+- **Missing tools.** Every check's toolchain is looked up before anything runs. A check that can't run shows as `UNAVAILABLE` and fails the run.
+- **Results.** One line per check with its time. A failure prints the end of its output. The full output is `build/validate/<check>.log`, and `build/validate/summary.txt` is the text for the PR's validation section: it has the revision and says what was not run.
+- **Adding a check:** one `Check` entry in `CHECKS`, and its name in the CI job that has its toolchain.
+- **Hardware.** The script never flashes a board or opens a serial port. The HIL and smoke tests above stay separate and explicit.
+
 ## CI (`.github/workflows/ci.yml`)
 
-Runs on every pull request and on pushes to `main` and `firmware_overhaul`.
-- `idf.py build` in the `espressif/idf:v5.5.2` container, which fails on any compiler warning. It builds `firmware/`, then `firmware/` again with `firmware/sdkconfig.ci.nolog` (`CONFIG_DIAG_CONSOLE_LOG=n`), then `firmware/test/uart_comm`. Each app is built from inside its own directory.
-- On Ubuntu: `tools/gen/gen.py --check`, the generator's unit tests, `protocol.py` and the native tests.
-- The host Linux job builds `host/superbuild`, and also checks the installed CMake packages and the Linux PTY serial path.
+Runs on every pull request and on pushes to `main` and `firmware_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
+- `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
+- `gen` and `native` on Ubuntu.
+- `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.
+- There is no Windows job yet (H1 adds one). `host-win` runs only locally.
 
 F3d adds configurable-loop coverage (one through eight loops, sparse ids, empty
 saved layouts, factory fallback, task failures, live rate rollback and the native

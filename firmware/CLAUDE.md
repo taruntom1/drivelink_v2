@@ -27,7 +27,17 @@ A `CLAUDE.md` in a directory loads by itself when you work there. Open the other
 
 ## Commands
 
-**Export ESP-IDF first.** In PowerShell: `. $HOME\esp\v5.5.2\esp-idf\export.ps1`. On this machine two things go wrong:
+**All the checks, one command** (from the repository root, in any shell; it exports ESP-IDF itself):
+
+```bash
+python tools/validate.py quick             # generator, native tests, this OS's host tests; no IDF
+python tools/validate.py full              # every check; run it before a PR
+python tools/validate.py --only fw-nolog   # one check (--list names them)
+```
+
+It runs the checks one at a time, skips a check whose code is unchanged since it passed, and writes the logs and a summary to `build/validate/`. The guide is in [firmware/test/CLAUDE.md](test/CLAUDE.md) ("Validation"). The commands below are the ones it runs, for working on one build by hand.
+
+**Export ESP-IDF first** (for `idf.py` by hand; `tools/validate.py` does this itself). In PowerShell: `. $HOME\esp\v5.5.2\esp-idf\export.ps1`. On this machine two things go wrong:
 - The IDF Python env is built for Python 3.11. If `export.ps1` reports a missing `py3.14` env, put `C:\Espressif\tools\idf-python\3.11.2` first on `PATH` and export again.
 - The shell's `IDF_TOOLS_PATH` points at `~\.espressif\Espressif`, which has no `python_env` (the env is under `~\.espressif`). `export.ps1` then fails with "ESP-IDF Python virtual environment ... not found", and `idf.py` is not found.
 
@@ -81,6 +91,8 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 **Build traps:**
 - **A changed Kconfig default doesn't reach an existing `sdkconfig`.** After a pull that changes one, delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` before building, or the old values stay.
 - **Zero warnings.** The builds have none today, and CI fails on any.
+- **One build at a time.** In F4a three IDF builds ran together, and a timing-sensitive native test failed under the load. `tools/validate.py` runs everything in sequence; do the same by hand.
+- **A compiler crash in an IDF file.** On this machine the first no-log build of a fresh worktree stops with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. It happened in F4a and in every cold no-log build since, also with nothing else running. It is not our code: the same compile passes when repeated, alone or under load. Run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
 - **A new pure source file** must also be added to `firmware/test/native/CMakeLists.txt` (see [firmware/test/CLAUDE.md](test/CLAUDE.md)).
 
 ## Architecture
@@ -171,7 +183,7 @@ Every protocol on top of the `uart_comm` frame follows these rules:
 ### Definition of done
 
 A change is done when all of the following are true:
-- **Builds:** `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated files are current (`python tools/gen/gen.py --check`), and the native tests and the generator's unit tests pass. CI checks all of them.
+- **Builds:** `python tools/validate.py full` passes. That means: `idf.py -C firmware build` (also with `firmware/sdkconfig.ci.nolog`) and `idf.py -C firmware/test/uart_comm build` succeed with zero warnings, the generated files are current (`python tools/gen/gen.py --check`), and the native tests, the generator's unit tests and the host tests pass. CI runs the same checks through the same script.
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates the file that holds it: this file, an area file from the table above, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
