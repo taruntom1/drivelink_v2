@@ -155,7 +155,7 @@ Instance tick order comes from the wiring (`Ref` params) and is computed once at
 `protocol/defs/` holds:
 - `registry.yaml`: MSG_TYPEs and stream channel ranges. Module type ids live in each type's own YAML (`type_id`); the generator checks they are unique, and `0x00` is reserved for `system`.
 - `diag_codes.yaml` (moved from the diag component)
-- `system.yaml`: system items such as the watchdog timeout and the status rate (type `0x00`). The loop rates were here until F3d; their ids are retired.
+- `system.yaml`: system items such as the watchdog timeout and the status rate (type `0x00`), and from F4b the read-only `limits.*` params (see "Limits" under the notes on the ops). The loop rates were here until F3d; their ids are retired.
 - `loop.yaml` (from F3d): the built-in `loop` type, whose instances are the loops
 - one file per module type
 
@@ -267,6 +267,12 @@ The rules follow the protocol conventions:
   - the build id and the descriptor hash
   - capture capacity, the receive limit and the list of running loops (id, name, rate, and from F3d a flags byte with `realtime`)
   - an instance count and flags: `pending_reboot`, `layout_invalid`, `config_loaded_from_nvs` and `safe_mode`
+- **Limits** (from F4b). The device reports the limits of its build as read-only system params, not in `GET_INFO`:
+  - F4b adds `limits.loops` (`CORE_MAX_LOOPS`), `limits.instances` (`CORE_MAX_INSTANCES`), and the group limits that F4a built (`limits.sub_groups`, `limits.cmd_groups`, `limits.group_entries`). F4c adds `limits.link_values`. A later step that adds a limit adds its param.
+  - Each is a `u16` param of `system.yaml` flagged `read_only` (so it is not persisted). The core writes its value at boot from `CoreConfig`. A `SET` is refused (`ReadOnly`).
+  - The host reads them with the normal param `GET` and learns their names from the describe family, so this needs no new op and no change to a wire format. Only the descriptor hash changes.
+  - A host uses them to say "4 of 4 loops" before it sends an op. The device still refuses one over the limit (`Capacity`).
+  - `GET_INFO` keeps the two it already has: the capture capacity and the receive limit.
 - **Param `SET`**
   - **Staging rules:**
     - `reboot_required` params go to the pending layout, and so does any param of an instance that exists only there. Such a batch must be all pending (else `CrossLoopBatch`); accepted, it answers `PendingReboot` with the applied values.
@@ -478,10 +484,26 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
 
 ### Sources: reading a value across loops (F4c)
 
-- **Declaration.** A source is a `u32` param flagged `reboot_required` with `source: <value type>` in the YAML. Its value is a packed `Ref` to a signal or input of that value type, in any loop (its own included); 0 means not connected. F4c fixes the bit layout in `defs.hpp` and how `GET_ITEMS` marks a source.
-- **In the module.** `start()` binds it with `ctx.bindSource(id, &m_x)`, where `m_x` is a `core::Sampled<T>`:
-  - `value`: the copy taken at the producer's tick.
-  - `age_us`: this tick's start time minus the producer tick's start time.
+- **Declaration.** A source is one YAML item of `kind: source`. It gives the value type of its target and two more ids:
+
+  ```yaml
+  - {id: 0x0010, kind: source, name: left, type: i32, value_id: 0x0110, age_id: 0x0111}
+  ```
+
+  The generator expands it into three items of the type. On the wire they are an ordinary param and two ordinary signals:
+  - the param `left` (id `0x0010`): a `u32` flagged `reboot_required` and `Source` (`ItemFlag` `0x80`, the last free bit). Its value is a packed `Ref` to a signal or input of the declared value type, in any loop (its own included); 0 means not connected. F4c fixes the bit layout of the packed `Ref` in `defs.hpp`.
+  - the signal `left.value` (id `0x0110`), of the declared value type: the sampled copy.
+  - the signal `left.age_us` (id `0x0111`), a `u32` in µs: the age of that copy.
+- **What the host sees.** There is no op for sources. The host reads a source's state as it reads any signal:
+  - It knows a param is a source by the `Source` flag. It finds the two signals by name (`<param name>.value` and `<param name>.age_us`; the generator makes them, so the names can't drift), and takes the target's value type from the `.value` signal.
+  - `age_us` is `0xFFFFFFFF` while there is no valid sample. A real age saturates at `0xFFFFFFFE` (about 71 minutes).
+  - The host works out why a source has no valid sample from what it already has: the param is 0 (not connected), the target instance is not running (missing), or nothing has arrived yet.
+  - "Stale" is a host rule (for example an age above three periods of the producer's loop), or the consumer's own limit param if its type has one.
+  - Both signals can go into a subscription group of the consumer's loop and into a capture, so the age can be streamed and plotted.
+  - The new flag bit changes what `GET_ITEMS` can send, so F4c bumps the core wire version.
+- **In the module.** `start()` binds the three items with one call, `ctx.bindSource(id, &m_x)`, where `m_x` is a `core::Sampled<T>`. The core fills it at step 5 of the consumer's tick:
+  - `value`: the copy taken at the producer's tick. It is the storage of the `.value` signal.
+  - `age_us`: this tick's start time minus the producer tick's start time, or `0xFFFFFFFF`. It is the storage of the `.age_us` signal.
   - `valid`: false while the source is not connected, the producer is not running, or nothing was published yet.
   - `fresh`: true if a new snapshot arrived since this instance's last tick.
 - **A missing producer does not stop the consumer.** The consumer starts and sees `valid == false`, so a fusion module can go on with what it has. This differs from wiring, where a missing target leaves the instance out (`DependencyMissing`).
@@ -501,7 +523,7 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
 ### What it changes in the other steps
 
 - **F4a.** A group is bound to a loop id, for any loop. Its "latch a list of bound signals at the end of the tick" code is written so that F4c's links can use it.
-- **F4b.** The monitor walks the loop table. "Armed loop" and the `paused` rule use the `realtime` flag.
+- **F4b.** The monitor walks the loop table. "Armed loop" and the `paused` rule use the `realtime` flag. It also adds the read-only `limits.*` system params (see "Limits" under the notes on the ops).
 - **F5 and F6.** The motor types are `realtime: required`; `imu.bno055` is `forbidden` and runs in the factory `sensor` loop.
 - **F7.** Capture takes a loop id. F7b decides whether the test signal generator stays one per loop, now that the number of loops varies.
 - **Host.** `libdrivelink` and the CLI see loops as instances. The GUI's layout screen (H2) edits them.
@@ -587,8 +609,8 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F2 Definitions and generator | `tools/gen/`, `registry.yaml`, and `diag_codes.yaml` moved to `protocol/defs/`. The generated registry replaces the Kconfig MSG_TYPEs, and the "IDs from Kconfig" convention in `firmware/CLAUDE.md` is replaced in the same PR. The descriptor table format and hash. The legacy manager streams move out of the way: motor setpoint `0xBD`, motor telemetry `0xBE`, IMU `0xBF`. They are marked `legacy`, and each is removed when its manager is ported. Until then the registry's `static_assert`s keep the group channel limits below them. motor_manager and the IMU go to protocol v6 with the move. | Generated headers are used by diag and the managers, and the CI staleness check passes |
 | F3 Core skeleton and dev client | `core_os` (IDF and native), registry, loops (`control`, `sensor`), layout and NVS (A/B, validation, GPIO registry), safe mode, the system/layout/describe/param families, the action family, the status stream, `GET_INFO`, `mod_mock`, `drivelink-vdev` (in `host/vdev/`). diag v2. The first slice of `libdrivelink` (serial and TCP transport, session, the core families) and `drivelink-cli`, built by a first `host/superbuild`. `firmware/test/host` becomes `firmware/test/native`, which builds the core against `core_os`'s native backend. | With the CLI, on vdev and on hardware: mock instances can be added, described, set, saved, rebooted and reloaded |
 | F3d Configurable loops | Loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, and the host library, CLI and vdev updated with it. | With the CLI, on vdev and on hardware: a third loop can be added, given instances, saved, rebooted and reloaded; safe mode starts no loop |
-| F4 Groups and arming | Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
-| F4c Sources | Source params, the per-loop-pair snapshot buffers, `Sampled<T>`, and a `fusion.mock` type that reads `feedback.mock` and `imu.mock` across loops. | vdev: the fusion mock's output is streamed with the expected ages; on hardware the control loop's longest tick is measured with and without a 16-value link |
+| F4 Groups and arming | The read-only `limits.*` system params (F4b). Subscription and command groups (preallocated, epochs), arming and the arm state machine, `DISARM` fast path, the safety monitor, the watchdog, `DIAG_RAISE`, the `blocks_arm` / `disarms` flags and `kind: latched`, all working on mock instances. The CLI gains arm, stream and plot-to-CSV commands. | vdev: mock motors are commanded and streamed through the CLI; the watchdog, a simulated loop stall and faults disarm |
+| F4c Sources | Source items (`kind: source`: the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair snapshot buffers, `Sampled<T>`, and a `fusion.mock` type that reads `feedback.mock` and `imu.mock` across loops. | vdev: the fusion mock's output is streamed with the expected ages; on hardware the control loop's longest tick is measured with and without a 16-value link |
 | F5 Motor stack as modules | Split `motor_controller` into the actuator, feedback and controller types, with YAML, `emergencyStop()`, `onArmTransition()` and bumpless mode switching. Delete `motor_manager`. | Velocity and position control on hardware through groups; the monitor stops the motors in the loop-stall test; nothing remains of the old motor protocol |
 | F6 IMU module | `imu.bno055` on the `sensor` loop, with calibration actions (`calibration_read`, `calibration_write`, `calibration_apply`, all `runs_in: paused`). Delete `imu_bmo_055`. | IMU signals in subscription groups, and calibration works through actions |
 | F7 Capture and test signals | The capture and testgen families, PSRAM enabled (caps alloc only). Evaluate `SPIRAM_XIP_FROM_PSRAM`. | A step response and a chirp, captured at 1 kHz on hardware with their inputs |

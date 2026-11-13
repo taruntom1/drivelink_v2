@@ -1,6 +1,11 @@
 # To-do (firmware): loop choice at `ADD_INSTANCE`, and removing an instance others are wired to
 
-Status: open, added 2026-11-12 during the GUI design (G4). Not scheduled. Proposed for **F3a** (layout and its validation) and **F3b** (the layout family on the wire). Point 1 changes the wire protocol, so it follows the "host and firmware change together" rule. Point 2 only settles behaviour the plan leaves open.
+Status: **closed on 2026-11-13.** Nothing is left to schedule. The text below the outcome is the original proposal, kept as the record.
+
+## Outcome
+
+1. **Loop at add: built.** `ADD_INSTANCE` is `type | loop | label` (F3a-1, F3b). Loop `0xFF` picks the lowest-numbered compatible loop, and a loop the type does not allow answers `LoopMismatch`. `LIST_INSTANCES` reports each instance's loop. Since F3d the loop is a loop instance id, and a type's allowed loops come from its `realtime` requirement. See `docs/protocol/core.md`.
+2. **Remove with dependents: the firmware refuses it** (`Referenced`), for an instance that another one is wired to and for a loop that still holds an instance. The user decided on 2026-11-13 that the GUI follows the firmware: Remove is disabled and names what must be rewired first. The GUI rework is phase G7b in [gui-design.md](gui-design.md).
 
 ## Why
 

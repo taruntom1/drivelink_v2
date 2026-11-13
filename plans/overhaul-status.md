@@ -72,8 +72,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F3c | `drivelink-vdev`, first `libdrivelink` slice, `drivelink-cli`, `host/superbuild`, host-linux CI | bare board: CLI serial smoke | high | merged | [#37](https://github.com/taruntom1/drivelink_v2/pull/37) |
 | F3d | Configurable loops: loops as instances of the built-in `loop` type, the `realtime` flag in place of the loop classes, the factory layout, the real-time guard in the native tests, core wire v2, host library, CLI and vdev | bare board: a third loop added, saved and reloaded; stack marks; safe mode starts no loop | high | in review | [#41](https://github.com/taruntom1/drivelink_v2/pull/41) |
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id | no | high | planned | |
-| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands | yes: monitor and watchdog on the board with mock modules | high | planned | |
-| F4c | Sources: source params, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | planned | |
+| F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | planned | |
+| F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | planned | |
 | F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch | yes: motors | high | planned | |
 | F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test on hardware | yes: motors | high | planned | |
 | F6 | `imu.bno055` module and calibration actions; delete `imu_bmo_055` | yes: IMU | high | planned | |
@@ -91,7 +91,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 Each note is deleted by the step that uses it.
 
-- **GUI design follow-ups (carried from `claude/gui-design`).** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour; [todo-layout-ops.md](todo-layout-ops.md) records the GUI assumptions for loop selection and removing referenced instances. These were proposed before F3b landed and must be reconciled with the current core before scheduling a wire change. No firmware changes are authorised by the GUI design session.
+- **GUI design follow-ups.** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour. It was proposed before F3b landed and must be reconciled with the current core before a wire change is scheduled. [todo-layout-ops.md](todo-layout-ops.md) is closed: the loop at `ADD_INSTANCE` is built, and the GUI follows the firmware's `Referenced` refusal. The GUI design is being brought in line with F3d's loops and F4c's planned sources in phase G7b of [gui-design.md](gui-design.md). That phase found two gaps, both settled on 2026-11-13 and scheduled below: the device's limits (F4b) and a source's value and age as signals (F4c). No firmware changes are authorised by the GUI design sessions.
 
 - **F4a**
   - The command groups have 29 channels (`kCmdGroupChannelCount`) while the legacy streams sit on `0xBD`–`0xBF`. The Kconfig group count must `static_assert` against it.
@@ -102,8 +102,16 @@ Each note is deleted by the step that uses it.
   - `Instance` has no `onArmTransition` or `emergencyStop` yet.
   - Diag state has 254 fixed sparse identities. The `blocks_arm` and `disarms` flags are in the metadata with false defaults; the latch and arming behaviour is missing.
   - The monitor walks the loop table. See the paused-loop heartbeat note in the F3d handoff.
+  - **Limits as read-only system params** (plan: "Limits" under the notes on the ops). Add to `system.yaml`: `limits.loops`, `limits.instances`, and the group limits F4a built (`limits.sub_groups`, `limits.cmd_groups`, `limits.group_entries`).
+    - Each is `u16`, `read_only`, and takes its value from `CoreConfig` at boot. The system instance must write it into the record's shadow, because a param's boot value otherwise comes from its YAML default.
+    - No wire format changes; the descriptor hash does. Test: `GET` returns the build's values, `SET` answers `ReadOnly`, and SAVE writes none of them.
+    - First check how F4a exposed its group limits. If it reports them another way (for example in the group `LIST` reply), keep one way only and say so in the decision log.
 - **F4c**
-  - `ItemFlag` has one free bit (`0x80`). `GET_ITEMS` also carries a `ref` string, which could mark a source instead.
+  - **A source is three items** (plan: "Sources", "Declaration" and "What the host sees"). `kind: source` in the YAML expands into the param (flag `Source`, `ItemFlag` `0x80`, the last free bit) and the signals `<name>.value` and `<name>.age_us`. There is no source op.
+    - Generator: the expansion, the name rule, unique ids for all three, and tests in `tools/gen/tests`. `docs/protocol/definitions.md` gets the new kind.
+    - `age_us` is `0xFFFFFFFF` with no valid sample and saturates at `0xFFFFFFFE`.
+    - The flag bit is a wire change: bump the core version, and update `docs/protocol/core.md`, the host library and the CLI in the same PR.
+  - Add `limits.link_values` (`CORE_MAX_LINK_VALUES`) beside the limits F4b added.
 - **F5**
   - `feedback.mock` casts its ref to the concrete mock actuator and reads the previous tick's values. Real actuator and feedback interfaces replace that.
   - Removing the legacy motor streams (F5b) frees two command group channels.
@@ -166,6 +174,8 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | 2026-11-13 | F3d | At most 4 loops by default (Kconfig, up to 8); `rate_hz` 1–2000 for every loop; `control` + `sensor` are the factory layout | User decision | yes |
 | 2026-11-13 | F3d | Loop priority is capped at 20; every real-time loop task joins the Task WDT; safe mode starts no loop task; the status stream carries a loop id with each overrun count | The monitor (esp_timer task, 22) must preempt every loop; a bad loop config can be what crashes; loop ids can have gaps. Proposed with the design and not objected to | yes |
 | 2026-11-13 | F4c | A source whose producer is missing does not stop its consumer; the consumer runs and sees `valid == false` | A fusion module can go on with what it has (user decision) | yes |
+| 2026-11-13 | F4b | The device reports its limits as read-only system params (`limits.*`), not in `GET_INFO`. F4b adds the loop, instance and group limits; later steps add their own | No new op and no wire format change; a host can say "4 of 4 loops" before it sends an op. Kept out of F4a, which was already in progress (user decision) | yes |
+| 2026-11-13 | F4c | A source's sampled value and its age are ordinary signals generated from a `kind: source` item; the param carries a new `Source` flag (`0x80`); `age_us` of `0xFFFFFFFF` means no valid sample. No source status op | Groups, capture and plots work on them unchanged, and no second path from a loop to the config task is needed (user decision) | yes |
 | 2026-11-13 | F3d, F4c | Two new steps: F3d (loops and the flag) before F4a, and F4c (sources) after F4b | F4a, F4b and F5 are then built on the loop table; F4c reuses F4a's latch code | yes |
 
 ## Hardware test results
