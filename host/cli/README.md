@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v6 before any requested mutation.
+vdev. Every connection checks core v7 before any requested mutation.
 
 F4c source parameters have `is_source: true` in item JSON (flag 0x80).
 Configure them through `set`, using the numeric packed reference
@@ -81,7 +81,7 @@ capacity prefix, while the Client::groups JSON convenience fields remain.
 bench-enabled firmware / vdev --allow-crash schedules a deliberate loop stall.
 
 Capture (F7a): `capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...`
-with TRIGGER `manual`, `value_change REF` or `threshold REF rising|falling VALUE`
+with TRIGGER `manual`, `testgen_start`, `value_change REF` or `threshold REF rising|falling VALUE`
 (the value is parsed with the trigger item's descriptor). `capture-arm`,
 `capture-trigger`, `capture-abort` and `capture-status` map to the ops.
 `capture-wait [TIMEOUT_MS]` returns once the capture is done, with the
@@ -89,3 +89,27 @@ CaptureDone event when it arrived during the call. `capture-read` pages every
 sample of a done capture and adds typed rows; `capture-read --csv` prints
 `index,time_us,REF...`, where time is relative to the trigger sample
 (`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.
+
+## Test signals (F7b)
+
+`testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT`
+requires an already armed device and an independently fed command watchdog.
+WAVE is `step`, `square`, `ramp`, `sine`, `chirp_linear` or `chirp_log`.
+Unused frequencies must be zero. Duration is per repetition; repeat 0 means
+until STOP/DISARM. The target must be a running f32 input flagged Testgen.
+Values are clamped to its descriptor limits.
+
+`testgen-stop LOOP` is idempotent. STOP/completion holds the last generated
+value until a command received after termination; ignored commands and
+keepalives cannot restore an older value. DISARM resets inputs as usual.
+`testgen-status LOOP` reports the run and configuration. `testgen-wait LOOP
+[TIMEOUT_MS]` correlates loop/run, polls STATUS, and returns an optional matching
+TestgenDone event. It does not feed the watchdog.
+
+`testgen-run GROUP PERIOD_MS TIMEOUT_MS LOOP REF WAVE OFFSET AMPLITUDE F0 F1
+DURATION_MS REPEAT` arms, supplies prefix-only command-group keepalives, starts
+the test, waits within the supplied timeout, and disarms on completion,
+interruption or failure. GROUP must already be configured; PERIOD_MS must be
+less than half watchdog_ms. Both this workflow and `cmd-run` attempt DISARM
+even when ARM may have applied but its reply was lost. Mutations are never
+retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.

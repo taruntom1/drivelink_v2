@@ -177,3 +177,25 @@ and the longest control tick with a 1-ref and a 16-ref capture. Sample spacing
 is proven from the captured loop tick counter. Integration runs it on vdev at
 200 Hz; on the bare board use `--endpoint serial://COM3 --expect-psram`. It
 requires and restores a clean loops-only layout with idle groups.
+
+## Test generator smoke (F7b)
+
+`python host/test/testgen_smoke.py --cli <cli> --endpoint <endpoint>
+--loop-rate 1000 [--flash-write] [--report result.json]` captures a generated
+step and linear chirp through the cascade controller and mock motor, checks
+STOP/hold/fresh-command handoff and watchdog cancellation, and restores the
+original loops-only layout/settings. Device loop counters prove timing;
+Windows/Linux vdev integration uses 50 Hz for desktop scheduling. Native
+tests cover exact waveform/arming/concurrency boundaries. A local frame proxy
+drops successful ARM replies and requires cleanup DISARM from both CLI run
+workflows. `--flash-write` measures disarmed SAVE during capture for XiP
+comparison; `--stack-wait` supports longer log-chirp/stack observation.
+
+With a motor/encoder attached, use `--modules real --confirm-first-run
+--pwm-pin P --dir-pin D --enc-a A --enc-b B --cpr C [--gear G]
+[--duty-cap 0.2 --probe-duty 0.1 --min-response R]`. First-run procedure:
+wheels raised, a current-limited supply, a low duty cap and a hand on the
+power switch. A positive step response is required before the chirp.
+This real-motor check remains deferred; the same workflow passed with mocks
+on vdev and the bare board. XiP measurements and commands are recorded in
+`plans/f7b-implementation.md`; normal firmware keeps XiP disabled.

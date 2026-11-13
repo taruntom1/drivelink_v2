@@ -74,3 +74,10 @@ F6's `imu.mock` uses the shared pure IMU state/calibration codec. Persistent
 calibration, paused actions and modes run through the actual core; vdev has no
 I2C backend and does not register `imu.bno055`. The generic CLI/host discovers
 all module metadata; no module table is compiled into libdrivelink.
+
+F7b runs the actual per-loop test generator, capture-start trigger, terminal
+events and aggregate status flag. It registers no separate waveform emulator.
+Host integration runs step/chirp and handoff tests at 50 Hz; deterministic
+native tests cover exact timing and concurrent loops. Its TCP endpoint also
+supports the test-only lost-ARM-response proxy, which verifies cleanup DISARM
+in both `testgen-run` and `cmd-run`.

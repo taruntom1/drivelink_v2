@@ -173,3 +173,57 @@ overhaul status file. Record the approved Codex exception, terminal/handoff
 policy, F7a's merged state, XiP results, hardware results and the F8 handoff.
 No unrelated legacy changes. After all gates pass, commit, push and open one
 PR into `firmware_overhaul`, then record its link in the status file.
+
+## Review and validation results
+
+Self-review plus an independent Codex review at high effort completed. The
+review found an ARM-reply-loss cleanup bug in `testgen-run`; ownership is now
+marked before attempting ARM, so an uncertain outcome attempts DISARM. The
+same existing pattern in `cmd-run`, used by capture smoke, was corrected too.
+A localhost proxy against actual vdev drops successful ARM replies and
+requires timeout exit plus an explicit cleanup DISARM frame for both commands.
+The independent reviewer cleared both follow-ups; no findings were rejected.
+
+Full validation passed all seven checks at code commit `95950e4`: generator,
+305 native tests, Windows/Linux host tests/integration/install smoke and three
+zero-warning IDF builds. Vdev testgen scenarios use 50 Hz because desktop
+scheduling can exceed the 200 Hz stall window; native tests prove exact
+boundaries and the bare board was tested at 1 kHz.
+
+## Measured results (2026-11-14)
+
+Bare ESP32-S3 with 8 MiB octal PSRAM at 80 MHz, no motor or IMU attached;
+same firmware sources and 1 kHz loop in each profile. Capture-only costs use
+three actuator mocks and 2,000 samples; generated step/chirp runs use the
+cascade controller plus motor/feedback mocks and 3,000 samples with eight refs.
+Numbers are the largest captured `last_run_us`, excluding the first sample.
+
+| Measurement | Normal (XiP off) | Isolated XiP on |
+|---|---:|---:|
+| Capture, 1 ref | 75 us | 50 us |
+| Capture, 16 refs | 83 us | 53 us |
+| Generated step with capture | 222 us | 102 us |
+| Linear chirp with capture | 255 us | 125 us |
+| Disarmed SAVE during capture | 457 us | 94 us |
+| Advertised capture capacity | 4 MiB | 4 MiB |
+
+Both profiles passed with zero capture irregularity or overruns in these runs,
+including the measured disarmed SAVE. Device tick counters proved sample
+spacing. This is a bounded bench observation, not a guarantee for every flash
+erase or future layout. STOP/hold/fresh handoff and watchdog cancellation passed
+in both profiles. XiP copies instructions/rodata into PSRAM: the measured
+linker spans are 269,770 + 87,536 bytes (about 349 KiB before mapping alignment).
+Both profiles still advertised the configured 4 MiB capture cap.
+
+XiP remains disabled in normal defaults as approved. The isolated profile is
+available through `python tools/bench_fw.py xip`; enabling it by default needs
+a separate decision including boot/PSRAM-fallback implications. Existing
+SAVE/OTA armed restrictions and internal-RAM atomics do not change.
+
+Normal firmware was restored with the guarded helper. A 45 s log-chirp run
+with capture kept every task above 1 KiB free (minimum 1,644 bytes); stack
+marks are in the status file. COM4 was closed before cleanup reboot. Final
+legacy/core/safety/CLI and 1 kHz mock-cascade smoke all passed. The original
+loops/rates (1000/100 Hz), watchdog 200 ms, status 10 Hz, idle groups/capture/
+testgen and normal bench-op refusal were verified. A real-motor step/chirp
+remains deferred, using the same script's real-module mode.

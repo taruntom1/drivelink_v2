@@ -24,5 +24,11 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
   - Never use `uxTaskGetSystemState()`: it scans every stack inside a critical section and stalls the control loop on the other core.
 - **Bench-only options** in `Kconfig.projbuild`, default off in normal firmware:
   - `CONFIG_CORE_BENCH_CRASH` enables BenchCrash for the safe-mode check and BenchStall for monitor/Task WDT checks. Normal builds reject the op.
-  - From the repository root, run `python tools/bench_fw.py bench` on the bare board, then `python tools/bench_fw.py normal` after the checks. Both export IDF and flash COM3 (`--port` overrides it); full output is in `build/bench_fw/<mode>.log`. `bench` uses the committed `firmware/sdkconfig.bench` fragment and isolated, git-ignored `firmware/build_bench/`, without touching `firmware/sdkconfig`. `normal` reconfigures and builds, then refuses to flash if `firmware/build/config/sdkconfig.h` enables `CONFIG_CORE_BENCH_CRASH`. Still verify bench commands are refused on the board after restoration.
-  - `--dry-run` after either subcommand prints the commands without exporting IDF, building or flashing. This helper never runs as part of validation; its hardware-free tests run under `gen`.
+  - From the repository root, run `python tools/bench_fw.py bench` on the bare board, then `python tools/bench_fw.py normal` after the checks. Both export IDF and flash COM3 (`--port` overrides it); full output is in `build/bench_fw/<mode>.log`. `bench` uses the committed `firmware/sdkconfig.bench` fragment and isolated, git-ignored `firmware/build_bench/`, without touching `firmware/sdkconfig`. `normal` reconfigures and builds, then refuses to flash if the generated header enables bench or XiP/code/rodata relocation. Still verify bench commands are refused on the board after restoration.
+  - `--dry-run` after any subcommand prints the commands without exporting IDF, building or flashing. This helper never runs as part of validation; its hardware-free tests run under `gen`.
+
+F7b's `python tools/bench_fw.py xip` uses `firmware/sdkconfig.xip` and
+isolated, ignored `firmware/build_xip/`; it verifies bench is off and XiP,
+instruction fetch and rodata relocation are all on before flashing. `normal`
+verifies all three are off. Always restore normal after evaluation. This
+profile never changes `firmware/sdkconfig`; measurements are in the F7b plan.
