@@ -1,205 +1,108 @@
 #include "doctest.h"
 
-#include "pid_controller.hpp"
+#include "pid_kernel.hpp"
 
 #include <cmath>
+#include <limits>
 
-using pid::PidConfig;
-using pid::PidController;
+// pid::Kernel, the PID of controller.cascade_pid. The cascade behaviour that
+// uses it is tested in test_motor_modules.cpp.
 
 namespace {
-
-PidController makePid(float kp, float ki, float kd, float cutoff_hz = 0.0f)
-{
-    PidConfig cfg{};
-    cfg.kp = kp;
-    cfg.ki = ki;
-    cfg.kd = kd;
-    cfg.output_min = -1.0f;
-    cfg.output_max = 1.0f;
-    cfg.derivative_cutoff_hz = cutoff_hz;
-    PidController pid(cfg);
-    pid.setMode(pid::Mode::Automatic);
-    return pid;
-}
-
+constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
+constexpr float kInf = std::numeric_limits<float>::infinity();
 } // namespace
 
-TEST_CASE("PID defaults come from Kconfig: output [-1, 1], derivative filter off")
+TEST_CASE("lowPassAlpha is 1 with no cutoff and the first-order factor otherwise")
 {
-    const PidConfig cfg{};
-    CHECK(cfg.output_min == doctest::Approx(-1.0f));
-    CHECK(cfg.output_max == doctest::Approx(1.0f));
-    CHECK(cfg.derivative_cutoff_hz == 0.0f);
+    CHECK(pid::lowPassAlpha(0.F, .01F) == 1.F);
+    CHECK(pid::lowPassAlpha(-5.F, .01F) == 1.F);
+    CHECK(pid::lowPassAlpha(10.F, .01F) == doctest::Approx(1.F - std::exp(-6.2831853F * 10.F * .01F)));
 }
 
-TEST_CASE("PID in Manual mode outputs 0")
+TEST_CASE("Kernel proportional term and symmetric output limit")
 {
-    PidConfig cfg{};
-    cfg.kp = 1.0f;
-    PidController pid(cfg);
-    REQUIRE(pid.isValid());
-    CHECK(pid.getMode() == pid::Mode::Manual);
-    CHECK(pid.compute(0.0f, 0.5f, 0.01f) == 0.0f);
+    pid::Kernel k; k.kp = 2;
+    CHECK(k.compute(0, .25F, .01F, 1) == doctest::Approx(.5F));
+    CHECK(k.p == doctest::Approx(.5F));
+    CHECK(k.compute(0, 10, .01F, 1) == 1);
+    CHECK(k.compute(0, -10, .01F, 1) == -1);
 }
 
-TEST_CASE("PID proportional term, direction and output clamp")
+TEST_CASE("Kernel integral scales with dt")
 {
-    auto pid = makePid(0.5f, 0.0f, 0.0f);
-    CHECK(pid.compute(0.0f, 1.0f, 0.01f) == doctest::Approx(0.5f));
-
-    pid.setDirection(pid::Direction::Reverse);
-    CHECK(pid.compute(0.0f, 1.0f, 0.01f) == doctest::Approx(-0.5f));
-
-    auto strong = makePid(10.0f, 0.0f, 0.0f);
-    CHECK(strong.compute(0.0f, 1.0f, 0.01f) == doctest::Approx(1.0f));
-    CHECK(strong.compute(0.0f, -1.0f, 0.01f) == doctest::Approx(-1.0f));
+    pid::Kernel k; k.ki = 1;
+    CHECK(k.compute(0, 1, .01F, 10) == doctest::Approx(.01F));
+    CHECK(k.compute(0, 1, .02F, 10) == doctest::Approx(.03F));
 }
 
-TEST_CASE("PID feedforward is added before the clamp")
+TEST_CASE("Kernel integrates conditionally: never further into saturation, always back out")
 {
-    auto pid = makePid(0.0f, 0.0f, 0.0f);
-    CHECK(pid.compute(0.0f, 0.0f, 0.01f, 0.3f) == doctest::Approx(0.3f));
-    CHECK(pid.compute(0.0f, 0.0f, 0.01f, 5.0f) == doctest::Approx(1.0f));
-}
-
-TEST_CASE("PID integral scales with dt")
-{
-    auto a = makePid(0.0f, 1.0f, 0.0f);
-    CHECK(a.compute(0.0f, 0.5f, 0.01f) == doctest::Approx(0.005f));
-
-    auto b = makePid(0.0f, 1.0f, 0.0f);
-    CHECK(b.compute(0.0f, 0.5f, 0.02f) == doctest::Approx(0.010f));
-
-    // Ten 10 ms steps integrate the same as five 20 ms steps.
-    auto fast = makePid(0.0f, 2.0f, 0.0f);
-    auto slow = makePid(0.0f, 2.0f, 0.0f);
-    for (int i = 0; i < 10; ++i) {
-        fast.compute(0.0f, 0.25f, 0.01f);
+    pid::Kernel k; k.kp = 1; k.ki = 10; k.kd = 1;
+    k.track(0, 0, .5F, 1);
+    CHECK(k.compute(0, 0, .01F, 1) == doctest::Approx(.5F)); // primes the derivative
+    SUBCASE("a push further into saturation is not integrated") {
+        k.kd = 0;
+        CHECK(k.compute(0, 1, .01F, 1) == 1);
+        CHECK(k.i == doctest::Approx(.5F));
     }
-    for (int i = 0; i < 5; ++i) {
-        slow.compute(0.0f, 0.25f, 0.02f);
+    SUBCASE("an error that reduces the integral is integrated while still saturated") {
+        // The falling input makes a large positive derivative term, so the
+        // output stays saturated high while the error is negative.
+        CHECK(k.compute(-.1F, -.15F, .01F, 1) == 1);
+        CHECK(k.d == doctest::Approx(10.F));
+        CHECK(k.i == doctest::Approx(.5F - 10.F * .05F * .01F));
     }
-    CHECK(fast.getIntegralTerm() == doctest::Approx(slow.getIntegralTerm()));
-    CHECK(fast.getIntegralTerm() == doctest::Approx(0.05f));
 }
 
-TEST_CASE("PID anti-windup clamps the integral to the output limits")
+TEST_CASE("Kernel derivative acts on the measurement: no kick on the first sample or a setpoint step")
 {
-    auto pid = makePid(0.0f, 10.0f, 0.0f);
-    for (int i = 0; i < 50; ++i) {
-        pid.compute(0.0f, 1.0f, 0.1f); // +1.0 per step without a clamp
-    }
-    CHECK(pid.getIntegralTerm() == doctest::Approx(1.0f));
-
-    // One step of opposite error unwinds it at once, instead of after ~49
-    // steps as an unclamped integral would.
-    pid.compute(0.0f, -1.0f, 0.1f);
-    CHECK(pid.getIntegralTerm() == doctest::Approx(0.0f));
+    pid::Kernel k; k.kd = 1;
+    CHECK(k.compute(5, 0, .01F, 100) == 0);  // unprimed
+    CHECK(k.compute(5, 50, .01F, 100) == 0); // setpoint step, input unchanged
+    CHECK(k.compute(4.9F, 50, .01F, 100) == doctest::Approx(10.F));
+    pid::Kernel slow; slow.kd = 1;
+    slow.compute(5, 0, .02F, 100);
+    CHECK(slow.compute(4.9F, 0, .02F, 100) == doctest::Approx(5.F)); // a rate: scales with 1/dt
 }
 
-TEST_CASE("PID derivative on measurement: no kick on the first sample or on setpoint changes")
+TEST_CASE("Kernel derivative cutoff applies a first-order low-pass")
 {
-    auto pid = makePid(0.0f, 0.0f, 1.0f);
-    CHECK(pid.compute(0.0f, 0.0f, 0.1f) == doctest::Approx(0.0f)); // first sample: no D
-    CHECK(pid.compute(0.0f, 1.0f, 0.1f) == doctest::Approx(0.0f)); // setpoint step, input still
+    pid::Kernel k; k.kd = 1; k.cutoff = 10;
+    k.compute(5, 0, .01F, 100);
+    CHECK(k.compute(4.9F, 0, .01F, 100) == doctest::Approx(pid::lowPassAlpha(10, .01F) * 10.F));
 }
 
-TEST_CASE("PID derivative is a rate: it scales with 1/dt")
+TEST_CASE("Kernel ignores a bad dt, input or setpoint and keeps its state")
 {
-    auto a = makePid(0.0f, 0.0f, 1.0f);
-    a.compute(0.0f, 0.0f, 0.1f);
-    // Input rises 0.05 in 0.1 s: rate 0.5/s, D on measurement is -0.5.
-    CHECK(a.compute(0.05f, 0.0f, 0.1f) == doctest::Approx(-0.5f));
-
-    auto b = makePid(0.0f, 0.0f, 1.0f);
-    b.compute(0.0f, 0.0f, 0.2f);
-    CHECK(b.compute(0.05f, 0.0f, 0.2f) == doctest::Approx(-0.25f));
+    pid::Kernel k; k.kp = 1; k.ki = 1;
+    k.compute(0, 1, .01F, 10);
+    const float i = k.i;
+    for (float dt : {0.F, -1.F, kNaN, kInf}) { CHECK(k.compute(0, 1, dt, 10) == 0); }
+    CHECK(k.compute(kNaN, 1, .01F, 10) == 0);
+    CHECK(k.compute(0, kInf, .01F, 10) == 0);
+    CHECK(k.i == i);
+    CHECK(k.primed);
+    CHECK(k.last_input == 0);
 }
 
-TEST_CASE("PID derivative cutoff applies a first-order low-pass")
+TEST_CASE("Kernel resets and outputs 0 when its output is not finite")
 {
-    constexpr float kCutoffHz = 10.0f;
-    constexpr float kDt = 0.01f;
-    const float alpha = 1.0f - std::exp(-2.0f * 3.14159265f * kCutoffHz * kDt);
-
-    auto pid = makePid(0.0f, 0.0f, 1.0f, kCutoffHz);
-    CHECK(pid.getDerivativeCutoff() == doctest::Approx(kCutoffHz));
-    pid.compute(0.0f, 0.0f, kDt);
-    // Raw rate is 1/s (D = -1), the filter passes alpha of it on the first step.
-    const float d1 = pid.compute(0.01f, 0.0f, kDt);
-    CHECK(d1 == doctest::Approx(-alpha));
-    // Input holds still: the raw rate is 0, and the filter decays by (1 - alpha).
-    const float d2 = pid.compute(0.01f, 0.0f, kDt);
-    CHECK(d2 == doctest::Approx(-alpha * (1.0f - alpha)));
+    pid::Kernel k; k.kp = kNaN;
+    CHECK(k.compute(0, 1, .01F, 1) == 0);
+    CHECK_FALSE(k.primed);
+    CHECK(k.i == 0);
 }
 
-TEST_CASE("PID ignores a non-positive or non-finite dt")
+TEST_CASE("Kernel track presets the integral for a bumpless switch, within the limit")
 {
-    auto pid = makePid(0.0f, 1.0f, 0.0f);
-    const float out = pid.compute(0.0f, 0.5f, 0.1f);
-    const float integral = pid.getIntegralTerm();
-
-    CHECK(pid.compute(0.0f, 0.5f, 0.0f) == doctest::Approx(out));
-    CHECK(pid.compute(0.0f, 0.5f, -0.1f) == doctest::Approx(out));
-    CHECK(pid.compute(0.0f, 0.5f, std::nanf("")) == doctest::Approx(out));
-    CHECK(pid.compute(0.0f, 0.5f, INFINITY) == doctest::Approx(out));
-    CHECK(pid.getIntegralTerm() == doctest::Approx(integral));
-}
-
-TEST_CASE("PID setters reject invalid values and keep the previous ones")
-{
-    auto pid = makePid(1.0f, 2.0f, 3.0f);
-
-    pid.setTunings(-1.0f, 0.0f, 0.0f);
-    CHECK(pid.getKp() == 1.0f);
-    CHECK(pid.getKi() == 2.0f);
-    CHECK(pid.getKd() == 3.0f);
-
-    pid.setDerivativeCutoff(-5.0f);
-    CHECK(pid.getDerivativeCutoff() == 0.0f);
-    pid.setDerivativeCutoff(std::nanf(""));
-    CHECK(pid.getDerivativeCutoff() == 0.0f);
-
-    pid.setOutputLimits(0.5f, 0.5f); // min must be < max
-    CHECK(pid.compute(0.0f, 10.0f, 0.01f) == doctest::Approx(1.0f));
-}
-
-TEST_CASE("PID rejects non-finite gains and limits")
-{
-    auto pid = makePid(1.0f, 2.0f, 3.0f);
-    pid.setTunings(std::nanf(""), 0.0f, 0.0f);
-    pid.setTunings(0.0f, INFINITY, 0.0f);
-    CHECK(pid.getKp() == 1.0f);
-    CHECK(pid.getKi() == 2.0f);
-
-    pid.setOutputLimits(std::nanf(""), 1.0f);
-    pid.setOutputLimits(-1.0f, INFINITY);
-    CHECK(pid.compute(0.0f, 10.0f, 0.01f) == doctest::Approx(1.0f)); // still [-1, 1]
-
-    PidConfig cfg{};
-    cfg.kp = std::nanf("");
-    cfg.ki = 0.5f;
-    cfg.output_min = -INFINITY;
-    PidController from_bad_config(cfg);
-    CHECK(from_bad_config.getKp() == 0.0f); // replaced by 0
-    CHECK(from_bad_config.getKi() == 0.5f); // valid gains are kept
-    from_bad_config.setMode(pid::Mode::Automatic);
-    const float out = from_bad_config.compute(0.0f, 100.0f, 1.0f);
-    CHECK(std::isfinite(out));
-    CHECK(out == doctest::Approx(1.0f)); // limits fell back to [-1, 1]
-}
-
-TEST_CASE("PID reset clears the integral and derivative history")
-{
-    auto pid = makePid(0.0f, 1.0f, 1.0f);
-    pid.compute(0.0f, 1.0f, 0.1f);
-    pid.compute(0.5f, 1.0f, 0.1f);
-    REQUIRE(pid.getIntegralTerm() != 0.0f);
-
-    pid.reset();
-    CHECK(pid.getIntegralTerm() == 0.0f);
-    CHECK(pid.getLastOutput() == 0.0f);
-    // After a reset the first sample again has no D term.
-    CHECK(pid.compute(5.0f, 5.0f, 0.1f) == doctest::Approx(0.0f));
+    pid::Kernel k; k.kp = .1F;
+    k.track(1, 3, .4F, 1);
+    CHECK(k.output == doctest::Approx(.4F));
+    CHECK(k.i == doctest::Approx(.2F));
+    CHECK(k.compute(1, 3, .01F, 1) == doctest::Approx(.4F));
+    k.track(0, 0, 2, 1);
+    CHECK(k.output == 1); CHECK(k.i == 1);
+    k.reset();
+    CHECK(k.i == 0); CHECK(k.output == 0); CHECK_FALSE(k.primed);
 }

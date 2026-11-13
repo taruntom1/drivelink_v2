@@ -37,7 +37,7 @@ codes:
     severity: error
     kind: record
     clears: false
-    arg0: manager id (1 motor_manager, 2 time_sync, 3 imu)
+    arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu)
     arg1: unused
     description: A manager failed to start. It is left out, and the rest of the firmware keeps running.
 
@@ -214,9 +214,10 @@ codes:
     arg1: unused
     description: Reported by main at boot. esp_err is the error that nvs_flash_init returned (stage 1) or the final error (stage 2).
 
-  # ── motor_manager ────────────────────────────────────────────────────
+  # ── motor_manager (retired in F5b with the manager) ──────────────────
   - source: motor_manager
     code: 0x0001
+    retired: true
     name: InitFailed
     severity: error
     kind: record
@@ -227,6 +228,7 @@ codes:
 
   - source: motor_manager
     code: 0x0002
+    retired: true
     name: MotorCreateFailed
     severity: error
     kind: record
@@ -237,6 +239,7 @@ codes:
 
   - source: motor_manager
     code: 0x0003
+    retired: true
     name: TimerRestartFailed
     severity: error
     kind: record
@@ -247,6 +250,7 @@ codes:
 
   - source: motor_manager
     code: 0x0004
+    retired: true
     name: ControlTimerStalled
     severity: warning
     kind: record
@@ -257,6 +261,7 @@ codes:
 
   - source: motor_manager
     code: 0x0005
+    retired: true
     name: ControlOverrun
     severity: warning
     kind: counter
@@ -264,6 +269,7 @@ codes:
 
   - source: motor_manager
     code: 0x0006
+    retired: true
     name: SetpointBadFrame
     severity: warning
     kind: counter
@@ -271,6 +277,7 @@ codes:
 
   - source: motor_manager
     code: 0x0007
+    retired: true
     name: SetpointRejected
     severity: warning
     kind: counter
@@ -278,6 +285,7 @@ codes:
 
   - source: motor_manager
     code: 0x0008
+    retired: true
     name: ConfigQueueFull
     severity: warning
     kind: counter
@@ -285,6 +293,7 @@ codes:
 
   - source: motor_manager
     code: 0x0009
+    retired: true
     name: ResponseTxDropped
     severity: warning
     kind: counter

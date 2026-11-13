@@ -17,7 +17,8 @@ Event prefix: `version u8 | sequence u16 | kind u8 | flags u8`.
 Instance 0xFF means no instance. Source/code definitions are in diag-codes.md;
 module source IDs match module type IDs. The two args retain their documented
 per-code meanings. Module InitFailed uses arg0 stage, arg1 unused, with the
-instance in its own field. Legacy sources stay until their managers are removed.
+instance in its own field. A removed manager's source id stays reserved and its
+codes are retired (motor_manager 0x10 since F5b); never reuse them.
 
 Query: `version u8 | seq u8 | op u8 | body`.
 Response: `version u8 | seq u8 | op u8 | result u8 | body`.

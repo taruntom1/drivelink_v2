@@ -6,13 +6,6 @@
 
 namespace rotary_encoder_hal {
 
-/// Direction of encoder rotation, determined from the most recent rate sample.
-enum class Direction {
-    Forward,   ///< Count is increasing (positive delta)
-    Reverse,   ///< Count is decreasing (negative delta)
-    Stopped    ///< No count change detected in the last sample period
-};
-
 namespace detail {
 struct PcntUnit;
 struct EncoderImpl;
@@ -24,24 +17,19 @@ struct EncoderImpl;
 /// hardware pool, configured for 4x quadrature decoding. The ESP32-S3
 /// has 4 PCNT units, so a maximum of 4 encoders can be active simultaneously.
 ///
-/// Rate and direction are sampled on demand when getRate()/getDirection()
-/// are called. Sampling is throttled to a configurable minimum interval via
-/// menuconfig (ENCODER_HAL_RATE_SAMPLE_PERIOD_MS).
+/// It only counts: the velocity estimate is the caller's (mod_motor's
+/// VelocityEstimator, from counts sampled at the loop rate).
 ///
 /// Usage:
 ///   rotary_encoder_hal::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5);
-///   if (wheel.isValid()) {
-///       int32_t pos = wheel.getCount();
-///       float speed = wheel.getRate();
-///       auto dir = wheel.getDirection();
-///       wheel.reset();
-///   }
+///   int32_t pos = 0;
+///   if (wheel.isValid() && wheel.readCount(pos) == ESP_OK) { ... }
 ///
 class Encoder {
 public:
     /// Construct an encoder on the given quadrature signal pins.
     /// Allocates a PCNT unit, configures channels for quadrature decoding,
-    /// applies glitch filter, and initializes the on-demand rate sampler.
+    /// and applies the glitch filter.
     /// @param pin_a  GPIO number for encoder channel A (CLK)
     /// @param pin_b  GPIO number for encoder channel B (DT)
     Encoder(gpio_num_t pin_a, gpio_num_t pin_b);
@@ -62,33 +50,11 @@ public:
     Encoder(Encoder &&other) noexcept;
     Encoder &operator=(Encoder &&other) noexcept;
 
-    /// Returns the accumulated pulse count (position).
-    /// Uses the PCNT accumulator, so the value is not limited to 16 bits.
-    /// Thread-safe: pcnt_unit_get_count is ISR-safe.
-    /// @return Accumulated count, or 0 if the encoder is invalid.
-    int32_t getCount() const;
-
-    /// Read the accumulated count, reporting the driver result. ISR-safe
-    /// driver call under the unit's spinlock; no allocation, no log.
+    /// Read the accumulated count (the PCNT accumulator, so not limited to
+    /// 16 bits), reporting the driver result. ISR-safe driver call under the
+    /// unit's spinlock; no allocation, no log.
     /// @return ESP_OK, ESP_ERR_INVALID_STATE when not valid, or the driver error.
     esp_err_t readCount(int32_t &count) const;
-
-    /// Returns the last computed rotation direction.
-    /// Based on the count delta from the most recent on-demand sample.
-    /// @return Direction::Forward, Direction::Reverse, or Direction::Stopped.
-    Direction getDirection() const;
-
-    /// Returns the rotation rate in pulses per second (signed).
-    /// Positive when counting forward, negative when reversing.
-    /// Updated on demand, with a minimum interval set by
-    /// ENCODER_HAL_RATE_SAMPLE_PERIOD_MS.
-    /// @return Rate in pulses/second, or 0.0f if the encoder is invalid.
-    float getRate() const;
-
-    /// Reset the accumulated count to zero.
-    /// Also resets the internal rate measurement baseline so that
-    /// the next rate sample starts fresh.
-    void reset();
 
     /// Returns true if the PCNT hardware was allocated and configured successfully.
     bool isValid() const;

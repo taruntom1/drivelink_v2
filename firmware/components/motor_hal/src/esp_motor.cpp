@@ -14,7 +14,6 @@ namespace motor_hal {
 struct Motor::Impl {
     detail::McpwmChannel channel;
     gpio_num_t dir_gpio;
-    float current_speed;
     esp_err_t init_error;
     bool valid;
 };
@@ -28,7 +27,6 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options)
     : m_impl(new Impl{})
 {
     m_impl->dir_gpio = dir_gpio;
-    m_impl->current_speed = 0.0f;
     m_impl->valid = false;
     m_impl->init_error = ESP_ERR_INVALID_ARG;
 
@@ -57,7 +55,7 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options)
 
     // Allocate MCPWM channel
     ret = detail::McpwmPool::allocate(static_cast<int>(pwm_gpio), m_impl->channel,
-                                      options.exclusive_operator, options.start_forced);
+                                      options.start_forced);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate MCPWM channel for GPIO %d: %s",
                  pwm_gpio, esp_err_to_name(ret));
@@ -75,7 +73,7 @@ Motor::~Motor()
 {
     if (m_impl) {
         if (m_impl->valid) {
-            stop();
+            (void)write(0.0f);
             detail::McpwmPool::deallocate(m_impl->channel);
         }
         delete m_impl;
@@ -93,7 +91,7 @@ Motor &Motor::operator=(Motor &&other) noexcept
     if (this != &other) {
         if (m_impl) {
             if (m_impl->valid) {
-                stop();
+                (void)write(0.0f);
                 detail::McpwmPool::deallocate(m_impl->channel);
             }
             delete m_impl;
@@ -101,11 +99,6 @@ Motor &Motor::operator=(Motor &&other) noexcept
         m_impl = std::exchange(other.m_impl, nullptr);
     }
     return *this;
-}
-
-void Motor::setSpeed(float speed)
-{
-    (void)write(speed);
 }
 
 esp_err_t Motor::write(float speed)
@@ -142,7 +135,6 @@ esp_err_t Motor::write(float speed)
     if (ret != ESP_OK) {
         return ret;
     }
-    m_impl->current_speed = speed;
     return ESP_OK;
 }
 
@@ -162,16 +154,6 @@ esp_err_t Motor::releaseForce()
     return mcpwm_generator_set_force_level(m_impl->channel.generator, -1, true);
 }
 
-void Motor::setSpeedPercent(float percent)
-{
-    setSpeed(percent / 100.0f);
-}
-
-void Motor::stop()
-{
-    setSpeed(0.0f);
-}
-
 bool Motor::isValid() const
 {
     return m_impl && m_impl->valid;
@@ -180,14 +162,6 @@ bool Motor::isValid() const
 esp_err_t Motor::initError() const
 {
     return m_impl ? m_impl->init_error : ESP_ERR_INVALID_STATE;
-}
-
-float Motor::getSpeed() const
-{
-    if (!m_impl || !m_impl->valid) {
-        return 0.0f;
-    }
-    return m_impl->current_speed;
 }
 
 } // namespace motor_hal

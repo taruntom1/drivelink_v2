@@ -28,7 +28,8 @@ only a claimed controller port drives it.
 - Each instance takes an **MCPWM operator of its own** (6 on the ESP32-S3). The
   two generators of an operator share one force register, which the driver
   updates read-modify-write, so outputs forced and released from different
-  tasks must not share it. Legacy motors still share operators until F5b.
+  tasks must not share it. Since F5b `motor_hal` gives every motor an operator
+  of its own.
 - The output is **forced low from creation** (before the PWM actions are set)
   until `onArmTransition(true)`, which writes zero duty, releases the force and
   only then opens the atomic gate. DISARM and `emergencyStop()` force the

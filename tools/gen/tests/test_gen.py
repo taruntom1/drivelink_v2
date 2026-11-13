@@ -697,10 +697,10 @@ class RealDefinitions(unittest.TestCase):
         defs = model.load_defs(gen.DEFAULT_DEFS)
         reg = defs["registry"]
         values = {m["name"]: m["value"] for m in reg["msg_types"]}
-        self.assertEqual(values["motor_setpoint_stream"], 0xBD)
+        self.assertNotIn("motor_setpoint_stream", values)
         self.assertEqual(values["imu_stream"], 0xBF)
         counts = {r["name"]: r["usable_count"] for r in reg["channel_ranges"]}
-        self.assertEqual(counts, {"sub_groups": 31, "cmd_groups": 29})
+        self.assertEqual(counts, {"sub_groups": 31, "cmd_groups": 31})
         system = defs["types"][0]
         self.assertEqual(system["type_id"], 0x00)
         rates = {i["name"]: (i["min"], i["max"], i["default"]) for i in system["items"] if not i["retired"]}

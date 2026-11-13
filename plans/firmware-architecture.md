@@ -231,7 +231,7 @@ The id blocks per kind (`0x00xx`, `0x01xx`, …) are a readability convention on
 | `0x81–0x9F` | stream ESP → host | Subscription groups 0–30 |
 | `0xA0–0xBF` | stream host → ESP | Command groups 0–31 |
 
-The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. Until their managers are ported, the legacy entries stay there: time_sync `0x20` / `0x60` (until F8), motor `0x21` / `0x61` and streams `0xBD` / `0xBE` (until F5b), IMU `0x22` / `0x42` and stream `0xBF` (until F6). **The time ping's `0x02` / `0x42` enter the registry in F8**, because the legacy IMU configure response holds `0x42` until F6.
+The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. Until their managers are ported, the legacy entries stay there: time_sync `0x20` / `0x60` (until F8), IMU `0x22` / `0x42` and stream `0xBF` (until F6). F5b removed the motor entries (`0x21` / `0x61`, streams `0xBD` / `0xBE`), so the command groups have 31 channels (`0xA0`–`0xBE`) until F6 frees `0xBF`. **The time ping's `0x02` / `0x42` enter the registry in F8**, because the legacy IMU configure response holds `0x42` until F6.
 
 ### Core command header
 

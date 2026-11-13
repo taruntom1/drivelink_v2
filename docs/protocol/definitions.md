@@ -42,7 +42,7 @@ Rules:
 - `direction` is `host_to_esp`, `esp_to_host` or `both`.
 - `legacy: <step>` marks the old protocol of a manager. The step that ports the manager removes the entry.
 - A channel range lies inside the stream class (`0x80–0xBF`) and overlaps no other range.
-- A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 29 while the legacy streams live, and grows when they are removed.
+- A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 31 while the legacy IMU stream holds `0xBF` (29 until F5b removed the motor streams), and grows to 32 in F6.
 - `symbol` names the constants `k<symbol>ChannelFirst` and `k<symbol>ChannelCount`.
 - `system_type_id` is `0x00`; `loop_type_id` is `0x05`, clear of the fixed diagnostic sources. Both are reserved. Other type ids are in their own files.
 

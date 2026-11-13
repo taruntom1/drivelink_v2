@@ -1,13 +1,10 @@
 # PID math
 
-`pid_kernel.hpp` contains the pure, nonlogging derivative and output math and
-the explicit-config `Kernel` used by motor modules. It allocates nothing.
-`track` presets output-domain integral state; the new kernel uses conditional
-integration under saturation and derivative on measurement. Its caller owns
-all state and supplies elapsed seconds and a symmetric output limit.
-
-`PidController` remains the legacy wrapper with its existing API, configuration
-defaults and clamped-integral behavior. It allocates its implementation at
-construction and reports invalid configuration through its existing logging.
-The shared derivative/output helpers preserve its computation semantics.
-Defaults remain in the component's Kconfig; see the public header for the API.
+`pid_kernel.hpp` is header-only, pure and nonlogging, and allocates nothing.
+`pid::Kernel` is the explicit-config PID used by `controller.cascade_pid`:
+conditional integration under saturation (no windup), derivative on
+measurement (no setpoint kick) with an optional first-order cutoff, and
+`track`, which presets the output-domain integral for a bumpless mode switch.
+Its caller owns all state and supplies elapsed seconds and a symmetric output
+limit. A non-positive or non-finite `dt`, input or setpoint returns 0 and
+changes nothing. The native tests are in `firmware/test/native/tests/test_pid.cpp`.

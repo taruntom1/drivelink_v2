@@ -138,8 +138,8 @@ are rejected. A response must fit before any SET is attempted.
 
 All groups are boot-allocated resources, with independent subscription and
 command IDs. They survive reconnects but are never persisted. Limits are
-CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..29 while legacy
-channels are reserved), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
+CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..31 while the legacy
+IMU stream holds 0xBF), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
 limit is min(configured limit, 64, floor((max_payload - 19)/4)), so both a
 complete LIST record and telemetry fit. A 128-byte build advertises 27. The channel is
 registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +

@@ -31,10 +31,6 @@ TEST_CASE("Registry MSG_TYPE constants")
     CHECK(msg::kDiagEvent == 0xC0);
     CHECK(msg::kTimeSyncRequest == 0x20);
     CHECK(msg::kTimeSyncResponse == 0x60);
-    CHECK(msg::kMotorConfigure == 0x21);
-    CHECK(msg::kMotorConfigureResponse == 0x61);
-    CHECK(msg::kMotorSetpointStream == 0xBD);
-    CHECK(msg::kMotorTelemetryStream == 0xBE);
     CHECK(msg::kImuConfigure == 0x22);
     CHECK(msg::kImuConfigureResponse == 0x42);
     CHECK(msg::kImuStream == 0xBF);
@@ -56,14 +52,14 @@ TEST_CASE("Registry values are unique and sorted, and none is reserved")
     CHECK(isResponse(msg::kCoreResponse));
 }
 
-TEST_CASE("Channel ranges: the legacy streams cut the command groups")
+TEST_CASE("Channel ranges: the legacy IMU stream cuts the command groups")
 {
     CHECK(kSubGroupChannelFirst == 0x81);
     CHECK(kSubGroupChannelCount == 31);
     CHECK(kCmdGroupChannelFirst == 0xA0);
-    CHECK(kCmdGroupChannelCount == 29);
-    // The usable command channels end just below the first legacy stream.
-    CHECK(kCmdGroupChannelFirst + kCmdGroupChannelCount == msg::kMotorSetpointStream);
+    CHECK(kCmdGroupChannelCount == 31);
+    // The usable command channels end just below the legacy IMU stream (F6).
+    CHECK(kCmdGroupChannelFirst + kCmdGroupChannelCount == msg::kImuStream);
     CHECK(kSubGroupChannelFirst + kSubGroupChannelCount == kCmdGroupChannelFirst);
 }
 

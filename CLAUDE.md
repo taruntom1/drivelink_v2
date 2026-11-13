@@ -44,7 +44,7 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
   - New components get a short README (purpose, API, rules) when they land.
   - There are no `review/` statuses or `TODO.md` to update.
 - **Legacy code.**
-  - `motor_manager`, `imu_bmo_055` and `time_sync` keep working until their phase ports them.
+  - `imu_bmo_055` and `time_sync` keep working until their phase ports them (`motor_manager` was removed in F5b).
   - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
   - Their wire format is defined by their code and native tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
 - **Roles.** The session plans, builds and reviews the step itself (Opus 5.5, high). It spawns an independent review agent (Opus, at the step's review effort) only when the step needs one: wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff. `/overhaul-step` has the details.

@@ -8,12 +8,12 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 - The `protocol/` library: CRC, framing, scanner, wire codec and the generated definitions. Its tests live in `protocol/test/` and are compiled into this build.
 - `core_os`'s native backend, with the in-memory KV store and its fault injection (power loss, failed and torn writes).
 - The pure `core`: registry, bind API, values, loops, param batches, the pending layout and its validation, the wiring order, the NVS blobs and A/B persistence, safe mode, the boot, and a threaded end-to-end run.
-- The legacy motor_manager, IMU, time_sync and diag protocol codecs, diag's slot table, the PID and the velocity estimator.
+- The legacy IMU, time_sync and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator.
 
 **How it is built:**
 - A plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`).
 - It builds `protocol/` as the host library `drivelink::protocol`. It compiles `core_os/backend/native`, the `core` sources (all but `src/idf/`) and the legacy sources directly with the host compiler.
-- `firmware/test/native/shim/` stands in for the two IDF headers the legacy sources include: `sdkconfig.h` with the Kconfig defaults they read, and a no-op `esp_log.h`. The core needs neither.
+- `firmware/test/native/shim/` stands in for the two IDF headers the legacy sources include: `sdkconfig.h` with the Kconfig defaults they read (none today), and a no-op `esp_log.h`. The core needs neither.
 - It needs no IDF export. On this machine, Strawberry Perl ships `g++` (MinGW-w64, posix threads), `cmake` and `ninja`.
 - It needs Python 3 with PyYAML: the build runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the type headers the tests include.
 
@@ -39,7 +39,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 
 Standalone scripts in `firmware/test/uart_comm/`, for the **main** firmware, not the test app. Update them with any change to what they check.
 
-- `smoke_main_firmware.py --port COMx` checks that diag, motor_manager, the IMU and time_sync answer with their current protocol versions, and that the IMU stream arrives on its registry channel. It creates no motor, so nothing can move.
+- `smoke_main_firmware.py --port COMx` checks that diag, the IMU and time_sync answer with their current protocol versions, and that the IMU stream arrives on its registry channel.
 - `smoke_core_firmware.py` exercises the core with mock instances and removes them again. `--safe-mode` needs a build with `CONFIG_CORE_BENCH_CRASH=y`; flash the normal firmware again afterwards.
 
 The ports and the state of the bench board are in `plans/overhaul-status.md` ("Hardware notes").
@@ -129,3 +129,13 @@ can run out, so a test that checks one module code falls back to the safety
 overflow query. On the bare board, `motor_smoke.py --modules real --no-motor
 --pool-check` with pins checks the hardware types; a motor run drops
 `--no-motor` and needs `--confirm-first-run`.
+
+F5b adds the loop-stall scenario: `motor_smoke.py --stall` (mocks, real
+`--no-motor`, or a motor) stalls the control loop for 2 s while it drives. It
+requires Fault/LoopStalled before the stall can have ended (the monitor
+disarmed, not the loop), zero duty (and `forced`) after it, and ACK_FAULT and
+re-arm. Duty and `forced` are loop signals, so the force during the stall is
+proven by the native test in `test_motor_hardware.cpp` (no tick at all: the
+monitor alone forces `actuator.pwm_dir`) and, physically, only by a motor's
+encoder. It needs a `CONFIG_CORE_BENCH_CRASH=y` build or vdev
+`--allow-crash`, which host integration uses.

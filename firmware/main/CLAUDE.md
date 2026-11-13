@@ -4,7 +4,7 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 
 ## Startup order
 
-- The order is `diag::init()`, `UartComm`, then `MotorManager`, `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then the core (`startCore()`), then `diag::Reporter`.
+- The order is `diag::init()`, `UartComm`, then `TimeSync` and `ImuBno055Manager` (each takes a reference to `UartComm`), then the core (`startCore()`), then `diag::Reporter`.
 - Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
 - Before the core, main initialises NVS (`core_os::nvsInit()`). A full partition or one from a newer NVS version is erased and initialised again. Both that and a failure are reported (`core.NvsInitFailed`, arg0 1 erased, 2 failed). The core boots either way.
 - The core:
