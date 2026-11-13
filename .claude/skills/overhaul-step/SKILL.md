@@ -5,11 +5,23 @@ description: Run one step of the DriveLink firmware overhaul (S1, F1a ... F10, H
 
 # Run one overhaul step
 
-One session runs one step and ends with one PR into `firmware_overhaul`. Follow these stages in order, and don't skip the approval points.
+One session runs one step and ends with one PR into `firmware_overhaul`. Follow these stages in order, and don't skip the approval points. Use the tools available in the current environment; no particular agent API or dedicated plan mode is required.
+
+## Token efficiency
+
+Apply these rules throughout the step without weakening approval points, safety rules, required tests or independent review:
+
+- **Read once, then retrieve narrowly.** Current material already in context counts as read. Reopen instructions or source only when changed, lost from context or needed to resolve a specific gap. Use targeted searches, excerpts and diffs instead of repeated whole-file reads.
+- **Keep a compact working record.** Retain approved decisions, safety invariants, relevant paths, unresolved issues, completed checks and the next action in working context or the existing step plan. Update changed facts; avoid repeatedly reconstructing the task or rewriting settled plans.
+- **Debug from evidence.** On failure, collect the smallest discriminating diagnostics, such as timestamps, state, failure reason and relevant log lines. Investigate the best-supported explanation before expanding the search. Capture transient evidence before cleanup when safe; stopping unsafe behavior takes priority.
+- **Bound tool output.** Store full build, flash and test output in logs. Read concise summaries and relevant failure excerpts. Avoid loading generated tables or large output batches unless the investigation needs them.
+- **Focus independent review.** Use one independent reviewer by default when required. Supply the exact diff/base, approved plan and relevant rules/invariants. Follow up with changed diffs and unresolved findings; broaden review when a change invalidates earlier assumptions.
+- **Keep routine work mechanical.** Use existing scripts/checklists for status updates, validation polling and PR preparation. Keep progress reports brief. Revisit settled design only when new evidence warrants it.
+- **Use soft checkpoints when agreed.** If the user supplies a soft token target, report usage when measurable, remaining work and ways to narrow scope at the checkpoint. State uncertainty if usage metrics are unavailable. Do not invent a budget, silently reduce verification or stop unfinished work merely to save tokens; honor explicit hard limits.
 
 ## 1. Orient
 
-1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, named `claude/overhaul-<step id>` (for example `claude/overhaul-f1a`). If the session already sits on a branch with unrelated work, stop and tell the user.
+1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, using the environment's branch prefix and `overhaul-<step id>` suffix. If the session already sits on a branch with unrelated work, stop and tell the user.
 2. Read these:
    - the "Firmware overhaul in progress" section of the root `CLAUDE.md`
    - all of `plans/overhaul-status.md`
@@ -18,12 +30,12 @@ One session runs one step and ends with one PR into `firmware_overhaul`. Follow 
    - the argument, if one was given
    - otherwise the first step in the table whose state is `planned`, provided every step it depends on is `merged`
    - If a step it depends on isn't merged, stop and tell the user.
-4. Read the step's **Review effort** and the "Models and effort" rules in the status file. The session plans **and** builds the step, on Opus 5.5 at high effort. If the session runs on a different model or effort, tell the user to switch before planning (in the app's model picker), then continue.
-5. Read the code the step will change before planning. For wide searches, use an `Explore` agent with `model: "haiku"`. Search agents only read; they never write code.
+4. Read the step's **Review effort** and the "Models and effort" rules in the status file. Apply that policy and any user-approved exceptions using the current environment's model/effort controls. Honor existing authorization without asking again. Resolve an unavailable required model or capability before planning.
+5. Read the code the step will change before planning. Use targeted searches first. Use a bounded read-only search helper only when allowed by the role policy, available and likely to reduce context duplication. Give it a specific question and paths; it never writes code.
 
 ## 2. Plan (approval point)
 
-Enter plan mode and write a short step plan:
+Use plan mode if available; otherwise present a short step plan for approval:
 - **Scope:** what this PR does, and what it leaves for later steps. If the step is too big for one reviewable PR, propose splitting it into rows such as `F3a-1` and `F3a-2`.
 - **Changes:** the files and components touched.
 - **Tests:** which existing tests change, and which new ones are added (host or native tests for every piece of pure logic).
@@ -38,7 +50,7 @@ Wait for the user's approval. Answer any deviation questions before you build.
 
 ## 3. Build
 
-The session builds the step itself, right after the approval, with no model switch. Don't hand the build to a subagent. Search agents (Haiku, read-only) may still help find code.
+The session builds the step itself, right after the approval, with no model switch. Don't hand the build to a subagent. Authorized read-only search helpers may still help find code when useful.
 
 - Follow the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
 - Don't improve legacy code that a later phase deletes, unless it blocks this step.
@@ -46,7 +58,7 @@ The session builds the step itself, right after the approval, with no model swit
   - While building, run `quick` (generator, native tests, Windows host tests), or one check with `--only`.
   - Before moving on, `full` must pass with nothing skipped: the three zero-warning IDF builds, the generator checks, the native tests and the host tests on Windows and Linux.
   - It runs the checks one at a time and sets up each toolchain itself. Start it once, in the background, and wait for it. Never start a second build or test run beside it.
-  - A rerun skips the checks whose code is unchanged, so after a fix just run `full` again.
+  - After a fix, verify the affected check or scenario first; once stable, rerun `full` before moving on. The validator reuses passing checks whose inputs are unchanged.
   - A test suite the step introduces becomes a `Check` in `tools/validate.py`, and CI calls it by name.
 - If something in the plans turns out wrong while building:
   - A small internal choice: decide, and log it in the decision log.
@@ -58,7 +70,7 @@ First review the diff yourself (`git diff origin/firmware_overhaul...HEAD`). Loo
 
 Then decide whether an **independent review agent** is needed. Spawn one when the step changes the wire protocol, a safety path (arming, the monitor, the watchdog, `emergencyStop`, disarm triggers), persistence or concurrency in a way your own review can't fully cover, or when the diff is large. Skip it for docs-only, tooling or mechanical steps. Say which you chose, and why, in the PR description. If the user says to skip it (or to run it), do that.
 
-When you spawn one: a `general-purpose` agent on `git diff origin/firmware_overhaul...HEAD`. Always pass `model: "opus"`, and pass `effort` set to the step's **Review effort** from the status table (`high` or `xhigh`). This skill is the instruction that sets that effort. Give the agent:
+Use the environment's independent-review capability on `git diff origin/firmware_overhaul...HEAD`, with the model required by the approved role policy and the step's **Review effort** (`high` or `xhigh`). Supply equivalent settings without assuming a particular agent type or tool argument. If a required independent review cannot be performed, report that limitation before proceeding past the review gate. Give the reviewer:
 - the step plan and the relevant plan sections
 - the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
 - the brief above
