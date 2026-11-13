@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F5a-1: motor interfaces, cascade controller and realistic mocks (approved; in progress).
+- **Next step:** F5a-2: real PWM+DIR actuator and quadrature feedback modules, after the F5a-1 PR is merged.
 - **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware`.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
@@ -28,35 +28,36 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F5a-1
+## Handoff for F5a-2
 
-F4c adds generated source params/value/age signals, `Sampled<T>`, same-loop
-sampling and cross-loop snapshots, and `fusion.mock`. Core is wire v5 across
-firmware/host/CLI/vdev; diag remains v3 and NVS formats are unchanged.
-The bare board has normal firmware and its original loops-only layout.
+F5a-1 adds `mod_motor` interfaces and the real `controller.cascade_pid` (0x20)
+to firmware and vdev, plus quantization/deadband/cap/delay/noise in the mocks.
+The controller's same-loop refs give feedback → controller → actuator order.
+Core remains v5, diag v3 and NVS formats unchanged. The motor contract and
+startup failure stages live in `firmware/components/mod_motor/README.md`.
 
-- Sources are persisted structural params. Their reference encoding differs
-  from instance wiring; use the helpers in `defs.hpp`.
-- Source links are built after instances start and before tick entries cache
-  consumer indices, with loop callbacks gated. Preserve that boot ordering.
-- ARM/DISARM reset bound inputs only. Source storage must retain its state.
-  Actuator/controller source declarations remain forbidden pending a user
-  safety decision. F5a adds none.
-- Keep the monitor's exact-arm-generation claim when touching loop ordering.
-  An unavailable receipt snapshot is unknown; paused loops retain heartbeat.
-- `feedback.mock` still uses the concrete mock actuator interface and reads
-  its previous-tick state. F5a introduces the real interfaces.
-- **No motors.** F5a-1 checks the controller with mock modules; F5a-2 adds
-  instance setup on real pins. There is no bench-only pin or LEDC readback
-  self-check. Velocity and
-  position control and the loop-stall stop on a real motor are written as a
-  deferred script (see "Deferred hardware checks") and dry-run against vdev or
-  the bare board with mocks.
-- **A more realistic mock motor.** Because the mock is the only plant the
-  controller meets before HW, F5a adds to it, each set by a param: encoder
-  quantization (counts, not a smooth position), a deadband, duty saturation, a
-  one-tick delay and optional noise. The controller and bumpless mode-switch
-  tests run against these effects.
+- Real actuator/feedback types are not implemented yet. Resolve interfaces
+  through `Instance::queryInterface`; the actuator port has one controller
+  owner and a shared lifetime. Never copy shared ownership in a tick. Use the
+  shared count/velocity estimator; the legacy header forwards until F5b.
+- Preserve the monitor's exact-arm-generation stop claim. The current PWM+DIR
+  HAL has **one PWM generator**; reconcile the architecture's earlier
+  two-generator wording when planning the hardware force/release path. There
+  is no bench pin or LEDC readback self-check.
+- Mode switches hold one tick and require a strictly post-boundary active-input
+  value receipt. Keepalives feed the watchdog without releasing that wait.
+  ARM/DISARM reset receipts/controllers, not encoder position or source storage.
+  The core README holds the source-link boot ordering and monitor contracts.
+- `host/test/motor_smoke.py` passed on vdev and the bare board with mocks.
+  `--modules real` deliberately refuses before changing config: F5a-2 completes
+  real type/pin setup and configurable real-plant tuning/limits in this same
+  script. Keep the first-run procedure and low duty cap. F5b adds loop-stall.
+- UART CLI calls take hundreds of milliseconds. Keep the pre-mode keepalive
+  and reuse the held-position sample; an extra stream/discovery call can
+  correctly trip the 1 s test watchdog. Linux integration retains a PTY whose
+  status may be buffered; use timestamps/state polling (see host README).
+- The board is back on normal F5a-1 firmware with its original loops-only
+  layout, rates 1000/100/10 Hz and watchdog 200 ms. No motors or IMU were run.
 
 ## Steps
 
@@ -77,7 +78,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id; core wire v3, host/CLI/vdev | no | high | merged |[#44](https://github.com/taruntom1/drivelink_v2/pull/44) |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | merged | [#47](https://github.com/taruntom1/drivelink_v2/pull/47) |
 | F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | merged | [#48](https://github.com/taruntom1/drivelink_v2/pull/48) |
-| F5a-1 | Shared motor interfaces, true cascade PID controller, fresh-command bumpless mode switch and realistic mocks; [approved implementation plan](f5a-1-implementation.md) | bare board: controller with mocks; deferred: motors | high | in progress | |
+| F5a-1 | Shared motor interfaces, true cascade PID controller, fresh-command bumpless mode switch and realistic mocks; [approved implementation plan](f5a-1-implementation.md) | bare board: controller with mocks; deferred: motors | high | in review | |
 | F5a-2 | Real PWM+DIR actuator and quadrature feedback modules, hardware emergency force/release and driver failure paths; depends on F5a-1 | bare board: instances on real pins, mocks; deferred: motors | high | planned | |
 | F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test | bare board: loop-stall stop with mocks; deferred: motors | high | planned | |
 | F6 | `imu.bno055` module behind a bus interface, with a fake BNO055 bus in the native tests; calibration actions; delete `imu_bmo_055` | bare board: missing-sensor path, calibration actions on `imu.mock`; deferred: IMU | high | planned | |
@@ -99,7 +100,6 @@ Each note is deleted by the step that uses it.
 - **GUI design follow-ups.** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour. It was proposed before F3b landed and must be reconciled with the current core before a wire change is scheduled. [todo-layout-ops.md](todo-layout-ops.md) is closed: the loop at `ADD_INSTANCE` is built, and the GUI follows the firmware's `Referenced` refusal. The GUI design is being brought in line with F3d's loops and F4c's planned sources in phase G7b of [gui-design.md](gui-design.md). That phase found two gaps, both settled on 2026-11-13 and scheduled below: the device's limits (F4b) and a source's value and age as signals (F4c). No firmware changes are authorised by the GUI design sessions.
 
 - **F5**
-  - `feedback.mock` casts its ref to the concrete mock actuator and reads the previous tick's values. Real actuator and feedback interfaces replace that.
   - Removing the legacy motor streams (F5b) frees two command group channels.
 - **F6**
   - Removing the IMU manager frees `0x42` and the `0xBF` channel.
@@ -126,6 +126,7 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 
 | Step | Script and command | Needs | Checks | Pass |
 |---|---|---|---|---|
+| F5a-1 / F5a-2 | `python host/test/motor_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --loop-rate 1000`; mock path passed in F5a-1; real setup/tuning options scheduled for F5a-2 | Motor driver, motor and encoder | Velocity/position control, mode transfer and command watchdog; first-run procedure in script. F5b adds loop-stall | Tracking within configured tolerances; no mode-transfer duty step; watchdog removes physical effort. Real path remains unavailable until F5a-2 |
 
 ## Hardware notes
 
@@ -139,9 +140,9 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
   - `firmware/test/uart_comm/smoke_main_firmware.py`: the legacy managers. It creates no motor.
   - `firmware/test/uart_comm/smoke_core_firmware.py`: the core with mock instances, which it removes again. `--safe-mode` needs a `CONFIG_CORE_BENCH_CRASH=y` build; flash the normal firmware again afterwards.
   - `host/test/hardware_smoke.py`: the same through the CLI. It refuses to run with pending edits, and restores the layout and rates it found.
-- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F4c/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
+- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F5a-1/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
-- **Latest stack marks** (F4c, a 16-value control-to-sensor link, eight feedback mocks and eight fusion mocks; bytes free; stacks 4096 unless given): main 1200 (4608), uart_rx 3188, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1780, time_sync_task 2008, diag 1748, esp_timer 3344, core_cfg 4068 (6144), core_loop_0 3072, core_loop_1 3160.
+- **Latest stack marks** (F5a-1 controller/mocks and source-link regressions; minimum bytes free across runs; stacks 4096 unless given): main 1200 (4608), uart_rx 2756, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1780, time_sync_task 1912, diag 1636, esp_timer 3248, core_cfg 3168 (6144), core_loop_0 3076, core_loop_1 3076.
 - **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board. None of these are expected before HW; see "Deferred hardware checks".
 
 ## Other traps
@@ -161,7 +162,8 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 - **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a, F4b and F4c are explicitly approved for Codex planning/build and an independent Codex review at high effort.
 - **F5a:** Codex planning/build and an independent Sol review at high effort
   are explicitly approved. F5a is split into F5a-1 and F5a-2; F5a-1's concrete
-  implementation plan, including exclusive actuator ownership, is approved.
+  implementation plan, including exclusive actuator ownership, is approved;
+  the code and UART harness correction received the independent Sol review.
 
 ## Decision log
 
@@ -211,3 +213,4 @@ One row per run. The stack marks and what was never run are in "Hardware notes".
 | 2026-11-13 | F3d | CLI serial smoke: third loop and mock, SAVE/reboot/reload, live rate change, actions, status ids, restoration; all task stack marks above 1 KB. Bench build: three panics, safe mode with zero loops, EXIT_SAFE_MODE and cleanup; normal firmware restored; normal core and legacy smoke passed | Pass |
 | 2026-11-13 | F4b | Normal firmware: legacy/core/CLI smoke; mock ARM/commands/fast DISARM, stale mailboxes, armed refusals, blockers/fault ACK, watchdog re-arm, read-only limits; every measured stack above 1 KB (minimum 1200). Bench: 150 ms stalls of both loops and recovery; Task WDT panic names core_loop_0, then reboot. Forced reconfigure, normal firmware restored; bench commands refused; final legacy/core/safety smoke and layout/settings restoration passed | Pass |
 | 2026-11-13 | F4c | Source value/age smoke; matched 35 s control-loop runs with 0/16 linked values (106/94 us max, zero overruns); all stacks >1 KB (minimum 1200). Legacy/core/CLI/safety smoke passed; core v5/source descriptors/limit verified; original layout, rates, watchdog and idle groups restored | Pass |
+| 2026-11-13 | F5a-1 | Normal firmware: 1 kHz cascade/controller-mock control, mode freshness, persistence, watchdog/re-arm; legacy/core/safety/sources/CLI smoke. Matched 0/16-value links: 204/200 us max, zero overruns. All stacks >1 KB (minimum 1200); original layout/settings/groups restored | Pass |

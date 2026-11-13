@@ -87,6 +87,7 @@ def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0):
 
         cli('arm')
         drive([.2, 2, 0], .5)
+        command()  # cover the mode-write round trip on the slower UART CLI path
         cli('set', f'{pid}:16=1')
         # Old velocity target was present in every open-loop frame. Keepalives
         # cannot turn it into a new-mode command.
@@ -95,9 +96,12 @@ def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0):
         velocity = drive([0, 2, 0], 6)
         assert abs(sum(s[1] for s in velocity[-5:])/len(velocity[-5:]) - 2) < .3, velocity[-5:]
         assert velocity[-1][4] is False
+        command()
         cli('set', f'{pid}:16=2')
-        command(); assert sample()[4] is True
-        target = sample()[0] + .5
+        command(); held = sample(); assert held[4] is True
+        # Reuse the sample: another CLI discovery/stream round trip can leave
+        # a >1 s gap between UART command receipts and correctly trip safety.
+        target = held[0] + .5
         position = drive([0, 0, target], 8)
         assert abs(position[-1][0] - target) < .12, (target, position[-5:])
         assert abs(position[-1][1]) < .3, position[-5:]
@@ -105,6 +109,9 @@ def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0):
         time.sleep(1.2)
         deadline = time.monotonic() + 2
         observed = []
+        # Linux integration retains a PTY with buffered status across CLI
+        # sessions. Its first frame can predate the deadline; native tests
+        # verify timing, while this smoke waits for the actual state/reason.
         while True:
             status = cli('status'); observed.append(status)
             if status['arm_state'] != 1 or time.monotonic() >= deadline:

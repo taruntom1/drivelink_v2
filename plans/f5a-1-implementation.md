@@ -1,6 +1,6 @@
 # F5a-1 implementation plan
 
-Status: approved on 2026-11-13; implementation in progress. Based on `origin/firmware_overhaul` at
+Status: implemented, independently reviewed and verified on the bare board on 2026-11-13; ready for PR review. Based on `origin/firmware_overhaul` at
 `46fd141`. The user approved Codex planning/build, an independent Sol review
 at high effort, true cascade control, fresh commands after a mode switch,
 and splitting F5a into two PRs/sessions on 2026-11-13.
@@ -149,3 +149,26 @@ only where its description/rules need to reflect the new modules.
 Open one PR into `firmware_overhaul`, include the complete full-validation
 summary, review outcome and hardware results, and record its link in status.
 F5a-2 starts in a new session after this PR merges.
+
+## Review and verification record
+
+The session self-reviewed the complete diff. An independent Sol agent at high
+effort reviewed `46fd141...08b0186`, then the UART smoke timing correction, with
+no actionable findings and no rejected findings. The Linux watchdog observation
+was traced to buffered status on the PTY retained by integration.py: the first
+Armed frame preceded the deadline, and a later frame reported Watchdog disarm.
+A separate fresh TCP smoke returned Watchdog disarm on its first status.
+
+The first bare-board motor run exposed a test-harness gap: two consecutive
+CLI stream/discovery calls exceeded the 1 s watchdog between command receipts.
+The board correctly stopped with Watchdog reason and zero overruns. Reusing the
+held-position sample and feeding before mode writes fixes the harness without
+changing controller or safety behavior. The corrected 1 kHz board run passed
+control, freshness, persistence, watchdog and re-arm; all sampled task stacks
+exceeded 1 KB free (minimum 1200 bytes). The original layout/settings were restored.
+
+Legacy, core, safety, sources and host CLI board regressions passed. Matched
+35 s zero/16-value link runs measured 204/200 us maximum control ticks with zero
+overruns. Final readback confirmed two loops, rates 1000/100/10 Hz, watchdog
+200 ms, Disarmed, no dirty/pending flags, no configured groups and zero overruns.
+No real motor, encoder hardware or IMU was tested; F5a-2 and HW retain those checks.
