@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -246,6 +247,15 @@ def main():
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             from motor_smoke import run as motor_smoke
             motor_smoke(args.cli, url)
+            # The vdev has no pins: the real-module path refuses before any
+            # change, whether the endpoint is TCP or (on Linux) a serial PTY.
+            refused = subprocess.run([sys.executable, str(Path(__file__).with_name('motor_smoke.py')), '--cli', str(args.cli),
+                                      '--endpoint', url, '--modules', 'real', '--no-motor', '--pwm-pin', '4',
+                                      '--dir-pin', '5', '--enc-a', '6', '--enc-b', '7'],
+                                     capture_output=True, text=True, timeout=30)
+            assert refused.returncode in (1, 2) and 'no configuration was changed' in refused.stderr, refused
+            assert 'Traceback' not in refused.stderr and 'PASS' not in refused.stdout, refused
+            assert cli('types') and len(cli('instances')) == 2
             print('PASS CLI discovery, typed params, actions, status, diag, persistence, failed SAVE, crash recovery, locking and transports')
         finally:
             kill()

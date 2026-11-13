@@ -46,6 +46,9 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/mod_mock/src/modules.cpp
     ${COMPONENTS_DIR}/mod_motor/src/controller.cpp
     ${COMPONENTS_DIR}/mod_motor/src/velocity_estimator.cpp
+    ${COMPONENTS_DIR}/mod_motor/src/pwm_dir.cpp
+    ${COMPONENTS_DIR}/mod_motor/src/quadrature.cpp
+    ${COMPONENTS_DIR}/mod_motor/src/hardware_types.cpp
     ${COMPONENTS_DIR}/core/src/core.cpp
     ${COMPONENTS_DIR}/core/src/safety.cpp
     ${COMPONENTS_DIR}/core/src/crc32.cpp
@@ -127,6 +130,8 @@ set(TEST_SOURCES
     tests/test_core_safe_mode.cpp
     tests/test_pid.cpp
     tests/test_motor_modules.cpp
+    tests/test_motor_hardware.cpp
+    tests/fake_motor_hw.cpp
     tests/test_velocity_estimator.cpp
     tests/test_motor_protocol.cpp
     tests/test_motor_validation.cpp

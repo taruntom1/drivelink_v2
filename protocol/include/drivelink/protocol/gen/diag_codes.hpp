@@ -20,6 +20,8 @@ enum class Source : uint8_t {
     MotorManager = 0x10,
     TimeSync = 0x11,
     Imu = 0x12,
+    ActuatorPwmDir = 0x21,
+    FeedbackQuadrature = 0x22,
     ActuatorMock = 0x70,
     FeedbackMock = 0x71,
     ImuMock = 0x72,
@@ -77,7 +79,7 @@ inline constexpr Code kDiscardedBytes{7, Source::UartComm, 0x0006, Severity::War
 /// A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.
 inline constexpr Code kHeaderCrcError{8, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false, "HeaderCrcError", false, false};
 /// A stream write was skipped because its slot was busy.
-inline constexpr Code kStreamSkipped{52, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
+inline constexpr Code kStreamSkipped{54, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
 } // namespace uart_comm
 
 namespace diag {
@@ -94,7 +96,7 @@ namespace core {
 /// arg0: stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main). arg1: for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused.
 inline constexpr Code kInitFailed{12, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
-/// arg0: type id << 8 | instance id. arg1: stage (the instance's own stage from fail(), or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound).
+/// arg0: type id << 8 | instance id. arg1: stage (the instance's own stage from fail() - controller.cascade_pid 1 missing or incompatible refs, 2 actuator already claimed - or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound).
 inline constexpr Code kInstanceStartFailed{13, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false, "InstanceStartFailed", false, false};
 /// A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
 /// arg0: loop instance id. arg1: the period that failed, in us.
@@ -118,17 +120,17 @@ inline constexpr Code kNvsWriteFailed{19, Source::Core, 0x0008, Severity::Error,
 /// arg0: what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved). arg1: unused.
 inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false, "NvsInitFailed", false, false};
 /// The core command queue was full.
-inline constexpr Code kCommandDropped{50, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
+inline constexpr Code kCommandDropped{52, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
 /// A core reply could not be queued for transmission.
-inline constexpr Code kResponseDropped{51, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
+inline constexpr Code kResponseDropped{53, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
 /// A loop tick took longer than its period; instance identifies the loop.
-inline constexpr Code kLoopOverBudget{53, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
+inline constexpr Code kLoopOverBudget{55, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
 /// A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.
-inline constexpr Code kCommandFrameRejected{54, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
+inline constexpr Code kCommandFrameRejected{56, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
 /// A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required.
-inline constexpr Code kLoopStalled{55, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
+inline constexpr Code kLoopStalled{57, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
 /// No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.
-inline constexpr Code kWatchdogTimeout{56, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
+inline constexpr Code kWatchdogTimeout{58, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
 } // namespace core
 
 namespace motor_manager {
@@ -206,14 +208,30 @@ inline constexpr Code kConfigQueueFull{45, Source::Imu, 0x000D, Severity::Warnin
 inline constexpr Code kResponseTxDropped{46, Source::Imu, 0x000E, Severity::Warning, CodeKind::Counter, false, "ResponseTxDropped", false, false};
 } // namespace imu
 
+namespace actuator_pwm_dir {
+/// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+/// arg0: stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
+inline constexpr Code kInitFailed{49, Source::ActuatorPwmDir, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+/// An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required.
+inline constexpr Code kDriverFault{61, Source::ActuatorPwmDir, 0x0002, Severity::Error, CodeKind::Latched, true, "DriverFault", false, true};
+} // namespace actuator_pwm_dir
+
+namespace feedback_quadrature {
+/// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+/// arg0: stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
+inline constexpr Code kInitFailed{50, Source::FeedbackQuadrature, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+/// Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required.
+inline constexpr Code kReadFailed{62, Source::FeedbackQuadrature, 0x0002, Severity::Error, CodeKind::Latched, true, "ReadFailed", false, true};
+} // namespace feedback_quadrature
+
 namespace actuator_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
 inline constexpr Code kInitFailed{47, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT.
-inline constexpr Code kFaultInjected{57, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
+inline constexpr Code kFaultInjected{59, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
 /// A mock diagnostic action raised an arm-blocking condition.
-inline constexpr Code kArmBlocked{58, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
+inline constexpr Code kArmBlocked{60, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
 } // namespace actuator_mock
 
 namespace feedback_mock {
@@ -225,12 +243,12 @@ inline constexpr Code kInitFailed{48, Source::FeedbackMock, 0x0001, Severity::Er
 namespace imu_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{49, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{51, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 } // namespace imu_mock
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 59;
+inline constexpr size_t kSlotCount = 63;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -283,6 +301,8 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::imu::kResponseTxDropped,
     codes::actuator_mock::kInitFailed,
     codes::feedback_mock::kInitFailed,
+    codes::actuator_pwm_dir::kInitFailed,
+    codes::feedback_quadrature::kInitFailed,
     codes::imu_mock::kInitFailed,
     codes::core::kCommandDropped,
     codes::core::kResponseDropped,
@@ -293,6 +313,8 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::core::kWatchdogTimeout,
     codes::actuator_mock::kFaultInjected,
     codes::actuator_mock::kArmBlocked,
+    codes::actuator_pwm_dir::kDriverFault,
+    codes::feedback_quadrature::kReadFailed,
 }};
 
 } // namespace drivelink::protocol::defs::diag

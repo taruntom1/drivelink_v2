@@ -20,6 +20,11 @@ struct Motor::Impl {
 };
 
 Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
+    : Motor(pwm_gpio, dir_gpio, Options{})
+{
+}
+
+Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options)
     : m_impl(new Impl{})
 {
     m_impl->dir_gpio = dir_gpio;
@@ -51,10 +56,12 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
     gpio_set_level(dir_gpio, 0);
 
     // Allocate MCPWM channel
-    ret = detail::McpwmPool::allocate(static_cast<int>(pwm_gpio), m_impl->channel);
+    ret = detail::McpwmPool::allocate(static_cast<int>(pwm_gpio), m_impl->channel,
+                                      options.exclusive_operator, options.start_forced);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate MCPWM channel for GPIO %d: %s",
                  pwm_gpio, esp_err_to_name(ret));
+        gpio_reset_pin(dir_gpio); // leave the object consistent: release DIR
         m_impl->init_error = ret;
         return;
     }
@@ -98,17 +105,19 @@ Motor &Motor::operator=(Motor &&other) noexcept
 
 void Motor::setSpeed(float speed)
 {
+    (void)write(speed);
+}
+
+esp_err_t Motor::write(float speed)
+{
     if (!m_impl || !m_impl->valid) {
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
     if (!std::isfinite(speed)) {
         speed = 0.0f; // NaN would survive the clamp and break the compare value
     }
     speed = std::clamp(speed, -1.0f, 1.0f);
-
-    bool reverse = speed < 0.0f;
-    gpio_set_level(m_impl->dir_gpio, reverse ? 1 : 0);
 
     float magnitude = std::fabsf(speed);
     uint32_t compare_value = static_cast<uint32_t>(
@@ -118,8 +127,39 @@ void Motor::setSpeed(float speed)
         compare_value = m_impl->channel.period_ticks;
     }
 
-    mcpwm_comparator_set_compare_value(m_impl->channel.comparator, compare_value);
+    // DIR changes at once, the compare value at the next PWM period. A zero
+    // write leaves DIR alone, so DIR never flips under a live compare value
+    // of the other sign when callers pass through zero on a reversal.
+    esp_err_t ret = ESP_OK;
+    if (compare_value > 0) {
+        ret = gpio_set_level(m_impl->dir_gpio, speed < 0.0f ? 1 : 0);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+    }
+
+    ret = mcpwm_comparator_set_compare_value(m_impl->channel.comparator, compare_value);
+    if (ret != ESP_OK) {
+        return ret;
+    }
     m_impl->current_speed = speed;
+    return ESP_OK;
+}
+
+esp_err_t Motor::forceLow()
+{
+    if (!m_impl || !m_impl->valid) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return mcpwm_generator_set_force_level(m_impl->channel.generator, 0, true);
+}
+
+esp_err_t Motor::releaseForce()
+{
+    if (!m_impl || !m_impl->valid) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return mcpwm_generator_set_force_level(m_impl->channel.generator, -1, true);
 }
 
 void Motor::setSpeedPercent(float percent)

@@ -120,4 +120,12 @@ ownership, delay/emergency overrides, seeded noise reset and count wrap.
 Host integration invokes `host/test/motor_smoke.py` on vdev; the same script
 runs controller/mocks on the bare board via `--endpoint serial://COM3
 --loop-rate 1000`. It restores a clean loops-only layout/settings and refuses
-pending edits or configured groups. Real-module setup follows in F5a-2.
+pending edits or configured groups.
+
+F5a-2 adds `test_motor_hardware.cpp` over the fake driver backend
+`tests/fake_motor_hw.cpp` (fixed atomic storage; it stands in for
+`mod_motor/src/idf/`). Sparse diag slots are stable across the test binary and
+can run out, so a test that checks one module code falls back to the safety
+overflow query. On the bare board, `motor_smoke.py --modules real --no-motor
+--pool-check` with pins checks the hardware types; a motor run drops
+`--no-motor` and needs `--confirm-first-run`.

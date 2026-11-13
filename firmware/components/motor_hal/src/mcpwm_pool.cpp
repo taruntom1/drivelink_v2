@@ -23,11 +23,14 @@ SemaphoreHandle_t McpwmPool::poolMutex()
     return mutex;
 }
 
-bool McpwmPool::findFreeSlot(int &group_id, int &oper_index, int &slot)
+bool McpwmPool::findFreeSlot(bool exclusive, int &group_id, int &oper_index, int &slot)
 {
     for (int g = 0; g < kNumGroups; g++) {
         for (int o = 0; o < kOpersPerGroup; o++) {
-            if (s_groups[g].opers[o].user_count < kSlotsPerOper) {
+            const OperatorState &op = s_groups[g].opers[o];
+            const bool free = exclusive ? op.user_count == 0
+                                        : (!op.exclusive && op.user_count < kSlotsPerOper);
+            if (free) {
                 group_id = g;
                 oper_index = o;
                 slot = s_groups[g].opers[o].user_count;
@@ -107,6 +110,7 @@ esp_err_t McpwmPool::ensureOperator(int group_id, int oper_index)
         ESP_LOGE(TAG, "Failed to connect operator to timer: %s", esp_err_to_name(ret));
         mcpwm_del_operator(op.handle);
         op.handle = nullptr;
+        op.exclusive = false;
         return ret;
     }
 
@@ -114,16 +118,17 @@ esp_err_t McpwmPool::ensureOperator(int group_id, int oper_index)
     return ESP_OK;
 }
 
-esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
+esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out, bool exclusive_operator, bool start_forced)
 {
     const SemaphoreHandle_t mtx = poolMutex();
     xSemaphoreTake(mtx, portMAX_DELAY);
 
     int gid, oidx, slot;
-    if (!findFreeSlot(gid, oidx, slot)) {
+    if (!findFreeSlot(exclusive_operator, gid, oidx, slot)) {
         xSemaphoreGive(mtx);
-        ESP_LOGE(TAG, "No free MCPWM slots (max %d motors)",
-                 kNumGroups * kOpersPerGroup * kSlotsPerOper);
+        ESP_LOGE(TAG, "No free MCPWM %s (max %d motors, %d with exclusive operators)",
+                 exclusive_operator ? "operator" : "slot",
+                 kNumGroups * kOpersPerGroup * kSlotsPerOper, kNumGroups * kOpersPerGroup);
         return ESP_ERR_NOT_FOUND;
     }
 
@@ -166,6 +171,17 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
         return ret;
     }
 
+    if (start_forced) {
+        ret = mcpwm_generator_set_force_level(gen, 0, true);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to force generator low: %s", esp_err_to_name(ret));
+            mcpwm_del_generator(gen);
+            mcpwm_del_comparator(cmpr);
+            xSemaphoreGive(mtx);
+            return ret;
+        }
+    }
+
     // Set PWM actions: HIGH on timer empty, LOW on comparator match
     ret = mcpwm_generator_set_action_on_timer_event(gen,
               MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
@@ -194,6 +210,7 @@ esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out)
     // Update bookkeeping
     uint32_t period = CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ / CONFIG_MOTOR_HAL_PWM_FREQ_HZ;
     s_groups[gid].opers[oidx].user_count++;
+    s_groups[gid].opers[oidx].exclusive = exclusive_operator;
     s_groups[gid].total_users++;
 
     out.group_id = gid;
@@ -230,6 +247,7 @@ esp_err_t McpwmPool::deallocate(const McpwmChannel &ch)
     if (op.user_count == 0) {
         mcpwm_del_operator(op.handle);
         op.handle = nullptr;
+        op.exclusive = false;
         ESP_LOGI(TAG, "Deleted operator: group=%d idx=%d", ch.group_id, ch.oper_index);
     }
 

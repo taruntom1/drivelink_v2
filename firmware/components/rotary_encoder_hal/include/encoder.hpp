@@ -46,6 +46,13 @@ public:
     /// @param pin_b  GPIO number for encoder channel B (DT)
     Encoder(gpio_num_t pin_a, gpio_num_t pin_b);
 
+    struct Options {
+        /// Internal pull-ups on A and B. The PCNT driver enables them; false
+        /// disables them again (push-pull encoders, external pull-ups).
+        bool pullup = true;
+    };
+    Encoder(gpio_num_t pin_a, gpio_num_t pin_b, const Options &options);
+
     /// Destructor. Releases the PCNT unit back to the pool.
     ~Encoder();
 
@@ -60,6 +67,11 @@ public:
     /// Thread-safe: pcnt_unit_get_count is ISR-safe.
     /// @return Accumulated count, or 0 if the encoder is invalid.
     int32_t getCount() const;
+
+    /// Read the accumulated count, reporting the driver result. ISR-safe
+    /// driver call under the unit's spinlock; no allocation, no log.
+    /// @return ESP_OK, ESP_ERR_INVALID_STATE when not valid, or the driver error.
+    esp_err_t readCount(int32_t &count) const;
 
     /// Returns the last computed rotation direction.
     /// Based on the count delta from the most recent on-demand sample.

@@ -98,3 +98,10 @@ control-port lifetime. Resolve/claim before loops start; never copy shared
 ownership in a tick. Commands, observations and control-port fields belong to
 the same loop. Optional input receipt timestamps are copied only with validated
 post-ARM value frames; keepalives never make a mode's stale setpoint fresh.
+
+F5a-2 hardware modules keep their logic pure and reach drivers only through
+`mod_motor/hardware.hpp` (device backend in `src/idf/`, a fake in the native
+tests). Bind first and take hardware last in `start()`. An output that the
+monitor forces must not share a read-modify-write force register with another
+output (one MCPWM operator per actuator). A type's diag code 1 is its
+`InitFailed`, which the core reports in place of `core.InstanceStartFailed`.
