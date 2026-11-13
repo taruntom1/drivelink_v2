@@ -17,6 +17,18 @@ inline constexpr uint8_t kTypeId = 0x71;
 
 /// param actuator
 inline constexpr uint16_t kActuator = 0x0001;
+/// param counts_per_rev
+inline constexpr uint16_t kCountsPerRev = 0x0002;
+/// param gear_ratio
+inline constexpr uint16_t kGearRatio = 0x0003;
+/// param velocity_cutoff
+inline constexpr uint16_t kVelocityCutoff = 0x0004;
+/// param noise_counts
+inline constexpr uint16_t kNoiseCounts = 0x0005;
+/// param noise_seed
+inline constexpr uint16_t kNoiseSeed = 0x0006;
+/// signal count
+inline constexpr uint16_t kCount = 0x0102;
 /// signal velocity
 inline constexpr uint16_t kVelocity = 0x0100;
 /// signal position
@@ -31,7 +43,7 @@ inline constexpr std::array<ActionArg, 2> kResults0300{{
 }};
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 4> kItems{{
+inline constexpr std::array<ItemDesc, 10> kItems{{
     ItemDesc{
         .id = 0x0001,
         .kind = ItemKind::Param,
@@ -47,6 +59,126 @@ inline constexpr std::array<ItemDesc, 4> kItems{{
         .has_max = false,
         .enum_values = {},
         .ref = "actuator",
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0002,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "counts_per_rev",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x3F800000 /* 1 */,
+        .max_bits = 0x49742400 /* 1000000 */,
+        .default_bits = 0x44B40000 /* 1440 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0003,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "gear_ratio",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x3A83126F /* 0.00100000005 */,
+        .max_bits = 0x461C4000 /* 10000 */,
+        .default_bits = 0x3F800000 /* 1 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0004,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "velocity_cutoff",
+        .unit = "Hz",
+        .description = "",
+        .min_bits = 0x00000000 /* 0 */,
+        .max_bits = 0x459C4000 /* 5000 */,
+        .default_bits = 0x41F00000 /* 30 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0005,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "noise_counts",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000 /* 0 */,
+        .max_bits = 0x42C80000 /* 100 */,
+        .default_bits = 0x00000000 /* 0 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0006,
+        .kind = ItemKind::Param,
+        .type = ValueType::U32,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "noise_seed",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000001,
+        .max_bits = 0xFFFFFFFF,
+        .default_bits = 0x00000001,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0102,
+        .kind = ItemKind::Signal,
+        .type = ValueType::I32,
+        .flags = flagBits(),
+        .name = "count",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
         .runs_in = ActionPlacement::None,
         .args = {},
         .results = {},

@@ -205,3 +205,9 @@ A change is done when all of the following are true:
 F4a groups are preallocated and use single-attempt atomic slot ownership;
 loops never wait for RX or configuration. Group snapshots read plain signals
 only on their owning loop. Command inputs stay gated disarmed until F4b.
+
+F5a-1 adds pure `mod_motor` interfaces, the cascade PID controller and shared
+encoder math. Firmware and vdev register the controller alongside the realistic
+motor mocks. Real PWM/PCNT modules follow in F5a-2; the legacy manager/controller
+remain until F5b. See `firmware/components/mod_motor/README.md` for ownership,
+mode-transfer and fresh-command contracts. Core v5/diag v3 encodings are unchanged.

@@ -143,7 +143,7 @@ TEST_CASE("Active startup diagnostics seed the fault latch before loop gates ope
     CHECK(c.armStatus()==core::ArmStatus::Fault); REQUIRE(c.acknowledgeFault().ok());
 }
 TEST_CASE("The monitor stops an actuator when its loop cannot process a disarm") {
-    Safety f; REQUIRE(f.c.arm().ok()); REQUIRE(f.send(core_os::nowUs()+1,1)); f.ticks();
+    Safety f; REQUIRE(f.c.arm().ok()); REQUIRE(f.send(core_os::nowUs()+1,1)); f.ticks(); f.ticks();
     const float velocity = f.value(256); REQUIRE(velocity>0);
     const auto base=core_os::nowUs(); f.c.monitor(base);
     { core_os::RealtimeScope rt(true); f.c.monitor(base+9000); }

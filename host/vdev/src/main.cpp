@@ -11,6 +11,7 @@
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include "mod_mock/modules.hpp"
+#include "mod_motor/modules.hpp"
 #include <array>
 #include <asio.hpp>
 #include <deque>
@@ -202,7 +203,9 @@ struct Server
         core::CoreConfig config;
         config.gpio_allowed_mask &= ~((1ULL << 43) | (1ULL << 44));
         core = std::make_unique<core::Core>(config);
-        if (!core->init(mod_mock::kTypes).ok() || !core->boot(store).ok() || !core->start().ok())
+        static const std::array<const core::ModuleType *, 5> types{
+            mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0]};
+        if (!core->init(types).ok() || !core->boot(store).ok() || !core->start().ok())
         {
             throw std::runtime_error("core boot failed");
         }

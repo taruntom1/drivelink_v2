@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F5a: motor module types.
+- **Next step:** F5a-1: motor interfaces, cascade controller and realistic mocks (approved; in progress).
 - **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware`.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
@@ -28,7 +28,7 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F5a
+## Handoff for F5a-1
 
 F4c adds generated source params/value/age signals, `Sampled<T>`, same-loop
 sampling and cross-loop snapshots, and `fusion.mock`. Core is wire v5 across
@@ -46,8 +46,9 @@ The bare board has normal firmware and its original loops-only layout.
   An unavailable receipt snapshot is unknown; paused loops retain heartbeat.
 - `feedback.mock` still uses the concrete mock actuator interface and reads
   its previous-tick state. F5a introduces the real interfaces.
-- **No motors.** The board check is instance setup on real pins plus the mock
-  modules. There is no bench-only pin or LEDC readback self-check. Velocity and
+- **No motors.** F5a-1 checks the controller with mock modules; F5a-2 adds
+  instance setup on real pins. There is no bench-only pin or LEDC readback
+  self-check. Velocity and
   position control and the loop-stall stop on a real motor are written as a
   deferred script (see "Deferred hardware checks") and dry-run against vdev or
   the bare board with mocks.
@@ -76,7 +77,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F4a | Subscription and command groups (preallocated, epochs), bound to any loop id; core wire v3, host/CLI/vdev | no | high | merged |[#44](https://github.com/taruntom1/drivelink_v2/pull/44) |
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | merged | [#47](https://github.com/taruntom1/drivelink_v2/pull/47) |
 | F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | merged | [#48](https://github.com/taruntom1/drivelink_v2/pull/48) |
-| F5a | Motor module types (actuator, feedback, controller) with `emergencyStop`, `onArmTransition`, bumpless mode switch; a more realistic mock motor | bare board: instances on real pins, mocks; deferred: motors | high | planned | |
+| F5a-1 | Shared motor interfaces, true cascade PID controller, fresh-command bumpless mode switch and realistic mocks; [approved implementation plan](f5a-1-implementation.md) | bare board: controller with mocks; deferred: motors | high | in progress | |
+| F5a-2 | Real PWM+DIR actuator and quadrature feedback modules, hardware emergency force/release and driver failure paths; depends on F5a-1 | bare board: instances on real pins, mocks; deferred: motors | high | planned | |
 | F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test | bare board: loop-stall stop with mocks; deferred: motors | high | planned | |
 | F6 | `imu.bno055` module behind a bus interface, with a fake BNO055 bus in the native tests; calibration actions; delete `imu_bmo_055` | bare board: missing-sensor path, calibration actions on `imu.mock`; deferred: IMU | high | planned | |
 | F7a | Capture family, PSRAM (caps alloc only) | bare board: capture of mock signals | high | planned | |
@@ -106,6 +108,7 @@ Each note is deleted by the step that uses it.
   - Before the merge, tag `main`'s last legacy commit `legacy-final`. Say in `README`/`firmware/CLAUDE.md` that the new firmware has not run on motors or an IMU until HW closes the deferred checks.
 - **F7b**
   - Decide whether the test signal generator stays one per loop, now that the number of loops varies.
+  - Controller mode changes require a fresh input receipt. Testgen must explicitly participate in the owning-loop receipt/activation contract; writing only the input value would leave a switched controller waiting.
 - **F8**
   - The time ping (`0x02` / `0x42`) is not in the registry yet.
 - **H1**
@@ -156,6 +159,9 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
 - **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a, F4b and F4c are explicitly approved for Codex planning/build and an independent Codex review at high effort.
+- **F5a:** Codex planning/build and an independent Sol review at high effort
+  are explicitly approved. F5a is split into F5a-1 and F5a-2; F5a-1's concrete
+  implementation plan, including exclusive actuator ownership, is approved.
 
 ## Decision log
 
@@ -163,6 +169,9 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
+| 2026-11-13 | F5a | Codex plans/builds; an independent Sol agent reviews at high effort | Explicit user approval in this session | yes: F5a-1 implementation plan |
+| 2026-11-13 | F5a | Split into F5a-1 (interfaces, controller, realistic mocks) and F5a-2 (real PWM/encoder modules and bench checks), one PR/session each | User chose the split to keep PRs near the 4–5k-line review limit | yes: status and F5a-1 implementation plan |
+| 2026-11-13 | F5a | Implement true position → velocity → duty cascade with a velocity limit; hold the transition tick and require a fresh command for the new mode; one controller owns each actuator and direct mock duty cannot override it | User choices and approval of the F5a-1 implementation plan | yes |
 | 2026-11-13 | F5–F10 | Checks that need motors, an IMU or the robot are deferred, not waited for. Each step merges on native, vdev and bare-board checks, and writes and dry-runs a script for each deferred check. A new HW step after F10 runs them; if hardware arrives earlier, the step in progress pauses and they run then | No motors or IMU are available; the user chose not to block the overhaul on them | yes |
 | 2026-11-13 | F5b, F6 | `motor_manager` and `imu_bmo_055` are still deleted in F5b and F6, before any hardware check | They ran only in mock mode on this branch, so keeping them proves nothing; `main` and git history keep them (user decision) | n/a |
 | 2026-11-13 | F10 | `main`'s last legacy commit is tagged `legacy-final`, then `firmware_overhaul` merges, marked as not yet run on motors or an IMU | User decision; the tag is the fallback firmware | yes |

@@ -10,11 +10,15 @@ Type id `0x70`. Loops: realtime.
 |---|---|---|---|---|---|---|---|
 | 0x0001 | `tau_s` | f32 | s | 0.00100000005 .. 10 | 0.100000001 | persist |  |
 | 0x0002 | `gain` | f32 |  | 0 .. 1000 | 10 | persist |  |
+| 0x0003 | `deadband` | f32 |  | 0 .. 1 | 0.0199999996 | persist |  |
+| 0x0004 | `duty_limit` | f32 |  | 0 .. 1 | 1 | persist |  |
+| 0x0005 | `one_tick_delay` | bool |  |  | true | persist |  |
 
 ## Signals
 
 | Id | Name | Type | Unit | Range | Default | Flags | Description |
 |---|---|---|---|---|---|---|---|
+| 0x0102 | `applied_duty` | f32 |  |  |  |  |  |
 | 0x0100 | `velocity` | f32 | rad/s |  |  |  |  |
 | 0x0101 | `position` | f32 | rad |  |  |  |  |
 

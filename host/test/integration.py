@@ -244,6 +244,8 @@ def main():
             cli('sub-clear', '0'); cli('remove', '115', str(fusion))
             cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
+            from motor_smoke import run as motor_smoke
+            motor_smoke(args.cli, url)
             print('PASS CLI discovery, typed params, actions, status, diag, persistence, failed SAVE, crash recovery, locking and transports')
         finally:
             kill()

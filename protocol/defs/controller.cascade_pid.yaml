@@ -1,0 +1,36 @@
+type: controller.cascade_pid
+type_id: 0x20
+realtime: required
+items:
+  - {id: 1, kind: param, name: actuator, type: u32, flags: [reboot_required], ref: actuator, ref_order: after}
+  - {id: 2, kind: param, name: feedback, type: u32, flags: [reboot_required], ref: feedback}
+  - {id: 16, kind: param, name: mode, type: enum, values: {open_loop: 0, velocity: 1, position: 2}, default: open_loop}
+  - {id: 17, kind: param, name: duty_limit, type: f32, min: 0, max: 1, default: 1}
+  - {id: 18, kind: param, name: velocity_limit, type: f32, unit: rad/s, min: 0.001, max: 1000, default: 100}
+  - {id: 32, kind: param, name: vel.kp, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 33, kind: param, name: vel.ki, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 34, kind: param, name: vel.kd, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 35, kind: param, name: vel.d_cutoff, type: f32, min: 0, max: 5000, default: 0}
+  - {id: 48, kind: param, name: pos.kp, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 49, kind: param, name: pos.ki, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 50, kind: param, name: pos.kd, type: f32, min: 0, max: 1000, default: 0}
+  - {id: 51, kind: param, name: pos.d_cutoff, type: f32, min: 0, max: 5000, default: 0}
+  - {id: 256, kind: signal, name: position, type: f32, unit: "rad"}
+  - {id: 257, kind: signal, name: velocity, type: f32, unit: "rad/s"}
+  - {id: 258, kind: signal, name: duty, type: f32, unit: ""}
+  - {id: 259, kind: signal, name: velocity_target, type: f32, unit: "rad/s"}
+  - {id: 260, kind: signal, name: waiting_for_command, type: bool, unit: ""}
+  - {id: 272, kind: signal, name: vel.error, type: f32}
+  - {id: 273, kind: signal, name: vel.p_term, type: f32}
+  - {id: 274, kind: signal, name: vel.i_term, type: f32}
+  - {id: 275, kind: signal, name: vel.d_term, type: f32}
+  - {id: 276, kind: signal, name: vel.integrator, type: f32}
+  - {id: 288, kind: signal, name: pos.error, type: f32}
+  - {id: 289, kind: signal, name: pos.p_term, type: f32}
+  - {id: 290, kind: signal, name: pos.i_term, type: f32}
+  - {id: 291, kind: signal, name: pos.d_term, type: f32}
+  - {id: 292, kind: signal, name: pos.integrator, type: f32}
+  - {id: 512, kind: input, name: velocity_sp, type: f32, unit: rad/s, min: -1000, max: 1000, testgen: true}
+  - {id: 513, kind: input, name: position_sp, type: f32, unit: rad, testgen: true}
+  - {id: 514, kind: input, name: duty_sp, type: f32, min: -1, max: 1, testgen: true}
+  - {id: 768, kind: action, name: reset_integrators, runs_in: loop}

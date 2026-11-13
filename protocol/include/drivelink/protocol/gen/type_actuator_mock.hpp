@@ -19,6 +19,14 @@ inline constexpr uint8_t kTypeId = 0x70;
 inline constexpr uint16_t kTauS = 0x0001;
 /// param gain
 inline constexpr uint16_t kGain = 0x0002;
+/// param deadband
+inline constexpr uint16_t kDeadband = 0x0003;
+/// param duty_limit
+inline constexpr uint16_t kDutyLimit = 0x0004;
+/// param one_tick_delay
+inline constexpr uint16_t kOneTickDelay = 0x0005;
+/// signal applied_duty
+inline constexpr uint16_t kAppliedDuty = 0x0102;
 /// signal velocity
 inline constexpr uint16_t kVelocity = 0x0100;
 /// signal position
@@ -46,7 +54,7 @@ inline constexpr std::array<ActionArg, 2> kArgs0302{{
 }};
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 8> kItems{{
+inline constexpr std::array<ItemDesc, 12> kItems{{
     ItemDesc{
         .id = 0x0001,
         .kind = ItemKind::Param,
@@ -80,6 +88,86 @@ inline constexpr std::array<ItemDesc, 8> kItems{{
         .default_bits = 0x41200000 /* 10 */,
         .has_min = true,
         .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0003,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "deadband",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000 /* 0 */,
+        .max_bits = 0x3F800000 /* 1 */,
+        .default_bits = 0x3CA3D70A /* 0.0199999996 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0004,
+        .kind = ItemKind::Param,
+        .type = ValueType::F32,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "duty_limit",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000 /* 0 */,
+        .max_bits = 0x3F800000 /* 1 */,
+        .default_bits = 0x3F800000 /* 1 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0005,
+        .kind = ItemKind::Param,
+        .type = ValueType::Bool,
+        .flags = flagBits(ItemFlag::Persist),
+        .name = "one_tick_delay",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000001,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0102,
+        .kind = ItemKind::Signal,
+        .type = ValueType::F32,
+        .flags = flagBits(),
+        .name = "applied_duty",
+        .unit = "",
+        .description = "",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000000,
+        .has_min = false,
+        .has_max = false,
         .enum_values = {},
         .ref = nullptr,
         .runs_in = ActionPlacement::None,

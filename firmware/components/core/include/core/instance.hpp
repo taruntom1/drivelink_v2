@@ -82,6 +82,9 @@ public:
     // hardware force, never touch ordinary loop-owned storage from it.
     virtual void onArmTransition(bool armed) { (void)armed; }
     virtual void emergencyStop() {}
+    /// Optional C++ interfaces, queried once at startup. IDs are local API
+    /// contracts, not wire values. Unknown IDs return nullptr; no RTTI.
+    virtual void *queryInterface(uint32_t id) { (void)id; return nullptr; }
 };
 
 namespace detail {
@@ -92,6 +95,7 @@ struct Binding {
     void *ptr = nullptr;
     OnChange hook = nullptr;
     bool bound = false;
+    int64_t *receipt_us = nullptr; // owning loop only; value-bearing commands
 };
 
 class InstanceTable;
@@ -168,9 +172,12 @@ public:
     }
 
     /// Bind input `id` to `storage`, which command groups write (F4a).
-    template <typename T> bool bindInput(uint16_t id, T *storage)
+    template <typename T> bool bindInput(uint16_t id, T *storage, int64_t *receipt_us = nullptr)
     {
-        return bind(id, defs::ItemKind::Input, valueTypeOf<T>(), storage, nullptr);
+        if (!bind(id, defs::ItemKind::Input, valueTypeOf<T>(), storage, nullptr)) { return false; }
+        m_record.bindings[m_record.itemIndex(id)].receipt_us = receipt_us;
+        if (receipt_us) { *receipt_us = 0; }
+        return true;
     }
 
     /// The boot value bits of param `id` (for structural params), or 0 if
