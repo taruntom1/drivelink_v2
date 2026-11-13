@@ -29,7 +29,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "imu_bmo_055.hpp"
-#include "motor_manager.hpp"
 #include "time_sync.hpp"
 #include "uart_comm.hpp"
 
@@ -42,10 +41,10 @@ namespace {
 
 // The firmware's tasks, by the names they are created with. A name with no
 // task (a manager that did not start) is skipped.
-// esp_timer runs the timer callbacks (the control and IMU sampling timers).
-constexpr std::array<const char *, 11> kLoggedTasks = {
-    "main",       "uart_rx",    "uart_tx",        "motor_mgr_upd", "motor_mgr_cfg", "imu_cfg",
-    "imu_stream", "time_sync_task", "diag",       "esp_timer", "core_cfg",
+// esp_timer runs the timer callbacks (the loop timers, the safety monitor and
+// the IMU sampling timer).
+constexpr std::array<const char *, 9> kLoggedTasks = {
+    "main", "uart_rx", "uart_tx", "imu_cfg", "imu_stream", "time_sync_task", "diag", "esp_timer", "core_cfg",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -194,25 +193,6 @@ extern "C" void app_main(void)
     }
 
     uint8_t started_mask = 0;
-
-    motor_manager::ManagerConfig mgr_cfg{};
-    mgr_cfg.max_motors = 4;
-    mgr_cfg.configure_msg_type = motor_manager::kManagerMsgConfigure;                 // 0x21
-    mgr_cfg.configure_response_msg_type = motor_manager::kManagerMsgConfigureResp;    // 0x61
-    mgr_cfg.setpoint_stream_channel = motor_manager::kManagerSetpointStreamChannel;   // 0xBD
-    mgr_cfg.telemetry_stream_channel = motor_manager::kManagerTelemetryStreamChannel; // 0xBE
-    mgr_cfg.use_mock_feedback = true;
-    mgr_cfg.update_task.enable = true; // timer-driven; periods from Kconfig, changeable via SetTiming
-
-    std::optional<motor_manager::MotorManager> manager;
-    manager.emplace(uart, mgr_cfg);
-    if (manager->isValid()) {
-        started_mask |= diag::kStartedMotorManager;
-    } else {
-        DIAG_ERROR(diag::codes::system::kManagerStartFailed, ESP_FAIL, diag::kManagerIdMotorManager, 0,
-                   "Motor manager failed to start; continuing without it");
-        manager.reset();
-    }
 
     time_sync::TimeSyncConfig sync_cfg{};
     sync_cfg.sync_interval_ms = 5000;

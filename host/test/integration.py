@@ -246,7 +246,11 @@ def main():
             cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             from motor_smoke import run as motor_smoke
-            motor_smoke(args.cli, url)
+            # The loop-stall scenario needs the bench stall: restart the same
+            # state with --allow-crash, on the same transport.
+            kill()
+            url = start('--allow-crash', *(('--pty',) if url.startswith('serial://') else ()))
+            motor_smoke(args.cli, url, stall_ms=2000)
             # The vdev has no pins: the real-module path refuses before any
             # change, whether the endpoint is TCP or (on Linux) a serial PTY.
             refused = subprocess.run([sys.executable, str(Path(__file__).with_name('motor_smoke.py')), '--cli', str(args.cli),

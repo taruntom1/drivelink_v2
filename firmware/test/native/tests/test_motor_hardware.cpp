@@ -206,6 +206,32 @@ TEST_CASE("The monitor's force stops the output without a loop transition and ho
     }
 }
 
+TEST_CASE("A stalled control loop leaves the output forced through the monitor alone") {
+    Hw f; auto &o = outputs[0];
+    f.arm(); REQUIRE(f.send(.3F)); f.tick();
+    REQUIRE(o.effective() == doctest::Approx(.3F));
+    const auto base = core_os::nowUs(); f.c.monitor(base);
+    // No tick runs from here: the heartbeat stops. 3 periods + 5 ms is the
+    // limit at 1 kHz, so 9 ms later the monitor must act on its own.
+    { core_os::RealtimeScope rt(true); f.c.monitor(base + 7000); }
+    CHECK(f.c.armStatus() == core::ArmStatus::Armed);
+    CHECK_FALSE(o.forced);
+    { core_os::RealtimeScope rt(true); f.c.monitor(base + 9000); }
+    CHECK(f.c.armStatus() == core::ArmStatus::Fault);
+    CHECK(f.c.lastDisarmReason() == core::DisarmReason::LoopStalled);
+    CHECK(o.forced); CHECK(o.effective() == 0);
+    CHECK(o.duty == doctest::Approx(.3F)); // the loop never ran: only the force stops it
+    // The loop resumes: the disarm transition writes zero; the force holds.
+    (void)f.send(.3F); f.tick();
+    CHECK(o.forced); CHECK(o.duty == 0); CHECK(f.get(kPwm, pwm::kForced) == 1);
+    CHECK(f.get(kPwm, pwm::kAppliedDuty) == 0);
+    CHECK(f.c.arm().detail == core::Detail::FaultLatched);
+    f.c.monitor(base + 10000);
+    REQUIRE(f.c.acknowledgeFault().ok());
+    f.arm(); REQUIRE(f.send(.3F)); f.tick();
+    CHECK_FALSE(o.forced); CHECK(o.duty == doctest::Approx(.3F));
+}
+
 TEST_CASE("A monitor stop racing the ARM release is not undone by it") {
     Hw f; auto &o = outputs[0];
     // The monitor forces after the loop read the stop epoch, and its force

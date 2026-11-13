@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F5b: delete `motor_manager` and the legacy motor streams, and add the loop-stall test, after the F5a-2 PR is merged.
+- **Next step:** F6: the `imu.bno055` module and the deletion of `imu_bmo_055`, after the F5b PR is merged.
 - **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware`.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
@@ -28,37 +28,35 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F5b
+## Handoff for F6
 
-F5a-2 adds `actuator.pwm_dir` (0x21) and `feedback.quadrature` (0x22): pure
-logic over `mod_motor/hardware.hpp`, a device backend in `mod_motor/src/idf/`,
-a fake in the native tests. Only the firmware registers them; the vdev does
-not. Core v5, diag v3 and NVS formats are unchanged; the contracts are in
-`firmware/components/mod_motor/README.md`.
+F5b deleted `motor_manager`, `motor_controller`, the legacy motor wire
+protocol and the HAL/PID APIs only they used. Motors exist only as core
+modules (`mod_motor`). Core v5, diag v3 and NVS formats are unchanged.
 
-- **Deleting `motor_manager` and `motor_controller`.** The new actuators use
-  `motor_hal` with `Options{exclusive_operator, start_forced}` and
-  `write/forceLow/releaseForce`; the encoder uses `Encoder::Options` and
-  `readCount`. Once the legacy manager is gone, the pool's shared-operator mode
-  and `setSpeed`, and the encoder's on-demand rate sampler and its two Kconfig
-  options, have no user left: delete or keep them deliberately.
-  `velocity_estimator.hpp` in `motor_controller` still forwards to `mod_motor`.
-- **Loop-stall test.** `motor_smoke.py` has the real path (`--modules real`);
-  add the stall scenario to both paths. On the bare board, a stalled control
-  loop must leave `forced` set on `actuator.pwm_dir` through the monitor alone.
-  The bench stall needs a `CONFIG_CORE_BENCH_CRASH=y` build (see
-  `smoke_safety_firmware.py --bench`); flash the normal firmware afterwards.
-- **A type's diag code 1 is its `InitFailed`**: the core reports it in place of
-  `core.InstanceStartFailed`. F6's `imu.bno055` should follow the same pattern.
-- **Main stack.** Instance `start()` runs on `main`; F5a-2 raised it to 5632
-  bytes (min 1824 free with real modules and their start-failure paths).
-- **PC crash during the bench run.** On 2026-11-13 the host PC bugchecked
-  (0xD1, a kernel driver fault) while `motor_smoke.py` drove COM3 and a
-  pyserial capture held COM4. The rerun with the same setup passed. If it
-  recurs, suspect the WCH CH343 (2.1.2025.7) or libwdi USB-JTAG driver, and
-  avoid holding COM4 open across many COM3 reboots.
-- The board is back on normal firmware with its loops-only layout, rates
-  1000/100/10 Hz and watchdog 200 ms. No motors or IMU were run.
+- **Registry.** The command groups now have 31 channels (`0xA0`–`0xBE`);
+  `CORE_COMMAND_GROUPS` allows 1–31 (default 8). F6 removes the IMU stream at
+  `0xBF` (32 channels, Kconfig max 32) and the IMU's `0x22` / `0x42`; update
+  `protocol/test/test_defs.cpp`, `tools/gen/tests/test_gen.py`
+  (`RealDefinitions`), `docs/protocol/core.md`, `definitions.md` and the core
+  README, which state the count.
+- **Retiring a manager's diag codes.** Mark each code `retired: true` and keep
+  its source id (motor_manager `0x10` is done; `imu` `0x12` is next). Manager
+  id 3 and the started bit `0x04` in `diag_reporter.hpp` become reserved, as
+  1 and `0x01` are now; `smoke_main_firmware.py` drops its IMU checks.
+- **`legacy-managers.md`** now covers only the IMU and time_sync; F6 deletes
+  the IMU parts, F8 the file.
+- **A type's diag code 1 is its `InitFailed`**: the core reports it in place
+  of `core.InstanceStartFailed`. `imu.bno055` should follow it.
+- **Main stack.** Instance `start()` runs on `main` (5632 bytes, F5a-2). Check
+  its mark after adding the BNO055's start path.
+- **Loop-stall tooling.** `motor_smoke.py --stall` and the bench build
+  (`CONFIG_CORE_BENCH_CRASH=y` in a separate build dir; see "Hardware notes")
+  are the pattern for any further monitor check.
+- **PC crash risk.** On 2026-11-13 the host PC bugchecked (0xD1) once while
+  `motor_smoke.py` drove COM3 and a pyserial capture held COM4. If it recurs,
+  suspect the WCH CH343 (2.1.2025.7) or libwdi USB-JTAG driver, and avoid
+  holding COM4 open across many COM3 reboots.
 
 ## Steps
 
@@ -80,8 +78,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F4b | Arming, `DISARM` fast path, safety monitor, watchdog, `DIAG_RAISE`, `blocks_arm` / `disarms`, `kind: latched`; CLI arm and stream commands; the read-only `limits.*` system params | yes: monitor and watchdog on the board with mock modules | high | merged | [#47](https://github.com/taruntom1/drivelink_v2/pull/47) |
 | F4c | Sources: `kind: source` items (the param, its generated value and age signals, the `Source` item flag), `limits.link_values`, the per-loop-pair triple buffers, `Sampled<T>`, `fusion.mock` reading across loops | bare board: the control loop's longest tick with and without a 16-value link | high | merged | [#48](https://github.com/taruntom1/drivelink_v2/pull/48) |
 | F5a-1 | Shared motor interfaces, true cascade PID controller, fresh-command bumpless mode switch and realistic mocks; [approved implementation plan](f5a-1-implementation.md) | bare board: controller with mocks; deferred: motors | high | merged | [#50](https://github.com/taruntom1/drivelink_v2/pull/50) |
-| F5a-2 | Real PWM+DIR actuator and quadrature feedback modules, hardware emergency force/release and driver failure paths; depends on F5a-1 | bare board: instances on real pins, pool limits, mocks; deferred: motors | high | in review | [#52](https://github.com/taruntom1/drivelink_v2/pull/52) |
-| F5b | Delete `motor_manager` and the legacy motor streams; loop-stall test | bare board: loop-stall stop with mocks; deferred: motors | high | planned | |
+| F5a-2 | Real PWM+DIR actuator and quadrature feedback modules, hardware emergency force/release and driver failure paths; depends on F5a-1 | bare board: instances on real pins, pool limits, mocks; deferred: motors | high | merged | [#52](https://github.com/taruntom1/drivelink_v2/pull/52) |
+| F5b | Delete `motor_manager`, `motor_controller`, the legacy motor streams and the HAL/PID APIs only they used; loop-stall test (`motor_smoke.py --stall`) | bare board: loop-stall stop with mocks and real modules; deferred: motors | high | in review | |
 | F6 | `imu.bno055` module behind a bus interface, with a fake BNO055 bus in the native tests; calibration actions; delete `imu_bmo_055` | bare board: missing-sensor path, calibration actions on `imu.mock`; deferred: IMU | high | planned | |
 | F7a | Capture family, PSRAM (caps alloc only) | bare board: capture of mock signals | high | planned | |
 | F7b | Test signal generator; evaluate `SPIRAM_XIP_FROM_PSRAM` | bare board: step and chirp on the mock motor at 1 kHz; deferred: on a motor | high | planned | |
@@ -100,8 +98,6 @@ Each note is deleted by the step that uses it.
 
 - **GUI design follow-ups.** [todo-device-name.md](todo-device-name.md) records the proposed device identity and Rename behaviour. It was proposed before F3b landed and must be reconciled with the current core before a wire change is scheduled. [todo-layout-ops.md](todo-layout-ops.md) is closed: the loop at `ADD_INSTANCE` is built, and the GUI follows the firmware's `Referenced` refusal. The GUI design is being brought in line with F3d's loops and F4c's planned sources in phase G7b of [gui-design.md](gui-design.md). That phase found two gaps, both settled on 2026-11-13 and scheduled below: the device's limits (F4b) and a source's value and age as signals (F4c). No firmware changes are authorised by the GUI design sessions.
 
-- **F5**
-  - Removing the legacy motor streams (F5b) frees two command group channels.
 - **F6**
   - Removing the IMU manager frees `0x42` and the `0xBF` channel.
   - The driver's register traffic goes through a small bus interface. A native test plays the BNO055 from its datasheet: chip id, mode switches, calibration status, a NACK and a timeout. It covers init, the calibration actions and the error paths. On the bare board only the missing-sensor path is checked.
@@ -127,7 +123,7 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 
 | Step | Script and command | Needs | Checks | Pass |
 |---|---|---|---|---|
-| F5a-1 / F5a-2 | `python host/test/motor_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --confirm-first-run --pwm-pin P --dir-pin D --enc-a A --enc-b B --cpr C [--gear G] [--duty-cap 0.2] [gains/targets/tolerances]`; the same setup passed on the bare board with `--no-motor --pool-check` | Motor driver, motor and encoder | First-run procedure; encoder polarity in open loop before any closed loop; velocity and position tracking; watchdog force; longest tick. F5b adds loop-stall | Polarity positive; tracking within the given tolerances; after the watchdog trip `forced` is set, applied duty 0 and the encoder stops (at most 2 counts in 0.5 s); zero overruns |
+| F5a-1 / F5a-2 / F5b | `python host/test/motor_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --confirm-first-run --pwm-pin P --dir-pin D --enc-a A --enc-b B --cpr C [--gear G] [--duty-cap 0.2] [gains/targets/tolerances]`, normal firmware; then the same with `--stall` on a `CONFIG_CORE_BENCH_CRASH=y` build (flash the normal firmware afterwards). Both passed on the bare board with `--no-motor` (`--pool-check` on the normal build) | Motor driver, motor and encoder | First-run procedure; encoder polarity in open loop before any closed loop; velocity and position tracking; watchdog force; longest tick; with `--stall`, a 2 s control-loop stall in velocity mode | Polarity positive; tracking within the given tolerances; after the watchdog trip `forced` is set, applied duty 0 and the encoder stops (at most 2 counts in 0.5 s); zero overruns in the normal run (a stall run counts its stall as overruns); stall: Fault/LoopStalled during the stall, the encoder moves at most 25% of its free run at the pre-stall speed, `forced` and zero duty after it |
 
 ## Hardware notes
 
@@ -141,10 +137,12 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
   - `firmware/test/uart_comm/smoke_main_firmware.py`: the legacy managers. It creates no motor.
   - `firmware/test/uart_comm/smoke_core_firmware.py`: the core with mock instances, which it removes again. `--safe-mode` needs a `CONFIG_CORE_BENCH_CRASH=y` build; flash the normal firmware again afterwards.
   - `host/test/hardware_smoke.py`: the same through the CLI. It refuses to run with pending edits, and restores the layout and rates it found.
-- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F5a-2/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
+- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F5b/core v5 firmware is flashed; bench crash/stall are disabled and panic-reset Task WDT is enabled.
+- **Bench build** (`CONFIG_CORE_BENCH_CRASH=y`) without touching `firmware/sdkconfig`, from inside `firmware/` with IDF exported: `idf.py -B build_bench -D SDKCONFIG=build_bench/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;<file with CONFIG_CORE_BENCH_CRASH=y>" build`, then `idf.py -B build_bench -p COM3 flash`. `build_bench/` is git-ignored. Restore with `idf.py -C firmware -p COM3 build flash` after checking `firmware/build/config/sdkconfig.h` has no `CONFIG_CORE_BENCH_CRASH`.
+- **Serial status backlog.** On Windows over the CH343, each new CLI process reads queued status frames, not the newest one, so a check that polls `status` sees device events late. Judge timing from device data (timestamps, overrun counts), as `motor_smoke.py --stall` does.
 - **Bench pins for real modules:** actuator PWM 4 / DIR 5, encoder 6 / 7 (nothing attached; pull-ups keep the count at 0). `motor_smoke.py`'s pool check uses 1, 2, 10–18, 21, 39–42 and 47. Avoid strapping pins 0, 3, 45, 46, the legacy IMU's I2C 8/9, and 38/48 (RGB LED on some boards).
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
-- **Latest stack marks** (F5a-2 real modules on pins, both pool-limit layouts and regressions; minimum bytes free across runs; stacks 4096 unless given): main 1824 (5632), uart_rx 2756, uart_tx 3056, motor_mgr_upd 1872, motor_mgr_cfg 3164 (5120), imu_cfg 2092, imu_stream 1780, time_sync_task 1912, diag 1748, esp_timer 3248, core_cfg 4068 (6144), core_loop_0 3072, core_loop_1 3152.
+- **Latest stack marks** (F5b, normal firmware, 7 `actuator.pwm_dir` with the 7th failing start on `main` plus one `feedback.quadrature`; stacks 4096 unless given): main 2376 (5632), uart_rx 2924, uart_tx 3064, imu_cfg 2092, imu_stream 1784, time_sync_task 2004, diag 1780, esp_timer 3352, core_cfg 4308 (6144), core_loop_0 3176, core_loop_1 3248. The motor manager's tasks are gone.
 - **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board. None of these are expected before HW; see "Deferred hardware checks".
 
 ## Other traps
@@ -162,7 +160,7 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
 - **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a, F4b and F4c are explicitly approved for Codex planning/build and an independent Codex review at high effort.
-- **F5a-2** used the default policy: planned and built on Opus 5.5 at high
+- **F5b** used the default policy: planned and built on Opus 5.5 at high
   effort, with an independent Opus review agent at high effort.
 
 ## Decision log
@@ -171,12 +169,10 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-13 | F5a-2 | `actuator.pwm_dir` forces its one PWM generator low (DIR left alone) and takes an MCPWM operator of its own (6 at most); the pool keeps a shared mode only for the legacy motors | Both generators of an operator share a read-modify-write force register (user decision) | yes |
-| 2026-11-13 | F5a-2 | Tick-time driver errors raise latched, disarming `actuator_pwm_dir.DriverFault` / `feedback_quadrature.ReadFailed`; start failures use each type's code-1 `InitFailed` (stage 1 pin unset, 2 driver error) | User decision; code 1 is what the core reports in place of `core.InstanceStartFailed` | yes |
-| 2026-11-13 | F5a-2 | `invert` on both types (locked while armed), `pullup` on the encoder, `duty_limit` on the actuator; a reversal passes through one zero tick and a zero write leaves DIR; MCPWM resolution default 10 MHz; main task stack 5632 | User decision (params); internal choices, the stack after an 848-byte mark on the board | yes |
-| 2026-11-13 | tooling | Add token-efficiency rules to overhaul-step; use environment-neutral tools and the approved model policy | User request after F5a-1; preserve approval, safety, full validation and independent review gates | yes: skill |
+| 2026-11-13 | F5b | The command groups grow to 31 channels (`0xA0`–`0xBE`) and `CORE_COMMAND_GROUPS` to 1–31 (default 8); core stays v5 | No payload changes, and the default capacity the device reports is unchanged (user decision) | yes |
+| 2026-11-13 | F5b | Deleted with the legacy stack: `motor_hal`'s shared-operator mode and `setSpeed`/`setSpeedPercent`/`stop`/`getSpeed`; the encoder's rate sampler, `getCount`/`reset` and `ENCODER_HAL_RATE_SAMPLE_PERIOD_MS`; `pid::PidController` and its Kconfig (`pid` is header-only, its tests cover `pid::Kernel`) | No user left (user decision); every motor now takes its own MCPWM operator | yes |
+| 2026-11-13 | F5b | The stall check proves the monitor's disarm during the stall from device data: the first Fault/LoopStalled status frame still carries the loop's pre-stall overrun count. The force during the stall is proven natively and, physically, only with a motor | Host timing is unreliable (each CLI process reads a backlog of queued status frames on the CH343); duty and `forced` are published by the stalled loop (independent review); a monitor-stop counter would add a wire field | yes |
 | 2026-11-13 | F5–F10 | Checks that need motors, an IMU or the robot are deferred, not waited for. Each step merges on native, vdev and bare-board checks, and writes and dry-runs a script for each deferred check. A new HW step after F10 runs them; if hardware arrives earlier, the step in progress pauses and they run then | No motors or IMU are available; the user chose not to block the overhaul on them | yes |
-| 2026-11-13 | F5b, F6 | `motor_manager` and `imu_bmo_055` are still deleted in F5b and F6, before any hardware check | They ran only in mock mode on this branch, so keeping them proves nothing; `main` and git history keep them (user decision) | n/a |
 | 2026-11-13 | F10 | `main`'s last legacy commit is tagged `legacy-final`, then `firmware_overhaul` merges, marked as not yet run on motors or an IMU | User decision; the tag is the fallback firmware | yes |
 | 2026-11-13 | F5, F6 | To make up for no hardware: F5a makes the mock motor more realistic (quantization, deadband, saturation, one-tick delay, optional noise); F6 tests the BNO055 driver against a fake bus. Review effort stays high; F5 has no bench pin self-check | User decision | yes |
 | 2026-11-13 | HW | The first motor run uses a procedure, not new firmware: wheels off the ground, a current-limited supply, a low duty cap, a hand on the power switch. The GPIO e-stop and driver-enable pin stay later options | User decision | yes |
@@ -215,4 +211,5 @@ One row per run. The stack marks and what was never run are in "Hardware notes".
 | 2026-11-13 | F4b | Normal firmware: legacy/core/CLI smoke; mock ARM/commands/fast DISARM, stale mailboxes, armed refusals, blockers/fault ACK, watchdog re-arm, read-only limits; every measured stack above 1 KB (minimum 1200). Bench: 150 ms stalls of both loops and recovery; Task WDT panic names core_loop_0, then reboot. Forced reconfigure, normal firmware restored; bench commands refused; final legacy/core/safety smoke and layout/settings restoration passed | Pass |
 | 2026-11-13 | F4c | Source value/age smoke; matched 35 s control-loop runs with 0/16 linked values (106/94 us max, zero overruns); all stacks >1 KB (minimum 1200). Legacy/core/CLI/safety smoke passed; core v5/source descriptors/limit verified; original layout, rates, watchdog and idle groups restored | Pass |
 | 2026-11-13 | F5a-1 | Normal firmware: 1 kHz cascade/controller-mock control, mode freshness, persistence, watchdog/re-arm; legacy/core/safety/sources/CLI smoke. Matched 0/16-value links: 204/200 us max, zero overruns. All stacks >1 KB (minimum 1200); original layout/settings/groups restored | Pass |
+| 2026-11-13 | F5b | Bench build: `motor_smoke.py --stall` with mocks at 1 kHz and with real modules `--no-motor` (pins 4/5, 6/7): Fault/LoopStalled sent at loop-0 overruns 0, before the 2 s stall added 1999; zero duty and `forced` after it, ACK_FAULT and re-arm. `smoke_safety_firmware.py --bench --wdt`. Normal firmware restored (bench op refused, `--stall` refused before any change): legacy smoke without the motor check, core, safety and CLI smoke, mock cascade, real `--no-motor --pool-check` (7th actuator and 5th encoder fail start, ARM refused; longest tick 161 us, zero overruns). Stack marks all >1 KB (minimum 1780). Layout/settings restored | Pass |
 | 2026-11-13 | F5a-2 | `motor_smoke.py --modules real --no-motor --pool-check` (pins 4/5, 6/7): start on real pins, forced while disarmed, release on ARM, duty cap and reversal, still count, watchdog force, re-arm, disarm force; 5th encoder and 7th actuator fail start with `InitFailed` stage 2 / ESP_ERR_NOT_FOUND and ARM is refused (StartFailed). 1 kHz longest tick 184–226 us, zero overruns. Main stack first 848 free, raised to 5632 (min 1824). Mock cascade, safety, core, legacy and CLI smoke. Host PC bugchecked (0xD1) once mid-run; rerun passed. Layout/settings restored | Pass |

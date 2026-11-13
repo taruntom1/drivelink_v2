@@ -67,9 +67,6 @@ set(CORE_SOURCES
 # Legacy firmware sources under test. Add a file here only if it builds
 # without ESP-IDF (beyond the shims).
 set(FIRMWARE_SOURCES
-    ${COMPONENTS_DIR}/pid/src/pid_controller.cpp
-    ${COMPONENTS_DIR}/motor_controller/src/velocity_estimator.cpp
-    ${COMPONENTS_DIR}/motor_manager/src/motor_protocol.cpp
     ${COMPONENTS_DIR}/imu_bmo_055/src/imu_protocol.cpp
     ${COMPONENTS_DIR}/time_sync/src/time_sync_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_protocol.cpp
@@ -133,8 +130,6 @@ set(TEST_SOURCES
     tests/test_motor_hardware.cpp
     tests/fake_motor_hw.cpp
     tests/test_velocity_estimator.cpp
-    tests/test_motor_protocol.cpp
-    tests/test_motor_validation.cpp
     tests/test_imu_protocol.cpp
     tests/test_time_sync_protocol.cpp
     tests/test_diag_protocol.cpp
@@ -152,9 +147,6 @@ target_include_directories(native_tests PRIVATE
     ${COMPONENTS_DIR}/mod_mock/include
     ${COMPONENTS_DIR}/mod_motor/include
     ${COMPONENTS_DIR}/pid/include
-    ${COMPONENTS_DIR}/motor_controller/include
-    ${COMPONENTS_DIR}/motor_manager/include
-    ${COMPONENTS_DIR}/motor_manager/priv_include
     ${COMPONENTS_DIR}/imu_bmo_055/include
     ${COMPONENTS_DIR}/imu_bmo_055/priv_include
     ${COMPONENTS_DIR}/time_sync/priv_include

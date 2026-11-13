@@ -178,7 +178,7 @@ Instance blobs retain format 1; layout format 2 retires pre-F3d layouts.
 metadata, bounded RX command mailboxes, and latest subscription samples.
 Defaults are eight subscription groups and eight command groups, each with up
 to 64 refs. Kconfig CORE_SUBSCRIPTION_GROUPS (1..31), CORE_COMMAND_GROUPS
-(1..29) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
+(1..31; 32 once F6 frees the IMU stream) and CORE_GROUP_ENTRIES (1..64) flow through CoreConfig. Registry counts
 are statically checked. The effective entry limit is capped by the payload
 (22 + 4*n bytes for a complete LIST record), so 128-byte builds advertise 26
 entries. All storage is allocated at construction, including

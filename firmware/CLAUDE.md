@@ -21,7 +21,7 @@ A `CLAUDE.md` in a directory loads by itself when you work there. Open the other
 | Tests: what the native tests cover, adding a source to them, HIL tests, smoke scripts, CI | [firmware/test/CLAUDE.md](test/CLAUDE.md) |
 | `uart_comm` internals: RX framing, the TX paths, limits | [firmware/components/uart_comm/CLAUDE.md](components/uart_comm/CLAUDE.md) |
 | The core: boot, loops, layout, params, NVS | [core/README.md](components/core/README.md), [core_os/README.md](components/core_os/README.md), [mod_mock/README.md](components/mod_mock/README.md) |
-| `motor_manager`, `imu_bmo_055`, `time_sync`: their loops and wire format | [firmware/components/legacy-managers.md](components/legacy-managers.md) |
+| `imu_bmo_055`, `time_sync`: their loops and wire format | [firmware/components/legacy-managers.md](components/legacy-managers.md) |
 | The wire format | `docs/protocol/` (`framing.md`, `core.md`, `diag.md`, `registry.md`, `diag-codes.md`) and [protocol/CLAUDE.md](../protocol/CLAUDE.md) |
 | The definition YAMLs and the generator | `docs/protocol/definitions.md` |
 
@@ -103,8 +103,9 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 
 **Layering** (each is an ESP-IDF component under `firmware/components/`):
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
-- `pid` is pure math. `motor_controller` combines one motor, one encoder and the PIDs.
-- `motor_manager`, `imu_bmo_055` and `time_sync` are the legacy protocol-facing managers. Each registers UART callbacks, owns its tasks, and keeps its payload codec in a pure module.
+- `pid` is the header-only PID kernel that `mod_motor`'s cascade controller uses.
+- `mod_motor` holds the motor module types (`actuator.pwm_dir`, `feedback.quadrature`, `controller.cascade_pid`); `mod_mock` holds the mocks. See their READMEs.
+- `imu_bmo_055` and `time_sync` are the legacy protocol-facing managers. Each registers UART callbacks, owns its tasks, and keeps its payload codec in a pure module.
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) is the pure wire library: CRC, framing, the frame `Scanner`, `wire_codec`, and the generated registry, diag code table and descriptor format.
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
@@ -142,7 +143,6 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 ### Real-time paths
 
 These paths are real-time:
-- the motor control tick (`MotorManager::updateTaskLoop` work, `MotorController::update`, `PidController::compute`)
 - the core loop tick (`core::Loop::runTick`, every `Instance::tick` in a loop whose realtime flag is true), the staging swap inside it, and the params' `OnChange` hooks
 - `esp_timer` callbacks
 - ISRs and PCNT/MCPWM driver callbacks
@@ -211,6 +211,8 @@ encoder math. Firmware and vdev register the controller alongside the realistic
 motor mocks. F5a-2 adds `actuator.pwm_dir` and `feedback.quadrature` (pure
 logic over `mod_motor/hardware.hpp`, device backend in `src/idf/`); only the
 firmware registers them. Each actuator owns an MCPWM operator, is forced low
-from creation and is released only by ARM. The legacy manager/controller remain
-until F5b. See `firmware/components/mod_motor/README.md` for ownership, force,
-mode-transfer and fresh-command contracts. Core v5/diag v3 encodings are unchanged.
+from creation and is released only by ARM. See
+`firmware/components/mod_motor/README.md` for ownership, force, mode-transfer
+and fresh-command contracts. F5b removed `motor_manager`, `motor_controller`,
+the legacy motor wire protocol and the HAL/PID APIs only they used: motors run
+only as core modules.

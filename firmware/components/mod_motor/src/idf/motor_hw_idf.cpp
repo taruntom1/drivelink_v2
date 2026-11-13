@@ -12,7 +12,7 @@ class IdfPwmDir final : public PwmDirOutput {
 public:
     IdfPwmDir(uint8_t pwm_pin, uint8_t dir_pin)
         : m_motor(static_cast<gpio_num_t>(pwm_pin), static_cast<gpio_num_t>(dir_pin),
-                  motor_hal::Motor::Options{.exclusive_operator = true, .start_forced = true}) {}
+                  motor_hal::Motor::Options{.start_forced = true}) {}
     core_os::Err initError() const { return m_motor.initError(); }
     core_os::Err write(float duty) override { return m_motor.write(duty); }
     core_os::Err forceLow() override { return m_motor.forceLow(); }

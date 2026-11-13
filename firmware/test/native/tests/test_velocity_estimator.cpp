@@ -1,12 +1,12 @@
 #include "doctest.h"
 
-#include "velocity_estimator.hpp"
+#include "mod_motor/velocity_estimator.hpp"
 
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
-using motor_controller::VelocityEstimator;
+using mod_motor::VelocityEstimator;
 
 namespace {
 
@@ -17,20 +17,20 @@ constexpr float kCpr = 1000.0f; // counts per output revolution
 
 TEST_CASE("countsToRadians and countsPerSecToRadPerSec include the gear ratio")
 {
-    CHECK(motor_controller::countsToRadians(1000, kCpr, 1.0f) == doctest::Approx(kTwoPi));
-    CHECK(motor_controller::countsToRadians(-500, kCpr, 1.0f) == doctest::Approx(-kTwoPi / 2.0f));
-    CHECK(motor_controller::countsToRadians(1000, kCpr, 2.0f) == doctest::Approx(kTwoPi / 2.0f));
-    CHECK(motor_controller::countsPerSecToRadPerSec(2000.0f, kCpr, 1.0f) == doctest::Approx(2.0f * kTwoPi));
+    CHECK(mod_motor::countsToRadians(1000, kCpr, 1.0f) == doctest::Approx(kTwoPi));
+    CHECK(mod_motor::countsToRadians(-500, kCpr, 1.0f) == doctest::Approx(-kTwoPi / 2.0f));
+    CHECK(mod_motor::countsToRadians(1000, kCpr, 2.0f) == doctest::Approx(kTwoPi / 2.0f));
+    CHECK(mod_motor::countsPerSecToRadPerSec(2000.0f, kCpr, 1.0f) == doctest::Approx(2.0f * kTwoPi));
 }
 
 TEST_CASE("lowPassAlpha")
 {
-    CHECK(motor_controller::lowPassAlpha(0.0f, 0.01f) == 1.0f);
-    CHECK(motor_controller::lowPassAlpha(-1.0f, 0.01f) == 1.0f);
-    CHECK(motor_controller::lowPassAlpha(10.0f, 0.01f) ==
+    CHECK(mod_motor::lowPassAlpha(0.0f, 0.01f) == 1.0f);
+    CHECK(mod_motor::lowPassAlpha(-1.0f, 0.01f) == 1.0f);
+    CHECK(mod_motor::lowPassAlpha(10.0f, 0.01f) ==
           doctest::Approx(1.0f - std::exp(-kTwoPi * 10.0f * 0.01f)));
     // A higher cutoff passes more of each new sample.
-    CHECK(motor_controller::lowPassAlpha(100.0f, 0.01f) > motor_controller::lowPassAlpha(10.0f, 0.01f));
+    CHECK(mod_motor::lowPassAlpha(100.0f, 0.01f) > mod_motor::lowPassAlpha(10.0f, 0.01f));
 }
 
 TEST_CASE("VelocityEstimator: the first sample only primes")
@@ -60,7 +60,7 @@ TEST_CASE("VelocityEstimator: the filter converges to a constant rate")
 {
     constexpr float kDt = 0.001f;
     constexpr float kCutoffHz = 20.0f;
-    const float alpha = motor_controller::lowPassAlpha(kCutoffHz, kDt);
+    const float alpha = mod_motor::lowPassAlpha(kCutoffHz, kDt);
     const float target = 10.0f * kTwoPi; // 10 counts per ms
 
     VelocityEstimator est;

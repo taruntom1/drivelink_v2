@@ -4,8 +4,8 @@
 #include <cmath>
 
 namespace pid {
-// Shared nonlogging math. The legacy wrapper selects its original clamped-I
-// policy; the cascade selects conditional integration to avoid saturation windup.
+// Pure, nonlogging PID math for controller.cascade_pid: conditional
+// integration (no saturation windup) and derivative on measurement.
 inline float lowPassAlpha(float hz, float dt) {
     return hz <= 0 ? 1.F : 1.F - std::exp(-6.283185307179586F * hz * dt);
 }

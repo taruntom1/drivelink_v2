@@ -13,7 +13,6 @@ namespace detail {
 struct McpwmChannel {
     int group_id;
     int oper_index;
-    int slot;
     mcpwm_timer_handle_t timer;
     mcpwm_oper_handle_t oper;
     mcpwm_cmpr_handle_t comparator;
@@ -22,25 +21,21 @@ struct McpwmChannel {
 };
 
 /// Static resource manager for MCPWM hardware allocation.
-/// Tracks available generators across all MCPWM groups/operators.
+/// Each motor takes an operator of its own (6 on the ESP32-S3): the two
+/// generators of an operator share one force register, which the driver
+/// updates read-modify-write, so a force set by one motor's emergency stop
+/// could be undone by another motor's release on a different task.
 class McpwmPool {
 public:
     /// Allocate an MCPWM channel for a motor PWM output.
     /// Creates timer/operator lazily if not yet initialized.
-    /// @param pwm_gpio            GPIO number for the PWM output
-    /// @param out                 Filled with allocated channel info on success
-    /// @param exclusive_operator  Take an operator with no other user and keep
-    ///                            it to this channel. The two generators of an
-    ///                            operator share one force register, so a
-    ///                            channel that is forced and released from
-    ///                            different tasks must not share it. Shared
-    ///                            allocations never join an exclusive operator.
-    /// @param start_forced        Force the generator low before its PWM
-    ///                            actions are set; it stays forced until
-    ///                            mcpwm_generator_set_force_level(gen, -1, true).
-    /// @return ESP_OK on success, ESP_ERR_NOT_FOUND if no free slots
-    static esp_err_t allocate(int pwm_gpio, McpwmChannel& out,
-                              bool exclusive_operator = false, bool start_forced = false);
+    /// @param pwm_gpio      GPIO number for the PWM output
+    /// @param out           Filled with allocated channel info on success
+    /// @param start_forced  Force the generator low before its PWM actions
+    ///                      are set; it stays forced until
+    ///                      mcpwm_generator_set_force_level(gen, -1, true).
+    /// @return ESP_OK on success, ESP_ERR_NOT_FOUND if no operator is free
+    static esp_err_t allocate(int pwm_gpio, McpwmChannel& out, bool start_forced);
 
     /// Release an MCPWM channel. Tears down operator/timer when
     /// they have no remaining users.
@@ -51,12 +46,10 @@ private:
 
     static constexpr int kNumGroups = 2;
     static constexpr int kOpersPerGroup = 3;
-    static constexpr int kSlotsPerOper = 2;
 
     struct OperatorState {
         mcpwm_oper_handle_t handle = nullptr;
-        int user_count = 0;
-        bool exclusive = false;
+        bool in_use = false;
     };
 
     struct GroupState {
@@ -71,7 +64,7 @@ private:
     static SemaphoreHandle_t poolMutex();
     static esp_err_t ensureTimer(int group_id);
     static esp_err_t ensureOperator(int group_id, int oper_index);
-    static bool findFreeSlot(bool exclusive, int& group_id, int& oper_index, int& slot);
+    static bool findFreeOperator(int& group_id, int& oper_index);
 };
 
 } // namespace detail

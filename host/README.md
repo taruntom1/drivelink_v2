@@ -110,9 +110,21 @@ watchdog, the duty cap and a still count, then that a 5th encoder and a 7th
 actuator fail start and ARM is refused. Without `--no-motor` it runs a motor
 and needs `--confirm-first-run` (wheels off the ground, a current-limited
 supply, a low duty cap, a hand on the power switch). It checks the encoder
-polarity in open loop before any closed loop. F5b adds the stall scenario.
+polarity in open loop before any closed loop.
 
-Linux integration retains its serial PTY after the transport tests. Buffered
+`--stall` (with any form; `--stall-ms` 500-4000, default 2000) stalls the
+control loop while it drives. It requires Fault/LoopStalled before the stall
+can have ended (judged from device data: the loop has not yet counted the
+stall's overruns), zero duty (and `forced`
+with real modules) after it, and ACK_FAULT and re-arm. Those signals come from
+the loop, so only a motor's encoder shows the monitor's force during the
+stall; the native tests prove the force without a tick. It needs a
+`CONFIG_CORE_BENCH_CRASH=y` firmware (flash the normal one afterwards) or a
+vdev started with `--allow-crash`, and refuses before any change otherwise.
+Host integration runs the mock form on a vdev with `--allow-crash`.
+
+Linux integration restarts the vdev on a serial PTY (with `--allow-crash`) for
+the motor smoke. Buffered
 status frames can survive between CLI sessions, so the motor smoke polls for
 Disarmed plus the Watchdog reason rather than treating its first queued status
 as current. Native tests verify the exact watchdog deadline. On the CH343, a

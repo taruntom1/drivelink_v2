@@ -11,8 +11,8 @@ This directory is the embedded firmware side of DriveLink. It is responsible for
 - Driving DC motors using PWM + direction control.
 - Reading wheel/shaft rotary encoders.
 - Running PID-based velocity/position control loops.
-- Exposing remote motor configuration and setpoint control over UART.
-- Streaming motor and IMU telemetry data.
+- Exposing module configuration, command groups and subscription streams over UART (the core).
+- Streaming IMU telemetry data.
 - Synchronizing time with an external host to align logs/telemetry.
 
 In short, it is the real-time robot control runtime that talks to an upstream controller (PC/SBC/MCU) through a binary UART link.
@@ -23,19 +23,11 @@ In short, it is the real-time robot control runtime that talks to an upstream co
 	- CRC-16 integrity checks.
 	- Callback-based message handling.
 	- Priority command frames and latest-wins streaming channels.
-- Motor hardware abstraction (`motor_hal`) with pooled MCPWM resource management.
+- Motor hardware abstraction (`motor_hal`) with pooled MCPWM resource management (one operator per motor).
 - Rotary encoder abstraction (`rotary_encoder_hal`) using ESP32-S3 PCNT (quadrature decoding).
-- Generic PID controller component (`pid`) with runtime tuning.
-- Integrated per-motor controller (`motor_controller`) supporting:
-	- Open-loop duty control.
-	- Closed-loop velocity control.
-	- Closed-loop position control.
-	- Runtime setpoint, gain, feedforward, and limit updates.
-- Multi-motor orchestration (`motor_manager`) with:
-	- Dynamic create/delete/configure motor commands.
-	- Per-motor and global telemetry configuration.
-	- Setpoint stream ingestion over UART.
-	- Periodic update task and telemetry publication.
+- Header-only PID kernel (`pid`).
+- The core (`core`): module instances in configurable loops, params, NVS, command and subscription groups, arming and the safety monitor.
+- Motor module types (`mod_motor`): `actuator.pwm_dir`, `feedback.quadrature` and the cascade controller `controller.cascade_pid` (open loop, velocity, position).
 - BNO055 IMU manager (`imu_bmo_055`) with:
 	- Stream enable/disable and period control.
 	- Selectable stream field masks (Euler, quaternion, accel, gyro, mag, temperature, calibration state).
@@ -47,11 +39,12 @@ In short, it is the real-time robot control runtime that talks to an upstream co
 The firmware entry point (`firmware/main/main.cpp`) brings up the stack in this order:
 
 1. `uart_comm::UartComm`
-2. `motor_manager::MotorManager`
-3. `time_sync::TimeSync`
-4. `imu_bmo_055::ImuBno055Manager`
+2. `time_sync::TimeSync`
+3. `imu_bmo_055::ImuBno055Manager`
+4. the core and its `CoreLink`
+5. the diag reporter
 
-Each module validates initialization through `isValid()`. If any required subsystem fails to initialize, startup exits early.
+A part that fails to start is reported through diag and left out; the rest keep running. `firmware/main/CLAUDE.md` has the details.
 
 ## Components
 
@@ -61,13 +54,13 @@ Each module validates initialization through `isValid()`. If any required subsys
 - `firmware/components/motor_hal`:
 	- Low-level motor control API (`motor_hal::Motor`) over MCPWM + DIR GPIO.
 - `firmware/components/rotary_encoder_hal`:
-	- Encoder position/rate/direction API (`rotary_encoder_hal::Encoder`) using PCNT.
+	- Encoder count API (`rotary_encoder_hal::Encoder`) using PCNT.
 - `firmware/components/pid`:
-	- Hardware-independent PID algorithm implementation.
-- `firmware/components/motor_controller`:
-	- Binds motor HAL + encoder HAL + PID for one motor control instance.
-- `firmware/components/motor_manager`:
-	- Protocol-facing manager for multiple motors, config commands, setpoint stream, telemetry stream.
+	- Hardware-independent PID kernel (`pid_kernel.hpp`).
+- `firmware/components/core`, `core_os`:
+	- The core and its OS adapters (see their READMEs).
+- `firmware/components/mod_motor`, `mod_mock`:
+	- Motor module types and the mocks (see their READMEs).
 - `firmware/components/imu_bmo_055`:
 	- BNO055 device management and telemetry/control protocol integration.
 - `firmware/components/time_sync`:
@@ -123,7 +116,7 @@ idf.py -C firmware build
 
 - Most component defaults are configured via Kconfig and emitted into `sdkconfig`.
 - UART pins/baud, IMU stream behavior, and control loop timings are tunable. Message types and stream channels are not: they come from the registry.
-- `firmware/main/main.cpp` currently sets example startup values (for example `max_motors = 4` and periodic time sync every 5 seconds).
+- `firmware/main/main.cpp` sets example startup values (for example periodic time sync every 5 seconds).
 
 ## Current Validation Strategy
 

@@ -17,11 +17,26 @@ only. Two forms:
                  and that the watchdog removes physical effort. Never infer
                  physical stopping from a zero command alone.
 
+--stall (any form): stall the control loop while it drives (velocity mode
+with mocks or a motor, open loop with --no-motor) for --stall-ms (500-4000).
+Status must report Fault/LoopStalled before the loop has counted the stall's
+overruns, so the safety monitor, not the loop, disarmed (device data: frames
+can be read late); after it the controller and applied
+duty are 0 (and `forced` is set on actuator.pwm_dir), and ACK_FAULT and re-ARM
+work. The duty and `forced` signals are published by the loop, so only a motor
+shows that the monitor's force stopped the output during the stall: the
+encoder may move at most 25% of what it would at the pre-stall speed. (The
+native test in test_motor_hardware.cpp proves the force without any tick.)
+It needs the bench stall: a firmware built with CONFIG_CORE_BENCH_CRASH=y
+(flash the normal firmware afterwards), or a vdev started with --allow-crash.
+It is checked last in the preflight, while disarmed, before any change.
+
 Every form refuses pending edits or configured groups, and restores the
-original loops-only layout and settings. F5b adds the loop-stall scenario.
+original loops-only layout and settings.
 """
 import argparse
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -52,6 +67,24 @@ class Device:
         assert result['ok'] == (code == 0), result
         return result.get('data', result)
 
+    def frames(self, command, count):
+        """`command COUNT` (status, events): one JSON envelope per frame."""
+        p = subprocess.run([str(self.cli_path), '--endpoint', self.endpoint, '--json', command, str(count)],
+                           capture_output=True, text=True, timeout=20 + count)
+        assert p.returncode == 0, (command, p.returncode, p.stdout, p.stderr)
+        out = [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
+        assert all(r['ok'] for r in out), out
+        return [r.get('data', r) for r in out]
+
+    def refused(self, *command):
+        """Run a command that may be refused (exit 5); True when it was."""
+        try:
+            self(*command)
+            return False
+        except AssertionError:
+            self(*command, code=5)
+            return True
+
     def connect(self):
         deadline = time.monotonic() + 15
         while True:
@@ -66,13 +99,21 @@ class Device:
         self('save'); self('reboot'); return self.connect()
 
 
-def preflight(cli):
+def preflight(cli, stall_ms=0):
     info = cli.connect()
     assert not info['flags'] & 11, 'pending edits, invalid layout or safe mode'
-    assert not cli('status')['flags'] & 8, 'unsaved params'
+    status = cli('status')
+    assert not status['flags'] & 8, 'unsaved params'
     original = cli('instances')
     assert all(x['type'] == 5 for x in original), 'requires an original loops-only layout'
     assert all(not g['configured'] for g in cli('groups')['groups']), 'requires idle groups'
+    # Last, and only while disarmed: the monitor watches loops only while
+    # armed, so a disarmed 10 ms stall changes nothing.
+    if stall_ms:
+        assert status['arm_state'] == 0, 'requires a disarmed device'
+        if cli.refused('bench-stall', 0, 10):
+            sys.exit('motor_smoke.py: error: --stall needs the bench stall: a CONFIG_CORE_BENCH_CRASH=y '
+                     'firmware or a vdev with --allow-crash; no configuration was changed')
     refs = [f"5:{loop['id']}:1" for loop in info['loops']] + ['0:0:4']
     return info, original, refs, cli('get', *refs)['typed_values']
 
@@ -137,9 +178,81 @@ class Stream:
         assert status['arm_state'] == 0 and status['last_disarm_reason'] == 2, observed
 
 
-def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0):
+def loop0_overruns(status):
+    return next(o['overruns'] for o in status['overruns'] if o['loop_id'] == 0)
+
+
+def stall_check(cli, io, values, stall_ms, loop_rate, real=False, motor=None):
+    """Stall control loop 0 while armed and driving `values`.
+
+    Samples are (pos, vel, duty, ...); index 5 is the applied duty, and with
+    real modules 6 is `forced` and 7 the encoder count. `motor` is the counts
+    per output radian for the encoder check, None without a motor.
+
+    The proof uses device data, not host timing: a status frame can be read
+    long after it was sent (the serial port keeps a backlog between CLI
+    processes). A stalled tick counts its missed periods only when it ends,
+    so a Fault/LoopStalled frame whose loop-0 overrun count is still below
+    the jump the stall then adds was sent while the loop was stalled: the
+    monitor disarmed, not the loop.
+    """
+    # One CLI call between watchdog feeds, as in Stream.drive: on the CH343
+    # two calls can outlast the 1 s watchdog.
+    end = time.monotonic() + .3
+    while True:
+        io.command(values)
+        sampled_at = time.monotonic()
+        before = io.sample()
+        if time.monotonic() >= end:
+            break
+        time.sleep(.02)
+    assert before[2] != 0, ('the stall check needs effort before the stall', before)
+    io.command(values)
+    cli('bench-stall', 0, stall_ms)
+    replied = time.monotonic()
+    jump = max(1, loop_rate * stall_ms // 2000)  # half the periods the stall misses
+    frames, fault = [], None
+    deadline = time.monotonic() + stall_ms / 1000 + 20
+    while time.monotonic() < deadline:
+        frames += cli.frames('status', 10)
+        if fault is None:
+            fault = next((f for f in frames if f['arm_state'] == 2), None)
+        if fault is not None and loop0_overruns(frames[-1]) >= loop0_overruns(fault) + jump:
+            break
+    assert fault is not None, ('no Fault after the stall request', frames[-3:])
+    assert fault['last_disarm_reason'] == 4, ('Fault, but not LoopStalled', fault)
+    assert loop0_overruns(frames[-1]) >= loop0_overruns(fault) + jump, (
+        'the stall\'s overruns were already counted when Fault was reported: not provably '
+        'the monitor during the stall', fault, frames[-1])
+    after, deadline = None, time.monotonic() + 5
+    while time.monotonic() < deadline:  # skip samples queued from before the stall
+        after = io.sample()
+        if after[2] == 0 and after[5] == 0 and (not real or after[6] is True):
+            break
+    assert after[2] == 0 and after[5] == 0, ('controller and applied duty after the stall', after)
+    if real:
+        assert after[6] is True, ('forced after the stall', after)
+    if motor is not None:
+        # From the sample to the stall the motor ran for less than
+        # `replied - sampled_at` (plus the sample's age, at most one 50 Hz
+        # subscription period); without the monitor's force it would run on
+        # for the whole stall.
+        moved = abs(after[7] - before[7])
+        speed = abs(before[1]) * motor
+        allowed = speed * (replied - sampled_at + .05) + .25 * speed * stall_ms / 1000
+        assert moved <= allowed, ('the encoder moved during the stall', moved, allowed, before, after)
+    cli('ack-fault'); cli('arm'); io.command()
+    s = io.sample(); assert s[2] == 0 and s[5] == 0, ('re-arm holds zero until a fresh command', s)
+    if real:
+        assert s[6] is False, ('re-arm releases the force', s)
+    print(f'PASS loop stall: Fault/LoopStalled sent with loop-0 overruns at {loop0_overruns(fault)}, '
+          f'before the stall added {loop0_overruns(frames[-1]) - loop0_overruns(fault)}; '
+          'zero duty after it, ACK_FAULT and re-arm')
+
+
+def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0, stall_ms=0):
     cli = Device(cli_path, endpoint)
-    info, original, refs, settings = preflight(cli)
+    info, original, refs, settings = preflight(cli, stall_ms)
     created, trace = [], []
     try:
         for type_, label in ((MOCK_ACT, 'motor_smoke'), (MOCK_FB, 'encoder_smoke'), (PID, 'pid_smoke')):
@@ -173,6 +286,8 @@ def run(cli_path, endpoint, loop_rate=50, report=None, stack_wait=0):
         velocity = io.drive([0, 2, 0], 6, bounded)
         assert abs(sum(s[1] for s in velocity[-5:])/len(velocity[-5:]) - 2) < .3, velocity[-5:]
         assert velocity[-1][4] is False
+        if stall_ms:
+            stall_check(cli, io, [0, 2, 0], stall_ms, loop_rate)
         io.command()
         cli('set', f'{pid}:16=2')
         io.command(); held = io.sample(); assert held[4] is True
@@ -225,7 +340,7 @@ def run_real(cli_path, endpoint, a):
     if cli.connect()['firmware_version'].endswith('-vdev'):
         sys.exit('motor_smoke.py: error: the device is a vdev, which has no pins and no '
                  'actuator.pwm_dir/feedback.quadrature; no configuration was changed')
-    info, original, refs, settings = preflight(cli)
+    info, original, refs, settings = preflight(cli, a.stall_ms if a.stall else 0)
     created, trace = [], []
     try:
         motor, encoder, pid = setup_real(cli, a, created)
@@ -281,6 +396,8 @@ def run_no_motor(cli, io, a, bounded):
     assert s[6] is False and abs(s[5] - a.duty_cap) < 1e-5, ('released and capped', s)
     if not a.no_pullup:
         assert s[7] == 0, ('nothing attached: the pulled-up encoder pins must not count', s)
+    if a.stall:
+        stall_check(cli, io, [1, 0, 0], a.stall_ms, a.loop_rate, real=True)
     samples = io.drive([-1, 0, 0], .5, bounded)  # reversal passes through one zero tick
     assert abs(samples[-1][5] + a.duty_cap) < 1e-5, samples[-1]
     io.drive([0, 0, 0], .2, bounded)
@@ -302,6 +419,9 @@ def run_motor(cli, io, a, pid, bounded):
     velocity = io.drive([0, a.velocity_target, 0], 6, bounded)
     mean = sum(s[1] for s in velocity[-5:]) / len(velocity[-5:])
     assert abs(mean - a.velocity_target) < a.velocity_tolerance, velocity[-5:]
+    if a.stall:
+        stall_check(cli, io, [0, a.velocity_target, 0], a.stall_ms, a.loop_rate, real=True,
+                    motor=a.cpr * a.gear / (2 * math.pi))
     io.command()
     cli('set', f'{pid}:16=2')
     io.command(); held = io.sample(); assert held[4] is True
@@ -348,6 +468,10 @@ def main():
     ap.add_argument('--loop-rate', type=int, default=None, help='control loop rate (mock 50, real 1000)')
     ap.add_argument('--report')
     ap.add_argument('--stack-wait', type=float, default=0)
+    ap.add_argument('--stall', action='store_true',
+                    help='loop-stall scenario; needs a CONFIG_CORE_BENCH_CRASH=y build or vdev --allow-crash')
+    ap.add_argument('--stall-ms', type=int, default=2000,
+                    help='stall length, 500-4000 ms (below the 5 s Task WDT)')
     real = ap.add_argument_group('real modules (--modules real)')
     real.add_argument('--no-motor', action='store_true', help='bare bench board, nothing attached')
     real.add_argument('--pool-check', action='store_true', help='with --no-motor: MCPWM/PCNT pool limits')
@@ -374,8 +498,11 @@ def main():
     real.add_argument('--position-step', type=float, default=1, help='rad at the output shaft')
     real.add_argument('--position-tolerance', type=float, default=.15)
     args = ap.parse_args()
+    if not 500 <= args.stall_ms <= 4000:
+        ap.error('--stall-ms must be 500-4000')
     if args.modules == 'mock':
-        run(args.cli, args.endpoint, args.loop_rate or 50, args.report, args.stack_wait)
+        run(args.cli, args.endpoint, args.loop_rate or 50, args.report, args.stack_wait,
+            args.stall_ms if args.stall else 0)
         return
     # Refuse before any connection or configuration change.
     if not args.endpoint.startswith('serial://'):
