@@ -594,11 +594,10 @@ def load_items(f: str, name: str, raw_items: Any, allowed_kinds: tuple[str, ...]
         if name == SYSTEM_TYPE or name == "loop" or name.split(".")[0] in ("actuator", "controller"):
             fail(where, "sources are not allowed on this type")
         check_keys(where, raw,
-                   {"id", "kind", "name", "type", "value_id", "age_id", "unit", "description", "values", "persist"},
+                   {"id", "kind", "name", "type", "value_id", "age_id", "unit", "description", "values"},
                    {"id", "kind", "name", "type", "value_id", "age_id"})
         param = load_item(f, name, {"id": raw["id"], "kind": "param", "name": raw["name"],
                                   "type": "u32", "flags": ["reboot_required"],
-                                  "persist": raw.get("persist", True),
                                   "description": raw.get("description", "")})
         param["flags"].append("source")
         value = {"id": raw["value_id"], "kind": "signal", "name": str(raw["name"]) + ".value",

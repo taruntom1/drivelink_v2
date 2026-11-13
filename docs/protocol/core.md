@@ -22,8 +22,8 @@ with the type declared by its descriptor (IEEE binary32 for f32).
 
 ## Sources (F4c)
 
-Item flag `Source` is 0x80. A source is an ordinary u32 param, persisted by
-default and `reboot_required`. Its value is `type << 24 | instance << 16 |
+Item flag `Source` is 0x80. A source is an ordinary persisted u32 param,
+`reboot_required`. Its value is `type << 24 | instance << 16 |
 item_id`; zero disconnects it. This packed numeric representation differs
 from both a Ref's serialized field order and existing instance wiring.
 The target must be a signal or input of the source's value type. Unknown

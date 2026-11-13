@@ -23,6 +23,7 @@ def main():
     assert args.seconds >= 5
     c = Client(args.port)
     created = []
+    modified = False
     original = c.connect()
     assert not original['flags'] & 11, original
     assert original['count'] == len(original['loops']), 'requires a loops-only layout'
@@ -45,6 +46,8 @@ def main():
             break
 
     def add(type_, label, loop):
+        nonlocal modified
+        modified = True
         instance = c.add(type_,label,loop)
         created.append((type_,instance))
         return instance
@@ -64,12 +67,14 @@ def main():
         return list(struct.unpack_from('<'+'I'*count,p,12))
 
     def cleanup():
+        nonlocal modified
         # Consumers first, so producer removal respects Referenced.
         for type_, instance in sorted(created, key=lambda entry: entry[0] != 115):
-            c.request(2,3,bytes((type_,instance)))
+            c.request(2,3,bytes((type_,instance)),accepted=(0,2))
         c.request(1,5)
         info = c.reboot()
         created.clear()
+        modified = False
         assert info['count'] == original['count'] and info['loops'] == original['loops'], info
 
     report = {'seconds_per_run': args.seconds, 'loops': original['loops'], 'runs': []}
@@ -112,7 +117,7 @@ def main():
         print('PASS source values/ages and matched 16-value link timing',flush=True)
     finally:
         try:
-            if created:
+            if modified:
                 cleanup()
         finally:
             c.serial.close()

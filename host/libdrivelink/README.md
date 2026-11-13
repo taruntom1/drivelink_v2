@@ -13,7 +13,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v4 and sets the device's maximum receive payload; the scanner's hard limit is
+v5 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 

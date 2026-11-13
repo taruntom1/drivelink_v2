@@ -18,7 +18,6 @@ class Sources(unittest.TestCase):
                          ('param', 'u32', ['reboot_required', 'persist', 'source'], 0))
         self.assertEqual((value['id'], value['name'], value['type'], value['unit']), (256, 'left.value', 'f32', 'rad'))
         self.assertEqual((age['id'], age['name'], age['type'], age['unit']), (257, 'left.age_us', 'u32', 'us'))
-        self.assertEqual(self.load([self.source(persist=False)])[0]['flags'], ['reboot_required', 'source'])
         text = emit_cpp.gen_type(dict(type='fusion.fixture', ns='fusion_fixture', type_id=120,
                                      description='', loops=['realtime'], items=items))
         self.assertIn('ItemFlag::Source', text)
@@ -40,7 +39,7 @@ class Sources(unittest.TestCase):
                 self.load([self.source(), extra])
         for key, value in [('value_id', 1), ('age_id', 256), ('value_id', -1),
                            ('age_id', 65536), ('type', 'none'), ('name', 'bad name'),
-                           ('persist', 3), ('ref', 'feedback'), ('default', 1)]:
+                           ('persist', False), ('persist', True), ('ref', 'feedback'), ('default', 1)]:
             source = self.source(); source[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(model.SpecError):
                 self.load([source])

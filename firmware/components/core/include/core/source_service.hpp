@@ -44,8 +44,10 @@ public:
     SourceService();
     ~SourceService();
     void build(const detail::InstanceTable &table);
+    static constexpr size_t kNoConsumer = static_cast<size_t>(-1);
+    size_t consumerIndex(const Instance *instance) const; // boot only
     void beginTick(uint8_t loop, int64_t now_us);
-    void beforeInstance(Instance *instance);
+    void beforeInstance(size_t consumer_index);
     void endTick(uint8_t loop, int64_t timestamp_us);
 private:
     struct Impl;

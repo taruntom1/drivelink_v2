@@ -111,6 +111,8 @@ is insufficient. Failed/disconnected producers yield invalid samples.
 `SourceService` resolves and allocates after module startup, before loop
 tasks are enabled. Same-loop edges affect tick order, not creation or
 dependency order; sources sample immediately before the consumer ticks.
+Each tick entry caches its consumer index at boot, so it visits only that
+instance's same-loop bindings, never bindings belonging to other loops.
 Cross-loop edges group by ordered loop pair and deduplicate target refs.
 The producer uses `BoundSignal`/`latchSignals` for end-of-tick snapshots.
 

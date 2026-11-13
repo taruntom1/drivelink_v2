@@ -141,7 +141,8 @@ private:
     ArmState *m_arm = nullptr;
     uint32_t m_seen_arm = 0;
 
-    std::unique_ptr<Instance *[]> m_instances;
+    struct TickEntry { Instance *instance; size_t source_index; };
+    std::unique_ptr<TickEntry[]> m_instances;
     const size_t m_capacity;
     size_t m_count = 0;
     struct Input { defs::ValueType type; void *ptr; uint32_t bits; };

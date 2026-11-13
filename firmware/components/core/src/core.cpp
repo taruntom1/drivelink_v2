@@ -364,6 +364,10 @@ Status Core::boot(core_os::KvStore &store)
         createObject(record);
     }
 
+    // Resolve source consumers before filling tick entries with their fixed
+    // source indices. Loop callbacks remain gated throughout boot.
+    m_sources.build(m_table);
+
     // 6. Fill the loops in tick order.
     for (size_t i = 0; i < n; ++i) {
         include[i] = records[i] != nullptr && records[i]->type_id != defs::kLoopTypeId && records[i]->state == InstanceState::Running;
@@ -376,8 +380,6 @@ Status Core::boot(core_os::KvStore &store)
             m_actuators[m_actuator_count++] = record.object.get();
         }
     }
-
-    m_sources.build(m_table);
 
     // 7. Clear the crash counter after a while of normal running.
     (void)m_crash_clear.start(kCrashClearName, m_config.crash_clear_delay_us, &clearCrashCount, nullptr);

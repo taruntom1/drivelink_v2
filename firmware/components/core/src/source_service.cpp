@@ -42,9 +42,10 @@ struct SourceService::Impl {
         std::vector<Sink> sinks;
         std::unique_ptr<detail::SourceBuffer> buffer;
     };
-    struct Local { Instance *consumer; Sample sample; BoundSignal signal; };
+    struct Local { Sample sample; BoundSignal signal; };
+    struct Consumer { const Instance *instance; std::vector<Local> bindings; };
     std::vector<Link> links;
-    std::vector<Local> locals;
+    std::vector<Consumer> consumers;
 };
 
 SourceService::SourceService() : m_impl(std::make_unique<Impl>()) {}
@@ -53,7 +54,7 @@ SourceService::~SourceService() = default;
 void SourceService::build(const detail::InstanceTable &table)
 {
     auto &p = *m_impl;
-    p.links.clear(); p.locals.clear();
+    p.links.clear(); p.consumers.clear();
     for (size_t i = 0; i < table.size(); ++i) {
         const auto &record = table.at(i);
         if (record.state != InstanceState::Running) { continue; }
@@ -67,7 +68,12 @@ void SourceService::build(const detail::InstanceTable &table)
                                       &target->desc->items[k], target->bindings[k].ptr};
             const auto producer = ownerLoop(*target);
             if (producer == record.loop) {
-                p.locals.push_back({record.object.get(), sample, signal});
+                auto index = consumerIndex(record.object.get());
+                if (index == kNoConsumer) {
+                    index = p.consumers.size();
+                    p.consumers.push_back({record.object.get(), {}});
+                }
+                p.consumers[index].bindings.push_back({sample, signal});
                 continue;
             }
             auto link = std::find_if(p.links.begin(), p.links.end(), [&](const auto &entry) {
@@ -104,12 +110,19 @@ void SourceService::beginTick(uint8_t loop, int64_t now_us)
     }
 }
 
-void SourceService::beforeInstance(Instance *instance)
+size_t SourceService::consumerIndex(const Instance *instance) const
 {
-    for (const auto &local : m_impl->locals) {
-        if (local.consumer == instance) {
-            update(local.sample, loadValue(local.signal.item->type, local.signal.storage), 0, true, true);
-        }
+    for (size_t i = 0; i < m_impl->consumers.size(); ++i) {
+        if (m_impl->consumers[i].instance == instance) { return i; }
+    }
+    return kNoConsumer;
+}
+
+void SourceService::beforeInstance(size_t consumer_index)
+{
+    if (consumer_index == kNoConsumer) { return; }
+    for (const auto &local : m_impl->consumers[consumer_index].bindings) {
+        update(local.sample, loadValue(local.signal.item->type, local.signal.storage), 0, true, true);
     }
 }
 

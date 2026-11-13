@@ -14,7 +14,7 @@ Loop::Loop(uint8_t id, const char *name, bool realtime, size_t capacity, uint32_
       m_name(name),
       m_realtime(realtime),
       m_published(published),
-      m_instances(std::make_unique<Instance *[]>(capacity)),
+      m_instances(std::make_unique<TickEntry[]>(capacity)),
       m_capacity(capacity),
       m_period_us(period_us)
 {
@@ -25,7 +25,7 @@ bool Loop::addInstance(Instance *instance)
     if (instance == nullptr || m_count >= m_capacity) {
         return false;
     }
-    m_instances[m_count++] = instance;
+    m_instances[m_count++] = {instance, m_sources ? m_sources->consumerIndex(instance) : SourceService::kNoConsumer};
     return true;
 }
 
@@ -69,9 +69,9 @@ void Loop::runTick(uint32_t elapsed)
     // before this loop woke. Disarm resets precede every arm release.
     if (coherent && arm_word != m_seen_arm) {
         resetInputs();
-        for (size_t i = 0; i < m_count; ++i) { m_instances[i]->onArmTransition(false); }
+        for (size_t i = 0; i < m_count; ++i) { m_instances[i].instance->onArmTransition(false); }
         if (armed) {
-            for (size_t i = 0; i < m_count; ++i) { m_instances[i]->onArmTransition(true); }
+            for (size_t i = 0; i < m_count; ++i) { m_instances[i].instance->onArmTransition(true); }
         }
         m_seen_arm = arm_word;
     }
@@ -103,8 +103,8 @@ void Loop::runTick(uint32_t elapsed)
         .elapsed = elapsed,
     };
     for (size_t i = 0; i < m_count; ++i) {
-        if (m_sources) { m_sources->beforeInstance(m_instances[i]); }
-        m_instances[i]->tick(t);
+        if (m_sources) { m_sources->beforeInstance(m_instances[i].source_index); }
+        m_instances[i].instance->tick(t);
     }
 
     // 8. Tick-owned plain storage, including loop statistics from the previous
