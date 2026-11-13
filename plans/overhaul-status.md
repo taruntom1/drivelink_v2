@@ -134,6 +134,7 @@ Each note is deleted by the step that uses it.
 - **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status). Normal firmware is flashed; BenchCrash is disabled.
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
 - **Latest stack marks** (F3d, temporary third loop and mocks; bytes free; stacks 4096 unless given): main 1304 (4608), uart_rx 3004, uart_tx 3096, motor_mgr_upd 1880, motor_mgr_cfg 3156 (5120), imu_cfg 2084, imu_stream 1788, time_sync_task 2000, diag 1576, esp_timer 3320, core_loop_0 3172, core_loop_1 3260, core_loop_2 3256, core_cfg 4052 (6144).
+- **Smoke test owed.** The main firmware now builds only the components `main` requires (decision log, tooling). The linked code is unchanged, but it was not flashed: the next step that uses the board checks the boot and the console on COM4 and runs the legacy and core smoke, then deletes this note.
 - **Never run on hardware so far:** a real BNO055, motors, an armed core, a host other than Windows.
 
 ## Other traps
@@ -176,6 +177,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | 2026-11-13 | F4c | A source's sampled value and its age are ordinary signals generated from a `kind: source` item; the param carries a new `Source` flag (`0x80`); `age_us` of `0xFFFFFFFF` means no valid sample. No source status op | Groups, capture and plots work on them unchanged, and no second path from a loop to the config task is needed (user decision) | yes |
 | 2026-11-13 | F3d, F4c | Two new steps: F3d (loops and the flag) before F4a, and F4c (sources) after F4b | F4a, F4b and F5 are then built on the loop table; F4c reuses F4a's latch code | yes |
 | 2026-11-13 | tooling | `tools/validate.py` is the one list of checks; CI calls it with `--only`, and a step's new test suite is added to it. Checks run in sequence, the WSL build directory is outside `/tmp`, and a compiler crash is retried once | In F4a three IDF builds at once made a timing test fail, WSL lost a `/tmp` build directory and the no-log build needed a manual retry; the commands were repeated in CI, two guides and the skill (user decision) | n/a |
+| 2026-11-13 | tooling | The main firmware builds only `main`, `esp_vfs_console` and what they require (`set(COMPONENTS ...)` in `firmware/CMakeLists.txt`), as the HIL app does. `esp_vfs_console` is named because nothing requires it and the console would otherwise fall back to the ROM output | 701 build steps in place of 1133, and `esp_lcd`, whose compile crashed the Windows compiler, is no longer built. The binary differs only in `esp_err_to_name`, which loses the names of components that are not built | n/a |
 
 ## Hardware test results
 

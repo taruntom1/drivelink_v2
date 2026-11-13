@@ -4,6 +4,12 @@ cmake_minimum_required(VERSION 3.16)
 
 # The pure wire library (framing, CRC, scanner, codec) lives outside firmware/.
 set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../protocol")
+# Build only main and what it REQUIRES, not every IDF component. A component
+# must list each IDF component it uses in its REQUIRES or PRIV_REQUIRES.
+# esp_vfs_console is named here because no component requires it: it brings in
+# vfs and puts the console on the USB-Serial-JTAG driver. Without it the build
+# still links, and stdout falls back to the ROM's output routine.
+set(COMPONENTS main esp_vfs_console)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(drivelink_v2)

@@ -9,7 +9,7 @@ These rules apply to every component under `firmware/components/`. They add to t
   - `priv_include/`: internal headers only. A public header must never include a private one.
   - `src/`: implementation files.
   - `Kconfig`: tunable defaults and their valid ranges (see below).
-  - `CMakeLists.txt`: `idf_component_register` with explicit `SRCS`, `INCLUDE_DIRS`, `PRIV_INCLUDE_DIRS` and `REQUIRES`.
+  - `CMakeLists.txt`: `idf_component_register` with explicit `SRCS`, `INCLUDE_DIRS`, `PRIV_INCLUDE_DIRS` and `REQUIRES`. List every IDF component whose headers the component includes: the firmware builds only what `main` requires (`firmware/CMakeLists.txt`), so nothing else is there to find.
   - `README.md`: the component's purpose, API, Kconfig options and rules. The wire format lives in `docs/protocol/`, not here. During the overhaul, legacy components have no README, and new components add one when they land.
 - Third-party code lives untouched in a `vendor/` subfolder of the component that uses it. Wrap it; don't edit it.
 - `core_os` is the one exception to `src/`: its sources are in `backend/idf/src` and `backend/native/src`, and each backend has its own `include` dir for `core_os/detail/backend_types.hpp`. The build picks the backend by include dir and sources, never by `#ifdef`.
