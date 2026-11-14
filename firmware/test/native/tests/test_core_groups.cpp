@@ -5,6 +5,7 @@
 #include "core_test_modules.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include <atomic>
+#include <chrono>
 #include <thread>
 
 using namespace testmod;
@@ -28,6 +29,23 @@ struct Groups {
         return g().complete(kind,id,0);
     }
 };
+// With loops running autonomously, a config call may meet the owning loop
+// holding the slot (StagingBusy) or a late loop wake (Withdrawn). Both are
+// definite no-effect refusals the caller retries; retry only those, bounded.
+template <class Op> core::Status retryGroupBusy(Op op) {
+    core::Status st;
+    for (int attempt=0; attempt<10; ++attempt) {
+        st=op();
+        const bool retry=st.result==core::Result::Busy &&
+            (st.detail==core::Detail::StagingBusy || st.detail==core::Detail::Withdrawn);
+        if (!retry) { break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!st.ok()) {
+        MESSAGE("group op refused: result ",static_cast<int>(st.result)," detail ",static_cast<int>(st.detail));
+    }
+    return st;
+}
 std::vector<uint8_t> frame(uint8_t epoch, std::initializer_list<uint32_t> values={}) {
     std::vector<uint8_t> bytes(4+4*values.size());
     drivelink::protocol::wire::Writer w(bytes.data(),bytes.size());
@@ -138,12 +156,12 @@ TEST_CASE("Group swaps, enables and clears work with autonomous loops and wrap e
     // Looser loop periods make desktop scheduling independent of a 1 ms tick.
     const core::SetEntry rate{{defs::kLoopTypeId,0,defs::loop::kRateHz},100};uint32_t applied=0;
     REQUIRE(f.c.params().set({&rate,1},{&applied,1}).ok());
-    REQUIRE(f.g().configure(sub,0,0,1,{&signal,1}).ok());
-    REQUIRE(f.g().enable(0,false).ok());CHECK_FALSE(f.g().info(sub,0)->enabled);
-    REQUIRE(f.g().enable(0,true).ok());
-    REQUIRE(f.g().clear(sub,0).ok());CHECK_FALSE(f.g().info(sub,0)->configured);
+    REQUIRE(retryGroupBusy([&] { return f.g().configure(sub,0,0,1,{&signal,1}); }).ok());
+    REQUIRE(retryGroupBusy([&] { return f.g().enable(0,false); }).ok());CHECK_FALSE(f.g().info(sub,0)->enabled);
+    REQUIRE(retryGroupBusy([&] { return f.g().enable(0,true); }).ok());
+    REQUIRE(retryGroupBusy([&] { return f.g().clear(sub,0); }).ok());CHECK_FALSE(f.g().info(sub,0)->configured);
     // Empty clears complete without a loop; epoch is deliberately a wrapping u8.
-    for(int i=0;i<252;++i) { REQUIRE(f.g().clear(sub,0).ok()); }
+    for(int i=0;i<252;++i) { REQUIRE(retryGroupBusy([&] { return f.g().clear(sub,0); }).ok()); }
     CHECK(f.g().info(sub,0)->epoch==0);
     f.c.stop();
 }
