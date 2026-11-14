@@ -5,11 +5,11 @@ Status: **closed on 2026-11-13.** Nothing is left to schedule. The text below th
 ## Outcome
 
 1. **Loop at add: built.** `ADD_INSTANCE` is `type | loop | label` (F3a-1, F3b). Loop `0xFF` picks the lowest-numbered compatible loop, and a loop the type does not allow answers `LoopMismatch`. `LIST_INSTANCES` reports each instance's loop. Since F3d the loop is a loop instance id, and a type's allowed loops come from its `realtime` requirement. See `docs/protocol/core.md`.
-2. **Remove with dependents: the firmware refuses it** (`Referenced`), for an instance that another one is wired to and for a loop that still holds an instance. The user decided on 2026-11-13 that the GUI follows the firmware: Remove is disabled and names what must be rewired first. The GUI rework is phase G7b in [gui-design.md](gui-design.md).
+2. **Remove with dependents: the firmware refuses it** (`Referenced`), for an instance that another one is wired to and for a loop that still holds an instance. The user decided on 2026-11-13 that the GUI follows the firmware: Remove is disabled and names what must be rewired first. The GUI rework is phase G7b in [gui-design.md](../gui-design.md).
 
 ## Why
 
-[firmware-architecture.md](firmware-architecture.md) says "each module type declares which loop classes it may run in, the layout assigns each instance a loop". But the layout family has `ADD_INSTANCE(type, label)` with no loop, and no item that holds an instance's loop. For a type that may run in more than one loop (the mocks can run in `control` or `sensor`) there is no way to choose.
+[firmware-architecture.md](../firmware-architecture.md) says "each module type declares which loop classes it may run in, the layout assigns each instance a loop". But the layout family has `ADD_INSTANCE(type, label)` with no loop, and no item that holds an instance's loop. For a type that may run in more than one loop (the mocks can run in `control` or `sensor`) there is no way to choose.
 
 The plan also doesn't say what `REMOVE_INSTANCE` does when another instance has a `Ref` param pointing at the removed one (removing `left_pwm` while `left_drive.actuator` points at it). Layout validation runs when an op is staged, so the op could be refused, or accepted with `layout_invalid` set.
 

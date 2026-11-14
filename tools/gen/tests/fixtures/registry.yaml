@@ -6,10 +6,10 @@ msg_types:
   - {name: fx_response,  value: 0x41, direction: esp_to_host}
   - {name: fx_status,    value: 0x80, direction: esp_to_host, description: "Status | with a pipe."}
   - {name: fx_event,     value: 0xC0, direction: esp_to_host}
-  - {name: fx_old_cmd,   value: 0x20, direction: both, legacy: F9}
-  - {name: fx_old_setpt, value: 0xBE, direction: host_to_esp, legacy: F9}
-  - {name: fx_old_telem, value: 0xBF, direction: esp_to_host, legacy: F9}
+  - {name: fx_query,     value: 0x20, direction: both}
+  - {name: fx_disarm,    value: 0x03, direction: host_to_esp}
+  - {name: fx_reply,     value: 0x60, direction: esp_to_host}
 
 channel_ranges:
   - {name: fx_subs, symbol: FxSub, first: 0x81, last: 0x8F, direction: esp_to_host}
-  - {name: fx_cmds, symbol: FxCmd, first: 0xA0, last: 0xBF, direction: host_to_esp, description: "Legacy at the tail."}
+  - {name: fx_cmds, symbol: FxCmd, first: 0xA0, last: 0xBF, direction: host_to_esp, description: "Command channels."}

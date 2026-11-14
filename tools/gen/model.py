@@ -116,7 +116,7 @@ def load_registry(path: Path) -> dict:
         where = f"{f}: msg_type {e.get('name') if isinstance(e, dict) else e!r}"
         if not isinstance(e, dict):
             fail(where, "must be a mapping")
-        check_keys(where, e, {"name", "value", "direction", "legacy", "description"}, {"name", "value", "direction"})
+        check_keys(where, e, {"name", "value", "direction", "description"}, {"name", "value", "direction"})
         name, value = e["name"], e["value"]
         if not isinstance(name, str) or not SNAKE.match(name):
             fail(where, "name must be snake_case")
@@ -127,9 +127,6 @@ def load_registry(path: Path) -> dict:
             fail(where, f"value 0x{value:02X} is in no MSG_TYPE class")
         if e["direction"] not in DIRECTIONS:
             fail(where, f"direction must be one of {', '.join(DIRECTIONS)}")
-        legacy = e.get("legacy")
-        if legacy is not None and (not isinstance(legacy, str) or not legacy):
-            fail(where, "legacy must name the step that removes the entry, for example F8")
         if value in by_value:
             fail(where, f"value 0x{value:02X} already used by '{by_value[value]}'")
         if name in by_name:
@@ -142,7 +139,6 @@ def load_registry(path: Path) -> dict:
                 "value": value,
                 "class": cls,
                 "direction": e["direction"],
-                "legacy": legacy,
                 "description": opt_str(where, e, "description"),
             }
         )
@@ -188,25 +184,13 @@ def load_registry(path: Path) -> dict:
             if a["first"] <= b["last"] and b["first"] <= a["last"]:
                 fail(f"{f}: channel range {a['name']}", f"overlaps range '{b['name']}'")
 
-    # Entries inside a range: legacy only, and at its tail. The usable count
-    # is the run from `first` up to the first occupied channel.
+    # A range holds no msg_type: every channel in it is usable.
     for r in ranges:
         where = f"{f}: channel range {r['name']}"
-        inside = [m for m in msgs if r["first"] <= m["value"] <= r["last"]]  # msgs is sorted by value
-        for m in inside:
-            if not m["legacy"]:
-                fail(where, f"msg_type '{m['name']}' (0x{m['value']:02X}) lies inside the range but is not legacy")
-        if inside:
-            lowest = inside[0]["value"]
-            expected = list(range(lowest, r["last"] + 1))
-            if [m["value"] for m in inside] != expected:
-                fail(where, f"legacy entries must fill the range's tail without gaps (from 0x{lowest:02X} to 0x{r['last']:02X})")
-            usable = lowest - r["first"]
-        else:
-            usable = r["last"] - r["first"] + 1
-        if usable < 1:
-            fail(where, "legacy entries leave no usable channel")
-        r["usable_count"] = usable
+        for m in msgs:
+            if r["first"] <= m["value"] <= r["last"]:
+                fail(where, f"msg_type '{m['name']}' (0x{m['value']:02X}) lies inside the range")
+        r["usable_count"] = r["last"] - r["first"] + 1
 
     wire_enums = doc.get("wire_enums", {})
     if not isinstance(wire_enums, dict):

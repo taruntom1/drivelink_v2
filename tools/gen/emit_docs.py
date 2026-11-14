@@ -24,8 +24,6 @@ REGISTRY_TEMPLATE = f"""# Registry
 
 The MSG_TYPEs and stream channel ranges of the wire protocol. The tables are generated from `protocol/defs/registry.yaml` by `tools/gen/gen.py`; edit the YAML and regenerate, never the tables. How the definitions work is in [definitions.md](definitions.md), and the frame and the MSG_TYPE classes are in [framing.md](framing.md).
 
-A legacy entry is the old protocol of a manager that a later overhaul step ports. The step removes the entry with the manager. The time ping (0x02 / 0x42) joins in F8; the legacy IMU response holds 0x42 until F6 removes the IMU manager.
-
 {REGISTRY_BEGIN}
 {REGISTRY_END}
 """
@@ -65,27 +63,25 @@ def registry_block(defs: dict, hash_value: int) -> str:
         "",
         "## MSG_TYPEs",
         "",
-        "| Value | Name | Class | Direction | Legacy | Use |",
-        "|---|---|---|---|---|---|",
+        "| Value | Name | Class | Direction | Use |",
+        "|---|---|---|---|---|",
     ]
     for m in reg["msg_types"]:
-        legacy = f"removed in {m['legacy']}" if m["legacy"] else ""
         rows.append(
-            f"| 0x{m['value']:02X} | `{m['name']}` | {m['class']} | {DIRECTION_TEXT[m['direction']]} | {legacy} | "
+            f"| 0x{m['value']:02X} | `{m['name']}` | {m['class']} | {DIRECTION_TEXT[m['direction']]} | "
             f"{md_cell(m['description'])} |"
         )
     rows += [
         "",
         "## Stream channel ranges",
         "",
-        "| Range | Channels | Direction | Usable | Use |",
+        "| Range | Channels | Count | Direction | Use |",
         "|---|---|---|---|---|",
     ]
     for r in reg["channel_ranges"]:
-        usable_last = r["first"] + r["usable_count"] - 1
         rows.append(
-            f"| `{r['name']}` | 0x{r['first']:02X}-0x{r['last']:02X} | {DIRECTION_TEXT[r['direction']]} | "
-            f"{r['usable_count']} (0x{r['first']:02X}-0x{usable_last:02X}) | {md_cell(r['description'])} |"
+            f"| `{r['name']}` | 0x{r['first']:02X}-0x{r['last']:02X} | {r['usable_count']} | "
+            f"{DIRECTION_TEXT[r['direction']]} | {md_cell(r['description'])} |"
         )
     rows += ["", f"The system type id is 0x{reg['system_type_id']:02X}; the built-in loop type id is 0x{reg['loop_type_id']:02X}.", "", REGISTRY_END]
     return "\n".join(rows)

@@ -89,7 +89,7 @@ python host/test/hardware_smoke.py --cli host/superbuild/build/windows-mingw/cli
 This requires a bare ESP32-S3 with UART0 on COM3 and console on COM4. It refuses
 pending edits, dirty configuration, invalid layout or safe mode, creates temporary
 mock instances, checks persistence/actions/status/diag and restores the original
-layout, loop rates and system status rate. It never sends the legacy motor commands. Do not use
+layout, loop rates and system status rate. It creates no real motor or IMU instance. Do not use
 this smoke script with motors or sensors attached.
 
 
@@ -199,7 +199,7 @@ wheels raised, a current-limited supply, a low duty cap and a hand on the
 power switch. A positive step response is required before the chirp.
 This real-motor check remains deferred; the same workflow passed with mocks
 on vdev and the bare board. XiP measurements and commands are recorded in
-`plans/f7b-implementation.md`; normal firmware keeps XiP disabled.
+`plans/archive/f7b-implementation.md`; normal firmware keeps XiP disabled.
 
 ## OTA (F9)
 

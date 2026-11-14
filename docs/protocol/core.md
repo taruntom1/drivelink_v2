@@ -124,8 +124,8 @@ system and loop have mask zero because they run in no loop.
 Kinds/types, loop masks, action placements and item flags use the explicit
 values in `defs.hpp`, including GPIO 0x20 and RefTicksAfter 0x40.
 Retired definitions are absent. Module diag source IDs are resolved from
-module type YAMLs when referenced by the diagnostic definitions; legacy
-manager sources remain until their porting phases.
+module type YAMLs when referenced by the diagnostic definitions; the retired
+manager sources (`motor_manager` 0x10, `time_sync` 0x11) stay reserved.
 
 ## Param (family 4)
 
@@ -148,7 +148,7 @@ CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..32), and CORE_GR
 limit is min(configured limit, 64, floor((max_payload - 19)/4)), so both a
 complete LIST record and telemetry fit. A 128-byte build advertises 27. The channel is
 registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +
-command ID. No legacy channel is used.
+command ID.
 
 | Op | Request body |
 |---|---|

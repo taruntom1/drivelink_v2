@@ -1,11 +1,9 @@
 // main.cpp - DriveLink v2 entry point.
 //
-// Startup order: diag, UartComm, the managers, NVS, the core (init, boot from
-// NVS, start), then the diag Reporter. A manager that fails to start is
-// reported (system.ManagerStartFailed), destroyed and left out; the others
-// keep running, so the host can still connect and ask what went wrong. The
-// core is the same: if it fails it is reported (core.InitFailed) and left
-// out. app_main never returns.
+// Startup order: diag, UartComm, NVS, the core (init, boot from NVS, start)
+// and its CoreLink, then the diag Reporter. A core that fails to start is
+// reported (core.InitFailed) and left out; the link and diag keep running, so
+// the host can still connect and ask what went wrong. app_main never returns.
 
 #include <array>
 #include <cstdio>
@@ -39,7 +37,7 @@ namespace {
 #define DRIVELINK_LOG_STACKS 1
 
 // The firmware's tasks, by the names they are created with. A name with no
-// task (a manager that did not start) is skipped.
+// task (one that did not start) is skipped.
 // esp_timer runs the timer callbacks (the loop timers, the safety monitor and
 // the IMU sampling timer).
 constexpr std::array kLoggedTasks = {

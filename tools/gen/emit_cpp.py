@@ -79,9 +79,8 @@ def gen_registry(defs: dict, hash_value: int) -> str:
     w(f"inline constexpr size_t kDescriptorMinPayload = {descriptor_min_payload(defs)};")
     w("namespace msg {")
     for m in msgs:
-        legacy = f" Legacy, removed in {m['legacy']}." if m["legacy"] else ""
         text = f" {m['description']}" if m["description"] else ""
-        w(f"/// {m['class']}, {DIRECTION_TEXT[m['direction']]}.{text}{legacy}")
+        w(f"/// {m['class']}, {DIRECTION_TEXT[m['direction']]}.{text}")
         w(f"inline constexpr uint8_t k{pascal(m['name'])} = 0x{m['value']:02X};")
     w("} // namespace msg")
     w("")
@@ -91,7 +90,7 @@ def gen_registry(defs: dict, hash_value: int) -> str:
         w(f"    msg::k{pascal(m['name'])},")
     w("}};")
     w("")
-    w("/// Stream channel ranges. The count is the usable run: legacy entries at the top of a range cut it.")
+    w("/// Stream channel ranges: the first channel and the channel count.")
     for r in reg["channel_ranges"]:
         sym = r["symbol"]
         w(f"inline constexpr uint8_t k{sym}ChannelFirst = 0x{r['first']:02X};")

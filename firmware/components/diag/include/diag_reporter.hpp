@@ -33,7 +33,7 @@ struct ReporterConfig {
 /// UART TX queue is full, events stay queued and are retried; nothing is
 /// lost except query responses (counted as diag.EventTxDropped).
 ///
-/// Construct it after the managers (so Boot carries the final
+/// Construct it after the core (so Boot carries the final
 /// instance counts); records reported before then wait in the queue.
 /// Must not outlive the UartComm. Calls diag::init() itself.
 class Reporter {

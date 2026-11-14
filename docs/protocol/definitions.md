@@ -39,9 +39,8 @@ channel_ranges:
 Rules:
 - A MSG_TYPE value is unique, between `0x01` and `0xFE`, and falls in a class of [framing.md](framing.md). Names are unique and snake_case. The generated constant is `msg::k<PascalName>`.
 - `direction` is `host_to_esp`, `esp_to_host` or `both`.
-- `legacy: <step>` marks the old protocol of a manager. The step that ports the manager removes the entry.
 - A channel range lies inside the stream class (`0x80–0xBF`) and overlaps no other range.
-- A range holds no entries, except legacy ones filling its tail without gaps. They cut the usable channel count: it is the run from `first` to the first occupied channel. `kCmdGroupChannelCount` is 32 after F6 removed the last legacy stream at `0xBF`; subscriptions retain 31 channels. It was 29 before F5b and 31 until F6.
+- A range holds no MSG_TYPE entries, so every channel in it is usable: `k<symbol>ChannelCount` is `last - first + 1` (31 subscription channels, 32 command channels).
 - `symbol` names the constants `k<symbol>ChannelFirst` and `k<symbol>ChannelCount`.
 - `system_type_id` is `0x00`; `loop_type_id` is `0x05`, clear of the fixed diagnostic sources. Both are reserved. Other type ids are in their own files.
 
@@ -181,7 +180,7 @@ PascalCase entries to unique integers 0..254. These are generated into
 registry.hpp and included in the descriptor hash. Diagnostic codes carry
 optional boolean blocks_arm/disarms (default false) and generated names.
 Module diagnostic sources referenced by codes are resolved from the module
-YAML namespace and type_id; reserved and legacy sources remain explicit.
+YAML namespace and type_id; reserved and retired sources remain explicit.
 
 The generator checks complete core descriptor response sizes, including
 headers/page metadata and UTF-8 byte lengths, against 1024 bytes. It emits

@@ -8,7 +8,9 @@ Guidance for working on the firmware. The repo map and the cross-cutting rules a
 
 ## What this is
 
-ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It drives DC motors (MCPWM + DIR GPIO), reads quadrature encoders (PCNT), runs PID velocity and position loops, streams BNO055 IMU data, and answers host time pings without setting a wall clock. The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
+ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It is a self-describing core: the host discovers module types, instances, params, signals, inputs, actions and diag codes from the device, and configures everything over the link. The core runs configurable loops of module instances (motor actuators on MCPWM + DIR GPIO, quadrature feedback on PCNT, the cascade PID controller, the BNO055 IMU and mocks), with subscription and command groups, arming and a safety monitor, cross-loop sources, capture into PSRAM, per-loop test signals, time pings and disarmed OTA. Configuration lives in NVS (A/B). The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44, 921600 baud). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
+
+**Not yet run on motors or a real IMU.** The bench board has neither. The checks that need them are scripted and listed in `plans/overhaul-status.md` ("Deferred hardware checks"); until they pass, treat motor and IMU behaviour on real hardware as unverified.
 
 ## Where the details are
 
@@ -16,13 +18,15 @@ A `CLAUDE.md` in a directory loads by itself when you work there. Open the other
 
 | Area | Read |
 |---|---|
-| Any component: layout, Kconfig scope, API shape, resources, logging, naming | [firmware/components/CLAUDE.md](components/CLAUDE.md) |
-| `main.cpp`: startup order, the stack log, bench-only options | [firmware/main/CLAUDE.md](main/CLAUDE.md) |
+| Any component: layout, Kconfig scope, API shape, resources, logging, naming, per-subsystem concurrency rules | [firmware/components/CLAUDE.md](components/CLAUDE.md) |
+| `main.cpp`: startup order, the stack log, bench, XiP and OTA-candidate builds | [firmware/main/CLAUDE.md](main/CLAUDE.md) |
 | Tests: what the native tests cover, adding a source to them, HIL tests, smoke scripts, CI | [firmware/test/CLAUDE.md](test/CLAUDE.md) |
 | `uart_comm` internals: RX framing, the TX paths, limits | [firmware/components/uart_comm/CLAUDE.md](components/uart_comm/CLAUDE.md) |
-| The core: boot, loops, layout, params, NVS | [core/README.md](components/core/README.md), [core_os/README.md](components/core_os/README.md), [mod_mock/README.md](components/mod_mock/README.md) |
-| Time pings and TX stamping | [docs/protocol/time.md](../docs/protocol/time.md) |
-| The wire format | `docs/protocol/` (`framing.md`, `core.md`, `diag.md`, `registry.md`, `diag-codes.md`) and [protocol/CLAUDE.md](../protocol/CLAUDE.md) |
+| The core: boot, loops, layout, params, NVS, groups, arming, sources, capture, testgen, OTA | [core/README.md](components/core/README.md), [core_os/README.md](components/core_os/README.md) |
+| Modules | [mod_motor/README.md](components/mod_motor/README.md), [mod_imu_bno055/README.md](components/mod_imu_bno055/README.md), [mod_mock/README.md](components/mod_mock/README.md) |
+| Support components | the READMEs of `uart_comm`, `diag`, `motor_hal`, `rotary_encoder_hal`, `rtos_util` and `pid` |
+| Adding a module type | [docs/adding-a-module.md](../docs/adding-a-module.md) |
+| The wire format | `docs/protocol/` (`framing.md`, `core.md`, `diag.md`, `time.md`, `ota.md`, `imu.md`, generated `registry.md`, `diag-codes.md`, `types/`) and [protocol/CLAUDE.md](../protocol/CLAUDE.md) |
 | The definition YAMLs and the generator | `docs/protocol/definitions.md` |
 
 ## Commands
@@ -85,7 +89,7 @@ python -m unittest discover -s tools/gen/tests
 ```bash
 pytest pytest_uart_comm.py --port COM3                           # needs the HIL test app flashed
 pytest pytest_uart_comm.py --port COM3 -k test_echo_max_payload   # one test
-python smoke_main_firmware.py --port COM3                         # needs the main firmware flashed
+python smoke_protocol_firmware.py --port COM3                      # needs the main firmware flashed
 ```
 
 **Build traps:**
@@ -102,21 +106,21 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 **Startup** (`firmware/main/main.cpp`): `diag::init()`, `UartComm`, the core, then `diag::Reporter`. A core that fails to start is reported and left out, and the rest keep running, so destructors must be safe at any point.
 
 **Layering** (each is an ESP-IDF component under `firmware/components/`):
-- `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
-- `pid` is the header-only PID kernel that `mod_motor`'s cascade controller uses.
-- `mod_motor` holds the motor module types (`actuator.pwm_dir`, `feedback.quadrature`, `controller.cascade_pid`); `mod_mock` holds the mocks. See their READMEs.
-- Time protocol v1 is a direct CoreLink RX callback and a per-command TX stamp flag, using monotonic timestamps only. No time task or wall-clock setter remains; see `docs/protocol/time.md`.
-- `mod_imu_bno055` is the F6 non-real-time IMU module: pure register logic and calibration/state over an instance-owned bus, with an IDF I2C backend. See its README and `docs/protocol/imu.md`.
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) is the pure wire library: CRC, framing, the frame `Scanner`, `wire_codec`, and the generated registry, diag code table and descriptor format.
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
+- `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). Record macros queue records; real-time counts and latched conditions update fixed atomic state. `diag::Reporter` sends events and answers queries. Only the core (through the `core_os` sink), the module components and `main` report. The hardware layers return errors and don't depend on `diag`.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
-- `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
-- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. All legacy managers are removed; it runs the configured module instances.
-- F4c adds source bindings (`Sampled<T>`) and boot-allocated cross-loop triple
-  buffers. Source storage belongs to the consumer loop and survives arm
-  transitions. `CORE_MAX_LINK_VALUES` bounds each ordered loop pair; see the
-  core README for ownership, sampling and age rules.
-- `diag` reports errors to the host as codes (wire v3, `docs/protocol/diag.md`). Record macros queue records; real-time counts and latched conditions update fixed atomic state. `diag::Reporter` sends events and answers queries. Only the managers, the core (through the `core_os` sink) and `main` report. The hardware layers return errors and don't depend on `diag`.
+- `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info, the capture allocator, the OTA seam) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
+- `core` is pure (only `core_os`, `protocol/` and std, so it also builds natively): the module registry, configurable loops (instances of the built-in `loop` type with a per-loop `realtime` flag), the param service, the pending layout, NVS A/B persistence, safe mode, the boot, groups, arming and the safety monitor, sources (`Sampled<T>` over per-loop-pair triple buffers), capture, testgen and the OTA service: the families of `docs/protocol/core.md`. Its `CoreLink` adapter owns the UART side, the `core_cfg` task and the time ping (a direct RX callback with a TX stamp flag; device time is monotonic and never host-set, see `docs/protocol/time.md`).
+- Module components: `mod_motor` (`actuator.pwm_dir`, `feedback.quadrature`, `controller.cascade_pid`), `mod_imu_bno055` (`imu.bno055`, non-real-time, instance-owned I2C) and `mod_mock` (the mocks the vdev also runs). Pure logic is kept apart from the IDF backend (`src/idf/`) so the native tests cover it.
+- `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex. Each actuator owns its own MCPWM operator.
+- `pid` is the header-only PID kernel that the cascade controller uses.
+
+**Memory.** PSRAM is enabled caps-alloc only (`sdkconfig.defaults`: octal, 80 MHz, `CONFIG_SPIRAM_USE_CAPS_ALLOC`, `CONFIG_SPIRAM_IGNORE_NOTFOUND`): nothing lands there unless asked, and only the capture ring asks (`core_os::captureAlloc`, at capture CONFIG). Never switch to `SPIRAM_USE_MALLOC`.
+- **Atomics with PSRAM.** With PSRAM on, IDF builds the S3 with `-mdisable-hardware-atomics` (the hidden `STDATOMIC_S32C1I_SPIRAM_WORKAROUND`): every atomic is a call into IDF's IRAM helpers, which use S32C1I on internal RAM and a critical section on a PSRAM address. **No atomic or shared state may live in PSRAM.** Lock-free checks use `core_os::lockFreeAtomic<T>()` (`core_os/atomics.hpp`), not `is_always_lock_free`, which is false there.
+- XiP (instruction/rodata relocation to PSRAM) stays off by default; its isolated evaluation profile and measured tradeoffs are in `plans/archive/f7b-implementation.md`.
+
+**OTA and partitions.** The app uses the dual-slot `firmware/partitions.csv` with rollback enabled and NVS at 0x9000/0x6000. FINISH only prepares an image; explicit SYSTEM REBOOT selects it after the reply drains and restarts at once, and no other reset path commits. Prepared ABORT never rewrites boot metadata. Receiving, Ready, errors and a pending confirmation block ARM; only host CONFIRM confirms a candidate. Flash access stays on `core_cfg`, with fixed internal-RAM buffers; there is no OTA task. Never use erase-flash as an update step. The exact rules are in `docs/protocol/ota.md`.
 
 ## Concurrency rules
 
@@ -172,11 +176,11 @@ Every protocol on top of the `uart_comm` frame follows these rules:
 
 - Check every ESP-IDF return value, and log failures with `esp_err_to_name`.
 - **Report errors to the host through diag** (the codes are listed in `docs/protocol/diag-codes.md`):
-  - Managers and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
+  - Components and `main` use `DIAG_ERROR` / `DIAG_WARN` for errors and warnings the host should know about. These write the console line and queue a code.
   - Frequent events are counted with `DIAG_COUNT`; recoverable active conditions use `DIAG_RAISE` on `kind: latched` codes. These atomic paths and latched `DIAG_CLEAR` are allowed on real-time paths.
   - Each new code goes in `protocol/defs/diag_codes.yaml`, then regenerate. Call sites write `diag::codes::<source>::k<Name>`, through the hand-written shim `firmware/components/diag/include/diag_codes.hpp`.
   - Plain `ESP_LOGx` is for info, for programmer errors, and for host commands rejected with a result code (the response already tells the host).
-  - A manager constructor that fails reports `<source>.InitFailed` with the failing stage in `arg0`.
+  - A component that fails to initialise reports `<source>.InitFailed` with the failing stage in `arg0`. A module type's diag code 1 is its `InitFailed`, which the core reports in place of `core.InstanceStartFailed`.
   - Recoverable conditions (a stalled timer, failing syncs) are reported once when they start and `DIAG_CLEAR`ed on recovery or when the task watching them stops, not on every occurrence. A real-time task only counts; a non-real-time task watches the count and reports.
   - `CONFIG_DIAG_CONSOLE_LOG=n` compiles out all first-party console text (`firmware/CMakeLists.txt` sets `LOG_LOCAL_LEVEL=ESP_LOG_NONE` on `firmware/components/` and `firmware/main/`). Code must build warning-free that way too, which CI checks.
 - **Never abort on runtime errors** that the host or the hardware can cause. Return `esp_err_t` or `bool`, expose `isValid()`, and log the failure.
@@ -194,67 +198,10 @@ A change is done when all of the following are true:
 - **Docs in the same commit:**
   - Any protocol change updates `docs/protocol/` in that commit. A public API or Kconfig change updates the component's README, if it has one.
   - A change to an architecture, concurrency or convention rule updates the file that holds it: this file, an area file from the table above, `firmware/components/CLAUDE.md`, or the root `CLAUDE.md` for a cross-cutting rule.
-- **Overhaul status:** during the overhaul, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
+- **Step status:** while the host overhaul is open, every PR updates `plans/overhaul-status.md` (see the root `CLAUDE.md`).
 - **Native tests for pure logic:** new or changed pure-logic code (the core, PID, filters, estimators, protocol encode/decode) comes with native unit tests (`firmware/test/native/`, or `protocol/test/` for the `protocol/` library), and they pass.
 
 ### Files not to edit
 
 - **Generated files:** don't edit anything under `firmware/build/` (or another build dir such as `build_variant/`) or the generated `sdkconfig` by hand. Everything under `protocol/include/drivelink/protocol/gen/` and the generated tables in `docs/protocol/` (`registry.md`, `diag-codes.md`, `types/`) come from `protocol/defs/` through `tools/gen/gen.py`. Edit the YAML and regenerate.
-- **Naming:** `mod_imu_bno055` fixes the legacy `imu_bmo_055` spelling. Its register driver is instance-owned and pure.
-
-F4a groups are preallocated and use single-attempt atomic slot ownership;
-loops never wait for RX or configuration. Group snapshots read plain signals
-only on their owning loop. Command inputs stay gated disarmed until F4b.
-
-F5a-1 adds pure `mod_motor` interfaces, the cascade PID controller and shared
-encoder math. Firmware and vdev register the controller alongside the realistic
-motor mocks. F5a-2 adds `actuator.pwm_dir` and `feedback.quadrature` (pure
-logic over `mod_motor/hardware.hpp`, device backend in `src/idf/`); only the
-firmware registers them. Each actuator owns an MCPWM operator, is forced low
-from creation and is released only by ARM. See
-`firmware/components/mod_motor/README.md` for ownership, force, mode-transfer
-and fresh-command contracts. F5b removed `motor_manager`, `motor_controller`,
-the legacy motor wire protocol and the HAL/PID APIs only they used: motors run
-only as core modules.
-
-F6 removes the legacy IMU manager and its tasks/codec. `imu.bno055` runs only in
-a non-real-time loop; bus waits can still trip the unchanged stall monitor.
-Calibration actions stage typed params, explicit SAVE persists them, and boot
-restores them. The core commits successful paused-action parameter updates
-while the owning loop remains paused; hooks/structural/read-only writes are
-excluded. See `docs/protocol/imu.md` and the core README.
-
-F7a adds the capture family and enables PSRAM (`sdkconfig.defaults`: octal,
-80 MHz, `CONFIG_SPIRAM_USE_CAPS_ALLOC`, `CONFIG_SPIRAM_IGNORE_NOTFOUND`). PSRAM
-is caps-alloc only: nothing lands there unless asked, and today only the
-capture ring asks (`core_os::captureAlloc`, at capture CONFIG). Never switch to
-`SPIRAM_USE_MALLOC`. A loop writes the ring through the cache; a flash write
-stalls it like any loop. See the core README ("Capture") and `docs/protocol/core.md`.
-- **Atomics with PSRAM.** With PSRAM on, IDF builds the S3 with
-  `-mdisable-hardware-atomics` (the hidden `STDATOMIC_S32C1I_SPIRAM_WORKAROUND`):
-  every atomic is a call into IDF's IRAM helpers, which use S32C1I on internal
-  RAM and a critical section on a PSRAM address. **No atomic or shared state may
-  live in PSRAM.** Lock-free checks use `core_os::lockFreeAtomic<T>()`
-  (`core_os/atomics.hpp`), not `is_always_lock_free`, which is false there.
-
-F7b adds the pure per-loop `TestgenService`: fixed storage, loop-owned input
-overrides and receipts, fresh-command handoff, and config-task completion events.
-It never feeds the watchdog. See the core README and `docs/protocol/core.md`.
-XiP remains disabled by default; the isolated `bench_fw.py xip` profile and
-its measured tradeoffs are recorded in `plans/f7b-implementation.md`.
-
-## OTA (F9)
-
-The main app uses core v8 and the dual-slot `firmware/partitions.csv`, with
-rollback enabled and NVS unchanged at 0x9000/0x6000. A board still on the old
-single-app table needs one UART migration; `python tools/bench_fw.py normal`
-builds, verifies normal/rollback/partition settings and flashes without erasing
-NVS. Never use erase-flash as an OTA migration step. The bootloader initializes
-the first slot as VALID; candidate images are confirmed only by host CONFIRM.
-
-FINISH prepares an image. Explicit SYSTEM REBOOT selects it after reply drain
-and immediately restarts. Other reset paths do not commit. Prepared ABORT never
-rewrites boot metadata; an already selected candidate requires reset/rollback.
-Receiving, Ready, errors and pending confirmation block ARM. Flash access stays
-on core_cfg, with fixed internal-RAM buffers; there is no OTA task. Exact wire,
-integrity/identity and recovery rules are in `docs/protocol/ota.md`.
+- **Naming:** the IMU component is `mod_imu_bno055` (the old `imu_bmo_055` spelling is gone). Its register driver is instance-owned and pure.

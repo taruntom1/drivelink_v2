@@ -1,11 +1,11 @@
 """
-smoke_main_firmware.py - check that the main firmware's managers answer over
-the link (docs/protocol/framing.md).
+smoke_protocol_firmware.py - check that the main firmware's diag and time
+protocols answer over the link (docs/protocol/diag.md, time.md).
 
 This is not a pytest suite: it runs against the main firmware (firmware/), not
 the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
 
-    python smoke_main_firmware.py --port COM5            (921600 baud by default)
+    python smoke_protocol_firmware.py --port COM5            (921600 baud by default)
 
 It checks, each with the protocol version the firmware must speak:
   - diag      GetInfo (0x23) -> response on 0x63, diag v3
@@ -35,7 +35,7 @@ TIME_REQUEST, TIME_RESPONSE, TIME_VERSION = 0x02, 0x42, 1
 
 def wait_for(proto: UartCommProto, msg_type: int, seq: int | None, timeout: float) -> bytes:
     """Read frames until one of `msg_type` (with `seq` at payload[1], if given) arrives.
-    Other traffic (diag events, time sync requests, streams) is skipped."""
+    Other traffic (diag events, status and other streams) is skipped."""
     deadline = time.monotonic() + timeout
     while True:
         remaining = deadline - time.monotonic()
