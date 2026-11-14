@@ -1,217 +1,44 @@
-# CLAUDE.md (firmware/test)
+# Test rules
 
-How the firmware tests are built and what they cover. The commands are in [firmware/CLAUDE.md](../CLAUDE.md) ("Commands"). Paths are relative to the repository root.
+These add to [firmware rules](../CLAUDE.md). Paths below are repo-relative.
+Commands/toolchains, check selection, logs and CI behavior are in
+[docs/development.md](../../docs/development.md).
 
-## Native unit tests (`firmware/test/native/`)
+## Native tests
 
-**What they cover:** everything that builds without ESP-IDF.
-- The `protocol/` library: CRC, framing, scanner, wire codec and the generated definitions. Its tests live in `protocol/test/` and are compiled into this build.
-- `core_os`'s native backend, with the in-memory KV store and its fault injection (power loss, failed and torn writes).
-- The pure `core`: registry, bind API, values, loops, param batches, the pending layout and its validation, the wiring order, the NVS blobs and A/B persistence, safe mode, the boot, and a threaded end-to-end run.
-- The time-v1 and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator; the pure BNO055 driver/state over its fake bus.
+- Add new core sources to `CORE_SOURCES` and other pure component sources to
+  `FIRMWARE_SOURCES` in `firmware/test/native/CMakeLists.txt`; protocol tests live
+  in `protocol/test/`. Core must not depend on shim headers. For non-core
+  sources needing a new `CONFIG_*`, update the native shim defaults.
+- Keep native KV storage in-memory by default; only vdev attaches file storage.
+  Model reboot with a new Core on the same store. Reuse generator fixture types
+  and the existing layout/boot helpers.
+- Threaded timing bounds must tolerate desktop scheduler delays (about 15 ms).
+  Preallocate real-time fixture observations. The native guard fails unexpected
+  allocation/blocking; suppress its sink only for deliberate violation tests.
+  Capture concurrency tests sample directly: a scheduler-delayed whole `runTick`
+  can count an overrun and allocate through the native diagnostic sink.
+- Test helpers may boundedly retry `Withdrawn` and group-only `StagingBusy`,
+  which guarantee no effect. Never extend this to timeout, opaque action Busy
+  or expected-refusal cases; production mutation retry policy stays unchanged.
+- Sparse diagnostic slots can run out across the test binary; module-code
+  checks fall back to the safety overflow query.
 
-**How it is built:**
-- A plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`).
-- It builds `protocol/` as the host library `drivelink::protocol`. It compiles `core_os/backend/native`, the `core` sources (all but `src/idf/`) and the pure sources of other components (`FIRMWARE_SOURCES`, module logic) directly with the host compiler.
-- `firmware/test/native/shim/` stands in for the two IDF headers that non-core sources may include: `sdkconfig.h` with the Kconfig defaults they read (none today), and a no-op `esp_log.h`. The core needs neither.
-- It needs no IDF export. On this machine, Strawberry Perl ships `g++` (MinGW-w64, posix threads), `cmake` and `ninja`.
-- It needs Python 3 with PyYAML: the build runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the type headers the tests include.
+## Hardware tests
 
-**Adding a source:**
-- A new `core` source goes in `CORE_SOURCES` in `firmware/test/native/CMakeLists.txt`. It must not need the shims.
-- A non-core component source can join only if it builds without ESP-IDF beyond the shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES`.
-- If such a source reads a new `CONFIG_*` symbol, add it to `firmware/test/native/shim/sdkconfig.h`.
+- `pytest_uart_comm.py` requires the separate HIL app; smoke scripts require
+  main firmware. Ports/board state are in the status file. Keep
+  `firmware/test/uart_comm/protocol.py` in sync with framing changes.
+- Restore layouts/settings after smoke checks. Bench tests require normal
+  restoration; close the console before cleanup reboots (the status file has
+  the USB driver trap). Use real IDF images for physical OTA tests, never native
+  fixtures. Deferred scripts/pass criteria stay in the status file.
 
-**Writing core tests:**
-- The generator's fixture types serve as test module types (`tests/core_test_modules.hpp`): `fixture.full`, `fixture.sensor`, and the wiring set `actuator.fixture`, `feedback.fixture`, `fixture.wired`.
-- A test builds a layout by writing it to a native `KvStore` (`writeLayout`) and booting a `Core` on it (`bootWith`). A reboot is a new `Core` on the same store.
-- The native store stays in memory unless `native::openFileStore` attaches a state directory, which only the vdev does.
-- Tests that use threads (the `core_os` timing and the threaded core run) keep loose timing bounds: a desktop scheduler can wake a thread 15 ms late.
+## Validation
 
-## Hardware-in-the-loop tests (`firmware/test/uart_comm/`)
-
-- A separate IDF app for `uart_comm`. Its `EXTRA_COMPONENT_DIRS` points at `../../components`, and it builds only the components its `main` requires (`set(COMPONENTS main)`).
-- `pytest_uart_comm.py` runs against the flashed test app through a USB-UART adapter on GPIO43/44. `conftest.py` defaults `--baud` to 921600, the Kconfig default.
-- `protocol.py` is the Python frame reference. `python protocol.py` is a hardware-free self-test with the golden frames, and CI runs it. Update it with any framing change.
-- The test app logs the uart_comm RX and TX stack marks when idle.
-
-## Smoke scripts for the main firmware
-
-Standalone scripts in `firmware/test/uart_comm/`, for the **main** firmware, not the test app. Update them with any change to what they check.
-
-- `smoke_protocol_firmware.py --port COMx` checks diag v3 and time v1 (including malformed-ping drops and TX CRC). The legacy IMU protocol was removed in F6.
-- `smoke_core_firmware.py` exercises the core with mock instances and removes them again. `--safe-mode` needs a build with `CONFIG_CORE_BENCH_CRASH=y`; flash the normal firmware again afterwards.
-
-The ports and the state of the bench board are in `plans/overhaul-status.md` ("Hardware notes").
-
-## Host tests
-
-The host library, CLI and vdev have their own unit and integration tests under `host/test`, built by `host/superbuild`. See `host/README.md`.
-
-## Validation (`tools/validate.py`)
-
-One script holds the list of checks and their commands. CI calls it with `--only`, so a check runs the same way locally and in CI. It needs only Python 3 (with PyYAML for `gen` and `native`), and runs from the repository root in any shell.
-
-| Check | What it runs | Toolchain it sets up |
-|---|---|---|
-| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py` | The Python that runs the script |
-| `native` | Configure, build and ctest of `firmware/test/native` | `g++`, `cmake` and `ninja` from `PATH` (Strawberry on this machine) |
-| `host-win` | The `windows-mingw` preset: build, ctest, `install_smoke.py`. Windows only | Qt's MinGW, CMake and Ninja, first on `PATH` |
-| `host-linux` | The `linux` preset: build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`) |
-| `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of `firmware/CLAUDE.md` |
-
-- **Modes.** `quick` is `gen`, `native` and the host check of this OS. `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
-- **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
-- **Unchanged checks are skipped.** A check that passed shows as `pass (unchanged)` until a file it covers changes. `--force` runs it anyway.
-  - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns only `gen`. Any other change reruns every check.
-  - The state is `build/validate/state.json`. Toolchain changes are not seen: use `--force` after one.
-- **Build directories** are the ones the commands in `firmware/CLAUDE.md` and `host/README.md` use, so they stay warm between runs. The WSL build is in `~/.cache/drivelink/<worktree>/host-linux` inside the distro. That is on the Linux filesystem (no rename locks) and not in `/tmp`, which WSL keeps in RAM and loses when the idle VM stops. Delete it there when the worktree is gone.
-- **ccache.** On Windows the IDF export turns on ccache, so the first IDF build of a new worktree mostly reuses another worktree's objects. A cached object replays its warnings, so the warning scan still sees them.
-- **Warnings.** The scan sees only the files compiled in that run. After a run that found warnings, the next run deletes that app's build directory and compiles everything. So fix the warning; a rerun never makes it go away. CI always builds from clean.
-- **Compiler crashes.** A step that fails with `internal compiler error` in its output runs once more (see "Build traps" in `firmware/CLAUDE.md`). If it then passes, the result says `pass (after one retry of a compiler crash)`. Nothing else is retried: a failing test fails the check.
-- **Missing tools.** Every check's toolchain is looked up before anything runs. A check that can't run shows as `UNAVAILABLE` and fails the run.
-- **Results.** One line per check with its time. A failure prints the end of its output. The full output is `build/validate/<check>.log`, and `build/validate/summary.txt` is the text for the PR's validation section: it has the revision and says what was not run.
-- **Adding a check:** one `Check` entry in `CHECKS`, and its name in the CI job that has its toolchain.
-- **Hardware.** The script never flashes a board or opens a serial port. The HIL and smoke tests above stay separate and explicit.
-
-## CI (`.github/workflows/ci.yml`)
-
-Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
-- `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
-- `gen` and `native` on Ubuntu.
-- `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.
-- There is no Windows job yet (H1 adds one). `host-win` runs only locally.
-
-F3d adds configurable-loop coverage (one through eight loops, sparse ids, empty
-saved layouts, factory fallback, task failures, live rate rollback and the native
-real-time guard). The guard fails unexpected violations automatically; deliberate
-violation tests explicitly suppress its failure sink. Native and vdev link the
-C allocator wrappers alongside the C++ allocation overrides.
-
-F4a adds native group tests for config/withdrawal, epoch wrapping, typed
-command rejection and atomicity, sparse loop ids, 64-entry limits, subscription
-dividers and concurrent mailbox coherence. Host integration exercises CLI
-groups on vdev and verifies disarmed commands do not alter mock inputs.
-
-
-F4b adds deterministic safety tests with native manual scheduling: ARM/disarm
-races, command freshness across arm epochs, latched recovery/ACK, watchdog
-feeds and grace, sparse non-real-time stalls, emergency force without a loop
-transition, read-only limits/persistence, and sparse diagnostic exhaustion.
-Host integration covers arming/refusals, command/keepalive runs and typed CSV.
-The default-off bench stall command supports bare-board monitor/WDT checks.
-
-`smoke_safety_firmware.py --port COM3` checks normal arming/watchdog behavior
-with one temporary actuator mock. A bench-enabled build additionally runs
-`--bench --wdt` to test stalls in real-time/background loops and the Task WDT
-reset; inspect COM4 for the panic. It restores the saved layout and settings.
-Add `--any-core` to run its real-time control loop with automatic initial
-placement; cleanup restores the original placement too.
-
-`host/test/loop_affinity_smoke.py --cli <cli> --endpoint serial://COM3
---console COM4` checks discovered enum choices, the new-loop Any-core default,
-pending edits, persistence, ticking mocks in real-time/background loops and
-all task stacks above 1 KiB, then restores a clean loops-only layout. Add
-`--bench` on the isolated bench build to require initial no-affinity and the
-post-tick FPU pinning observations; restore normal firmware afterward. The
-console closes before cleanup reboots. Without console options, the same
-workflow runs on vdev under the existing host integration/validator checks.
-Native configurable-loop tests observe requested OS affinity and cover saved
-0/1 values, missing params, invalid choices, DISCARD/REVERT and safe-mode edits.
-
-F4c adds native source binding/validation, ordering, capacity, persistence,
-failed-producer, age/freshness and concurrent triple-buffer coherence tests.
-Host integration discovers source descriptors and streams fusion values and
-ages. `smoke_sources_firmware.py --port COM3` checks sources on the bare board
-and compares the longest control tick with zero and sixteen linked values
-in otherwise identical mock layouts. It requires an original layout with
-loops only and restores it. Use COM4 concurrently to inspect stack marks.
-
-F5a-1 adds `test_motor_modules.cpp`: real cascade PID with quantized mock
-feedback, limits, all six mode transfers, command freshness, exclusive actuator
-ownership, delay/emergency overrides, seeded noise reset and count wrap.
-Host integration invokes `host/test/motor_smoke.py` on vdev; the same script
-runs controller/mocks on the bare board via `--endpoint serial://COM3
---loop-rate 1000`. It restores a clean loops-only layout/settings and refuses
-pending edits or configured groups.
-
-F5a-2 adds `test_motor_hardware.cpp` over the fake driver backend
-`tests/fake_motor_hw.cpp` (fixed atomic storage; it stands in for
-`mod_motor/src/idf/`). Sparse diag slots are stable across the test binary and
-can run out, so a test that checks one module code falls back to the safety
-overflow query. On the bare board, `motor_smoke.py --modules real --no-motor
---pool-check` with pins checks the hardware types; a motor run drops
-`--no-motor` and needs `--confirm-first-run`.
-
-F5b adds the loop-stall scenario: `motor_smoke.py --stall` (mocks, real
-`--no-motor`, or a motor) stalls the control loop for 2 s while it drives. It
-requires Fault/LoopStalled before the stall can have ended (the monitor
-disarmed, not the loop), zero duty (and `forced`) after it, and ACK_FAULT and
-re-arm. Duty and `forced` are loop signals, so the force during the stall is
-proven by the native test in `test_motor_hardware.cpp` (no tick at all: the
-monitor alone forces `actuator.pwm_dir`) and, physically, only by a motor's
-encoder. It needs a `CONFIG_CORE_BENCH_CRASH=y` build or vdev
-`--allow-crash`, which host integration uses.
-
-F6 adds `test_imu_modules.cpp`/`fake_imu_bus.cpp`: register timing, identity,
-units, mode/health/reset failures, resource ownership, calibration codec and
-errors, atomic paused-action updates and A/B persistence/REVERT/removal.
-`host/test/imu_smoke.py` runs the same mock workflow in host integration and on
-the bare board; `--modules real --missing-sensor` checks failed start/ARM refusal.
-The deferred `--modules real --calibration-wait 300` run waits for 3/3/3/3,
-then checks exact profile application and boot restore in CONFIG.
-`--stack-wait` holds the layout for a short COM4 capture; close COM4 before
-cleanup reboots (see the status file's driver trap).
-
-Host integration's test-only helper retries `Withdrawn` and group-only
-`StagingBusy` rejections, which guarantee no effect. The latter can occur
-when a native loop owns the group slot at the single publish attempt. Retries
-are bounded; timeouts, opaque action Busy responses and expected refusals are
-never retried. `tools/tests/test_host_retry.py` covers these boundaries under
-the existing `gen` check. Production CLI/SDK mutation retry policy is unchanged.
-
-F7a adds `test_core_capture.cpp`: CONFIG validation without side effects,
-capacity/`NoMemory` injection, pre-trigger history, early triggers, typed
-threshold edges, value change on an uncaptured signal, dividers and the loop
-tick counter, irregular detection, disarm, ABORT against a recording thread,
-the wire ops/READ paging/STATUS and the done event. Thread tests drive
-`CaptureService::sample` in a real-time scope directly: a whole preempted
-`runTick` can overrun and count `LoopOverBudget`, which the native sink
-records (an allocation the guard reports). `host/test/capture_smoke.py` runs on
-vdev in host integration and on the bare board.
-
-F7b adds `test_core_testgen.cpp`: waveform phases/repeats/clipping, validation
-without side effects, staging withdrawal, sparse/concurrent loops, arm epochs,
-terminal-event/restart races, delayed command mailboxes and fresh handoff,
-same-loop capture triggering/dividers and the real-time guard. Controller tests
-verify mode-activation receipts and that generation never feeds the watchdog.
-Host unit tests cover strict testgen request/reply/event encoding. Integration
-runs `testgen_smoke.py` at 50 Hz on vdev; `testgen_cli_failure.py` proxies the
-actual vdev and drops ARM replies, requiring cleanup DISARM from both run
-commands. All join existing validator checks (`native`, `host-win`, `host-linux`).
-
-On the bare board, `testgen_smoke.py --cli <cli> --endpoint serial://COM3
---loop-rate 1000 --flash-write` checks step/chirp captures, handoff, watchdog
-cancellation and disarmed SAVE timing. `capture_smoke.py` supplies the matched
-1/16-ref tick-cost measurement. Compare normal and isolated XiP firmware via
-`bench_fw.py normal` / `bench_fw.py xip`, then restore normal and verify the
-bench op is refused. Close COM4 before cleanup reboots. The real-motor mode
-and pass criteria are in Deferred hardware checks; no motor has run yet.
-
-F8 adds exact time codecs/TX patch tests in `protocol/test/test_time_codec.cpp`
-and host estimator/lifecycle tests. The existing host integration checks TCP
-and Linux PTY pings, malformed-drop counters, and a short traffic/capture dry
-run of `host/test/time_smoke.py`. Run that script for 180 s on the CH343 both
-idle and with `--traffic`; raw I/O timestamps, held-out low-RTT residuals and
-prediction changes are the evidence. The Pi `--jitter-us 100` campaign remains
-deferred in the status file. These suites join the existing validator checks.
-
-F9 adds SHA-256 known answers/image preflight, pure OTA lifecycle/wire/gate
-tests and native boot-metadata failures (including selection before/after
-mutation). Existing native/host Check entries cover them; `gen` also checks
-the fixed NVS/dual-slot table and guarded candidate-build helper. Host units
-cover batch correlation/close/timeouts/payload limits. Integration runs the
-shared `host/test/ota_smoke.py` campaign, plus TCP lost-reply/identity/commit
-proxies and pipelined REBOOT+FINISH/ABORT regressions. On the bare board use
-real IDF baseline/candidate binaries and `--stack-wait 45`, never native fixture
-images. Full commands and recovery are in `host/README.md` and the OTA spec.
+- Add new suites to `tools/validate.py`'s `CHECKS` and the CI job with the needed
+  toolchain, keeping one command source for local/CI. Run checks sequentially.
+- Report skipped/unavailable checks. Use `--force` after a toolchain change:
+  fingerprints track sources, not tools.
+  [The validation guide](../../docs/development.md#validation-toolsvalidatepy)
+  covers logs, warning scans and the single compiler-crash retry.
