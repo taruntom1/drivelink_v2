@@ -28,7 +28,7 @@ public:
     Err read(uint32_t offset, std::span<uint8_t> bytes);
     Err finish(); // validates image, frees upload handle, does not select it
     Err select(); // selects validated candidate
-    Err abort();  // closes handle and restores running boot slot
+    Err abort();  // closes prepared upload; refuses a committed boot selection
     Err confirm();
     struct Impl;
 private:

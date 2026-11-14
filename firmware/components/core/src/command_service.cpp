@@ -249,7 +249,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         }
         case defs::SystemOp::Reboot:
             if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
-            m_after=AfterReply::Reboot;return {};
+            m_after=AfterReply::CommitAndReboot;return {};
         default:return bad(Detail::Unsupported); // F4b arm state machine
         }
     }

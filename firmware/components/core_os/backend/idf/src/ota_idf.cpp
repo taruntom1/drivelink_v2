@@ -80,12 +80,9 @@ Err Ota::abort() {
     const auto *running=esp_ota_get_running_partition();
     const auto *selected=esp_ota_get_boot_partition();
     if (!running || !selected) { return ESP_ERR_NOT_FOUND; }
-    if (running!=selected) {
-        const auto err=esp_ota_set_boot_partition(running);if (err!=ESP_OK) { return err; }
-        // set_boot_partition marks the slot NEW. It is the already running,
-        // confirmed app; retain that validity so a later reset cannot demote it.
-        const auto valid=esp_ota_mark_app_valid_cancel_rollback();if (valid!=ESP_OK) { return valid; }
-    }
+    if (running!=selected) { return ESP_ERR_INVALID_STATE; }
+    // FINISH only prepares. Cancellation never rewrites boot metadata, so a
+    // power loss cannot turn the confirmed baseline into a NEW image.
     d.target=nullptr;d.finished=false;return kOk;
 }
 Err Ota::confirm() {

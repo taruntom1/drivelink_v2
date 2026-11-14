@@ -9,7 +9,7 @@ The user approved these choices on 2026-11-14:
 
 - Codex plans and builds F9, with an independent Codex review at high effort.
 - ARM is refused during upload, after FINISH, and while the running candidate
-  awaits CONFIRM. ABORT can cancel the update before reboot.
+  awaits CONFIRM. ABORT can cancel the prepared update before explicit REBOOT commits it.
 - Add read-only OTA STATUS, including progress, boot/confirmation state and
   image identity. Bump the core wire version from 7 to 8. Time v1 and diag v3
   retain their formats.
@@ -78,12 +78,14 @@ Implement family 0x09, generated OtaOp/state/detail definitions, and core v8:
   changing progress. Return the expected offset on offset/data rejection and
   the next offset on success. Retries never hash or write bytes twice.
 - FINISH: require exactly the declared bytes, verify SHA-256 over the exact
-  uploaded file bytes, complete IDF image validation, then select the candidate
-  boot partition. Repeating FINISH in Ready succeeds without another write.
-  FINISH does not reboot; use the existing SYSTEM REBOOT.
-- ABORT: release an active upload. In Ready, restore the current running boot
-  partition before dropping the ARM gate. Idle ABORT is idempotent. On an
-  unconfirmed running candidate, ABORT refuses; CONFIRM or reset is required.
+  uploaded file bytes, complete IDF image validation and prepare the candidate,
+  leaving boot metadata untouched. Repeating FINISH in Ready succeeds without
+  another write. Explicit SYSTEM REBOOT selects it after reply drain and then
+  immediately restarts; other reset paths never commit a prepared image.
+- ABORT: release an active upload or a prepared Ready image without rewriting
+  boot metadata. Idle ABORT is idempotent. If a commit has already selected the
+  candidate, ABORT refuses (OtaCommitted); reset is required. On an unconfirmed
+  running candidate, ABORT refuses; CONFIRM or reset is required.
 - CONFIRM: only a host command may mark the pending running app valid. A repeat
   on an already confirmed app is harmless. Release the gate only after success.
 - STATUS: available read-only, including while armed or in safe mode. Report
@@ -211,7 +213,7 @@ from isolated directories, with normal bench/XiP guards. Verify:
 1. Migration preserves saved layout/settings and starts a valid baseline.
 2. Update through CLI, duplicate WRITE acknowledgement, deliberately conflicting
    chunk refusal and incomplete/hash-invalid FINISH; the baseline remains bootable.
-3. FINISH/ABORT cancellation restores the old boot selection and ARM availability.
+3. FINISH/ABORT cancellation leaves old boot metadata untouched and restores ARM availability.
 4. Candidate boots pending, blocks ARM, matches its image identity, confirms,
    and survives another reset in the same slot.
 5. Another candidate boots without CONFIRM; the next reset returns to the exact
@@ -238,3 +240,24 @@ review with its PR, approved model/safety/wire choices, hardware evidence,
 current partition/build state and F10 handoff. Preserve existing deferred
 hardware rows. Record validation/review/measurements here, commit and push,
 open one PR into `firmware_overhaul`, then add and push its status link.
+
+## Review correction R1 (approved 2026-11-14)
+
+Independent review of `457418b` found that Ready ABORT's two IDF metadata
+writes can demote the previously confirmed image to NEW if interrupted. A
+later reset can then select the canceled candidate. The direct metadata-bit
+invalidation alternative falls outside IDF's documented erased-write contract.
+No hardware has been touched.
+
+The user approved this correction: FINISH validates and prepares the candidate without
+selecting it. SYSTEM REBOOT, after its reply drains, selects the prepared
+candidate and immediately restarts. Ready ABORT only releases the prepared
+image; it never rewrites boot metadata. STATUS boot_slot remains the actual
+selected slot (the running baseline while merely Ready). Once boot selection
+has been attempted, uncertain selection holds the ARM gate and requires reset
+if the candidate is selected; ABORT cannot pretend to undo that commit.
+The CLI reconciles the reboot/commit outcome through STATUS and identity,
+without automatically repeating REBOOT. A separate CommitAndReboot after-reply
+action prevents EXIT_SAFE_MODE or another incidental reset from committing.
+Failure tests cover selection before/after mutation, prepared reset/cancellation,
+and an accepted reboot whose commit never takes place.

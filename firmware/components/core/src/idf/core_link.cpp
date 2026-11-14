@@ -70,6 +70,9 @@ struct CoreLink::Impl {
             if(after!=AfterReply::None && err==ESP_OK) {
                 if(uart.waitTxIdle(1000)!=ESP_OK) { ESP_LOGE(TAG,"TX drain timed out; reboot cancelled");return; }
                 if(after==AfterReply::Crash) { esp_system_abort("bench crash command"); }
+                if(after==AfterReply::CommitAndReboot && !core.ota().commit().ok()) {
+                    ESP_LOGE(TAG,"OTA selection failed; reboot cancelled, query OTA STATUS");return;
+                }
                 core_os::reboot();
             }
         }

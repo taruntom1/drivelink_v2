@@ -101,12 +101,12 @@ Err Ota::finish() {
 }
 Err Ota::select() {
     auto &d=*m_impl;if (!d.valid || !d.finished || d.failed("select")) { return -1; }
-    d.selected=1-d.running;if (!d.save()) { d.valid=false;return -1; }return kOk;
+    d.selected=1-d.running;if (!d.save()) { d.valid=false;return -1; }
+    if (d.failed("select_after")) { return -1; }return kOk;
 }
 Err Ota::abort() {
-    auto &d=*m_impl;if (!d.valid || d.pending || d.failed("abort")) { return -1; }
-    d.open=false;d.finished=false;d.selected=d.running;
-    if (!d.save()) { d.valid=false;return -1; }return kOk;
+    auto &d=*m_impl;if (!d.valid || d.pending || d.selected!=d.running || d.failed("abort")) { return -1; }
+    d.open=false;d.finished=false;d.image.clear();return kOk;
 }
 Err Ota::confirm() {
     auto &d=*m_impl;if (!d.valid || d.failed("confirm")) { return -1; }

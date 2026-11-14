@@ -689,6 +689,9 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
             reconnect_options.timeout=std::min(options.timeout,std::chrono::milliseconds(1500));
             session=std::make_unique<Session>(endpoint,reconnect_options);client=std::make_unique<Client>(*session);
             const auto info=client->info();state=client->otaStatus();
+            if (state["running_slot"]==before["running_slot"] && (state["state"]==2 || state["state"]==3)) {
+                throw Error(ErrorKind::Protocol,"OTA reboot was accepted but commit did not complete; inspect ota-status, abort if boot_slot equals running_slot, otherwise reset for rollback");
+            }
             if (state["elf_sha256"]!=hex(identity) || state["running_slot"]==before["running_slot"] ||
                 state["running_slot"]!=state["boot_slot"] || info["build_id"]!=hex(identity).substr(0,16) ||
                 state["state"]!=0) {

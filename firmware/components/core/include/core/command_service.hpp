@@ -9,7 +9,7 @@ struct DeviceInfo {
     bool bench_crash = false;
     uint8_t ota_window = 1; // <= config queue depth and protocol's four-chunk bound
 };
-enum class AfterReply : uint8_t { None, Reboot, Crash };
+enum class AfterReply : uint8_t { None, Reboot, Crash, CommitAndReboot };
 inline constexpr size_t kCaptureDoneEventBytes = 11;
 // Config task: the CaptureDone event payload once per completed capture, else 0.
 size_t captureDoneEvent(Core &core, std::span<uint8_t> payload);

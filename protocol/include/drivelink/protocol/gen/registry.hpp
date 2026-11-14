@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x32713D40;
+inline constexpr uint32_t kDescriptorHash = 0xD05D60D2;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -87,6 +87,7 @@ enum class Detail : uint8_t {
     OtaHash = 50,
     OtaImage = 51,
     OtaBackend = 52,
+    OtaCommitted = 53,
 };
 
 enum class Family : uint8_t {

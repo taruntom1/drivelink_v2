@@ -585,9 +585,10 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
      - `offset` below that, with the data already there: acknowledge it as a duplicate (a retry).
      - anything else: return `InvalidArgument` with the expected offset in the body.
      - The host keeps a few chunks in flight, within the config queue depth.
-  3. `FINISH` checks the SHA-256 and sets the boot partition.
-  4. `REBOOT`.
+  3. `FINISH` checks the SHA-256 and validates/prepares the image, leaving boot selection unchanged. `ABORT` can discard this prepared image without rewriting boot metadata.
+  4. Explicit `SYSTEM REBOOT`: after the reply drains, select the prepared image and immediately restart. The reply means acceptance; failed drain/selection is reconciled through OTA STATUS, never by blindly repeating REBOOT. Other reset paths do not commit a prepared update. Once candidate selection has been attempted and is present, ABORT refuses; reset/rollback is the recovery.
 - **Confirmation:** the new image confirms itself (`esp_ota_mark_app_valid_cancel_rollback`) only after the host sends `CONFIRM`. Without it, the next reset rolls back. `CONFIRM` is sent after the host has reconnected and checked `GET_INFO`.
+- **ARM gate and recovery:** Receiving, Ready, uncertain failures and pending confirmation block ARM. OTA STATUS reports progress, actual boot selection and full running ELF identity; core wire is v8. Prepared ABORT never demotes the confirmed image to NEW. SAVE/REVERT/FACTORY_RESET, layout and PARAM SET changes are refused during a transaction, as are new capture/testgen starts; BEGIN refuses an active capture/testgen.
 - **Flash writes.** They run on the config task, so the loops stall as with NVS, which is why OTA requires the device to be disarmed. The UART keeps receiving because its ISR is in IRAM.
 
 ## Virtual device

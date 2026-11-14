@@ -115,6 +115,7 @@ wire_enums:
     OtaHash: 50
     OtaImage: 51
     OtaBackend: 52
+    OtaCommitted: 53
   Family:
     System: 1
     Layout: 2

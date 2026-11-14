@@ -14,6 +14,7 @@ public:
     Status begin(uint32_t size,const drivelink::protocol::Sha256Digest &digest);
     Status write(uint32_t offset,std::span<const uint8_t> bytes);
     Status finish();
+    Status commit(); // explicit SYSTEM REBOOT only, after reply TX drains
     Status abort();
     Status confirm();
     Status refresh();
@@ -40,6 +41,7 @@ private:
     State m_state=State::Idle;
     std::atomic<bool> m_gate{true};
     uint32_t m_size=0,m_offset=0;
+    bool m_prepared=false;
     core_os::Err m_error=0;
     Stage m_stage=Stage::None;
     drivelink::protocol::Sha256Digest m_digest{};

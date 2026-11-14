@@ -32,7 +32,7 @@ Status OtaService::begin(uint32_t size,const p::Sha256Digest &digest) {
     if (capture==p::defs::CaptureState::Armed || capture==p::defs::CaptureState::Triggered || m_core.testgen().running()) {
         return Status::fail(Result::Busy,Detail::WrongState);
     }
-    m_gate.store(true,std::memory_order_release);m_size=size;m_offset=0;m_digest=digest;m_hash={};
+    m_gate.store(true,std::memory_order_release);m_size=size;m_offset=0;m_digest=digest;m_hash={};m_prepared=false;
     const auto err=m_ota.begin(size);if (err!=core_os::kOk) { return fail(err,Stage::Begin); }
     m_state=State::Receiving;m_error=0;m_stage=Stage::None;return {};
 }
@@ -56,17 +56,30 @@ Status OtaService::finish() {
     if (m_state==State::Ready) { return {}; }
     if (m_state!=State::Receiving || m_offset!=m_size) { return Status::fail(Result::InvalidArgument,Detail::WrongState); }
     if (m_hash.final()!=m_digest) { return Status::fail(Result::InvalidArgument,Detail::OtaHash); }
-    auto err=m_ota.finish();if (err!=core_os::kOk) { return fail(err,Stage::Finish); }
-    err=m_ota.select();if (err!=core_os::kOk) { return fail(err,Stage::Select); }
-    m_state=State::Ready;return refresh();
+    const auto err=m_ota.finish();if (err!=core_os::kOk) { return fail(err,Stage::Finish); }
+    m_prepared=true;m_state=State::Ready;return refresh();
+}
+Status OtaService::commit() {
+    if (auto st=disarmed();!st.ok()) { return st; }
+    if (m_state!=State::Ready && !(m_state==State::Error && m_stage==Stage::Select)) { return {}; }
+    if (auto st=refresh();!st.ok()) { return st; }
+    // A prior uncertain commit may already have selected the candidate. An
+    // explicit reset is the recovery; never rewrite a confirmed baseline NEW.
+    if (m_boot.selected!=m_boot.running) { return {}; }
+    if (!m_prepared) { return fail(-1,Stage::Select); }
+    const auto err=m_ota.select();if (err!=core_os::kOk) { return fail(err,Stage::Select); }
+    // The caller must restart immediately, without another config command.
+    return {};
 }
 Status OtaService::abort() {
     if (auto st=disarmed();!st.ok()) { return st; }
     core_os::OtaBootInfo info;
     auto err=m_ota.info(info);if (err!=core_os::kOk) { return fail(err,Stage::Info); }
+    m_boot=info;
     if (info.pending) { return Status::fail(Result::Busy,Detail::OtaPendingConfirm); }
+    if (info.selected!=info.running) { return Status::fail(Result::Busy,Detail::OtaCommitted); }
     err=m_ota.abort();if (err!=core_os::kOk) { return fail(err,Stage::Abort); }
-    m_state=State::Idle;m_size=0;m_offset=0;m_digest={};m_error=0;m_stage=Stage::None;return refresh();
+    m_state=State::Idle;m_prepared=false;m_size=0;m_offset=0;m_digest={};m_error=0;m_stage=Stage::None;return refresh();
 }
 Status OtaService::confirm() {
     if (auto st=disarmed();!st.ok()) { return st; }

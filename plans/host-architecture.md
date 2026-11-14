@@ -88,7 +88,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - capture (configure, arm, read, decode into per-signal arrays)
   - test signals
   - actions
-  - OTA (stream the image, confirm after reconnect)
+  - OTA (stream and prepare the image; explicit reboot commits it after reply drain; reconnect, verify full running build identity and confirm. Reconcile uncertain outcomes with STATUS without automatically repeating REBOOT.)
   - diag (decode events, query entries, name codes from the code descriptors the device serves)
   - arming (arm with conditions reported, `DISARM` through the fast-path MSG_TYPE, `ACK_FAULT`)
   - command groups with prefix-only keepalives; automatic keepalives and NaN-to-hold mapping follow the arming/hold behavior (F4b or later); F4a exposes explicit sends and rejects non-finite values

@@ -77,6 +77,7 @@ TEST_CASE("OTA backend errors retain ARM gate until verified cleanup") {
             if (std::string(operation)=="write") { REQUIRE(ota.abort().ok());f.begin();CHECK_FALSE(ota.write(0,std::span(f.image).first(1)).ok()); }
             else if (std::string(operation)=="read") { CHECK_FALSE(ota.write(0,std::span(f.image).first(1)).ok()); }
             else if (std::string(operation)=="abort") { CHECK_FALSE(ota.abort().ok()); }
+            else if (std::string(operation)=="select") { REQUIRE(ota.finish().ok());CHECK_FALSE(ota.commit().ok()); }
             else { CHECK_FALSE(ota.finish().ok()); }
         }
         CHECK(ota.blocksArm());CHECK(ota.state()==p::defs::OtaState::Error);REQUIRE(ota.abort().ok());CHECK_FALSE(ota.blocksArm());
@@ -103,6 +104,14 @@ TEST_CASE("Native OTA persists selection and fails closed on torn metadata") {
     Manual manual;const auto directory=std::filesystem::temp_directory_path()/"drivelink-native-ota-test";
     std::filesystem::remove_all(directory);std::filesystem::create_directories(directory);core_os::native::setOtaDirectory(directory);
     const auto image=otaFixture();
+    {
+        core_os::Ota ota;
+        auto contents=[&] { std::ifstream f(directory/"ota.bin",std::ios::binary);return std::vector<char>(std::istreambuf_iterator<char>(f),{}); };
+        const auto baseline=contents();
+        REQUIRE(ota.begin(static_cast<uint32_t>(image.size()))==0);REQUIRE(ota.write(image)==0);REQUIRE(ota.finish()==0);
+        CHECK(contents()==baseline);REQUIRE(ota.abort()==0);CHECK(contents()==baseline);
+    }
+    { core_os::Ota ota;core_os::OtaBootInfo info;REQUIRE(ota.info(info)==0);CHECK(info.running==0);CHECK_FALSE(info.pending); }
     { core_os::Ota ota;REQUIRE(ota.begin(static_cast<uint32_t>(image.size()))==0);REQUIRE(ota.write(image)==0);REQUIRE(ota.finish()==0);REQUIRE(ota.select()==0); }
     { core_os::Ota ota;core_os::OtaBootInfo info;REQUIRE(ota.info(info)==0);CHECK(info.running==1);CHECK(info.pending); }
     { core_os::Ota ota;core_os::OtaBootInfo info;REQUIRE(ota.info(info)==0);CHECK(info.running==0);CHECK_FALSE(info.pending); }
@@ -134,4 +143,43 @@ TEST_CASE("OTA mutations refuse armed devices and remain available in safe mode"
         const auto image=otaFixture();REQUIRE(c.ota().begin(static_cast<uint32_t>(image.size()),p::sha256(image)).ok());
         REQUIRE(c.ota().abort().ok());CHECK_FALSE(c.ota().blocksArm());
     }
+}
+TEST_CASE("Prepared OTA abort and resets never demote the confirmed baseline") {
+    Fixture f;auto &ota=f.core.ota();f.upload();REQUIRE(ota.finish().ok());
+    CHECK(ota.bootInfo().running==ota.bootInfo().selected);
+    REQUIRE(ota.abort().ok());core_os::native::rebootOta(ota.platform());core_os::native::rebootOta(ota.platform());
+    core_os::OtaBootInfo info;REQUIRE(ota.platform().info(info)==0);CHECK(info.running==0);CHECK_FALSE(info.pending);
+    f.upload();REQUIRE(ota.finish().ok());
+    // Power loss before the explicit REBOOT commit, including a reset after
+    // a failed ABORT, cannot select the prepared candidate.
+    core_os::native::failOtaOperation(ota.platform(),"abort");CHECK_FALSE(ota.abort().ok());
+    core_os::native::rebootOta(ota.platform());REQUIRE(ota.platform().info(info)==0);CHECK(info.running==0);CHECK_FALSE(info.pending);
+}
+TEST_CASE("Uncertain OTA commit preserves baseline and refuses cancellation of selected candidate") {
+    for (const auto *fault:{"select","select_after"}) {
+        CAPTURE(fault);Fixture f;auto &ota=f.core.ota();f.upload();REQUIRE(ota.finish().ok());
+        core_os::native::failOtaOperation(ota.platform(),fault);CHECK_FALSE(ota.commit().ok());CHECK(ota.blocksArm());
+        if (std::string(fault)=="select") { REQUIRE(ota.abort().ok());CHECK_FALSE(ota.blocksArm()); }
+        else {
+            CHECK(ota.abort().detail==core::Detail::OtaCommitted);CHECK(ota.blocksArm());
+            core_os::native::rebootOta(ota.platform());core_os::OtaBootInfo info;REQUIRE(ota.platform().info(info)==0);
+            CHECK(info.running==1);CHECK(info.pending);
+            core_os::native::rebootOta(ota.platform());REQUIRE(ota.platform().info(info)==0);CHECK(info.running==0);CHECK_FALSE(info.pending);
+        }
+    }
+}
+TEST_CASE("Only explicit SYSTEM REBOOT asks to commit a prepared image after the reply") {
+    Fixture f;f.upload();REQUIRE(f.core.ota().finish().ok());
+    std::array<uint8_t,1024> response{};
+    const std::array<uint8_t,4> exit_safe{p::core_wire::kVersion,6,1,9};
+    CHECK(f.service.handle(exit_safe,response)==6);CHECK(response[4]==0);
+    CHECK(f.service.takeAfterReply()==core::AfterReply::Reboot);
+    REQUIRE(f.core.ota().refresh().ok());CHECK(f.core.ota().bootInfo().selected==0);
+    const std::array<uint8_t,4> reboot{p::core_wire::kVersion,7,1,8};
+    CHECK(f.service.handle(reboot,response)==6);CHECK(response[4]==0);
+    CHECK(f.service.takeAfterReply()==core::AfterReply::CommitAndReboot);
+    // An accepted reply alone (or TX drain failure) has not selected anything.
+    REQUIRE(f.core.ota().refresh().ok());CHECK(f.core.ota().bootInfo().selected==0);
+    REQUIRE(f.core.ota().commit().ok());REQUIRE(f.core.ota().refresh().ok());CHECK(f.core.ota().bootInfo().selected==1);
+    CHECK(f.core.ota().abort().detail==core::Detail::OtaCommitted);
 }

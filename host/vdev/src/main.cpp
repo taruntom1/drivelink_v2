@@ -142,7 +142,7 @@ struct Peer : std::enable_shared_from_this<Peer>
         std::chrono::steady_clock::time_point expires;
     };
     std::deque<Output> output;
-    bool closed = false;
+    bool closed = false, reset_pending = false;
     uint64_t generation = 0;
     explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
     ~Peer()
@@ -250,6 +250,14 @@ struct Server
         }
         else if (frame.msg_type == msg::kCoreCommand)
         {
+            if (from.reset_pending) {
+                // Match the firmware's config fence while its after-reply
+                // action drains/commits. Later commands cannot change Ready.
+                p::core_wire::Header h;p::wire::Reader r(frame.payload,frame.len);
+                (void)p::core_wire::decodeHeader(r,h);p::wire::Writer w(reply.data(),reply.size());
+                p::core_wire::response(w,h,core::Result::Busy,core::Detail::StagingBusy);
+                from.send(msg::kCoreResponse,reply.data(),w.size());return;
+            }
             const auto n = commands->handle({frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
         }
@@ -552,6 +560,7 @@ bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply af
     p::encodeFrame(bytes->data(), bytes->size(), type, data, n);
     output.push_back({bytes, after, stream, type == msg::kCoreResponse || type == msg::kDiagQueryResponse || type == msg::kTimeResponse,
                       std::chrono::steady_clock::now() + std::chrono::seconds(2)});
+    if (after!=core::AfterReply::None) { reset_pending=true; }
     armDeadline();
     if (output.size() == 1)
     {
@@ -572,6 +581,7 @@ void Peer::recoverPty()
         stale.cancel();
         write_deadline.cancel();
         output.clear();
+        reset_pending=false;
         scanner = p::Scanner(1024);
         read();
         return;
@@ -633,7 +643,9 @@ void Peer::write()
             return;
         }
         self->output.pop_front();
-        if (item.after != core::AfterReply::None)
+        if (item.after != core::AfterReply::None) { self->reset_pending=false; }
+        if (item.after != core::AfterReply::None &&
+            (item.after != core::AfterReply::CommitAndReboot || self->server.core->ota().commit().ok()))
         {
             if (item.after == core::AfterReply::Crash)
             {

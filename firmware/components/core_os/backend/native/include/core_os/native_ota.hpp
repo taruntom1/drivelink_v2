@@ -9,6 +9,7 @@ void setOtaDirectory(const std::filesystem::path &directory);
 void setOtaBaseline(const drivelink::protocol::Sha256Digest &elf,const char *version);
 // Deterministic tests: fail a backend operation before it takes effect.
 // Operation names: info, begin, write, read, finish, select, abort, confirm.
+// select_after reports failure after durable selection, modeling uncertainty.
 void failOtaOperation(Ota &ota, const char *operation);
 void rebootOta(Ota &ota);
 }

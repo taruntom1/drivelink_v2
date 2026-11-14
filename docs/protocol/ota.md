@@ -38,17 +38,26 @@ All other rejected commands have empty bodies. Offsets are not sequence IDs;
 retried requests use fresh ordinary correlation IDs and identical chunk data.
 
 FINISH needs all declared bytes and the expected complete-file SHA, then IDF
-image validation. Only afterward does it select the candidate boot slot. It
-does not reboot. Repeating FINISH in Ready succeeds without changing selection.
+image validation. It prepares the candidate and leaves boot selection untouched.
+It does not reboot. Repeating FINISH in Ready succeeds without another write.
 Incomplete data returns WrongState; a hash mismatch returns OtaHash and remains
 Receiving until ABORT. Backend/IDF image failures enter Error with a diagnostic.
 
-ABORT releases an upload. In Ready it restores the running confirmed slot's
-boot selection and validity before releasing the ARM gate. Idle ABORT is
+ABORT releases an upload or a prepared Ready image without writing boot
+metadata. Idle ABORT is
 idempotent. On an unconfirmed running candidate ABORT returns
 Busy/OtaPendingConfirm; reset to roll back, or deliberately CONFIRM.
+If a commit has already selected another slot, ABORT returns Busy/OtaCommitted
+(detail 53); reset rather than attempting to undo the selection.
 
-Use SYSTEM REBOOT after FINISH. The new app boots pending confirmation.
+Use SYSTEM REBOOT after FINISH. After its reply drains, the config caller
+selects the prepared candidate and immediately restarts, without another
+configuration command. A failed drain leaves Ready unchanged; a failed selection
+enters Error, retains the ARM gate and cancels the restart. The reply means
+acceptance, not proof of commit or reboot. Query STATUS after an uncertain
+outcome; never automatically repeat REBOOT. Other reset paths, including
+EXIT_SAFE_MODE, do not commit a prepared image; a physical reset before commit
+keeps the confirmed baseline. The new app boots pending confirmation.
 The host reconnects, checks GET_INFO/core v8, the running slot, and the full
 ELF hash against its uploaded app descriptor, then sends CONFIRM. Firmware
 never confirms itself at startup. The next reset without confirmation rolls
@@ -73,7 +82,8 @@ bounded by the config queue depth. State: Idle 0, Receiving 1, Ready 2, Error 3.
 Idle has zero size/offset/digest; pending confirmation is an independent boot
 flag. Ready keeps the completed transfer's size/hash/progress until reboot or
 ABORT. A service reconstructed with a different selected boot slot reports
-Ready even when upload metadata is unavailable. STATUS remains successful in
+Ready even when upload metadata is unavailable; if boot_slot differs from
+running_slot, ABORT refuses it as already committed. STATUS remains successful in
 Error so the host can see the failure; boot fields after an info failure are
 the last known values and must not be trusted to confirm an image.
 

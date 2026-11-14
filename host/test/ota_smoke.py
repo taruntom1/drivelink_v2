@@ -83,7 +83,7 @@ def run(cli_path, endpoint, baseline, candidate, stack_wait=0):
         assert cli('ota-status')['boot_slot'] == start['running_slot']
 
         ready = cli('ota-upload', candidate, '--upload-only')
-        assert ready['state'] == 2 and ready['boot_slot'] != start['running_slot'], ready
+        assert ready['state'] == 2 and ready['boot_slot'] == start['running_slot'], ready
         if stack_wait:
             # Let the normal console logger observe the config task's deepest
             # OTA stack before a reboot discards its high-water mark.
@@ -144,10 +144,15 @@ def simulated(cli_path, endpoint):
         Cli(cli_path, endpoint)('ota-upload', baseline)
         run(cli_path, endpoint, baseline, candidate)
         if endpoint.startswith('tcp://'):
-            from ota_cli_failure import check
+            from ota_cli_failure import check, pipeline_reboot
             cli = Cli(cli_path, endpoint)
             check(cli_path, endpoint, candidate)
             cli('ota-upload', baseline)
+            check(cli_path, endpoint, candidate, hold_commit=True)
+            ready = cli('ota-status')
+            assert ready['state'] == 2 and ready['boot_slot'] == ready['running_slot'], ready
+            cli('ota-abort')
+            pipeline_reboot(cli, endpoint, baseline, candidate)
             check(cli_path, endpoint, candidate, mismatch=True)
             assert cli('ota-status')['pending_confirm']
             rolled_back = cli.reboot()
