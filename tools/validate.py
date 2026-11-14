@@ -18,6 +18,7 @@ Standard library only. The guide is in firmware/test/CLAUDE.md ("Validation").
 """
 import argparse
 import dataclasses
+import datetime
 import functools
 import hashlib
 import json
@@ -26,6 +27,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -295,6 +297,34 @@ def revision():
         return 'unknown revision'
 
 
+def source_snapshot():
+    """Identify the invocation separately from a cached check's execution."""
+    try:
+        return {'revision': git('rev-parse', 'HEAD').decode().strip(),
+                'dirty': bool(git('status', '--porcelain'))}
+    except (OSError, subprocess.CalledProcessError):
+        return {'revision': None, 'dirty': None}
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def write_report(report):
+    """Publish only complete reports, preserving the last one if writing fails."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=OUT,
+                                         prefix='summary-', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(report, stream, indent=2)
+            stream.write('\n')
+        os.replace(temporary, OUT / 'summary.json')
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 # --- Running ---------------------------------------------------------------
 
 def warning_lines(output):
@@ -379,6 +409,30 @@ def main(argv=None):
             print(f"{check.name:<11} {check.about}{' (Windows only)' if check.windows_only else ''}")
         return 0
     chosen, left_out = select(args.mode, args.only, args.skip)
+    report = {
+        'schema_version': 1,
+        'started_at': utc_now(),
+        'finished_at': None,
+        'source': source_snapshot(),
+        'request': {'mode': args.mode, 'only': args.only, 'skip': args.skip,
+                    'force': args.force, 'fail_fast': args.fail_fast},
+        'status': None,
+        'full_gate_passed': False,
+        'hardware_status': 'not_run',
+        'omitted_checks': left_out,
+        'checks': [],
+    }
+    records = {}
+    for check in CHECKS:
+        if check.windows_only and not WINDOWS:
+            continue
+        record = {'name': check.name, 'status': 'not_selected',
+                  'input_fingerprint': None, 'duration_seconds': None,
+                  'log_path': None, 'failure_reason': None,
+                  'diagnostic_excerpt': None, 'execution': None,
+                  'compiler_crash_retried': None}
+        records[check.name] = record
+        report['checks'].append(record)
     verbose = args.verbose or GROUPS
     OUT.mkdir(parents=True, exist_ok=True)
     state_file = OUT / 'state.json'
@@ -393,7 +447,8 @@ def main(argv=None):
     for check in (c for c in CHECKS if c.name in chosen):
         covered = fingerprint(check)
         previous = state.get(check.name, {})
-        if not args.force and covered and previous == {'result': 'pass', 'fingerprint': covered}:
+        if (not args.force and covered and previous.get('result') == 'pass'
+                and previous.get('fingerprint') == covered):
             work.append((check, None, covered, 'pass (unchanged)'))
             continue
         try:
@@ -409,25 +464,54 @@ def main(argv=None):
             print(f"  {check.name} cannot run here ({result.partition(': ')[2]})", flush=True)
     bad = 0
     for check, steps, covered, result in work:
+        record = records[check.name]
+        record['input_fingerprint'] = covered
         detail, seconds = '', ''
         if result is None and bad and args.fail_fast:
             result = 'not run (--fail-fast)'
+            record['status'] = 'skipped_after_failure'
         elif result is None:
             print(f'  {check.name:<11} running...', flush=True)
             started = time.monotonic()
+            execution = {'source': report['source'], 'started_at': utc_now(),
+                         'finished_at': None}
             entry = {'result': 'fail'}
             try:
                 retried = run_check(check, steps, state.get(check.name, {}), verbose)
                 result = 'pass (after one retry of a compiler crash)' if retried else 'pass'
                 entry = {'result': 'pass', 'fingerprint': covered}
+                record['status'] = 'passed'
+                record['compiler_crash_retried'] = retried
             except Failed as failure:
                 result, detail = f'FAIL: {failure}', failure.detail
                 entry['warned'] = failure.warned
+                record['status'] = 'failed'
+                record['failure_reason'] = str(failure)
+                record['diagnostic_excerpt'] = failure.detail or None
                 if GROUPS:
                     print(f'::error::{check.name}: {failure}', flush=True)
-            seconds = f'{time.monotonic() - started:.0f} s'
+            elapsed = time.monotonic() - started
+            seconds = f'{elapsed:.0f} s'
+            execution['finished_at'] = utc_now()
+            record['duration_seconds'] = round(elapsed, 3)
+            record['execution'] = execution
+            if (OUT / f'{check.name}.log').is_file():
+                record['log_path'] = str((OUT / f'{check.name}.log').resolve())
+            if record['status'] == 'passed':
+                entry['execution'] = execution
+                entry['compiler_crash_retried'] = retried
             state[check.name] = entry
             state_file.write_text(json.dumps(state, indent=1))
+        elif result == 'pass (unchanged)':
+            previous = state.get(check.name, {})
+            record['status'] = 'reused'
+            record['execution'] = previous.get('execution')
+            record['compiler_crash_retried'] = previous.get('compiler_crash_retried')
+            if (OUT / f'{check.name}.log').is_file():
+                record['log_path'] = str((OUT / f'{check.name}.log').resolve())
+        elif result.startswith('UNAVAILABLE'):
+            record['status'] = 'unavailable'
+            record['failure_reason'] = result.partition(': ')[2]
         bad += not result.startswith('pass')
         line = f'  {check.name:<11} {result}' + (f'   [{seconds}]' if seconds else '')
         if result.startswith('FAIL'):
@@ -446,6 +530,10 @@ def main(argv=None):
     summary.append(f'Result: {verdict}')
     print('\n'.join(summary[-3:] if left_out else summary[-2:]), flush=True)
     (OUT / 'summary.txt').write_text('\n'.join(summary) + '\n', encoding='utf-8')
+    report['finished_at'] = utc_now()
+    report['status'] = 'failed' if bad else 'passed'
+    report['full_gate_passed'] = args.mode == 'full' and not left_out and not bad
+    write_report(report)
     return 1 if bad else 0
 
 

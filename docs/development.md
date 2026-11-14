@@ -99,8 +99,36 @@ One script holds the list of checks and their commands. CI calls it with `--only
 - **Compiler crashes.** A step that fails with `internal compiler error` in its output runs once more (see "Build traps" in this guide). If it then passes, the result says `pass (after one retry of a compiler crash)`. Nothing else is retried: a failing test fails the check.
 - **Missing tools.** Every check's toolchain is looked up before anything runs. A check that can't run shows as `UNAVAILABLE` and fails the run.
 - **Results.** One line per check with its time. A failure prints the end of its output. The full output is `build/validate/<check>.log`, and `build/validate/summary.txt` is the text for the PR's validation section: it has the revision and says what was not run.
+- **Agent report.** Every completed validation invocation also writes
+  `build/validate/summary.json` automatically; no extra flag is needed. Read this
+  first to establish verification state, then open only the relevant log.
+  `--list`, argument errors and interrupted/unhandled failures do not publish a
+  report; the file describes the last completed invocation. Check its timestamps
+  and source before using it as evidence for current work.
 - **Adding a check:** one `Check` entry in `CHECKS`, and its name in the CI job that has its toolchain.
 - **Hardware.** The script never flashes a board or opens a serial port. The HIL and smoke tests above stay separate and explicit.
+
+### JSON report (schema version 1)
+
+- Top-level fields: `schema_version`, UTC `started_at`/`finished_at`, `source`
+  (`revision`: full Git SHA, `dirty`: boolean; both null if unknown), `request`
+  (`mode`, `only`, `skip`, `force`, `fail_fast`), `status` (`passed`/`failed`),
+  `full_gate_passed`, `hardware_status` (always `not_run`), `omitted_checks`,
+  and `checks` in validator order, for checks supported on the current OS.
+- Each check has `name`, `status` (`passed`, `reused`, `failed`, `unavailable`,
+  `not_selected`, `skipped_after_failure`), `input_fingerprint`,
+  `duration_seconds`, absolute `log_path`, `failure_reason`, `diagnostic_excerpt`,
+  `execution` and `compiler_crash_retried`. Inapplicable/unknown values are null;
+  fingerprints are null in CI. Unavailable/unexecuted checks never point to stale logs.
+- `execution` records the actual attempt's `source` and UTC start/end timestamps.
+  A reused check retains its original execution; its duration is null because no
+  test ran now. Old cache entries reuse as before but have null execution/retry
+  provenance. Missing log files produce null paths. The top-level source always
+  identifies the current invocation, not the cached execution.
+- `full_gate_passed` requires `full` mode, no omitted supported checks and no
+  failures/unavailable/skipped checks. A partial run can have `status: passed`
+  while this field is false. Hardware and toolchain freshness are not certified;
+  existing `--force` rules still apply. Reports are replaced atomically.
 
 ## CI (`.github/workflows/ci.yml`)
 
