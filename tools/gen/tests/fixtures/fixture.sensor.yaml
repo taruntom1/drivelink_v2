@@ -1,0 +1,5 @@
+type: fixture.sensor
+type_id: 0x02
+realtime: forbidden
+items:
+  - {id: 0x0100, kind: signal, name: value, type: f32, unit: m}

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, host_overhaul]
   pull_request:
 
 permissions:
@@ -12,7 +12,20 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The commands of every check are in tools/validate.py, which is also what
+# runs locally. A job here only provides the toolchain and names its checks.
 jobs:
+  host-linux:
+    name: Host Linux (Ubuntu 26.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install host toolchain
+        run: apt-get update && apt-get install -y build-essential cmake ninja-build python3 python3-yaml git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Build (warnings are errors), test against TCP and PTY vdev, check the installed packages
+        run: python3 tools/validate.py --only host-linux
+
   firmware:
     name: idf.py build (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -22,14 +35,11 @@ jobs:
       matrix:
         include:
           - name: firmware
-            app: "."
-            defaults: ""
+            check: fw
           - name: firmware, console logs off
-            app: "."
-            defaults: "sdkconfig.defaults;sdkconfig.ci.nolog"
-          - name: test/uart_comm
-            app: "test/uart_comm"
-            defaults: ""
+            check: fw-nolog
+          - name: firmware/test/uart_comm
+            check: fw-hil-app
     steps:
       - uses: actions/checkout@v4
 
@@ -41,22 +51,10 @@ jobs:
           # IDF runs git to stamp the app version.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
-          if [ -n "${{ matrix.defaults }}" ]; then
-            # A separate build dir and sdkconfig, so the variant never
-            # touches the default configuration.
-            idf.py -C "${{ matrix.app }}" -B build_variant \
-              -D SDKCONFIG=build_variant/sdkconfig \
-              -D SDKCONFIG_DEFAULTS="${{ matrix.defaults }}" build 2>&1 | tee build.log
-          else
-            idf.py -C "${{ matrix.app }}" build 2>&1 | tee build.log
-          fi
-          if grep -E "warning:" build.log; then
-            echo "::error::Compiler warnings found; the build must stay warning-free."
-            exit 1
-          fi
+          python3 tools/validate.py --only ${{ matrix.check }}
 
-  host-tests:
-    name: Host unit tests
+  native-tests:
+    name: Native unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,14 +62,5 @@ jobs:
       - name: Install Ninja and PyYAML
         run: sudo apt-get update && sudo apt-get install -y ninja-build python3-yaml
 
-      - name: Check generated diag code files
-        run: python3 tools/gen_diag_codes.py --check
-
-      - name: Configure
-        run: cmake -S test/host -B test/host/build -G Ninja
-
-      - name: Build
-        run: cmake --build test/host/build
-
-      - name: Test
-        run: ctest --test-dir test/host/build --output-on-failure
+      - name: Generated files, generator tests, Python frame reference, native tests
+        run: python3 tools/validate.py --only gen native

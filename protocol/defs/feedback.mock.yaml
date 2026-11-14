@@ -1,0 +1,14 @@
+type: feedback.mock
+type_id: 113
+realtime: required
+items:
+  - {id: 1, kind: param, name: actuator, type: u32, ref: actuator, ref_order: after, flags: [reboot_required]}
+  - {id: 2, kind: param, name: counts_per_rev, type: f32, min: 1, max: 1000000, default: 1440, flags: [reboot_required]}
+  - {id: 3, kind: param, name: gear_ratio, type: f32, min: 0.001, max: 10000, default: 1, flags: [reboot_required]}
+  - {id: 4, kind: param, name: velocity_cutoff, type: f32, unit: Hz, min: 0, max: 5000, default: 30}
+  - {id: 5, kind: param, name: noise_counts, type: f32, min: 0, max: 100, default: 0}
+  - {id: 6, kind: param, name: noise_seed, type: u32, min: 1, max: 4294967295, default: 1}
+  - {id: 258, kind: signal, name: count, type: i32}
+  - {id: 256, kind: signal, name: velocity, type: f32, unit: rad/s}
+  - {id: 257, kind: signal, name: position, type: f32, unit: rad}
+  - {id: 768, kind: action, name: sample, runs_in: loop, results: [{name: velocity, type: f32}, {name: position, type: f32}]}

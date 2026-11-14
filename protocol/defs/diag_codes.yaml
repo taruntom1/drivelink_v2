@@ -1,0 +1,585 @@
+# diag code table: the single source of every error and warning code sent
+# over the control UART. After editing, run:
+#
+#   python tools/gen/gen.py
+#
+# and commit the regenerated files with this one (CI fails if they are stale):
+#   protocol/include/drivelink/protocol/gen/diag_codes.hpp
+#   protocol/include/drivelink/protocol/gen/registry.hpp (the descriptor hash)
+#   the code table in docs/protocol/diag-codes.md
+#   the descriptor hash line in docs/protocol/registry.md
+#
+# Rules:
+#   - Never renumber or reuse a code. Retire it with `retired: true`; it
+#     keeps its number and gets no firmware slot.
+#   - severity: error | warning
+#   - kind: record  (DIAG_ERROR / DIAG_WARN: queued with esp_err and two args)
+#           counter (DIAG_COUNT: an atomic counter, sent as 1 Hz deltas)
+#   - clears: true when the firmware calls DIAG_CLEAR on recovery; the code
+#     then has an `active` bit. Only record codes can clear.
+#   - arg0 / arg1: what the args mean ("unused" when not used). Counters
+#     carry no args.
+
+sources:
+  system: 0x01
+  uart_comm: 0x02
+  diag: 0x03
+  core: 0x04
+  motor_manager: 0x10
+  time_sync: 0x11
+  imu: 0x12
+
+codes:
+  # ── system (app_main) ────────────────────────────────────────────────
+  - source: system
+    retired: true
+    code: 0x0001
+    name: ManagerStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6)
+    arg1: unused
+    description: A manager failed to start. It is left out, and the rest of the firmware keeps running.
+
+  - source: system
+    retired: true
+    code: 0x0002
+    name: PeriodicSyncStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: unused
+    arg1: unused
+    description: time_sync started, but its periodic sync task did not. esp_err gives the reason.
+
+  # ── uart_comm link counters (read from UartComm::getErrorCounters) ───
+  - source: uart_comm
+    code: 0x0001
+    name: CrcError
+    severity: warning
+    kind: counter
+    description: A frame candidate with a valid header was rejected for a CRC16 mismatch.
+
+  - source: uart_comm
+    code: 0x0002
+    name: PartialFrame
+    severity: warning
+    kind: counter
+    description: A partial frame was dropped because the sender stopped mid-frame.
+
+  - source: uart_comm
+    code: 0x0003
+    name: FrameOrParityError
+    severity: warning
+    kind: counter
+    description: The UART reported a framing or parity error.
+
+  - source: uart_comm
+    code: 0x0004
+    name: RxOverflow
+    severity: warning
+    kind: counter
+    description: The RX hardware FIFO overflowed or the ring buffer was full.
+
+  - source: uart_comm
+    code: 0x0005
+    name: LengthError
+    severity: warning
+    kind: counter
+    description: A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload.
+
+  - source: uart_comm
+    code: 0x0006
+    name: DiscardedBytes
+    severity: warning
+    kind: counter
+    description: Received bytes that were not part of any valid frame (counts bytes, not events).
+
+  - source: uart_comm
+    code: 0x0007
+    name: HeaderCrcError
+    severity: warning
+    kind: counter
+    description: A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.
+
+  # ── diag itself ──────────────────────────────────────────────────────
+  - source: diag
+    code: 0x0001
+    name: RecordDropped
+    severity: warning
+    kind: counter
+    description: A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet).
+
+  - source: diag
+    code: 0x0002
+    name: EventTxDropped
+    severity: warning
+    kind: counter
+    description: A diag query response could not be queued for UART transmission and was dropped.
+
+  - source: diag
+    code: 0x0003
+    name: QueryDropped
+    severity: warning
+    kind: counter
+    description: A diag query was dropped because the reporter's query queue was full.
+
+  # ── core (the module registry, loops and param service) ─────────────
+  - source: core
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main)
+    arg1: for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused
+    description: Core startup failed. Stage 2 leaves the named loop Failed and its modules DependencyMissing; other loops and the config link stay available. Other stages leave the core out; legacy managers keep running. esp_err gives the loop task error.
+
+  - source: core
+    code: 0x0002
+    name: InstanceStartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: type id << 8 | instance id
+    arg1: stage (the instance's own stage from fail() - controller.cascade_pid 1 missing or incompatible refs, 2 actuator already claimed - or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound)
+    description: A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
+
+  - source: core
+    code: 0x0003
+    name: TimerRestartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: loop instance id
+    arg1: the period that failed, in us
+    description: A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
+
+  - source: core
+    code: 0x0004
+    name: SafeModeEntered
+    severity: error
+    kind: record
+    clears: false
+    arg0: the crash counter (consecutive boots after a panic or a watchdog reset)
+    arg1: unused
+    description: The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; no loop task starts. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
+
+  - source: core
+    code: 0x0005
+    name: LayoutInvalid
+    severity: error
+    kind: record
+    clears: false
+    arg0: type id << 8 | instance id
+    arg1: the core Detail of the check that failed (UnknownType, LoopMismatch, BadLabel, LabelInUse, GpioNotAllowed, GpioConflict, BadRef, WiringCycle, Capacity, ...; numbered in registry.yaml from F3b)
+    description: A layout entry loaded from NVS failed validation at boot and was left out. layout_invalid is set. Instances wired to it are left out too (core.DependencyMissing).
+
+  - source: core
+    code: 0x0006
+    name: DependencyMissing
+    severity: error
+    kind: record
+    clears: false
+    arg0: type id << 8 | instance id of the instance left out
+    arg1: type id << 8 | instance id of the instance it is wired to, which is not running
+    description: An instance was left out at boot because an instance it is wired to (a ref param) is invalid, failed to start or is itself missing a dependency. Its configuration is kept.
+
+  - source: core
+    code: 0x0007
+    name: ConfigLoadFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: the newest layout generation that passed its checks (0 when none did)
+    arg1: cause (1 no layout blob passed its checks, 2 no generation had every instance blob)
+    description: NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the factory layout. config_loaded_from_nvs is false. Not reported on a blank NVS.
+
+  - source: core
+    code: 0x0008
+    name: NvsWriteFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: the namespace, type id << 8 | instance id (0xFFFF for the layout namespace `core`)
+    arg1: operation (1 write a blob, 2 erase a namespace)
+    description: An NVS write or erase failed during SAVE or FACTORY_RESET. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
+
+  - source: core
+    code: 0x0009
+    name: NvsInitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved)
+    arg1: unused
+    description: Reported by main at boot. esp_err is the error that nvs_flash_init returned (stage 1) or the final error (stage 2).
+
+  # ── motor_manager (retired in F5b with the manager) ──────────────────
+  - source: motor_manager
+    code: 0x0001
+    retired: true
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: "stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task, 9 telemetry stream slot"
+    arg1: unused
+    description: MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+
+  - source: motor_manager
+    code: 0x0002
+    retired: true
+    name: MotorCreateFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: motor id
+    arg1: "hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT)"
+    description: CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR.
+
+  - source: motor_manager
+    code: 0x0003
+    retired: true
+    name: TimerRestartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: requested control period (us)
+    arg1: unused
+    description: SET_TIMING could not restart the control timer at the new period. The old period stays in effect.
+
+  - source: motor_manager
+    code: 0x0004
+    retired: true
+    name: ControlTimerStalled
+    severity: warning
+    kind: record
+    clears: true
+    arg0: wait without a tick (ms)
+    arg1: unused
+    description: The control timer stopped waking the update task, so the control loop is not running. Detected by the config task. Cleared when the timer fires again or the manager stops.
+
+  - source: motor_manager
+    code: 0x0005
+    retired: true
+    name: ControlOverrun
+    severity: warning
+    kind: counter
+    description: Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex).
+
+  - source: motor_manager
+    code: 0x0006
+    retired: true
+    name: SetpointBadFrame
+    severity: warning
+    kind: counter
+    description: A setpoint stream frame was dropped because its header or length was invalid.
+
+  - source: motor_manager
+    code: 0x0007
+    retired: true
+    name: SetpointRejected
+    severity: warning
+    kind: counter
+    description: A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox).
+
+  - source: motor_manager
+    code: 0x0008
+    retired: true
+    name: ConfigQueueFull
+    severity: warning
+    kind: counter
+    description: A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
+
+  - source: motor_manager
+    code: 0x0009
+    retired: true
+    name: ResponseTxDropped
+    severity: warning
+    kind: counter
+    description: A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.
+
+  - source: core
+    code: 0x0106
+    name: BadTimeRequest
+    severity: warning
+    kind: counter
+    description: A time ping was dropped because its exact length or independent protocol version was invalid.
+
+  # ── time_sync ────────────────────────────────────────────────────────
+  - source: time_sync
+    retired: true
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: "stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback"
+    arg1: unused
+    description: TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+
+  - source: time_sync
+    retired: true
+    code: 0x0002
+    name: SyncFailed
+    severity: warning
+    kind: record
+    clears: true
+    arg0: "stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock"
+    arg1: host status byte (stage 3), else 0
+    description: A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.
+
+  - source: time_sync
+    retired: true
+    code: 0x0003
+    name: BadResponseFrame
+    severity: warning
+    kind: counter
+    description: A time sync response was dropped because it could not be decoded (bad length or version).
+
+  # ── imu ──────────────────────────────────────────────────────────────
+  - source: imu
+    retired: true
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: "stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot"
+    arg1: unused
+    description: The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
+
+  - source: imu
+    retired: true
+    code: 0x0002
+    name: FallbackToMock
+    severity: warning
+    kind: record
+    clears: false
+    arg0: I2C port
+    arg1: BNO055 I2C address
+    description: The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.
+
+  - source: imu
+    retired: true
+    code: 0x0003
+    name: ModeSwitchFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: requested operation mode
+    arg1: unused
+    description: SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.
+
+  - source: imu
+    retired: true
+    code: 0x0004
+    name: StreamReenableFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: "cause: 1 manager mutex busy, 2 sampling timer did not restart"
+    arg1: unused
+    description: The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.
+
+  - source: imu
+    retired: true
+    code: 0x0005
+    name: CalibrationReadFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: unused
+    arg1: unused
+    description: ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.
+
+  - source: imu
+    retired: true
+    code: 0x0006
+    name: CalibrationApplyFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: unused
+    arg1: unused
+    description: ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.
+
+  - source: imu
+    retired: true
+    code: 0x0007
+    name: TimerRestartFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: requested sample period (us)
+    arg1: unused
+    description: SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.
+
+  - source: imu
+    retired: true
+    code: 0x0008
+    name: SamplerStalled
+    severity: warning
+    kind: record
+    clears: true
+    arg0: wait without a tick (ms)
+    arg1: unused
+    description: The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.
+
+  - source: imu
+    retired: true
+    code: 0x0009
+    name: SampleLate
+    severity: warning
+    kind: counter
+    description: Sample periods that were missed because the stream task ran late.
+
+  - source: imu
+    retired: true
+    code: 0x000A
+    name: DeviceBusy
+    severity: warning
+    kind: counter
+    description: Samples skipped because a configure operation held the BNO055.
+
+  - source: imu
+    retired: true
+    code: 0x000B
+    name: ReadError
+    severity: warning
+    kind: counter
+    description: Samples that failed to read from the BNO055.
+
+  - source: imu
+    retired: true
+    code: 0x000C
+    name: EncodeError
+    severity: warning
+    kind: counter
+    description: Samples that could not be encoded into a stream packet.
+
+  - source: imu
+    retired: true
+    code: 0x000D
+    name: ConfigQueueFull
+    severity: warning
+    kind: counter
+    description: A configure command was not applied because the config queue was full. It is answered with detail QueueFull.
+
+  - source: imu
+    retired: true
+    code: 0x000E
+    name: ResponseTxDropped
+    severity: warning
+    kind: counter
+    description: A configure response could not be queued for UART transmission and was dropped.
+
+  - source: actuator_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - source: feedback_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - source: actuator_pwm_dir
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+
+  - source: feedback_quadrature
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
+
+  - source: imu_mock
+    code: 0x0001
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)
+    arg1: unused
+    description: The module instance failed to start.
+
+  - {source: core, code: 256, name: CommandDropped, severity: warning, kind: counter, description: "The core command queue was full."}
+
+  - {source: core, code: 257, name: ResponseDropped, severity: warning, kind: counter, description: "A core reply could not be queued for transmission."}
+
+  - {source: uart_comm, code: 8, name: StreamSkipped, severity: warning, kind: counter, description: "A stream write was skipped because its slot was busy."}
+
+  - {source: core, code: 258, name: LoopOverBudget, severity: warning, kind: counter, description: "A loop tick took longer than its period; instance identifies the loop."}
+
+  - {source: core, code: 259, name: CommandFrameRejected, severity: warning, kind: counter, description: "A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog."}
+
+  - {source: core, code: 260, name: LoopStalled, severity: error, kind: latched, disarms: true, description: "A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required."}
+  - {source: core, code: 261, name: WatchdogTimeout, severity: warning, kind: latched, disarms: true, description: "No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible."}
+  - {source: actuator_mock, code: 2, name: FaultInjected, severity: error, kind: latched, disarms: true, description: "A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT."}
+  - {source: actuator_mock, code: 3, name: ArmBlocked, severity: warning, kind: latched, blocks_arm: true, description: "A mock diagnostic action raised an arm-blocking condition."}
+  - {source: actuator_pwm_dir, code: 2, name: DriverFault, severity: error, kind: latched, disarms: true, description: "An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required."}
+  - {source: feedback_quadrature, code: 2, name: ReadFailed, severity: error, kind: latched, disarms: true, description: "Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required."}
+
+  # F6 instance diagnostics
+  - source: core
+    code: 263
+    name: OtaFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: OtaStage (1 info, 2 begin, 3 write, 4 read, 5 finish, 6 select, 7 abort, 8 confirm)
+    arg1: expected upload offset
+    description: OTA backend operation failed; esp_err carries the cause. ARM remains blocked until explicit recovery.
+
+  # F6 instance diagnostics
+  - source: imu_bno055
+    code: 1
+    name: InitFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: 'stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages
+      0x100 through 0x103 retain their meaning'
+    arg1: unused
+    description: Instance failed to start; esp_err carries the underlying bus or driver
+      error.
+  - source: imu_bno055
+    code: 2
+    name: ReadFailed
+    severity: warning
+    kind: latched
+    description: The latest sensor read failed; numeric values are retained and valid
+      is false. Clears after a complete successful sample.
+  - source: imu_bno055
+    code: 3
+    name: ActionFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: action id
+    arg1: actual mode (255 when mode restoration failed)
+    description: A mode or calibration bus operation failed. esp_err carries the first
+      bus error.

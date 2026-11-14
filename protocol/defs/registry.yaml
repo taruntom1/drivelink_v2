@@ -1,0 +1,226 @@
+# The wire registry: every MSG_TYPE and stream channel range of the protocol.
+# After editing, run:
+#
+#   python tools/gen/gen.py
+#
+# and commit the regenerated files with this one (CI fails if they are stale):
+#   protocol/include/drivelink/protocol/gen/registry.hpp
+#   docs/protocol/registry.md
+#
+# Rules:
+#   - Values are unique, between 0x01 and 0xFE, and fall in the MSG_TYPE
+#     classes of docs/protocol/framing.md: command 0x01-0x3F, response
+#     0x40-0x7F, stream 0x80-0xBF, event 0xC0-0xFE.
+#   - direction: host_to_esp | esp_to_host | both
+#   - channel_ranges: stream channels the core hands out in groups. A range
+#     holds no msg_type entries; the generated header exports its first
+#     channel and channel count.
+#   - `symbol` names the generated constants: k<symbol>ChannelFirst and
+#     k<symbol>ChannelCount.
+#   - Module type ids live in each type's own file. Only the id reserved for
+#     `system` is set here.
+#   - Time ping uses an independent v1 on 0x02 / 0x42 (F8).
+
+system_type_id: 0x00
+loop_type_id: 0x05
+
+msg_types:
+  # -- core (F3 on) --
+  - {name: core_command,           value: 0x01, direction: host_to_esp, description: "Core command (family, op). Not used until F3."}
+  - {name: core_response,          value: 0x41, direction: esp_to_host, description: "Answer to a core command."}
+  - {name: disarm,                 value: 0x03, direction: host_to_esp, description: "DISARM fast path, handled in the RX callback and never queued."}
+  - {name: core_event,             value: 0xC1, direction: esp_to_host, description: "Core events: capture done, test signal done, layout applied, OTA state, arm state change."}
+  - {name: status_stream,          value: 0x80, direction: esp_to_host, description: "System status stream, also the heartbeat."}
+
+  # -- diag --
+  - {name: diag_query,             value: 0x23, direction: host_to_esp, description: "diag query: GetInfo, GetEntries, Clear."}
+  - {name: diag_query_response,    value: 0x63, direction: esp_to_host, description: "Answer to a diag query."}
+  - {name: diag_event,             value: 0xC0, direction: esp_to_host, description: "diag events: Record, CounterDelta, Cleared, Boot."}
+
+  # -- time protocol v1 --
+  - {name: time_request, value: 0x02, direction: host_to_esp, description: "Host time ping, answered directly in RX."}
+  - {name: time_response, value: 0x42, direction: esp_to_host, description: "Time reply with monotonic RX and TX-submission timestamps."}
+
+channel_ranges:
+  - {name: sub_groups, symbol: SubGroup, first: 0x81, last: 0x9F, direction: esp_to_host, description: "Subscription groups 0-30."}
+  - {name: cmd_groups, symbol: CmdGroup, first: 0xA0, last: 0xBF, direction: host_to_esp, description: "Command groups 0-31."}
+
+# Core wire enumerations. Values are permanent once published.
+wire_enums:
+  Result:
+    Ok: 0
+    InvalidArgument: 1
+    NotFound: 2
+    Exists: 3
+    NoMemory: 4
+    Busy: 5
+    Armed: 6
+    NotArmed: 7
+    PendingReboot: 8
+    Fault: 9
+  Detail:
+    None: 0
+    UnknownRef: 1
+    UnknownType: 2
+    WrongKind: 3
+    WrongType: 4
+    AlreadyBound: 5
+    NullStorage: 6
+    ReadOnly: 7
+    LockedWhileArmed: 8
+    Unsupported: 9
+    BadValue: 10
+    BadEnum: 11
+    NonFiniteFloat: 12
+    CrossLoopBatch: 13
+    StagingBusy: 14
+    Withdrawn: 15
+    BatchTooLarge: 16
+    DuplicateRef: 17
+    BufferTooSmall: 18
+    TimerFailed: 19
+    LoopMismatch: 20
+    LabelInUse: 21
+    BadLabel: 22
+    GpioConflict: 23
+    GpioNotAllowed: 24
+    BadRef: 25
+    WiringCycle: 26
+    Referenced: 27
+    DependencyMissing: 28
+    SafeMode: 29
+    Capacity: 30
+    NotAtBoot: 31
+    StartFailed: 32
+    NoSavedConfig: 33
+    StorageFailed: 34
+    ReservedType: 35
+    DuplicateType: 36
+    NoFactory: 37
+    FaultLatched: 38
+    BlocksArm: 39
+    LayoutInvalid: 40
+    NoCommandGroup: 41
+    DisarmRaced: 42
+    FaultActive: 43
+    MonitorUnavailable: 44
+    RebootPending: 45
+    WrongState: 46
+    OtaActive: 47
+    OtaPendingConfirm: 48
+    OtaOffset: 49
+    OtaHash: 50
+    OtaImage: 51
+    OtaBackend: 52
+    OtaCommitted: 53
+  Family:
+    System: 1
+    Layout: 2
+    Describe: 3
+    Param: 4
+    Group: 5
+    Capture: 6
+    Testgen: 7
+    Action: 8
+    Ota: 9
+  SystemOp:
+    GetInfo: 1
+    Arm: 2
+    Disarm: 3
+    AckFault: 4
+    Save: 5
+    Revert: 6
+    FactoryReset: 7
+    Reboot: 8
+    ExitSafeMode: 9
+    BenchStall: 253
+    BenchCrash: 254
+  LayoutOp:
+    ListInstances: 1
+    AddInstance: 2
+    RemoveInstance: 3
+    SetLabel: 4
+    DiscardPending: 5
+  DescribeOp:
+    GetTypes: 1
+    GetItems: 2
+    GetEnum: 3
+    GetCodes: 4
+  ParamOp:
+    Get: 1
+    Set: 2
+    GetPending: 3
+  GroupOp:
+    SubConfig: 1
+    SubEnable: 2
+    SubClear: 3
+    CmdConfig: 4
+    CmdClear: 5
+    List: 6
+  CaptureOp:
+    Config: 1
+    Arm: 2
+    Abort: 3
+    Status: 4
+    Read: 5
+    Trigger: 6
+  CaptureTrigger:
+    Manual: 0
+    TestgenStart: 1
+    ValueChange: 2
+    Threshold: 3
+  CaptureEdge:
+    Rising: 0
+    Falling: 1
+  CaptureState:
+    Idle: 0
+    Armed: 1
+    Triggered: 2
+    Done: 3
+  CoreEvent:
+    CaptureDone: 1
+    TestgenDone: 2
+  TestgenOp:
+    Start: 1
+    Stop: 2
+    Status: 3
+  TestgenWaveform:
+    Step: 0
+    Square: 1
+    Ramp: 2
+    Sine: 3
+    ChirpLinear: 4
+    ChirpLog: 5
+  TestgenState:
+    Idle: 0
+    Running: 1
+    Done: 2
+  TestgenReason:
+    None: 0
+    Completed: 1
+    Stopped: 2
+    Disarmed: 3
+  ActionOp:
+    Run: 1
+  OtaOp:
+    Begin: 1
+    Write: 2
+    Finish: 3
+    Abort: 4
+    Confirm: 5
+    Status: 6
+  OtaState:
+    Idle: 0
+    Receiving: 1
+    Ready: 2
+    Error: 3
+  OtaStage:
+    None: 0
+    Info: 1
+    Begin: 2
+    Write: 3
+    Read: 4
+    Finish: 5
+    Select: 6
+    Abort: 7
+    Confirm: 8

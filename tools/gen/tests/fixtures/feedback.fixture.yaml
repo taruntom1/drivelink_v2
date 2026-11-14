@@ -1,0 +1,8 @@
+# A ref target for the wiring tests: category `feedback`. One GPIO param.
+type: feedback.fixture
+type_id: 0x04
+description: Fixture feedback.
+realtime: any
+items:
+  - {id: 0x0001, kind: param, name: pin, type: u8, flags: [reboot_required], gpio: true}
+  - {id: 0x0100, kind: signal, name: position, type: f32, unit: rad}

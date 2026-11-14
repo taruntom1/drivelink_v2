@@ -1,0 +1,16 @@
+type: actuator.mock
+type_id: 112
+realtime: required
+items:
+  - {id: 1, kind: param, name: tau_s, type: f32, unit: s, min: 0.001, max: 10, default: 0.1}
+  - {id: 2, kind: param, name: gain, type: f32, min: 0, max: 1000, default: 10}
+  - {id: 3, kind: param, name: deadband, type: f32, min: 0, max: 1, default: 0.02}
+  - {id: 4, kind: param, name: duty_limit, type: f32, min: 0, max: 1, default: 1}
+  - {id: 5, kind: param, name: one_tick_delay, type: bool, default: true}
+  - {id: 258, kind: signal, name: applied_duty, type: f32}
+  - {id: 256, kind: signal, name: velocity, type: f32, unit: rad/s}
+  - {id: 257, kind: signal, name: position, type: f32, unit: rad}
+  - {id: 512, kind: input, name: duty, type: f32, min: -1, max: 1, testgen: true}
+  - {id: 768, kind: action, name: drive, runs_in: loop, args: [{name: duty, type: f32}], results: [{name: velocity, type: f32}, {name: position, type: f32}]}
+  - {id: 769, kind: action, name: reset, runs_in: paused, blob: both}
+  - {id: 770, kind: action, name: diagnostic, runs_in: loop, args: [{name: disarms, type: bool}, {name: active, type: bool}], description: "Raise or clear a mock arm blocker (false) or disarming fault (true)."}

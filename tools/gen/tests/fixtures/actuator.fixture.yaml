@@ -1,0 +1,10 @@
+# A ref target for the wiring tests: its category is `actuator`, the part of
+# the type name before the dot. One GPIO param.
+type: actuator.fixture
+type_id: 0x03
+description: Fixture actuator.
+realtime: any
+items:
+  - {id: 0x0001, kind: param, name: pin, type: u8, flags: [reboot_required], gpio: true, description: "Output pin."}
+  - {id: 0x0010, kind: param, name: duty_limit, type: f32, min: 0, max: 1, default: 1}
+  - {id: 0x0100, kind: signal, name: duty, type: f32}

@@ -1,0 +1,126 @@
+# drivelink-cli
+
+Generic CLI over libdrivelink. `--help` lists commands and arguments.
+Options precede the command; supply `--endpoint tcp://127.0.0.1:8765` or
+`--endpoint serial://COM3` (921600 baud by default).
+
+```sh
+drivelink-cli --endpoint tcp://127.0.0.1:8765 --json types
+drivelink-cli --endpoint tcp://127.0.0.1:8765 add 112 motor
+drivelink-cli --endpoint tcp://127.0.0.1:8765 set 112:0:1=0.2
+drivelink-cli --endpoint tcp://127.0.0.1:8765 save
+drivelink-cli --endpoint tcp://127.0.0.1:8765 reboot
+drivelink-cli --endpoint tcp://127.0.0.1:8765 action 112:0:768 0.5
+```
+
+The numeric mock IDs above are examples. `types`, `items TYPE`, `enums TYPE ITEM`
+and `codes` discover definitions. `instances [pending]`, `add`, `remove`, `label`
+and `discard` edit the layout. An add is pending until SAVE and reboot.
+`get REF...`, `get-pending REF...` and `set REF=VALUE...` support batches, with
+Refs written as `type:instance:item`. IDs accept decimal or `0x` hexadecimal.
+Param values are parsed from device descriptors (booleans, integers, float or
+enum names). GET/SET show raw slot bits and typed values. A pending parameter
+write is a successful command with `pending_reboot: true`.
+
+Actions use `action REF [ARG...] [--blob HEX]`, with descriptor-defined scalar
+args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
+watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
+`revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
+services. `bench-crash` is a test hook rejected by normal firmware and normal
+vdev. Every connection checks core v7 before any requested mutation.
+
+F4c source parameters have `is_source: true` in item JSON (flag 0x80).
+Configure them through `set`, using the numeric packed reference
+`type << 24 | instance << 16 | item_id`, then `save` and `reboot`.
+For example, `set 115:0:2=1912602880` connects fusion.mock instance 0's
+IMU source to imu.mock instance 0's yaw (type 114, signal 256).
+Discover and subscribe to `<name>.value` and `<name>.age_us` on the consumer
+loop normally. Age 4294967295 means no valid sample; zero disconnects a
+source parameter. Sources stay sampled while disarmed.
+
+Default output is readable key/value text. With `--json`, stdout holds only
+`{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.
+Watch commands produce one JSON envelope per line (NDJSON). Exit codes: 0
+success, 1 internal failure, 2 usage/value error, 3 connection, 4 timeout,
+5 device rejection, 6 malformed/incompatible protocol. Help does not open a port.
+Writes never retry; a write timeout has an unknown outcome.
+
+Loops are built-in type 5. For example, `add 5 fusion` allocates its loop id;
+`set 5:2:1=250` changes its rate, and `set 5:2:2=true` stages its real-time flag.
+Use the returned id rather than assuming 2. Add modules with `add TYPE LABEL LOOP`.
+SAVE/reboot applies additions, removals and reboot-required settings. `info`
+reports running loop ids/flags; status overruns are objects with loop_id and
+overruns. Safe mode reports no running loops, while instances lists offline config.
+
+Groups: `groups` lists slots and limits. `sub-config GROUP LOOP DIVIDER REF...`
+and `cmd-config GROUP LOOP REF...` return the new epoch/channel. Use
+`sub-enable GROUP true|false`, `sub-clear GROUP`, or `cmd-clear GROUP` to change
+resources. `sub-stream GROUP [COUNT]` prints typed samples and filters stale
+epochs. `cmd-send GROUP COUNTER [VALUE...]` parses configured input types; no
+values means keepalive. It drains its frame with an ordered GET_INFO before
+closing; the stream itself has no acknowledgement. Commands received while disarmed are ignored, so
+sending command values cannot change device inputs. NaN/Inf are rejected.
+
+
+F4b adds `arm`, `disarm` (MSG_TYPE 0x03), and `ack-fault`. ARM failures include
+the device result/detail; acknowledging a fault never clears its active cause.
+`cmd-run GROUP PERIOD_MS COUNT [VALUE...]` validates typed values, arms, sends
+repeated frames and disarms when done or on SIGINT/error. The period must be
+less than half watchdog_ms. With no values it sends prefix-only keepalives.
+`keepalive GROUP PERIOD_MS COUNT` sends those frames without arming or taking
+ownership of an existing arm session. Both workflows stop on connection errors;
+command streams have no acknowledgement, so status/diag supervision is separate.
+NaN remains rejected; automatic hold conversion needs semantic device modeling
+in the later host work.
+
+`sub-csv GROUP COUNT` writes timestamp_us, counter and descriptor-typed values
+to stdout as CSV. Redirect to a file; omit --json. `sub-stream` retains NDJSON.
+Read group capacities through `get 0:0:18 0:0:19 0:0:20`; GROUP LIST has no
+capacity prefix, while the Client::groups JSON convenience fields remain.
+`bench-stall LOOP DURATION_MS` is refused by normal firmware and vdev. A
+bench-enabled firmware / vdev --allow-crash schedules a deliberate loop stall.
+
+Capture (F7a): `capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...`
+with TRIGGER `manual`, `testgen_start`, `value_change REF` or `threshold REF rising|falling VALUE`
+(the value is parsed with the trigger item's descriptor). `capture-arm`,
+`capture-trigger`, `capture-abort` and `capture-status` map to the ops.
+`capture-wait [TIMEOUT_MS]` returns once the capture is done, with the
+CaptureDone event when it arrived during the call. `capture-read` pages every
+sample of a done capture and adds typed rows; `capture-read --csv` prints
+`index,time_us,REF...`, where time is relative to the trigger sample
+(`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.
+
+## Test signals (F7b)
+
+`testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT`
+requires an already armed device and an independently fed command watchdog.
+WAVE is `step`, `square`, `ramp`, `sine`, `chirp_linear` or `chirp_log`.
+Unused frequencies must be zero. Duration is per repetition; repeat 0 means
+until STOP/DISARM. The target must be a running f32 input flagged Testgen.
+Values are clamped to its descriptor limits.
+
+`testgen-stop LOOP` is idempotent. STOP/completion holds the last generated
+value until a command received after termination; ignored commands and
+keepalives cannot restore an older value. DISARM resets inputs as usual.
+`testgen-status LOOP` reports the run and configuration. `testgen-wait LOOP
+[TIMEOUT_MS]` correlates loop/run, polls STATUS, and returns an optional matching
+TestgenDone event. It does not feed the watchdog.
+
+`testgen-run GROUP PERIOD_MS TIMEOUT_MS LOOP REF WAVE OFFSET AMPLITUDE F0 F1
+DURATION_MS REPEAT` arms, supplies prefix-only command-group keepalives, starts
+the test, waits within the supplied timeout, and disarms on completion,
+interruption or failure. GROUP must already be configured; PERIOD_MS must be
+less than half watchdog_ms. Both this workflow and `cmd-run` attempt DISARM
+even when ARM may have applied but its reply was lost. Mutations are never
+retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.
+
+## Time measurements (F8)
+
+`time-ping` obtains one four-timestamp sample. `time-sync [DURATION_S]` defaults
+to 180 s (1–3600), using a 100 ms warmup cadence for five seconds and 1 s
+thereafter. Both support readable/JSON output. The measurement command reports
+raw samples, bounded-estimator snapshots, held-out predictions, timeouts and
+dropped event counts. Interrupt stops sampling; no firmware clock is set.
+Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
+and repeat with `--traffic` for the bare-board stability check. See the
+[time contract](../../docs/protocol/time.md) for the accuracy limits.

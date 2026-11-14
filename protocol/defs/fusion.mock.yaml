@@ -1,0 +1,8 @@
+type: fusion.mock
+type_id: 115
+realtime: any
+description: Deterministic fusion of sampled feedback and IMU values; missing inputs contribute zero.
+items:
+  - {id: 1, kind: source, name: feedback, type: f32, value_id: 256, age_id: 257}
+  - {id: 2, kind: source, name: imu, type: f32, value_id: 258, age_id: 259, unit: rad}
+  - {id: 260, kind: signal, name: combined, type: f32}

@@ -1,0 +1,8 @@
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(host_tests test_host.cpp test_time.cpp test_ota.cpp)
+target_include_directories(host_tests SYSTEM PRIVATE ../../firmware/test/native/third_party/doctest)
+target_link_libraries(host_tests PRIVATE drivelink drivelink_asio drivelink_native_core)
+add_test(NAME host-unit COMMAND host_tests)
+set_tests_properties(host-unit PROPERTIES TIMEOUT 30)
+add_test(NAME host-integration COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration.py --cli $<TARGET_FILE:drivelink-cli> --vdev $<TARGET_FILE:drivelink-vdev>)
+set_tests_properties(host-integration PROPERTIES TIMEOUT 180)

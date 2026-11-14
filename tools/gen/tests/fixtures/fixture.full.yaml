@@ -1,0 +1,37 @@
+# A type that covers every kind, value type, flag, enum, ref, action arg and a retired id.
+type: fixture.full
+type_id: 0x01
+description: Fixture type with every feature.
+realtime: any
+items:
+  # params
+  - {id: 0x0001, kind: param, name: actuator, type: u32, flags: [reboot_required], ref: actuator, description: "Wiring."}
+  - {id: 0x0010, kind: param, name: mode, type: enum, values: {a_mode: 0, b_mode: 1, c_mode: 2}, default: b_mode, flags: [locked_while_armed]}
+  - {id: 0x0020, kind: param, name: gain, type: f32, unit: "1/s", min: 0, max: 1000, default: 1.5}
+  - {id: 0x0021, kind: param, name: offset, type: i32, min: -100, max: 100, default: -5}
+  - {id: 0x0022, kind: param, name: enabled, type: bool, default: true, persist: false}
+  - {id: 0x0023, kind: param, name: level, type: u8, min: 1, max: 10, default: 3}
+  - {id: 0x0024, kind: param, name: count, type: u16, max: 500, flags: [read_only]}
+  - {id: 0x0030, kind: param, name: vel.kp, type: f32, min: -0.5, max: 2.25}
+  # signals
+  - {id: 0x0100, kind: signal, name: position, type: f32, unit: rad}
+  - {id: 0x0101, kind: signal, name: ready, type: bool}
+  - {id: 0x0102, kind: signal, name: state, type: enum, values: {idle: 0, run: 1}}
+  # inputs
+  - {id: 0x0200, kind: input, name: velocity_sp, type: f32, unit: rad/s, min: -1000, max: 1000, testgen: true}
+  - {id: 0x0201, kind: input, name: raw, type: u32}
+  # actions
+  - {id: 0x0300, kind: action, name: reset, runs_in: loop}
+  - id: 0x0301
+    kind: action
+    name: calibrate
+    runs_in: paused
+    description: Run a calibration.
+    args:
+      - {name: seconds, type: f32, unit: s}
+      - {name: mask, type: u8}
+    results:
+      - {name: offset, type: i32}
+    blob: out
+  # retired
+  - {id: 0x0400, name: old_thing, retired: true}
