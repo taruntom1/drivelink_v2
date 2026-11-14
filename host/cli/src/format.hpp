@@ -56,4 +56,7 @@ template <class T> Json toJson(const std::vector<T> &values)
     return out;
 }
 Json valueJson(ValueType type, uint32_t bits);
+template<class T> Json toJson(const std::optional<T> &value) {
+    return value ? toJson(*value) : Json(nullptr);
+}
 } // namespace cli

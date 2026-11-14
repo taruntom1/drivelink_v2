@@ -74,6 +74,13 @@ ParamResult values(const Reply &reply, size_t expected)
     return {reply.result, reply.result == 8, std::move(result)};
 }
 } // namespace
+void Client::contextualize(Error &error,uint8_t family,uint8_t op,bool mutation) {
+    if(error.has_request_context) { return; }
+    error.family=family;error.op=op;error.has_request_context=true;
+    // Local Usage failures precede submission. A malformed success body is
+    // not a valid answer about the effect of the submitted mutation.
+    if(error.kind==ErrorKind::Protocol && mutation) { error.outcome_unknown=true; }
+}
 Reply Client::accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body)
 {
     auto reply = m_session.request(family, op, body);
@@ -87,6 +94,7 @@ Reply Client::accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body
     return reply;
 }
 DeviceInfo Client::info()
+try
 {
     auto reply = accepted(1, 1);
     Reader r(reply.body.data(), reply.body.size());
@@ -128,8 +136,9 @@ DeviceInfo Client::info()
     m_session.setMaxPayload(cap);
     m_max_payload = cap;
     return j;
-}
+} catch(Error &e) { contextualize(e,1,1,false);throw; }
 template<class T> std::vector<T> Client::pages(uint8_t family, uint8_t op, const Bytes &prefix)
+try
 {
     std::vector<T> all;
     uint16_t cursor = 0;
@@ -225,7 +234,7 @@ template<class T> std::vector<T> Client::pages(uint8_t family, uint8_t op, const
         cursor = next;
     } while (cursor != 65535);
     return all;
-}
+} catch(Error &e) { contextualize(e,family,op,false);throw; }
 std::vector<TypeDescriptor> Client::types()
 {
     return pages<TypeDescriptor>(3, 1);
@@ -247,6 +256,7 @@ std::vector<Instance> Client::instances(bool pending)
     return pages<Instance>(2, 1, {static_cast<uint8_t>(pending)});
 }
 AddedInstance Client::add(uint8_t type, const std::string &name, uint8_t loop)
+try
 {
     if (name.empty() || name.size() > 16 || name.find('\0') != std::string::npos)
     {
@@ -260,8 +270,9 @@ AddedInstance Client::add(uint8_t type, const std::string &name, uint8_t loop)
         malformed();
     }
     return {reply.body[0], true};
-}
+} catch(Error &e) { contextualize(e,2,2,true);throw; }
 LayoutResult Client::remove(uint8_t type, uint8_t instance)
+try
 {
     auto r = accepted(2, 3, Bytes{type, instance});
     if (!r.body.empty())
@@ -269,8 +280,9 @@ LayoutResult Client::remove(uint8_t type, uint8_t instance)
         malformed();
     }
     return {true};
-}
+} catch(Error &e) { contextualize(e,2,3,true);throw; }
 LayoutResult Client::label(uint8_t type, uint8_t instance, const std::string &name)
+try
 {
     if (name.empty() || name.size() > 16 || name.find('\0') != std::string::npos)
     {
@@ -284,8 +296,9 @@ LayoutResult Client::label(uint8_t type, uint8_t instance, const std::string &na
         malformed();
     }
     return {true};
-}
+} catch(Error &e) { contextualize(e,2,4,true);throw; }
 OperationResult Client::discard()
+try
 {
     auto r = accepted(2, 5);
     if (!r.body.empty())
@@ -293,8 +306,9 @@ OperationResult Client::discard()
         malformed();
     }
     return {};
-}
+} catch(Error &e) { contextualize(e,2,5,true);throw; }
 SystemResult Client::system(uint8_t op)
+try
 {
     auto r = accepted(1, op);
     if (!r.body.empty())
@@ -302,25 +316,29 @@ SystemResult Client::system(uint8_t op)
         malformed();
     }
     return {true, r.result};
-}
+} catch(Error &e) { contextualize(e,1,op,op != 1);throw; }
 ParamResult Client::get(std::span<const Ref> refs, bool pending)
+try
 {
     return values(accepted(4, pending ? 3 : 1, refBody(refs)), refs.size());
-}
-OperationResult Client::benchStall(uint8_t loop, uint16_t duration_ms) {
+} catch(Error &e) { contextualize(e,4,pending ? 3 : 1,false);throw; }
+OperationResult Client::benchStall(uint8_t loop, uint16_t duration_ms) try
+{
     const auto reply = accepted(1,253,Bytes{loop,static_cast<uint8_t>(duration_ms),static_cast<uint8_t>(duration_ms>>8)});
     if (!reply.body.empty()) { malformed(); }
     return {};
-}
+} catch(Error &e) { contextualize(e,1,253,true);throw; }
 ParamResult Client::set(std::span<const Ref> refs, std::span<const uint32_t> data)
+try
 {
     if (refs.size() != data.size())
     {
         throw Error(ErrorKind::Usage, "ref/value count mismatch");
     }
     return values(accepted(4, 2, refBody(refs, data)), refs.size());
-}
+} catch(Error &e) { contextualize(e,4,2,true);throw; }
 ActionResult Client::action(Ref target, std::array<uint32_t, 4> args, std::span<const uint8_t> blob)
+try
 {
     if (blob.size() > 512)
     {
@@ -356,7 +374,7 @@ ActionResult Client::action(Ref target, std::array<uint32_t, 4> args, std::span<
     }
     exact(r);
     return {out, std::move(bytes)};
-}
+} catch(Error &e) { contextualize(e,8,1,true);throw; }
 ItemDescriptor Client::item(Ref ref)
 {
     for (const auto &d : items(ref.type))
@@ -369,6 +387,7 @@ ItemDescriptor Client::item(Ref ref)
     throw Error(ErrorKind::Usage, "item not found in device descriptors");
 }
 DiagInfo Client::diagInfo()
+try
 {
     auto data = m_session.diagRequest(1);
     Reader r(data.data(), data.size());
@@ -394,8 +413,9 @@ DiagInfo Client::diagInfo()
     j.firmware_version = version;
     exact(r);
     return j;
-}
+} catch(Error &e) { contextualize(e,0,1,false);throw; }
 std::vector<DiagEntry> Client::diagEntries()
+try
 {
     std::vector<DiagEntry> all;
     uint8_t cursor = 0;
@@ -425,8 +445,9 @@ std::vector<DiagEntry> Client::diagEntries()
         cursor = next;
     } while (cursor != 255);
     return all;
-}
+} catch(Error &e) { contextualize(e,0,2,false);throw; }
 OperationResult Client::diagClear(uint8_t what)
+try
 {
     auto data = m_session.diagRequest(3, Bytes{what});
     if (!data.empty())
@@ -434,7 +455,7 @@ OperationResult Client::diagClear(uint8_t what)
         malformed();
     }
     return {};
-}
+} catch(Error &e) { contextualize(e,0,3,true);throw; }
 Event Client::event(const Frame &frame) const {
     Reader r(frame.payload.data(),frame.payload.size());
     const auto version=r.readU8();

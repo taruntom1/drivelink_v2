@@ -19,6 +19,7 @@ uint8_t parseTestgenWaveform(const std::string &text)
     throw Error(ErrorKind::Usage, "unknown testgen waveform: " + text);
 }
 TestgenStarted Client::testgenStart(const TestgenConfig &c)
+try
 {
     if (c.loop == 255 || c.waveform > 5 || !c.duration_ms || !std::isfinite(c.offset) || !std::isfinite(c.amplitude) ||
         !std::isfinite(c.frequency_start) || !std::isfinite(c.frequency_end)) {
@@ -32,14 +33,16 @@ TestgenStarted Client::testgenStart(const TestgenConfig &c)
     const auto reply = accepted(kFamily, op(defs::TestgenOp::Start), body);
     Reader r(reply.body.data(), reply.body.size()); const auto run = r.readU32Le(); exact(r);
     return {c.loop,run};
-}
+} catch(Error &e) { contextualize(e,7,1,true);throw; }
 OperationResult Client::testgenStop(uint8_t loop)
+try
 {
     if (loop == 255) { throw Error(ErrorKind::Usage, "invalid loop"); }
     if (!accepted(kFamily, op(defs::TestgenOp::Stop), Bytes{loop}).body.empty()) { malformed(); }
     return {};
-}
+} catch(Error &e) { contextualize(e,7,2,true);throw; }
 TestgenStatus Client::testgenStatus(uint8_t loop)
+try
 {
     if (loop == 255) { throw Error(ErrorKind::Usage, "invalid loop"); }
     const auto reply = accepted(kFamily, op(defs::TestgenOp::Status), Bytes{loop});
@@ -60,5 +63,5 @@ TestgenStatus Client::testgenStatus(uint8_t loop)
     j.duration_ms = r.readU32Le(); j.repeat = r.readU32Le();
     exact(r); if (!std::isfinite(value)) { malformed(); }
     return j;
-}
+} catch(Error &e) { contextualize(e,7,3,false);throw; }
 }

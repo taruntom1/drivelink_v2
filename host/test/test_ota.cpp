@@ -137,6 +137,46 @@ TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
         CHECK(std::string(e.what()).find("update aborted")!=std::string::npos);
     }
 }
+TEST_CASE("SDK OTA failed reconciliation retains the lost mutation's uncertainty") {
+    Device device([](Socket &s) {
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
+        bool dropped=false;
+        for (;;) {
+            const auto req=readFrame(s);const auto n=commands.handle(req,response);
+            if(req[2]==9 && req[3]==1) { dropped=true;continue; }
+            if(dropped && req[2]==9 && req[3]==6) { return; }
+            send(s,Bytes(response.begin(),response.begin()+n));
+        }
+    });
+    SessionOptions options;options.timeout=std::chrono::milliseconds(60);options.read_retries=0;
+    Session session(device.endpoint(),options);Client client(session);
+    try { client.otaUpload(otaFixture());FAIL("accepted missing reconciliation"); }
+    catch(const Error &e) {
+        CHECK(e.kind==ErrorKind::Connection);CHECK(e.family==9);CHECK(e.op==6);CHECK(e.outcome_unknown);
+        CHECK(std::string(e.what()).find("cleanup uncertain")!=std::string::npos);
+    }
+}
+TEST_CASE("SDK pipelined OTA malformed WRITE bodies retain mutation context") {
+    Device device([](Socket &s) {
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
+        bool malformed=false;
+        for (;;) {
+            const auto req=readFrame(s);const auto n=commands.handle(req,response);
+            if(req[2]==9 && req[3]==2 && !malformed) {
+                malformed=true;send(s,{p::core_wire::kVersion,req[1],9,2,0,0,0});
+            } else { send(s,Bytes(response.begin(),response.begin()+n)); }
+        }
+    });
+    Session session(device.endpoint());Client client(session);
+    try { client.otaUpload(otaFixture());FAIL("accepted malformed WRITE"); }
+    catch(const Error &e) {
+        CHECK(e.kind==ErrorKind::Protocol);CHECK(e.has_request_context);
+        CHECK(e.family==9);CHECK(e.op==2);CHECK(e.outcome_unknown);
+        CHECK(std::string(e.what()).find("update aborted")!=std::string::npos);
+    }
+}
 TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgements") {
     Device device([](Socket &s) {
         core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());

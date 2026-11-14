@@ -5,12 +5,15 @@ descriptor is served by the peer; it is not a module definition in host code.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import socket
+import signal
 import struct
 import subprocess
 import sys
 import threading
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart_comm'))
 from protocol import encode_frame
@@ -66,6 +69,9 @@ def run_case(cli, command, json_mode):
     listener.listen(1)
     listener.settimeout(10)
     errors = []
+    process = None
+    child_ready = threading.Event()
+    disarmed = threading.Event()
 
     def serve():
         try:
@@ -74,6 +80,8 @@ def run_case(cli, command, json_mode):
                 while True:
                     header = exact(peer, 7)
                     data = exact(peer, int.from_bytes(header[4:6], 'little') + 2)[:-2]
+                    if 160 <= header[3] <= 191:
+                        continue  # unacknowledged keepalive before START
                     family, op = data[2:4]
                     if (family, op) == (1, 1):
                         body = INFO
@@ -86,9 +94,23 @@ def run_case(cli, command, json_mode):
                     elif (family, op) == (8, 1):
                         body = pack('IIIIH', 0xffffffff, 0, 0, 0, 2) + b'\xab\xcd'
                     elif (family, op) == (4, 1):
-                        body = pack('BIII', 3, 1, 0, 64)
+                        body = pack('BI', 1, 1000) if data[4] == 1 else pack('BIII', 3, 0 if command[0] == 'testgen-run' else 1,
+                                                                                      1 if command[0] == 'testgen-run' else 0, 64)
                     elif (family, op) == (5, 6):
-                        body = pack('HHB BBBBBHB', 1, 65535, 1, 0, 0, 3, 0, 4, 1, 1) + REF
+                        if command[0] == 'testgen-run':
+                            body = pack('HHB BBBBBHB', 1, 65535, 1, 1, 0, 1, 0, 4, 1, 0)
+                        else:
+                            body = pack('HHB BBBBBHB', 1, 65535, 1, 0, 0, 3, 0, 4, 1, 1) + REF
+                    elif (family, op) in ((1, 2), (1, 3)):
+                        body = b''
+                        if op == 3:
+                            disarmed.set()
+                    elif (family, op) == (7, 1):
+                        # START is in flight, and no STATUS has been read.
+                        child_ready.wait(timeout=5)
+                        os.kill(process.pid, signal.SIGINT)
+                        time.sleep(.05)
+                        body = pack('I', 99)
                     else:
                         raise AssertionError((family, op, data.hex()))
                     peer.sendall(encode_frame(65, bytes([8, data[1], family, op, 0, 0]) + body))
@@ -107,14 +129,22 @@ def run_case(cli, command, json_mode):
     worker = threading.Thread(target=serve, daemon=True)
     worker.start()
     try:
-        result = subprocess.run([cli, '--endpoint', f'tcp://127.0.0.1:{listener.getsockname()[1]}',
-                                 *(['--json'] if json_mode else []), *command],
-                                capture_output=True, text=True, timeout=15)
+        process = subprocess.Popen([cli, '--endpoint', f'tcp://127.0.0.1:{listener.getsockname()[1]}',
+                                    *(['--json'] if json_mode else []), *command],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        child_ready.set()
+        stdout, stderr = process.communicate(timeout=15)
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=5)
         worker.join(timeout=11)
         listener.close()
     assert not worker.is_alive(), 'replay worker did not stop'
     assert not errors, errors
+    if command[0] == 'testgen-run':
+        assert disarmed.is_set(), 'interrupted START did not send DISARM'
     assert result.returncode == 0, (command, result.stdout, result.stderr)
     output = [json.loads(line) for line in result.stdout.splitlines()] if json_mode else result.stdout
     return dict(command=command, json=json_mode, stdout=output, stderr=result.stderr, code=result.returncode)
@@ -138,6 +168,12 @@ def main():
         expected = json.loads(fixture.read_text(encoding='utf-8'))
         for before, after in zip(expected, actual, strict=True):
             assert before == after, (before, after)
+    if os.name != 'nt':
+        # POSIX allows deterministic SIGINT to just this process. Assert the
+        # established pre-refactor null-status contract and successful DISARM.
+        interrupted = run_case(args.cli, ['testgen-run', '0', '100', '1000', '0', '112:0:1',
+                                         'step', '0', '.1', '0', '0', '1000', '1'], True)
+        assert interrupted['stdout'] == [{'ok': True, 'data': {'status': None, 'interrupted': True}}], interrupted
     print(f'PASS {len(actual)} deterministic CLI replay outputs (events, action, capture, subscription and CSV)')
 
 

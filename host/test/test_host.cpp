@@ -97,14 +97,15 @@ TEST_CASE("device refusal metadata survives value-based error propagation") {
     }
 }
 TEST_CASE("submitted mutation failures report uncertainty while reads and preflight do not") {
-    for(bool mutation:{false,true}) {
+    struct Request { uint8_t family,op;bool mutation; };
+    for(const auto request:{Request{1,1,false},Request{1,5,true},Request{7,3,false}}) {
         FakeDevice device([](Socket &socket) { readFrame(socket);std::this_thread::sleep_for(std::chrono::milliseconds(90)); });
         SessionOptions options;options.timeout=std::chrono::milliseconds(40);options.read_retries=0;
         Session session(device.endpoint(),options);
-        try { session.request(1,mutation?5:1);FAIL("missing timeout"); }
+        try { session.request(request.family,request.op);FAIL("missing timeout"); }
         catch(const Error &e) {
-            CHECK(e.kind==ErrorKind::Timeout);CHECK(e.has_request_context);CHECK(e.family==1);
-            CHECK(e.op==(mutation?5:1));CHECK(e.outcome_unknown==mutation);
+            CHECK(e.kind==ErrorKind::Timeout);CHECK(e.has_request_context);CHECK(e.family==request.family);
+            CHECK(e.op==request.op);CHECK(e.outcome_unknown==request.mutation);
         }
     }
     SUBCASE("oversized request is local") {
@@ -144,6 +145,33 @@ TEST_CASE("scalar variants preserve distinct types and exact bits") {
         CHECK_THROWS_AS(decodeValue(pair.first,pair.second),Error);
     }
     CHECK_THROWS_AS(valueBits(Value(std::numeric_limits<float>::infinity())),Error);
+}
+TEST_CASE("malformed successful service replies keep request context and mutation uncertainty") {
+    struct Case { uint8_t family,op;bool mutation; };
+    const std::array cases{Case{1,1,false},Case{4,2,true},Case{8,1,true},Case{5,2,true},
+                           Case{7,1,true},Case{7,3,false},Case{9,1,true}};
+    for(const auto &test:cases) {
+        FakeDevice device([&](Socket &socket) {
+            const auto req=readFrame(socket);
+            answer(socket,req,Bytes{test.family==1?protocol::core_wire::kVersion:uint8_t{1}});
+        });
+        Session session(device.endpoint());Client client(session);
+        try {
+            const std::array<Ref,1> refs{{{0,0,4}}};const std::array<uint32_t,1> values{200};
+            switch(test.family) {
+            case 1: client.info();break;
+            case 4: client.set(refs,values);break;
+            case 5: client.subEnable(0,true);break;
+            case 7: if(test.op==1) { client.testgenStart({}); }else { client.testgenStatus(0); }break;
+            case 8: client.action({0,0,1});break;
+            case 9: client.otaBegin(512,{});break;
+            }
+            FAIL("accepted malformed service result");
+        } catch(const Error &e) {
+            CHECK(e.kind==ErrorKind::Protocol);CHECK(e.has_request_context);
+            CHECK(e.family==test.family);CHECK(e.op==test.op);CHECK(e.outcome_unknown==test.mutation);
+        }
+    }
 }
 TEST_CASE("time pings correlate u16 IDs, reject stale replies and timestamp on I/O") {
     FakeDevice device([](Socket &socket) {
@@ -585,6 +613,7 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
     CHECK(all.data==std::vector<std::vector<uint32_t>>{{0,100},{1,101},{2,102}});
     CHECK(client.captureStatus().refs.size()==1);
     CHECK_THROWS_AS(client.captureRead(0,1,1),Error);
+    CHECK_THROWS_AS(client.captureRead(0,1,65),Error);
     CHECK_THROWS_AS(client.captureStatus(),Error);
     Bytes event{protocol::core_wire::kVersion,1,3,0,0,0,1,0,0,0,2};
     const auto done=std::get<CaptureDone>(client.event({protocol::defs::msg::kCoreEvent,event}));

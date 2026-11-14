@@ -373,6 +373,10 @@ struct Session::Impl
     Bytes exchange(uint8_t kind, uint8_t family, uint8_t op, std::span<const uint8_t> body, bool read_only)
     {
         std::lock_guard calls(call_mutex);
+        // Retry eligibility is deliberately unchanged. Testgen STATUS is a
+        // read even though the existing policy does not retry it automatically.
+        const bool mutation = !read_only && !(family == static_cast<uint8_t>(p::defs::Family::Testgen) &&
+                                             op == static_cast<uint8_t>(p::defs::TestgenOp::Status));
         for (unsigned attempt = 0;; ++attempt)
         {
             std::unique_lock lock(mutex);
@@ -439,7 +443,7 @@ struct Session::Impl
             {
                 retired[seq] = true;
                 throw uncertain(ErrorKind::Protocol,
-                            "incompatible protocol version or truncated response header",!read_only);
+                            "incompatible protocol version or truncated response header",mutation);
             }
             if (ready)
             {
@@ -448,11 +452,11 @@ struct Session::Impl
             retired[seq] = true;
             if (closed)
             {
-                throw uncertain(ErrorKind::Connection, failure,!read_only);
+                throw uncertain(ErrorKind::Connection, failure,mutation);
             }
             if (!read_only || attempt >= options.read_retries)
             {
-                throw uncertain(ErrorKind::Timeout, "request timed out; outcome may be unknown for writes",!read_only);
+                throw uncertain(ErrorKind::Timeout, "request timed out; outcome may be unknown for writes",mutation);
             }
         }
     }

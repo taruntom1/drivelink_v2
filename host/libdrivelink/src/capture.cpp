@@ -28,6 +28,7 @@ uint8_t parseCaptureTrigger(const std::string &text)
 
 OperationResult Client::captureConfig(uint8_t loop, uint16_t divider, uint32_t samples, uint32_t pre_trigger,
                            const CaptureTrigger &trigger, std::span<const Ref> refs)
+try
 {
     if (refs.empty() || refs.size() > 64 || loop == 255 || !divider || !samples || pre_trigger >= samples ||
         trigger.kind > 3 || trigger.edge > 1) {
@@ -42,17 +43,19 @@ OperationResult Client::captureConfig(uint8_t loop, uint16_t divider, uint32_t s
     for (const auto &ref : refs) { w.appendU8(ref.type); w.appendU8(ref.instance); w.appendU16Le(ref.item); }
     if (!accepted(kFamily, op(defs::CaptureOp::Config), body).body.empty()) { malformed(); }
     return {};
-}
+} catch(Error &e) { contextualize(e,6,1,true);throw; }
 OperationResult Client::captureOp(uint8_t o)
+try
 {
     if (!accepted(kFamily, o).body.empty()) { malformed(); }
     return {};
-}
+} catch(Error &e) { contextualize(e,6,o,true);throw; }
 OperationResult Client::captureArm() { return captureOp(op(defs::CaptureOp::Arm)); }
 OperationResult Client::captureTrigger() { return captureOp(op(defs::CaptureOp::Trigger)); }
 OperationResult Client::captureAbort() { return captureOp(op(defs::CaptureOp::Abort)); }
 
 CaptureStatus Client::captureStatus()
+try
 {
     const auto reply = accepted(kFamily, op(defs::CaptureOp::Status));
     Reader r(reply.body.data(), reply.body.size());
@@ -89,9 +92,10 @@ CaptureStatus Client::captureStatus()
     for (unsigned i = 0; i < n; ++i) { j.refs.push_back(readRef(r)); }
     exact(r);
     return j;
-}
+} catch(Error &e) { contextualize(e,6,4,false);throw; }
 
 CapturePage Client::captureRead(uint32_t first, uint16_t count, size_t width)
+try
 {
     if (!width || width > 64 || !count) { throw Error(ErrorKind::Usage, "invalid capture read"); }
     Bytes body(6);
@@ -108,9 +112,10 @@ CapturePage Client::captureRead(uint32_t first, uint16_t count, size_t width)
     }
     exact(r);
     return {first,count,std::move(samples)};
-}
+} catch(Error &e) { contextualize(e,6,5,false);throw; }
 
 CaptureData Client::captureData()
+try
 {
     auto status = captureStatus();
     if (status.state != CaptureState::Done) { throw Error(ErrorKind::Usage, "capture is not done"); }
@@ -129,5 +134,5 @@ CaptureData Client::captureData()
         first += count;
     }
     return {std::move(status), std::move(samples)};
-}
+} catch(Error &e) { contextualize(e,6,4,false);throw; }
 } // namespace drivelink

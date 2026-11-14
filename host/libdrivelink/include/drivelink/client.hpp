@@ -65,6 +65,7 @@ class Client
                    const std::function<bool(uint32_t,uint32_t)> &progress={});
 
   private:
+    static void contextualize(Error &error, uint8_t family, uint8_t op, bool mutation);
     Reply accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
     template<class T> std::vector<T> pages(uint8_t family, uint8_t op, const Bytes &prefix = {});
     GroupMutation groupMutation(uint8_t op, const Bytes &body);

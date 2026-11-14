@@ -482,11 +482,11 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             const auto started = client.testgenStart(c);
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
             auto next = std::chrono::steady_clock::now();
-            TestgenStatus status;
+            std::optional<TestgenStatus> status;
             while (!interrupted) {
                 feed(); status = client.testgenStatus(c.loop);
-                if (status.run != started.run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
-                if (status.state == TestgenState::Done) { break; }
+                if (status->run != started.run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
+                if (status->state == TestgenState::Done) { break; }
                 if (std::chrono::steady_clock::now() >= deadline) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
                 next += std::chrono::milliseconds(period); std::this_thread::sleep_until(next);
             }

@@ -43,7 +43,8 @@ Bytes readOtaImage(const std::string &path) {
     if (!p::otaImageIdentity(bytes,identity)) { throw Error(ErrorKind::Usage,"expected a complete unsigned ESP32-S3 application .bin"); }
     return bytes;
 }
-OtaStatus Client::otaStatus() {
+OtaStatus Client::otaStatus() try
+{
     const auto reply=m_session.request(kFamily,op(p::defs::OtaOp::Status));checkReply(reply,6);
     Reader r(reply.body.data(),reply.body.size());
     const auto state=r.readU8(),running=r.readU8(),selected=r.readU8(),pending=r.readU8();
@@ -57,19 +58,24 @@ OtaStatus Client::otaStatus() {
         (state!=3 && (stage || error))) { malformed(); }
     return {state,running,selected,bool(pending),size,offset,capacity,chunk,window,
             static_cast<int32_t>(error),stage,digest,elf};
-}
-uint32_t Client::otaBegin(uint32_t size,const p::Sha256Digest &digest) {
+} catch(Error &e) { contextualize(e,9,6,false);throw; }
+uint32_t Client::otaBegin(uint32_t size,const p::Sha256Digest &digest) try
+{
     Bytes body(36);Writer w(body.data(),body.size());w.appendU32Le(size);for (auto b:digest) { w.appendU8(b); }
     const auto offset=next(m_session.request(kFamily,op(p::defs::OtaOp::Begin),body),1);
     if (offset>size) { malformed(); }return offset;
-}
-uint32_t Client::otaWrite(uint32_t offset,std::span<const uint8_t> bytes) {
+} catch(Error &e) { contextualize(e,9,1,true);throw; }
+uint32_t Client::otaWrite(uint32_t offset,std::span<const uint8_t> bytes) try
+{
     const auto n=next(m_session.request(kFamily,op(p::defs::OtaOp::Write),writeBody(offset,bytes)),2);
     if (offset>UINT32_MAX-bytes.size() || n<offset+bytes.size()) { malformed(); }return n;
-}
-OperationResult Client::otaFinish() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Finish));checkReply(r,3);empty(r);return {}; }
-OperationResult Client::otaAbort() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Abort));checkReply(r,4);empty(r);return {}; }
-OperationResult Client::otaConfirm() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Confirm));checkReply(r,5);empty(r);return {}; }
+} catch(Error &e) { contextualize(e,9,2,true);throw; }
+OperationResult Client::otaFinish() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Finish));checkReply(r,3);empty(r);return {}; } catch(Error &e) { contextualize(e,9,3,true);throw; }
+OperationResult Client::otaAbort() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Abort));checkReply(r,4);empty(r);return {}; } catch(Error &e) { contextualize(e,9,4,true);throw; }
+OperationResult Client::otaConfirm() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Confirm));checkReply(r,5);empty(r);return {}; } catch(Error &e) { contextualize(e,9,5,true);throw; }
 OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::function<bool(uint32_t,uint32_t)> &progress) {
     p::Sha256Digest identity;
     if (!window || window>p::kOtaWindow || !p::otaImageIdentity(image,identity)) { throw Error(ErrorKind::Usage,"invalid OTA image/window"); }
@@ -82,7 +88,7 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
     window=std::min(window,status.window);
     const auto chunk_bytes=status.chunk_bytes;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(5);
-    bool attempted=false;
+    bool attempted=false, unresolved=false;
     auto verify=[&](const OtaStatus &s,uint32_t lower,uint32_t upper) {
         const auto offset=s.offset;
         if ((s.state!=1 && s.state!=2) || s.size!=size || s.sha256!=digest || offset<lower || offset>upper) {
@@ -94,7 +100,10 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
         if (status.state==1) { (void)verify(status,0,size); }
         attempted=true;uint32_t offset=0;
         try { offset=otaBegin(size,digest); }
-        catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; }status=otaStatus();offset=verify(status,0,size); }
+        catch (const Error &e) {
+            if (e.kind!=ErrorKind::Timeout) { throw; }
+            unresolved=e.outcome_unknown;status=otaStatus();offset=verify(status,0,size);unresolved=false;
+        }
         unsigned retries=0;
         while (offset<size) {
             if (std::chrono::steady_clock::now()>deadline) { throw Error(ErrorKind::Timeout,"OTA upload deadline exceeded"); }
@@ -118,8 +127,13 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
                     const auto n=next(reply,2);const auto chunk_end=std::min<uint32_t>(end,offset+static_cast<uint32_t>((i+1)*chunk_bytes));
                     if (n<chunk_end || n>end) { malformed(); }
                 }
-            } catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; }reconcile=true; }
+            } catch (Error &e) {
+                contextualize(e,kFamily,2,true);
+                if (e.kind!=ErrorKind::Timeout) { throw; }
+                unresolved=e.outcome_unknown;reconcile=true;
+            }
             const auto current=reconcile ? verify(otaStatus(),offset,end) : end;
+            unresolved=false;
             if (current==offset && ++retries>5) { throw Error(ErrorKind::Timeout,"OTA upload made no progress"); }
             if (current!=offset) { retries=0; }offset=current;
             if (reconcile) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
@@ -128,7 +142,9 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
         try { (void)otaFinish(); }
         catch (const Error &e) {
             if (e.kind!=ErrorKind::Timeout) { throw; }
+            unresolved=e.outcome_unknown;
             status=otaStatus();(void)verify(status,size,size);if (status.state!=2) { throw; }
+            unresolved=false;
         }
         status=otaStatus();(void)verify(status,size,size);
         if (status.state!=2) { malformed(); }return status;
@@ -140,9 +156,9 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
         }
         // Preserve all context (including DeviceError dynamic type) while adding cleanup evidence.
         if(const auto *device=dynamic_cast<const DeviceError *>(&e)) {
-            auto error=*device;error.setMessage(message);throw error;
+            auto error=*device;error.outcome_unknown|=unresolved;error.setMessage(message);throw error;
         }
-        auto error=e;error.setMessage(message);throw error;
+        auto error=e;error.outcome_unknown|=unresolved;error.setMessage(message);throw error;
     }
 }
 }

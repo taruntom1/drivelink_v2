@@ -24,6 +24,7 @@ Bytes configBody(uint8_t group, uint8_t loop, uint16_t divider, std::span<const 
 }
 }
 GroupList Client::groups()
+try
 {
     GroupList result;
     namespace sys = protocol::defs::system;
@@ -63,8 +64,9 @@ GroupList Client::groups()
         exact(r); cursor = next;
     } while (cursor != 65535);
     return result;
-}
+} catch(Error &e) { contextualize(e,5,6,false);throw; }
 GroupMutation Client::groupMutation(uint8_t op, const Bytes &body)
+try
 {
     const auto reply = accepted(static_cast<uint8_t>(defs::Family::Group), op, body);
     Reader r(reply.body.data(), reply.body.size());
@@ -75,7 +77,7 @@ GroupMutation Client::groupMutation(uint8_t op, const Bytes &body)
     if (body.empty() || body[0] >= capacity || channel != first + body[0]) { malformed(); }
     exact(r);
     return {epoch,channel};
-}
+} catch(Error &e) { contextualize(e,5,op,true);throw; }
 GroupMutation Client::subConfigure(uint8_t group, uint8_t loop, uint16_t divider, std::span<const Ref> refs)
 { return groupMutation(static_cast<uint8_t>(defs::GroupOp::SubConfig), configBody(group, loop, divider, refs, true)); }
 GroupMutation Client::cmdConfigure(uint8_t group, uint8_t loop, std::span<const Ref> refs)
