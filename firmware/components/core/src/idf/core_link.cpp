@@ -1,4 +1,5 @@
 #include "core/core_link.hpp"
+#include "drivelink/protocol/time_codec.hpp"
 #include "core/command_service.hpp"
 #include "core/cpu_load.hpp"
 #include "freertos/idf_additions.h"
@@ -36,6 +37,7 @@ struct CoreLink::Impl {
     QueueHandle_t queue=nullptr;
     uart_comm::CallbackRegistration registration;
     uart_comm::CallbackRegistration disarm_registration;
+    uart_comm::CallbackRegistration time_registration;
     std::array<uart_comm::CallbackRegistration, defs::kCmdGroupChannelCount> command_registrations;
     std::array<uint8_t, kGroupStreamBytes> group_stream{};
     std::array<uint8_t, kCaptureDoneEventBytes> event{};
@@ -124,6 +126,19 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     auto err=uart.openStream(msg::kStatusStream,d.status.size());
     if(err!=ESP_OK) { ESP_LOGE(TAG,"status setup: %s",esp_err_to_name(err));return; }
     auto *impl=&d;
+    err=uart.registerCallback(msg::kTimeRequest, [impl](const uart_comm::RxFrame &f) {
+        const auto rx=static_cast<uint64_t>(core_os::nowUs());
+        uint16_t id=0;
+        if (!drivelink::protocol::time_wire::decodeRequest(f.payload,f.len,id)) {
+            DIAG_COUNT(diag::codes::core::kBadTimeRequest); return;
+        }
+        std::array<uint8_t,drivelink::protocol::time_wire::kResponseBytes> reply{};
+        const auto n=drivelink::protocol::time_wire::response(reply.data(),reply.size(),{id,rx,0});
+        if (impl->uart.sendCommand(msg::kTimeResponse,reply.data(),n,true)!=ESP_OK) {
+            DIAG_COUNT(diag::codes::core::kResponseDropped);
+        }
+    }, d.time_registration);
+    if(err!=ESP_OK) { ESP_LOGE(TAG,"time callback: %s",esp_err_to_name(err));return; }
     err=uart.registerCallback(msg::kDisarm, [impl](const uart_comm::RxFrame &f) {
         std::array<uint8_t, 6> reply{};
         const auto n = fastDisarm(impl->core, {f.payload, f.len}, reply);
@@ -164,7 +179,7 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     if(err!=core_os::kOk) { ESP_LOGE(TAG,"core task: %s",esp_err_to_name(err));return; }
     d.valid=true;
 }
-CoreLink::~CoreLink() { m_impl->disarm_registration.reset();for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
+CoreLink::~CoreLink() { m_impl->time_registration.reset(); m_impl->disarm_registration.reset();for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
 bool CoreLink::isValid() const { return m_impl->valid; }
 uint32_t CoreLink::stackHighWater() const { return m_impl->task.stackHighWaterMark(); }
 }

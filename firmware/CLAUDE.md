@@ -8,7 +8,7 @@ Guidance for working on the firmware. The repo map and the cross-cutting rules a
 
 ## What this is
 
-ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It drives DC motors (MCPWM + DIR GPIO), reads quadrature encoders (PCNT), runs PID velocity and position loops, streams BNO055 IMU data, and syncs time with a host. The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
+ESP-IDF 5.5.2 firmware for the ESP32-S3, written in C++. It drives DC motors (MCPWM + DIR GPIO), reads quadrature encoders (PCNT), runs PID velocity and position loops, streams BNO055 IMU data, and answers host time pings without setting a wall clock. The host talks to the board over a binary UART protocol on UART0 (TX=GPIO43, RX=GPIO44). The console runs on USB-Serial-JTAG, so logs do not mix with protocol traffic.
 
 ## Where the details are
 
@@ -21,7 +21,7 @@ A `CLAUDE.md` in a directory loads by itself when you work there. Open the other
 | Tests: what the native tests cover, adding a source to them, HIL tests, smoke scripts, CI | [firmware/test/CLAUDE.md](test/CLAUDE.md) |
 | `uart_comm` internals: RX framing, the TX paths, limits | [firmware/components/uart_comm/CLAUDE.md](components/uart_comm/CLAUDE.md) |
 | The core: boot, loops, layout, params, NVS | [core/README.md](components/core/README.md), [core_os/README.md](components/core_os/README.md), [mod_mock/README.md](components/mod_mock/README.md) |
-| `time_sync`: its loop and wire format | [firmware/components/legacy-managers.md](components/legacy-managers.md) |
+| Time pings and TX stamping | [docs/protocol/time.md](../docs/protocol/time.md) |
 | The wire format | `docs/protocol/` (`framing.md`, `core.md`, `diag.md`, `registry.md`, `diag-codes.md`) and [protocol/CLAUDE.md](../protocol/CLAUDE.md) |
 | The definition YAMLs and the generator | `docs/protocol/definitions.md` |
 
@@ -99,19 +99,19 @@ python smoke_main_firmware.py --port COM3                         # needs the ma
 
 ## Architecture
 
-**Startup** (`firmware/main/main.cpp`): `diag::init()`, `UartComm`, the legacy managers, the core, then `diag::Reporter`. A manager or the core that fails to start is reported and left out, and the rest keep running, so destructors must be safe at any point.
+**Startup** (`firmware/main/main.cpp`): `diag::init()`, `UartComm`, the core, then `diag::Reporter`. A core that fails to start is reported and left out, and the rest keep running, so destructors must be safe at any point.
 
 **Layering** (each is an ESP-IDF component under `firmware/components/`):
 - `motor_hal` (`motor_hal::Motor`) and `rotary_encoder_hal` (`rotary_encoder_hal::Encoder`) are move-only hardware wrappers. Scarce peripherals come from static pools (`McpwmPool`, `PcntPool`) guarded by a FreeRTOS mutex.
 - `pid` is the header-only PID kernel that `mod_motor`'s cascade controller uses.
 - `mod_motor` holds the motor module types (`actuator.pwm_dir`, `feedback.quadrature`, `controller.cascade_pid`); `mod_mock` holds the mocks. See their READMEs.
-- `time_sync` is the remaining legacy protocol-facing manager. It registers UART callbacks, owns its task, and keeps its payload codec in a pure module.
+- Time protocol v1 is a direct CoreLink RX callback and a per-command TX stamp flag, using monotonic timestamps only. No time task or wall-clock setter remains; see `docs/protocol/time.md`.
 - `mod_imu_bno055` is the F6 non-real-time IMU module: pure register logic and calibration/state over an instance-owned bus, with an IDF I2C backend. See its README and `docs/protocol/imu.md`.
 - `protocol/` (at the repo root, an IDF component through `EXTRA_COMPONENT_DIRS`) is the pure wire library: CRC, framing, the frame `Scanner`, `wire_codec`, and the generated registry, diag code table and descriptor format.
 - `uart_comm` is the transport: the driver, the RX and TX tasks, callbacks, the command pool and the stream slots.
 - `rtos_util` provides `StoppableTask`, `TaskTimer` and `msToTicksCeil`.
 - `core_os` holds thin OS adapters (clock, `Mutex`, `Event`, `PeriodicTask`, `OneShotTimer`, the diag sink, the `KvStore` on NVS, the boot info) with an ESP-IDF backend and a native one. The backend is picked by include dir, never by `#ifdef`.
-- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. Until the legacy managers are ported, it runs beside them with the configured mock instances (`mod_mock`).
+- `core` is the new core (F3 onwards): the module registry, configurable built-in loop instances, the param service, the layout, NVS A/B persistence, safe mode, the boot, and the command, action and group services of `docs/protocol/core.md`. It is pure: only `core_os`, `protocol/` and std, so it also builds natively. Its `CoreLink` adapter owns the UART side. All legacy managers are removed; it runs the configured module instances.
 - F4c adds source bindings (`Sampled<T>`) and boot-allocated cross-loop triple
   buffers. Source storage belongs to the consumer loop and survives arm
   transitions. `CORE_MAX_LINK_VALUES` bounds each ordered loop pair; see the
@@ -166,7 +166,7 @@ Every protocol on top of the `uart_comm` frame follows these rules:
 - **Result and detail.** A response carries `result` and then a `detail` byte that names the check that failed (`None` on success). Each failure site sets its own detail. Detail values are part of the wire format: add new ones, never renumber. Every command gets a response, including one dropped because a queue is full.
 - **Untrusted input.** Reject invalid host input with an error result code and apply nothing. Invalid means a wrong length, an unknown subcommand or id, a non-finite float, a GPIO outside the allowed set, or an invalid enum value. A valid value outside its range is clamped, and the response reports the value actually applied.
 - **IDs from the registry.** MSG_TYPE values and stream channels come only from `protocol/defs/registry.yaml`, through the generated `gen/registry.hpp`. Never hard-code one, and never add a Kconfig option for one.
-- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. The legacy managers are the exception during the overhaul: their wire format is their code and native tests (see [legacy-managers.md](components/legacy-managers.md)).
+- **`docs/protocol/` is the spec.** It defines the wire format, and is updated in the same commit as any wire change. Time protocol v1 is an explicit exception to ordinary result/detail responses: malformed pings are dropped and counted (see `docs/protocol/time.md`).
 
 ### Errors, failures and memory
 

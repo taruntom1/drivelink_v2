@@ -36,3 +36,9 @@ plans/host-architecture.md; F3c is the first service slice, not the full H1 mode
 The CLI supports readable output and `--json`; stdout in JSON mode contains
 only envelopes/NDJSON. Errors include an exit code, device result and detail.
 Hardware tests use host/test/hardware_smoke.py only on the bare bench board.
+
+F8 time pings use separate u16 IDs and I/O-thread timestamps. Keep Boot/session
+clock generations and timeout retirement distinct from ordinary core sequence
+IDs. ClockEstimator is single-caller, bounded and monotonic; H1 will integrate
+periodic ownership and application-data mapping. Wire/bias limits are in
+`docs/protocol/time.md`.

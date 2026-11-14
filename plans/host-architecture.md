@@ -2,7 +2,8 @@
 
 Status: architecture target, 2026-11-10 (revised after review). F3c implements
 the first host slice (library, CLI, virtual device and superbuild); subsequent
-services, the full device/time models, GUI, agent and ROS remain planned.
+services and the F8 ping/clock estimator are built; the full device model,
+automatic timestamp mapping, GUI, agent and ROS remain planned.
 
 **Baseline.** The host is written against the firmware described in [firmware-architecture.md](firmware-architecture.md), after all its phases are done. A minimal slice of `libdrivelink` and `drivelink-cli` is built earlier, alongside firmware phases F3–F9, to drive and test them. That firmware is:
 - self-describing: module instances with params, signals, inputs, actions and diag codes
@@ -91,7 +92,7 @@ The `diag` plan (fault codes over UART) is also assumed done. Read the firmware 
   - diag (decode events, query entries, name codes from the code descriptors the device serves)
   - arming (arm with conditions reported, `DISARM` through the fast-path MSG_TYPE, `ACK_FAULT`)
   - command groups with prefix-only keepalives; automatic keepalives and NaN-to-hold mapping follow the arming/hold behavior (F4b or later); F4a exposes explicit sends and rejects non-finite values
-- **Growth.** The first slice (transport, session, the core families) and `drivelink-cli` are built in firmware phase F3 and grow with each firmware phase. H1 adds the time model, the device model and the remaining services.
+- **Growth.** The first slice (transport, session, the core families) and `drivelink-cli` are built in firmware phase F3 and grow with each firmware phase. F8 adds the reusable clock estimator, ping API and CLI measurement; H1 adds periodic integration, automatic timestamp mapping, the device model and the remaining services.
 - **Threading.**
   - One I/O thread (Asio) does all the reading and writing.
   - Clients get events through thread-safe queues.
@@ -287,7 +288,7 @@ Each directory is created by the phase that first puts something in it. No empty
 | S0 | Workflow setup on `firmware_overhaul`: the status file, the temporary `CLAUDE.md` section, CI, the `/overhaul-step` skill. |
 | S1 | Repo restructure (detailed below). No behavior change. |
 | F1–F10 | The firmware plan ([firmware-architecture.md](firmware-architecture.md)). From F3 on, each firmware phase also extends the first slice of `libdrivelink` and `drivelink-cli`, which drive and test it. The host-linux CI job starts in F3. |
-| H1 | Complete `libdrivelink`: the time model, the device model, the remaining services, and plant identification math. The host-windows CI job. Tested against vdev. |
+| H1 | Complete `libdrivelink`: periodic time integration/automatic timestamp mapping over F8’s estimator, the device model, the remaining services, and plant identification math. The host-windows CI job. Tested against vdev. |
 | H2 | GUI in local mode: connect, device, layout, tune and monitor screens. |
 | H3 | Agent: arbitration, lease, clock model distribution. The GUI's remote mode. |
 | H4 | `drivelink_hardware` and `drivelink_bringup`, the diagnostics node, the ROS CI job. |

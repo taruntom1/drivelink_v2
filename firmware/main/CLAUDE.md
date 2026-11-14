@@ -4,8 +4,8 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
 
 ## Startup order
 
-- The order is `diag::init()`, `UartComm`, then `TimeSync` (which takes a reference to `UartComm`), then the core (`startCore()`), then `diag::Reporter`.
-- Each manager is checked with `isValid()`. One that failed is reported (`system.ManagerStartFailed`), destroyed through its `std::optional`, and left out, so destructors must be safe at any point. The rest keep running.
+- The order is `diag::init()`, `UartComm`, the core (`startCore()`), then `diag::Reporter`. The time ping lives in CoreLink; there is no legacy manager or time task.
+- Core/CoreLink startup is checked; failure is reported/logged and the console remains usable. Destructors must be safe at every partial setup stage.
 - Before the core, main initialises NVS (`core_os::nvsInit()`). A full partition or one from a newer NVS version is erased and initialised again. Both that and a failure are reported (`core.NvsInitFailed`, arg0 1 erased, 2 failed). The core boots either way.
 - The core:
   - It is built on the heap (`app_main`'s stack is small) from `coreConfigFromKconfig()` and main's module list (`kModuleTypes`, from `mod_mock::kTypes`, `mod_motor::kTypes`, `mod_motor::kHardwareTypes` and `mod_imu_bno055::kType`; each desc is checked against `defs::kTypeTable`).

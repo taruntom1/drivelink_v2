@@ -6,6 +6,7 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/core_codec.hpp"
+#include "drivelink/protocol/time_codec.hpp"
 #include <asio.hpp>
 #include <bit>
 #include <filesystem>
@@ -78,6 +79,63 @@ struct FakeDevice
 } // namespace
 
 using namespace drivelink;
+TEST_CASE("time pings correlate u16 IDs, reject stale replies and timestamp on I/O") {
+    FakeDevice device([](Socket &socket) {
+        namespace tw=protocol::time_wire;
+        auto req=readFrame(socket);uint16_t id=0;REQUIRE(tw::decodeRequest(req.data(),req.size(),id));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80)); // first ping times out
+        std::array<uint8_t,19> p{};tw::response(p.data(),p.size(),{id,10,20});
+        sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),p.end()));
+        req=readFrame(socket);uint16_t second=0;REQUIRE(tw::decodeRequest(req.data(),req.size(),second));
+        CHECK(second!=id);
+        // Repeated stale reply cannot complete the second request.
+        sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),p.end()));
+        tw::response(p.data(),p.size(),{second,30,40});
+        sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),p.end()));
+    });
+    SessionOptions o;o.timeout=std::chrono::milliseconds(60);o.read_retries=0;
+    Session session(device.endpoint(),o);
+    CHECK_THROWS_AS(session.timePing(),Error);
+    const auto before=monotonicUs();const auto s=session.timePing();const auto after=monotonicUs();
+    CHECK(s.esp_rx_us==30);CHECK(s.esp_tx_us==40);
+    CHECK(s.host_tx_us>=before);CHECK(s.host_rx_us>=s.host_tx_us);CHECK(s.host_rx_us<=after);
+}
+TEST_CASE("matching malformed time reply is an explicit protocol failure") {
+    for(bool bad_version:{false,true}) {
+        FakeDevice device([bad_version](Socket &socket) {
+            auto req=readFrame(socket);uint16_t id=0;REQUIRE(protocol::time_wire::decodeRequest(req.data(),req.size(),id));
+            std::array<uint8_t,19> p{};protocol::time_wire::response(p.data(),p.size(),{id,1,2});
+            if(bad_version){p[0]=2;}
+            sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),bad_version?p.end():p.end()-1));
+        });
+        Session session(device.endpoint());
+        try {session.timePing();FAIL("accepted malformed ping");} catch(const Error &e){CHECK(e.kind==ErrorKind::Protocol);}
+    }
+}
+TEST_CASE("closing session wakes a pending time ping") {
+    std::promise<void> received;auto got=received.get_future();
+    FakeDevice device([&](Socket &socket) {readFrame(socket);received.set_value();std::this_thread::sleep_for(std::chrono::milliseconds(80));});
+    Session session(device.endpoint());
+    auto pending=std::async(std::launch::async,[&] {try{session.timePing();return false;}catch(const Error &e){return e.kind==ErrorKind::Connection;}});
+    got.wait();session.close();CHECK(pending.get());
+}
+TEST_CASE("Boot rejects a ping spanning reset and changes the next sample generation") {
+    FakeDevice device([](Socket &socket) {
+        auto answer_ping=[&] {
+            auto req=readFrame(socket);uint16_t id=0;REQUIRE(protocol::time_wire::decodeRequest(req.data(),req.size(),id));
+            std::array<uint8_t,19> p{};protocol::time_wire::response(p.data(),p.size(),{id,100,101});
+            sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),p.end()));
+        };
+        answer_ping();readFrame(socket);
+        diag::protocol::BootEvent boot{};std::array<uint8_t,32> event{};
+        const auto n=diag::protocol::encodeBootEvent(0,0,boot,event.data(),event.size());
+        sendFrame(socket,protocol::defs::msg::kDiagEvent,Bytes(event.begin(),event.begin()+static_cast<ptrdiff_t>(n)));
+        answer_ping();
+    });
+    Session session(device.endpoint());const auto first=session.timePing();
+    try {session.timePing();FAIL("ping spanned Boot");}catch(const Error &e){CHECK(e.kind==ErrorKind::Protocol);}
+    const auto next=session.timePing();CHECK(first.boot_generation!=next.boot_generation);
+}
 TEST_CASE("typed values reject malformed inputs instead of narrowing")
 {
     Json d = {{"value_type", 1}};

@@ -29,7 +29,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mod_imu_bno055/modules.hpp"
-#include "time_sync.hpp"
 #include "uart_comm.hpp"
 
 static const char *const TAG = "main";
@@ -43,8 +42,8 @@ namespace {
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the loop timers, the safety monitor and
 // the IMU sampling timer).
-constexpr std::array<const char *, 7> kLoggedTasks = {
-    "main", "uart_rx", "uart_tx", "time_sync_task", "diag", "esp_timer", "core_cfg",
+constexpr std::array kLoggedTasks = {
+    "main", "uart_rx", "uart_tx", "diag", "esp_timer", "core_cfg",
 };
 
 /// Log each task's stack high-water mark: the least free stack, in bytes,
@@ -192,33 +191,7 @@ extern "C" void app_main(void)
         idleForever();
     }
 
-    uint8_t started_mask = 0;
-
-    time_sync::TimeSyncConfig sync_cfg{};
-    sync_cfg.sync_interval_ms = 5000;
-    sync_cfg.response_timeout_ms = 250;
-    sync_cfg.enable_round_trip_compensation = true;
-
-    std::optional<time_sync::TimeSync> time_sync_obj;
-    time_sync_obj.emplace(uart, sync_cfg);
-    if (time_sync_obj->isValid()) {
-        started_mask |= diag::kStartedTimeSync;
-    } else {
-        DIAG_ERROR(diag::codes::system::kManagerStartFailed, ESP_FAIL, diag::kManagerIdTimeSync, 0,
-                   "Time sync failed to start; continuing without it");
-        time_sync_obj.reset();
-    }
-
-    if (time_sync_obj) {
-        const esp_err_t ret = time_sync_obj->startPeriodicSync();
-        if (ret != ESP_OK) {
-            DIAG_ERROR(diag::codes::system::kPeriodicSyncStartFailed, ret, 0, 0,
-                       "Periodic time sync not started: %s", esp_err_to_name(ret));
-        }
-    }
-
-    // After the legacy managers: they keep running whether or not it starts.
-    // Never destroyed (app_main never returns).
+    // Core owns every protocol-facing service.
     initNvs();
     std::unique_ptr<core::Core> core_obj = startCore();
     std::unique_ptr<core::CoreLink> core_link;
@@ -234,7 +207,6 @@ extern "C" void app_main(void)
     diag_cfg.instances_ok=core_obj?static_cast<uint8_t>(core_obj->instanceCount()):0;
     diag_cfg.instances_failed=core_obj?static_cast<uint8_t>(core_obj->instancesFailed()):0;
     diag_cfg.safe_mode=core_obj && core_obj->safeMode();
-    (void)started_mask;
     diag::Reporter reporter(uart, diag_cfg);
     if (!reporter.isValid()) {
         ESP_LOGE(TAG, "diag reporter failed to start; errors are on the console only");

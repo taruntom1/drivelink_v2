@@ -113,3 +113,14 @@ interruption or failure. GROUP must already be configured; PERIOD_MS must be
 less than half watchdog_ms. Both this workflow and `cmd-run` attempt DISARM
 even when ARM may have applied but its reply was lost. Mutations are never
 retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.
+
+## Time measurements (F8)
+
+`time-ping` obtains one four-timestamp sample. `time-sync [DURATION_S]` defaults
+to 180 s (1–3600), using a 100 ms warmup cadence for five seconds and 1 s
+thereafter. Both support readable/JSON output. The measurement command reports
+raw samples, bounded-estimator snapshots, held-out predictions, timeouts and
+dropped event counts. Interrupt stops sampling; no firmware clock is set.
+Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
+and repeat with `--traffic` for the bare-board stability check. See the
+[time contract](../../docs/protocol/time.md) for the accuracy limits.

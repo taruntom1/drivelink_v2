@@ -22,7 +22,7 @@
 #     k<symbol>ChannelCount.
 #   - Module type ids live in each type's own file. Only the id reserved for
 #     `system` is set here.
-#   - The time ping (0x02 / 0x42) joins in F8. F6 freed 0x42 by removing the legacy IMU response.
+#   - Time ping uses an independent v1 on 0x02 / 0x42 (F8).
 
 system_type_id: 0x00
 loop_type_id: 0x05
@@ -40,9 +40,9 @@ msg_types:
   - {name: diag_query_response,    value: 0x63, direction: esp_to_host, description: "Answer to a diag query."}
   - {name: diag_event,             value: 0xC0, direction: esp_to_host, description: "diag events: Record, CounterDelta, Cleared, Boot."}
 
-  # -- legacy time_sync (removed in F8) --
-  - {name: time_sync_request,      value: 0x20, direction: esp_to_host, legacy: F8, description: "time_sync request, sent by the ESP."}
-  - {name: time_sync_response,     value: 0x60, direction: host_to_esp, legacy: F8, description: "time_sync response, sent by the host."}
+  # -- time protocol v1 --
+  - {name: time_request, value: 0x02, direction: host_to_esp, description: "Host time ping, answered directly in RX."}
+  - {name: time_response, value: 0x42, direction: esp_to_host, description: "Time reply with monotonic RX and TX-submission timestamps."}
 
 channel_ranges:
   - {name: sub_groups, symbol: SubGroup, first: 0x81, last: 0x9F, direction: esp_to_host, description: "Subscription groups 0-30."}

@@ -1,5 +1,5 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_executable(host_tests test_host.cpp)
+add_executable(host_tests test_host.cpp test_time.cpp)
 target_include_directories(host_tests SYSTEM PRIVATE ../../firmware/test/native/third_party/doctest)
 target_link_libraries(host_tests PRIVATE drivelink drivelink_asio drivelink_native_core)
 add_test(NAME host-unit COMMAND host_tests)

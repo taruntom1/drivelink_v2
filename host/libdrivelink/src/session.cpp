@@ -2,6 +2,9 @@
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/scanner.hpp"
+#include "drivelink/protocol/time_codec.hpp"
+#include <bitset>
+#include <atomic>
 #include <array>
 #include <asio.hpp>
 #include <condition_variable>
@@ -13,6 +16,7 @@ namespace drivelink
 {
 namespace p = protocol;
 namespace msg = protocol::defs::msg;
+namespace { std::atomic<uint64_t> next_clock_generation{1}; }
 struct Session::Impl
 {
     SessionOptions options;
@@ -37,6 +41,12 @@ struct Session::Impl
     bool closed = false, waiting = false, ready = false, protocol_error = false;
     uint8_t expected_type = 0, expected_seq = 0, expected_family = 0, expected_op = 0;
     Bytes response;
+    std::bitset<65536> ping_retired;
+    uint32_t ping_sequence = 0;
+    uint64_t boot_generation = next_clock_generation.fetch_add(1);
+    bool ping_waiting = false, ping_ready = false, ping_error = false, ping_written = false;
+    TimeSample ping_sample;
+    std::shared_ptr<Bytes> ping_bytes;
     std::string failure;
 
     Impl(const std::string &endpoint, SessionOptions opts) : options(opts)
@@ -140,6 +150,29 @@ struct Session::Impl
             // Asio's Windows open() already disables flow control, DTR and
             // RTS. Its flow_control(none) option re-enables both lines, which
             // toggles ESP32 auto-reset circuitry on every CLI invocation.
+            if (!ec)
+            {
+                // Asio 1.30.2 waits for a 1 ms inter-byte gap or a full read
+                // buffer. Continuous streams can therefore hide a ping reply
+                // in a 2048-byte read for tens of ms. Return on the first byte
+                // instead (Win32 COMMTIMEOUTS documented special mode).
+                // The constant only bounds idle reads; bytes return at once.
+                COMMTIMEOUTS timeouts{};
+                if (!::GetCommTimeouts(serial.native_handle(), &timeouts))
+                {
+                    ec = asio::error_code(static_cast<int>(::GetLastError()), asio::error::get_system_category());
+                }
+                else
+                {
+                    timeouts.ReadIntervalTimeout = MAXDWORD;
+                    timeouts.ReadTotalTimeoutMultiplier = MAXDWORD;
+                    timeouts.ReadTotalTimeoutConstant = 1000;
+                    if (!::SetCommTimeouts(serial.native_handle(), &timeouts))
+                    {
+                        ec = asio::error_code(static_cast<int>(::GetLastError()), asio::error::get_system_category());
+                    }
+                }
+            }
 #endif
         }
         else
@@ -171,6 +204,23 @@ struct Session::Impl
     void receive(const p::Scanner::Frame &f)
     {
         std::lock_guard lock(mutex);
+        if (f.msg_type==msg::kDiagEvent && f.len==17 && f.payload[0]==3 && f.payload[3]==4) {
+            boot_generation=next_clock_generation.fetch_add(1);
+            // An in-flight ping must not span a device reboot.
+            if (ping_waiting && ping_written) { ping_error=true;cv.notify_all(); }
+        }
+        if (f.msg_type==msg::kTimeResponse) {
+            if (!ping_waiting || !ping_written || ping_ready || f.len<3) { return; }
+            p::wire::Reader r(f.payload+1,2);const auto id=r.readU16Le();
+            if (id!=ping_sample.id) { return; }
+            p::time_wire::Response reply;
+            if (!p::time_wire::decodeResponse(f.payload,f.len,reply)) { ping_error=true; }
+            else {
+                ping_sample.esp_rx_us=reply.rx_us;ping_sample.esp_tx_us=reply.tx_us;
+                ping_sample.host_rx_us=monotonicUs();ping_ready=true;
+            }
+            cv.notify_all();return;
+        }
         if (waiting && f.msg_type == expected_type && f.len >= 2 && f.payload[1] == expected_seq)
         {
             const bool core = expected_type == msg::kCoreResponse;
@@ -260,6 +310,12 @@ struct Session::Impl
     void write()
     {
         auto bytes = writes.front();
+        if (bytes->at(3)==msg::kTimeRequest) {
+            std::lock_guard guard(mutex);
+            if (ping_waiting && bytes==ping_bytes) {
+                ping_sample.host_tx_us=monotonicUs();ping_sample.boot_generation=boot_generation;ping_written=true;
+            }
+        }
         auto handler = [this, bytes](auto ec, size_t)
         {
             {
@@ -413,6 +469,38 @@ Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body
                            (family == 6 && (op == 4 || op == 5));
     auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
     return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
+}
+TimeSample Session::timePing()
+{
+    auto &d=*m_impl;
+    std::lock_guard calls(d.call_mutex);
+    std::unique_lock lock(d.mutex);
+    if(d.closed) { throw Error(ErrorKind::Connection,d.failure); }
+    unsigned tried=0;
+    while(tried<65536 && d.ping_retired[d.ping_sequence%65536]) { ++tried;++d.ping_sequence; }
+    if(tried==65536) { throw Error(ErrorKind::Connection,"time ping IDs exhausted; reconnect"); }
+    const auto id=static_cast<uint16_t>(d.ping_sequence++%65536);
+    std::array<uint8_t,p::time_wire::kRequestBytes> payload{};
+    p::time_wire::request(payload.data(),payload.size(),id);
+    auto bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
+    p::encodeFrame(bytes->data(),bytes->size(),msg::kTimeRequest,payload.data(),payload.size());
+    d.ping_sample={};d.ping_sample.id=id;
+    d.ping_waiting=true;d.ping_ready=false;d.ping_error=false;d.ping_written=false;d.ping_bytes=bytes;
+    asio::post(d.io,[&d,bytes] {
+        {
+            std::lock_guard guard(d.mutex);
+            if(d.closed || !d.ping_waiting || d.ping_bytes!=bytes) { return; }
+        }
+        if(d.writes.size()>=16) { d.fail("TX queue full");return; }
+        d.writes.push_back(bytes);if(d.writes.size()==1) { d.write(); }
+    });
+    d.cv.wait_for(lock,d.options.timeout,[&d]{return d.closed || d.ping_ready || d.ping_error;});
+    d.ping_waiting=false;d.ping_bytes.reset();
+    if(d.ping_error) { d.ping_retired[id]=true;throw Error(ErrorKind::Protocol,"invalid time reply or device reboot during ping"); }
+    if(d.ping_ready) { return d.ping_sample; }
+    d.ping_retired[id]=true;
+    if(d.closed) { throw Error(ErrorKind::Connection,d.failure); }
+    throw Error(ErrorKind::Timeout,"time ping timed out");
 }
 bool Session::sendCommandGroup(uint8_t group, std::span<const uint8_t> payload)
 {

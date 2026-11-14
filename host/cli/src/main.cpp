@@ -20,6 +20,7 @@ struct InterruptScope {
 };
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
+  time-ping | time-sync [DURATION_S]
   info | types | items TYPE | enums TYPE ITEM | codes
   instances [pending] | add TYPE LABEL [LOOP] | remove TYPE INSTANCE
   label TYPE INSTANCE LABEL | discard
@@ -284,6 +285,41 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             result["typed_values"].push_back(valueJson(d["results"][i]["value_type"], result["values"][i]));
         }
         return result;
+    }
+    if (cmd=="time-ping" || cmd=="time-sync") {
+        if(args.size()>(cmd=="time-ping"?1U:2U)) { usage("time-ping | time-sync [DURATION_S]"); }
+        const auto duration=cmd=="time-ping"?0U:(args.size()==2?id(1,3600):180U);
+        if(cmd=="time-sync" && !duration) { usage("duration must be positive"); }
+        ClockEstimator estimator;Json samples=Json::array();unsigned timeouts=0;
+        InterruptScope interrupt_scope;
+        const auto start=std::chrono::steady_clock::now();auto next=start;
+        do {
+            try {
+                const auto s=session.timePing();
+                double rtt=0,device=0,host=0;const auto valid=ClockEstimator::measure(s,rtt,device,host);
+                const auto before=estimator.model(s.host_rx_us);
+                const auto prediction=before.drift_valid?before.map(s.esp_rx_us):0.0;
+                const bool accepted=estimator.add(s);
+                const auto m=estimator.model(s.host_rx_us);
+                samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
+                    {"esp_tx_us",s.esp_tx_us},{"host_rx_us",s.host_rx_us},{"boot_generation",s.boot_generation},
+                    {"accepted",accepted},{"rtt_us",valid?Json(rtt):Json(nullptr)},
+                    {"prior_prediction_us",before.drift_valid?Json(prediction):Json(nullptr)}, {"prior_slope",before.slope},
+                    {"model",{{"offset_valid",m.offset_valid},{"drift_valid",m.drift_valid},
+                        {"device_reference_us",m.device_reference_us},{"host_reference_us",m.host_reference_us},
+                        {"slope",m.slope},{"drift_ppm",m.drift_ppm},{"samples",m.samples},
+                        {"span_us",m.span_us},{"updated_us",m.updated_us},{"age_us",m.age_us},{"residual_us",m.residual_us},
+                        {"min_rtt_us",m.min_rtt_us},{"max_rtt_us",m.max_rtt_us}}}});
+            } catch(const Error &e) { if(e.kind!=ErrorKind::Timeout || !duration) { throw; } ++timeouts; }
+            if(!duration || interrupted) { break; }
+            const auto elapsed=std::chrono::steady_clock::now()-start;
+            next=std::max(next,std::chrono::steady_clock::now())+
+                (elapsed<std::chrono::seconds(5)?std::chrono::milliseconds(100):std::chrono::milliseconds(1000));
+            const auto end=start+std::chrono::seconds(duration);
+            if(next>=end) { break; }
+            std::this_thread::sleep_until(next);
+        } while(!interrupted);
+        return {{"samples",samples},{"timeouts",timeouts},{"dropped_events",session.droppedEvents()}};
     }
     if (cmd == "groups") { count(0); return client.groups(); }
     if (cmd == "sub-config" || cmd == "cmd-config") {

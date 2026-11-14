@@ -1,4 +1,6 @@
 #include "uart_comm.hpp"
+#include "drivelink/protocol/time_codec.hpp"
+#include "esp_timer.h"
 #include "parser.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "stoppable_task.hpp"
@@ -90,7 +92,8 @@ struct UartComm::Impl {
     // the encoded ones in send order. A queue never holds more than the pool
     // size, so posting an index cannot fail.
     std::unique_ptr<uint8_t[]> cmd_pool;           // kCmdPoolSize * kMaxFrameSize bytes
-    std::array<size_t, kCmdPoolSize> cmd_size;     // encoded size per buffer
+    std::array<size_t, kCmdPoolSize> cmd_size;    // encoded size per buffer
+    std::array<bool, kCmdPoolSize> cmd_stamp{};   // owned with its pool entry
     QueueHandle_t cmd_free;
     QueueHandle_t cmd_ready;
 
@@ -164,8 +167,13 @@ void UartComm::txTaskBody(Impl* impl)
         // Phase 1: Drain ALL pending commands (high priority)
         uint8_t index = 0;
         while (xQueueReceive(impl->cmd_ready, &index, 0) == pdTRUE) {
-            uart_write_bytes(impl->port, &impl->cmd_pool[static_cast<size_t>(index) * kMaxFrameSize],
-                             impl->cmd_size[index]);
+            auto *bytes=&impl->cmd_pool[static_cast<size_t>(index) * kMaxFrameSize];
+            if (!impl->cmd_stamp[index] || protocol::time_wire::stampFrame(bytes, impl->cmd_size[index],
+                    static_cast<uint64_t>(esp_timer_get_time()))) {
+                const auto written=uart_write_bytes(impl->port, bytes, impl->cmd_size[index]);
+                if (written != static_cast<int>(impl->cmd_size[index])) { ESP_LOGE(TAG,"command write failed"); }
+            }
+            impl->cmd_stamp[index]=false;
             // Hand the buffer back. This cannot fail: the free queue has room for the whole pool.
             (void)xQueueSend(impl->cmd_free, &index, 0);
         }
@@ -429,7 +437,7 @@ bool UartComm::isValid() const
 
 // ── sendCommand ─────────────────────────────────────────────────────────
 
-esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len)
+esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len, bool stamp_time)
 {
     if (!m_impl || !m_impl->valid) {
         return ESP_ERR_INVALID_STATE;
@@ -457,6 +465,12 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (stamp_time) {
+        protocol::time_wire::Response value;
+        if (msg_type!=protocol::defs::msg::kTimeResponse || !protocol::time_wire::decodeResponse(payload,len,value)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
     // Take an idle buffer without waiting and encode straight into it.
     uint8_t index = 0;
     if (xQueueReceive(m_impl->cmd_free, &index, 0) != pdTRUE) {
@@ -472,6 +486,7 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t
         return ESP_ERR_INVALID_ARG;
     }
     m_impl->cmd_size[index] = size;
+    m_impl->cmd_stamp[index] = stamp_time;
 
     // Cannot fail: the ready queue has room for the whole pool.
     (void)xQueueSend(m_impl->cmd_ready, &index, 0);

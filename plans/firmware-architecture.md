@@ -231,7 +231,10 @@ The id blocks per kind (`0x00xx`, `0x01xx`, …) are a readability convention on
 | `0x81–0x9F` | stream ESP → host | Subscription groups 0–30 |
 | `0xA0–0xBF` | stream host → ESP | Command groups 0–31 |
 
-The Kconfig MSG_TYPE options of motor_manager, the IMU, time_sync and diag were removed in F2; `protocol/defs/registry.yaml` holds every assignment, and `docs/protocol/registry.md` is its generated table. The remaining legacy entries are time_sync `0x20` / `0x60`, until F8. F5b removed the motor entries (`0x21` / `0x61`, streams `0xBD` / `0xBE`); F6 removed IMU `0x22` / `0x42` and stream `0xBF`. Command groups now have 32 channels (`0xA0`–`0xBF`). **The time ping's `0x02` / `0x42` enter the registry in F8**; F6 leaves `0x42` free.
+Message assignments come from `protocol/defs/registry.yaml`. F8 registers time
+v1 on `0x02` / `0x42` and removes the final legacy `time_sync` entries
+`0x20` / `0x60`. F5b removed the legacy motor protocol and F6 the legacy IMU
+protocol. Command groups have 32 channels (`0xA0`–`0xBF`).
 
 ### Core command header
 
@@ -323,7 +326,11 @@ A valid frame feeds the watchdog only if it arrived after the current `ARM`.
 - **Request:** `version u8 | id u16`
 - **Response:** `version u8 | id u16 | esp_rx_us u64 | esp_tx_us u64`
 
-The RX time is taken in the RX callback. `esp_tx_us` is written into the frame by the TX task just before the frame goes to the UART driver. `uart_comm` gets a "stamp at send" flag on TX items for this, which also recomputes the CRC. The host:
+The RX time is taken in the RX callback. `esp_tx_us` is written into the frame by the TX task just before the frame goes to the UART driver. `uart_comm` gets a "stamp at send" flag on TX items for this, which also recomputes the CRC. The independent time protocol is v1; malformed/version-mismatched requests
+are dropped and counted without an error body (user decision, F8). Core stays
+v7. Exact boundaries, queueing limits and host estimator semantics are in
+`docs/protocol/time.md`. The reusable estimator is implemented in F8; H1 adds
+automatic application-data mapping and H3 model distribution. The host:
 1. timestamps its own send and receive
 2. keeps the pings with the smallest round trip
 3. fits offset and drift (a linear fit over a sliding window)

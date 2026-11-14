@@ -6,6 +6,7 @@ the capture family, the core event stream and the status capture state.
 F7b (v7) adds test generation, its completion event and capture trigger.
 Firmware, host library, CLI and vdev use v7 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
+F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
 `core_response` (0x41). All integers are little-endian. Version is 7.

@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -54,6 +56,38 @@ def main():
         try:
             url = start()
             assert cli('info')['max_payload'] == 1024
+            ping=cli('time-ping')['samples'][0]
+            assert ping['accepted'] and ping['esp_tx_us'] >= ping['esp_rx_us']
+            assert len(cli('time-sync','1')['samples']) >= 3
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'firmware/test/uart_comm'))
+            from protocol import encode_frame, UartCommProto
+            # Invalid pings are dropped; the first time reply must be the valid
+            # one, and scanning its CRC proves the queued TX patch was finalized.
+            address,port=url[6:].rsplit(':',1)
+            with socket.create_connection((address,int(port)), timeout=3) as raw:
+                raw.sendall(encode_frame(2,b'\x01')+encode_frame(2,struct.pack('<BH',2,77))+
+                            encode_frame(2,struct.pack('<BH',1,78)))
+                class Wire:
+                    in_waiting=0
+                    def read(self, n):
+                        return raw.recv(n)
+                decoder=UartCommProto(Wire())
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline:
+                    kind,payload=decoder.read_frame(max(.01,deadline-time.monotonic()))
+                    if kind==0x42:
+                        version,ident,rx,tx=struct.unpack('<BHQQ',payload)
+                        assert (version,ident)==(1,78) and tx>=rx
+                        break
+                else:
+                    raise AssertionError('no valid time reply after invalid requests')
+            rejected=next(e for e in cli('diag-entries') if e['source']==4 and e['code']==0x106)
+            assert rejected['count']>=2, rejected
+            time_check = subprocess.run([sys.executable, str(Path(__file__).with_name('time_smoke.py')),
+                '--cli', args.cli, '--endpoint', url, '--duration', '1', '--warmup-only', '--traffic',
+                '--report', str(Path(state)/'time-dry-run.json')], capture_output=True, text=True, timeout=25)
+            assert time_check.returncode == 0, (time_check.stdout, time_check.stderr)
+            print(time_check.stdout, end='')
             assert len(cli('types')) >= 4
             for type_ in ('0', '112', '113', '114'):
                 assert cli('items', type_)
@@ -171,6 +205,7 @@ def main():
                 process = None
                 url = start('--pty')
                 assert cli('info')['protocol_version'] == 7
+                assert cli('time-ping')['samples'][0]['accepted']
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
                 # More than the PTY's kernel buffer: no external reader must
