@@ -4,7 +4,7 @@ The working state of the overhaul: the firmware ([firmware-architecture.md](firm
 
 ## Current
 
-- **Validation report (2026-11-14):** validator writes `build/validate/summary.json` with per-check results and cached-execution provenance; schema/usage are in `docs/development.md`. Existing commands and verification gates are unchanged; H1a/HW handoff remains applicable.
+- **Validation report (2026-11-14):** [PR #66](https://github.com/taruntom1/drivelink_v2/pull/66) adds `build/validate/summary.json` with per-check results and cached-execution provenance; schema/usage are in `docs/development.md`. Full validation passed. Existing commands and gates are unchanged; H1a/HW handoff remains applicable.
 
 - **Instruction cleanup (2026-11-14):** scoped instructions shortened; existing command walkthroughs moved to `docs/development.md`. CLAUDE sources and AGENTS links retained; no step/runtime policy changed. [PR #65](https://github.com/taruntom1/drivelink_v2/pull/65); existing H1a/HW handoff remains applicable.
 
