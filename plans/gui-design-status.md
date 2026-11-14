@@ -6,6 +6,8 @@ The plan, the decisions and the phase contents are in [gui-design.md](gui-design
 
 Last updated: 2026-11-14 (G7 and G7b accepted, including their G2 extensions; G8 is next; handoff issues remain recorded).
 
+PR: [#62](https://github.com/taruntom1/drivelink_v2/pull/62), accepted G7/G7b records, into `firmware_overhaul` (opened at the user's request).
+
 ## Where things stand
 
 | Phase | State | Notes |
