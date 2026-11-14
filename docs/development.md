@@ -42,7 +42,25 @@ The no-log variant (`CONFIG_DIAG_CONSOLE_LOG=n`) is the one build run from insid
 idf.py -B build_variant -D SDKCONFIG=build_variant/sdkconfig -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ci.nolog" build
 ```
 
-**Native unit tests** (no IDF export needed; they need Python 3 with PyYAML):
+**Native unit tests** (no IDF export needed; CMake 3.20+, a C++23 compiler,
+Ninja and Python 3 with PyYAML). On Windows, run:
+
+```powershell
+python tools/validate.py --only native --force
+```
+
+The validator explicitly uses `C:\msys64\ucrt64\bin\gcc.exe` and `g++.exe`
+(MSYS2 UCRT64 GCC 16.2), Qt's CMake/CTest and Ninja, and builds in
+`firmware/test/native/build/ucrt64/`. It puts the UCRT64 runtime DLLs first
+on the check's PATH. It never falls back to Strawberry or Qt's MinGW compiler;
+keep their build directories separate. To run one test by hand:
+
+```powershell
+$env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
+firmware/test/native/build/ucrt64/native_tests.exe -tc="*SetTiming*"
+```
+
+On Linux (including the `ubuntu:26.04` native-tests CI container):
 
 ```bash
 cmake -S firmware/test/native -B firmware/test/native/build -G Ninja
@@ -83,7 +101,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
 | `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py` | The Python that runs the script |
-| `native` | Configure, build and ctest of `firmware/test/native` | `g++`, `cmake` and `ninja` from `PATH` (Strawberry on this machine) |
+| `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest, `install_smoke.py`. Windows only | Qt's MinGW, CMake and Ninja, first on `PATH` |
 | `host-linux` | The `linux` preset: build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`) |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
@@ -134,7 +152,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
-- `gen` and `native` on Ubuntu.
+- `gen` and `native` in an `ubuntu:26.04` container with build-essential, CMake, Ninja and PyYAML.
 - `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.
 - There is no Windows job yet (H1a adds one). `host-win` runs only locally.
 

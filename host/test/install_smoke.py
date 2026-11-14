@@ -23,7 +23,13 @@ add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE drivelink::drivelink)
 ''')
         (source / 'main.cpp').write_text('''#include <drivelink/client.hpp>
+#include <expected>
+#if __cplusplus <= 202002L
+#error drivelink must propagate its C++23 requirement to consumers
+#endif
 int main() {
+    std::expected<int, int> value = 42;
+    if (value.value() != 42) { return 4; }
     drivelink::Json descriptor={{"value_type",1}};
     if(drivelink::parseValue(descriptor,"42")!=42) { return 1; }
     try {

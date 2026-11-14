@@ -4,7 +4,7 @@ Read the root rules, [host architecture](../plans/host-architecture.md) for the
 target, and [README.md](README.md) for builds/usage. Until H1a, JSON remains the
 public service result; H1a moves it into CLI and preserves CLI output.
 
-- `libdrivelink` is C++20 without Qt/ROS/firmware dependencies. Public namespace
+- `libdrivelink` is C++23 without Qt/ROS/firmware dependencies. Public namespace
   is `drivelink`; protocol code is `drivelink::protocol`. Asio is private.
   Dependencies stay version/SHA256-pinned; never edit vendored source.
 - Discover module types/values/actions from the device, never a compiled module
@@ -35,6 +35,6 @@ public service result; H1a moves it into CLI and preserves CLI output.
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
-  may use Strawberry; never share build dirs. The root `full` gate includes
-  Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI
+  use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
+  `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI
   must pass. Hardware smoke runs only on the bare bench board.

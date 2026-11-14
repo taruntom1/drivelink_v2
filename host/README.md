@@ -8,7 +8,7 @@ the rest of H1 remain planned.
 
 ## Build
 
-Requires CMake 3.24+, Ninja, a C++20 compiler and Python 3. The first configure
+Requires CMake 3.24+, Ninja, a C++23 compiler (GCC 13.1 minimum) and Python 3. The first configure
 downloads SHA256-pinned standalone Asio 1.30.2 and nlohmann JSON 3.11.3.
 The presets do not build a GUI yet.
 
@@ -37,7 +37,9 @@ Keep the same MinGW runtime DLLs on PATH when running them.
 
 From the repository root, `python tools/validate.py --only host-win host-linux`
 runs both sequences above with the right toolchain for each, the Linux one
-inside WSL (see firmware/test/CLAUDE.md, "Validation").
+inside WSL (see [docs/development.md](../docs/development.md#validation-toolsvalidatepy)).
+Windows host binaries use Qt's MinGW 13.1 exclusively; MSYS2 UCRT64 GCC 16.2
+is reserved for firmware native tests. Never mix their runtime DLLs or build directories.
 
 Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)
 include the integration test's stdout and PASS lines. Validation runs the

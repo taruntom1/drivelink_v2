@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step:** T0 (tooling; a separate session is on it), then H1a. HW runs as hardware arrives.
+- **Next step:** H1a after the T0 PR merges. HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -32,11 +32,11 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for T0 and H1a (and HW)
+## Handoff for H1a (and HW)
 
 The firmware is core v8, time v1, diag v3 (descriptor hash `0xDF9F21A5` after LP). Its docs describe the code as it is: `firmware/CLAUDE.md`, the area files, every component README, `docs/protocol/`, `docs/adding-a-module.md`.
 
-- **T0** (C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04`) is being done by a separate session from the old status file; its PR moves its row and notes here. H1a starts after it merges.
+- **T0** is in review; H1a starts after its PR merges. All seven full-gate checks passed, including the installed C++23 consumer on both host platforms. No hardware check is needed. Updated toolchain commands are in [docs/development.md](../docs/development.md).
 - **H1a** is its brief in [host-steps.md](host-steps.md): typed types, errors and services, the device model as a snapshot, the CLI on the typed API with golden output, and the host-windows CI job. The async path, events, group buffers and time mapping are H1b; identity is H1c ([todo-device-name.md](todo-device-name.md)); plant identification is H2e.
 - **LP.** Loop placement is a discovered enum (`core_0` 0, `core_1` 1, `any` 2); new loops default to Any, factory control/sensor stay 1/0. DISCARD cancels pending placement edits; REVERT stays live-only. The GUI consumes the enum (H2c).
 
@@ -46,7 +46,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` (separate session) | no | high, self | in progress | |
+| T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | no | high, self | in review | |
 | H1a | Typed `libdrivelink`: types, errors, services, device model snapshot; CLI on the typed API (output unchanged); host-windows CI. Depends on T0 | bare board: CLI smokes | high, independent | planned | |
 | H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a | bare board: time, 1 kHz groups, smokes | high, independent | planned | |
 | H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | planned | |
@@ -102,6 +102,7 @@ Normal LP firmware (core v8, time v1; ELF build id b8ad3d153466c34d, from the d8
 - **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change it in the same PR and log the reason.
+- **T0 exception (user-approved 2026-11-14).** This Codex session plans and builds T0; self-review at high effort is sufficient for its tooling-only diff. The user approved the T0 plan before edits.
 
 ## Decision log
 

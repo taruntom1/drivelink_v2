@@ -66,7 +66,7 @@ Not planned: a descriptor disk cache (until connecting gets slow), a USB transpo
 
 ## T0 Tooling
 
-Run by a separate session (started 2026-11-14), before the first library step.
+Runs before the first library step.
 
 - C++23 for the host superbuild (libdrivelink, CLI, vdev) and the firmware native tests; `protocol/` keeps C++20 as its declared minimum.
 - The firmware native tests build with MSYS2 UCRT64 GCC 16.2 instead of Strawberry; `tools/validate.py` names the tools explicitly.

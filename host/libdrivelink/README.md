@@ -1,6 +1,6 @@
 # libdrivelink
 
-First host slice: C++20, standalone Asio serial/TCP, framed sessions and core
+First host slice: C++23 (GCC 13.1 minimum), standalone Asio serial/TCP, framed sessions and core
 system/layout/describe/param/action services, status and diagnostic v3 decoding.
 It uses device-supplied descriptors; it contains no module-specific code.
 
