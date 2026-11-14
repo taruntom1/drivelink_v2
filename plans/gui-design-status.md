@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-14 (six G7b choices recorded; plan aligned with built firmware; awaiting scope approval; G7 remains in review).
+Last updated: 2026-11-14 (G7b Parts A–G built and in review; G7 remains in review; inherited G5 responsive issues recorded).
 
 ## Where things stand
 
@@ -12,31 +12,30 @@ Last updated: 2026-11-14 (six G7b choices recorded; plan aligned with built firm
 |---|---|---|
 | G0 Foundations | done | FigJam screen map and flows 1–11; state inventory in gui-design.md |
 | G1 Wireframes | done | 21 frames. Tune (12) and Monitor (14) updated after G2 with the tuning controls |
-| G2 Design system | done | Accepted 2026-11-12. Extensions through G6 accepted; G7 CalibrationLevel and OrientationPreview reviewed with G7 |
+| G2 Design system | done | Accepted 2026-11-12. Extensions through G6 accepted; CalibrationLevel/OrientationPreview reviewed with G7; loop TreeItem, SourcePicker, SourceRow and AddMenu extensions reviewed with G7b |
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
-| G4 Layout | done | Accepted 2026-11-12. 11 frames on Screens – Local plus 2 kept check copies |
+| G4 Layout | done | Accepted 2026-11-12. G7b retains 9 frames, deletes the two obsolete removal states and rebuilds the 2 check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | in review | 11 Calibration screens on Custom panels, 2 retained 1080p Light checks; awaiting acceptance |
-| G7b Loops and sources rework | planned | Discussion complete 2026-11-14; revised Parts A–G await scope approval. 17 new Layout frames planned; nothing built. Current sources use shipped fusion.mock |
+| G7b Loops and sources rework | in review | Parts A–G complete 2026-11-14: G2 extensions, 17 Layout frames, shared data updates, two G4 deletions, Cover/flow records and size/theme checks. Awaiting user acceptance |
 | G8 Prototype and handoff | planned | After G7b |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
 ## Next step
 
-1. Obtain agreement to the revised **G7b** scope in [gui-design.md](gui-design.md), "Discussion outcome and scope approval". All six questions have answers; do not ask them again. G7 remains in review by explicit user choice on 2026-11-14.
-2. After scope approval, build Parts A–G in order: A design system, B 17 new Layout frames, C existing Layout frames, D Device and remote copies, E Monitor and custom-panel trees, F FigJam/Cover records, G checks and record. No Figma edits have been made during planning. A session may stop after any part; record completed parts and IDs.
-3. Review **G7 Custom panel** separately before G8, including its G2 components and reconciliation with built F6 calibration actions/persistence. G7b's shared-tree update does not accept G7.
-4. After G7 and G7b are accepted, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
+1. Ask the user to accept **G7b Loops and sources rework** and its G2 extensions. Parts A–G are built; do not rebuild or repeat the six discussion questions. Review loop live/pending edits, add/remove refusals, the second real-time wiring example, source current/pending values and shared three-loop data. Start at Loop detail `182:10790` or Sources `183:15439` on Screens – Local.
+2. Review **G7 Custom panel** separately before G8, including its G2 components and reconciliation with built F6 calibration actions/persistence. The user explicitly left G7 in review; G7b's shared-tree update does not accept it.
+3. After G7 and G7b are accepted, discuss **G8 Prototype and handoff**: key G0 flows, status-bar fault count, responsive behavior (including the inherited G5 fixed plots/paused toolbar and Tune/A–B issues) and H2/H3 handoff scope before building.
 
 ## Handoff note
 
 - **Branch:** this session uses local `codex/gui-design-g7b` in worktree `86ff`, based on `0f70c6a` (completed firmware overhaul, also the fetched `origin/firmware_overhaul`). Publish with `git push origin HEAD:Codex/gui-design` per the invoked skill; no PR unless the user requests it. The local `Codex/gui-design` branch is checked out in worktree `7805`, so it was not moved or edited. Its fetched remote tip was verified to be an ancestor of this base; publication is a normal fast-forward. The old instruction to use `claude/gui-loop-rework` is superseded. Never target `main`.
-- **G7b in one paragraph:** loops, limits and sources are built. Edit loops as instances on Layout; remove with dependents is refused. Use one Add menu and selectable loop headers with name, rate, neutral Real-time badge and budget %. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and its actual two f32 sources. The wiring-picker scenario adds real-time `test` with `sim_motor` to demonstrate cross-loop refusal. Delete the obsolete after-remove-invalid frame. The revised plan covers Parts A–G and 17 new Layout frames; approval of this scope is the next gate.
+- **G7b complete:** Parts A–G are built, in review. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. Await acceptance, not construction approval.
 - **G7b traps:**
   - Retained normal frames with a tree or Device loop table use the three-loop baseline: G4, G7, Device and its G6 copies. Preserve explicit scenario differences: four loops for wiring refusal, factory loops for first boot, no loops for the saved-empty layout, offline/failed states where appropriate. Update in one scripted pass per page, then screenshot each frame.
-  - The G4 Instance detail tree (`84:4122`) was checked on 2026-11-14: it is a FRAME containing separate G2 TreeItem INSTANCE rows, not a shared tree component. The Device table card `67:1267` was located; inspect its row structure before editing it. Do not assume a component update adds the third loop to every frame.
+  - The G4 tree (`84:4122`) is a FRAME with separate G2 TreeItem INSTANCE rows, not a shared tree component. Trees and Device table rows were updated per frame. Six remote Device/lease-over-Device states did not contain the local loop card; a compact read-only table was added there while preserving lease/history controls.
   - Loop names and the loop count come from the device. Nothing may assume `control` and `sensor`.
   - The mock actuator and feedback need a real-time loop. In wiring picker `85:4111`, move the scenario's `sim_motor` into second real-time loop `test`; its cross-loop entry stays disabled with a reason.
   - Read `docs/protocol/core.md`, `docs/protocol/types/loop.md` and `docs/protocol/types/fusion.mock.md`. The source target picker accepts signals and inputs of the required value type; `left_enc.count` is i32 and cannot feed fusion.mock's f32 feedback source. Use `left_enc.position` instead.
@@ -74,7 +73,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 **G3 frames** (page `2:5`, Screens – Local): Connect · Serial port `64:942`, Loading `65:1018`, Protocol mismatch `65:1225`; Device · Disarmed `67:1154` (the base the others were cloned from), Armed `69:1328`, ARM refused `69:1729`, Fault with drawer `70:1694`, Safe mode `70:2136`, Rename `73:2066`, Factory reset `73:2240`, Firmware update writing `73:2407`, waiting to confirm `73:2666`, rolled back `73:2949`; Overlay · Link lost `74:2992`, Device rebooted `74:3268`; checks: 1920×1080 Connect `75:2574` and Device `75:2721`, Light Connect `75:3039` and Fault `75:3186`. Header `75:3587`. Rows at y 0, 1640, 3280, 4920, 6560, 8200; frames 2760 apart.
 
-**G4 frames** (page `2:5`): header `89:7038`, notes `89:7039`, row labels `89:7034`–`89:7037`. Row y 10040: Instance detail `84:3890`, Wiring picker open `85:4111`, Custom panel slot `85:4679`, Armed, layout locked `85:5034`. Row y 11680: Pending changes, refused op `87:4704`, Review pending changes `87:5149`, Discard all confirm `87:5221`. Row y 13320: Remove with dependents `89:5301`, After remove, wiring invalid `89:5729`, Failed instance `89:6270`, First boot, Add instance `89:6715`. Checks y 14960: 1920×1080 Instance detail `89:7040`, Light Pending changes `89:7326`.
+**G4 retained frames** (page `2:5`): header `89:7038`, notes `89:7039`, row labels `89:7034`–`89:7037` (updated in G7b). Row y 10040: Instance detail `84:3890`, Wiring picker open `85:4111`, Custom panel slot `85:4679`, Armed, layout locked `85:5034`. Row y 11680: Pending changes, refused op `87:4704`, Review pending changes `87:5149`, Discard all confirm `87:5221`. Row y 13320: Failed instance `89:6270`, First boot, Add instance `89:6715`; the two earlier removal states were deleted. Rebuilt checks y 14960: Instance detail `191:13815`, Pending changes `191:14162`, both 1920×1080 Light. Removal refusals are now in G7b.
 
 **G5 frames** (page `2:5`): header `111:8758`, notes `111:8759`, row labels `111:8760`–`111:8763`. Row y 16840: Tune · Run results `99:6359`, Run in progress `103:6756`, Run stopped by disarm `104:7169`, Disarmed, new session `105:7584`. Row y 18480: A/B compare `106:7916`, Plant identification `107:8318`. Row y 20120: Monitor · Live plots and manual command `109:8621`, Paused with cursors `109:9147`, Link budget full `109:9731`. Checks y 21760: 1920×1080 Tune · Run results `111:8764`, Light Monitor · Live plots `116:9143`.
 
@@ -87,6 +86,19 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 **G7 frames** (page `2:7`, Custom panels): header `162:2714`, note `162:2715`. Three columns 2760 px apart. Row y 0: Live calibration `161:1030`, Fully calibrated `161:1344`, Read snapshot/export `161:1647`. Row y 1640: Imported file review `161:1965`, Applying `161:2344`, Applied `161:2669`. Row y 3280: File rejected `161:2988`, Apply failed `161:3291`, IMU data unavailable `161:3615`. Row y 4920: Confirm apply `162:2565`, Waiting for first sample `165:3124`. Checks y 6560: Live calibration `162:2887`, Confirm apply `163:8006` (x 2120), both 1920×1080 Light.
 
 **G2 changes in G7:** Sensor panels section `160:992` at x 5544, y 4200. CalibrationLevel set `160:999`, variants 0 `160:994`, 1 `160:995`, 2 `160:996`, 3 `160:997`, Unavailable `160:998`; Label text property. OrientationPreview set `160:1050`, Live `160:1047`, Stale `160:1048`, Unavailable `160:1049`. Mapping rows `160:1132`, `160:1141`. Instance reviews Dark `160:1087`, Light `164:1030`. Existing variables/styles only.
+
+**G7b G2:** Loops and sources section `176:1181`; SourcePicker `176:1231` (6 states), SourceRow `176:1369` (9), AddMenu `176:1385`; mapping rows `176:1388`, `176:1397`, `176:1406`. TreeItem `36:347` retains module variants and has 8 loop states plus Real-time visibility. Reviews Dark `176:1415`, compact Light `176:2588`. Shell `63:1180` moved to y 4322 after Navigation grew. No new tokens or styles.
+
+**G7b Layout frames** (Screens – Local `2:5`): header `187:13623`, note `187:13624`; 4 columns, 2760 px apart, rows 1640 px apart. Full names and contents in gui-design.md, "Built 2026-11-14".
+
+- y 23640: Loop detail/control `182:10790`, fusion pending/unsaved `183:10951`, armed `183:11384`, Add loop `183:11898`.
+- y 25280: capacity reached `183:12402`, Capacity refusal `183:12848`, loop-in-use removal refusal `183:13351`, wired-instance removal refusal `183:13749`.
+- y 26920: failed loop `183:14040`, Add instance/loop choice `183:14362`, no compatible loop `183:14818`, saved empty layout `183:15212`.
+- y 28560: Sources valid `183:15439`, stale/missing `183:15772`, disconnected/waiting `183:16106`, pending/refused `183:16413`.
+- y 30200: Source picker `183:16738`.
+- Kept checks at x 12000: Loop detail `191:13355` (y 0), Sources `191:13619` (y 1280), both 1920×1080 Light. Temporary QA copies removed.
+- Rebuilt G4 checks at y 14960: Instance detail `191:13815` (x 0), Pending changes `191:14162` (x 2120), both 1920×1080 Light. Old `89:7040` / `89:7326` are deleted, as are obsolete removal frames `89:5301` / `89:5729`.
+- Cover G7b row `190:19106`, state text `190:19110`. FigJam flow 5 `15:949`: first state `6:441`, Add `6:444` updated.
 
 **G2 changes in G4:** Banner `37:359` booleans `Button 2`, `Button 3`; MenuItem `31:154` boolean `Show detail` and a Detail text; mapping rows `40:928` (Banner) and `40:820` (Menu / MenuItem) extended.
 
@@ -135,11 +147,16 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Growing the QML mapping table can make its section overlap Icons. G6 moved the mapping section below the other sections in its column; check section bounds after adding mapping rows.
 - Returning every descendant id for many cloned screens can exceed the 48 KB use_figma return limit and roll back the call. G7 split check creation into bounded groups after inspecting the canvas; do not silently omit affected ids.
 - Narrowing a generic table card does not shrink fixed-width TableCell instances. Resize the columns explicitly or values can disappear beyond the card. Likewise, shorten or wrap the signal-card header action when its title changes to paused/stale.
+- Old TreeItem instances retain explicit 32 px height overrides after their loop main component grows. Resize loop instances to 52 px; otherwise the budget/state line clips into the next row.
+- Overlay rectangles, dialogs, popups and tooltips appended to an auto-layout screen must be ABSOLUTE before positioning; otherwise the body can collapse and the dialog falls below the frame. Recenter INSTANCE dialogs as well as FRAME dialogs at 1080p.
+- For the RGBA scrim token, construct the fallback RGB and paint opacity from `resolveForConsumer()` and keep the binding. A generic grey fallback can render grey despite a black RGBA alias. Avoid reading `visible` after hiding a nested instance: its proxy can become invalid; compute the flag before setting it.
+- Compact G4: right column 460 px, wiring pickers fill their row, and full param refusal/pending notes sit below the editor. Compact Device table widths total 500 px; rate/Core need enough room to avoid ellipses. Compact Calibration: wrapped controls, file-card gap 8 and vertical padding 12, activity gap 8/padding 12. These checks supplement the earlier retained compact views.
 
 ## Session log
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-14 | G7b build | User approved Parts A–G. Built 8 loop header states, SourcePicker, SourceRow and AddMenu with mappings/reviews; 17 new Layout frames; updated G4/G7 trees, local/remote Device tables and Monitor browsers; deleted 2 obsolete G4 states; rebuilt G4 checks; updated Cover/flow 5. Checked all new frames and 44 changed primary frames in full size and 1080p Light, inspected retained copies, fixed header heights/compact fields/overlays/pending ARM controls. G5 inherited fixed plot/toolbar issues remain open. G7b in review; G7 left in review |
 | 2026-11-14 | G7b planning | Recorded six user answers: leave G7 in review, one Add menu, detailed loop headers, delete obsolete invalid-layout frame, second real-time loop for wiring refusal, shipped fusion.mock. Read current core v8/loop/source contracts; inspected G7 and G4 structure/screenshots. Revised Parts A–G to 17 new Layout frames, two G4 deletions and shared-screen updates with size/theme checks. No Figma mutations. Awaiting scope approval before Part A |
 | 2026-11-13 | loop design (firmware session) | After firmware F3d: compared the designs with the built loops and the planned sources; user decisions (loops edited on Layout, Remove follows the firmware, sources designed as provisional, third sample loop `fusion`); wrote the G7b brief in gui-design.md, updated the sample device and the state inventory, closed todo-layout-ops.md. Nothing built in Figma |
 | 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
