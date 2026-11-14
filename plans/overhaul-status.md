@@ -4,6 +4,8 @@ The working state of the overhaul: the firmware ([firmware-architecture.md](firm
 
 ## Current
 
+- **Validation report (2026-11-14):** validator writes `build/validate/summary.json` with per-check results and cached-execution provenance; schema/usage are in `docs/development.md`. Existing commands and verification gates are unchanged; H1a/HW handoff remains applicable.
+
 - **Instruction cleanup (2026-11-14):** scoped instructions shortened; existing command walkthroughs moved to `docs/development.md`. CLAUDE sources and AGENTS links retained; no step/runtime policy changed. [PR #65](https://github.com/taruntom1/drivelink_v2/pull/65); existing H1a/HW handoff remains applicable.
 
 - **Branches.** F1–F10 are merged into `main`, `legacy-final` resolves to `7a4d693`, and `origin/host_overhaul` exists (verified 2026-11-14). The HW and H steps run on `host_overhaul`; `main` stays frozen until `host_overhaul` merges, and HW firmware fixes go to `host_overhaul` too.
