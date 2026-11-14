@@ -53,6 +53,51 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(env, {'PATH': 'C:\\a;C:\\b', 'IDF_PATH': 'C:\\idf', 'A': 'b=c'})
 
 
+class NativeToolchainTest(unittest.TestCase):
+    def windows_plan(self, missing=None):
+        def exists(path):
+            return path.name != missing
+
+        with mock.patch.object(validate, 'WINDOWS', True), \
+                mock.patch.object(validate, 'need_yaml'), \
+                mock.patch.object(validate.Path, 'is_file', exists), \
+                mock.patch.dict(validate.os.environ, {'PATH': 'C:/Strawberry/c/bin'}):
+            return validate.plan_native('2')
+
+    def test_windows_ignores_strawberry_and_keeps_ucrt_runtime_first(self):
+        steps = self.windows_plan()
+        configure = steps[0]
+        self.assertEqual(configure.argv[0], (validate.QT_DIRS[1] / 'cmake.exe').as_posix())
+        self.assertIn('-DCMAKE_C_COMPILER=' + (validate.UCRT_BIN / 'gcc.exe').as_posix(),
+                      configure.argv)
+        self.assertIn('-DCMAKE_CXX_COMPILER=' + (validate.UCRT_BIN / 'g++.exe').as_posix(),
+                      configure.argv)
+        self.assertIn('-DCMAKE_MAKE_PROGRAM=' + (validate.QT_DIRS[2] / 'ninja.exe').as_posix(),
+                      configure.argv)
+        build = configure.argv[configure.argv.index('-B') + 1]
+        self.assertEqual(build, 'firmware/test/native/build/ucrt64')
+        for step in steps:
+            self.assertIn(build, step.argv)
+            self.assertEqual(step.env['PATH'].split(';')[0], str(validate.UCRT_BIN))
+        self.assertEqual(steps[2].argv[0], (validate.QT_DIRS[1] / 'ctest.exe').as_posix())
+
+    def test_missing_windows_tool_never_falls_back_to_path(self):
+        for tool in ('gcc.exe', 'g++.exe', 'cmake.exe', 'ctest.exe', 'ninja.exe'):
+            with self.subTest(tool=tool):
+                with self.assertRaises(validate.Unavailable) as error:
+                    self.windows_plan(missing=tool)
+                self.assertIn(tool, str(error.exception))
+
+    def test_linux_keeps_native_tools_and_build_directory(self):
+        with mock.patch.object(validate, 'WINDOWS', False), \
+                mock.patch.object(validate, 'need_yaml'), \
+                mock.patch.object(validate, 'need') as need:
+            steps = validate.plan_native('2')
+        need.assert_called_once_with('cmake', 'ctest', 'ninja', 'gcc', 'g++')
+        self.assertIn('firmware/test/native/build', steps[0].argv)
+        self.assertTrue(all(step.env is None for step in steps))
+
+
 class FingerprintTest(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()

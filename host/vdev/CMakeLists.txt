@@ -27,7 +27,7 @@ target_include_directories(drivelink_native_core PUBLIC
   ${COMPONENTS}/core_os/include ${COMPONENTS}/core_os/backend/native/include
   ${COMPONENTS}/diag/include ${COMPONENTS}/diag/priv_include)
 target_link_libraries(drivelink_native_core PUBLIC drivelink::protocol Threads::Threads)
-target_compile_features(drivelink_native_core PUBLIC cxx_std_20)
+target_compile_features(drivelink_native_core PUBLIC cxx_std_23)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   # Match firmware/test/native's warning policy for the shared firmware code.
   target_compile_options(drivelink_native_core PUBLIC -Wno-unused-parameter -Wno-sign-compare)

@@ -14,7 +14,7 @@ the code it covers is unchanged (--force runs it anyway).
 No check flashes a board or opens a serial port. Hardware tests stay separate
 (firmware/CLAUDE.md, "Hardware-in-the-loop and smoke tests").
 
-Standard library only. The guide is in firmware/test/CLAUDE.md ("Validation").
+Standard library only. The guide is in docs/development.md ("Validation").
 """
 import argparse
 import dataclasses
@@ -36,10 +36,11 @@ WINDOWS = os.name == 'nt'
 CI = bool(os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS'))
 GROUPS = bool(os.environ.get('GITHUB_ACTIONS'))
 
-# This machine's toolchains, as firmware/CLAUDE.md and host/README.md give them.
+# This machine's toolchains, documented in docs/development.md and host/README.md.
 # The windows-mingw preset and install_smoke.py name the same Qt compiler.
 QT_TOOLS = Path('C:/Qt/Tools')
 QT_DIRS = [QT_TOOLS / 'mingw1310_64/bin', QT_TOOLS / 'CMake_64/bin', QT_TOOLS / 'Ninja']
+UCRT_BIN = Path('C:/msys64/ucrt64/bin')  # MSYS2 UCRT64 GCC 16.2; native tests only
 IDF_DEFAULT = Path.home() / 'esp/v5.5.2/esp-idf'
 IDF_PYTHON_311 = Path('C:/Espressif/tools/idf-python/3.11.2')
 
@@ -161,13 +162,32 @@ def plan_gen(jobs):
 
 def plan_native(jobs):
     need_yaml()
-    need('cmake', 'ninja', 'g++')
     build = 'firmware/test/native/build'
+    env = None
+    cmake, ctest = 'cmake', 'ctest'
+    options = []
+    if WINDOWS:
+        # Name every tool so Strawberry (or Qt's MinGW) cannot win via PATH.
+        cmake = (QT_DIRS[1] / 'cmake.exe').as_posix()
+        ctest = (QT_DIRS[1] / 'ctest.exe').as_posix()
+        ninja = (QT_DIRS[2] / 'ninja.exe').as_posix()
+        cc, cxx = [(UCRT_BIN / name).as_posix() for name in ('gcc.exe', 'g++.exe')]
+        missing = [tool for tool in (cmake, ctest, ninja, cc, cxx) if not Path(tool).is_file()]
+        if missing:
+            raise Unavailable('native tests need MSYS2 UCRT64 GCC 16.2 and Qt CMake/Ninja; '
+                              'missing: ' + ', '.join(missing))
+        env = dict(os.environ)
+        env['PATH'] = ';'.join([str(UCRT_BIN), *map(str, QT_DIRS[1:]), env['PATH']])
+        build += '/ucrt64'  # never reuse a Strawberry CMake cache or object
+        options = [f'-DCMAKE_C_COMPILER={cc}', f'-DCMAKE_CXX_COMPILER={cxx}',
+                   f'-DCMAKE_MAKE_PROGRAM={ninja}']
+    else:
+        need('cmake', 'ctest', 'ninja', 'gcc', 'g++')
     return [
-        Step('configure', ['cmake', '-S', 'firmware/test/native', '-B', build, '-G', 'Ninja',
-                           f'-DPython3_EXECUTABLE={python()}']),
-        Step('build', ['cmake', '--build', build, '--parallel', jobs]),
-        Step('test', ['ctest', '--test-dir', build, '--output-on-failure']),
+        Step('configure', [cmake, '-S', 'firmware/test/native', '-B', build, '-G', 'Ninja',
+                           f'-DPython3_EXECUTABLE={python()}', *options], env=env),
+        Step('build', [cmake, '--build', build, '--parallel', jobs], env=env),
+        Step('test', [ctest, '--test-dir', build, '--output-on-failure'], env=env),
     ]
 
 
