@@ -192,3 +192,13 @@ run of `host/test/time_smoke.py`. Run that script for 180 s on the CH343 both
 idle and with `--traffic`; raw I/O timestamps, held-out low-RTT residuals and
 prediction changes are the evidence. The Pi `--jitter-us 100` campaign remains
 deferred in the status file. These suites join the existing validator checks.
+
+F9 adds SHA-256 known answers/image preflight, pure OTA lifecycle/wire/gate
+tests and native boot-metadata failures (including selection before/after
+mutation). Existing native/host Check entries cover them; `gen` also checks
+the fixed NVS/dual-slot table and guarded candidate-build helper. Host units
+cover batch correlation/close/timeouts/payload limits. Integration runs the
+shared `host/test/ota_smoke.py` campaign, plus TCP lost-reply/identity/commit
+proxies and pipelined REBOOT+FINISH/ABORT regressions. On the bare board use
+real IDF baseline/candidate binaries and `--stack-wait 45`, never native fixture
+images. Full commands and recovery are in `host/README.md` and the OTA spec.

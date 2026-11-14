@@ -1,6 +1,6 @@
 # F9 implementation plan: OTA, partition table and rollback
 
-Status: approved on 2026-11-14; implementation in progress. Based on `origin/firmware_overhaul`
+Status: implemented and validated on 2026-11-14; ready for PR review. Based on `origin/firmware_overhaul`
 at `06fef73` (F8 merged). Branch: `codex/overhaul-F9`.
 
 ## Approved pre-plan decisions
@@ -247,7 +247,7 @@ Independent review of `457418b` found that Ready ABORT's two IDF metadata
 writes can demote the previously confirmed image to NEW if interrupted. A
 later reset can then select the canceled candidate. The direct metadata-bit
 invalidation alternative falls outside IDF's documented erased-write contract.
-No hardware has been touched.
+The correction and its failure tests passed review/full validation before hardware was touched.
 
 The user approved this correction: FINISH validates and prepares the candidate without
 selecting it. SYSTEM REBOOT, after its reply drains, selects the prepared
@@ -261,3 +261,32 @@ without automatically repeating REBOOT. A separate CommitAndReboot after-reply
 action prevents EXIT_SAFE_MODE or another incidental reset from committing.
 Failure tests cover selection before/after mutation, prepared reset/cancellation,
 and an accepted reboot whose commit never takes place.
+
+## Results (2026-11-14)
+
+- Full validation passed all seven checks after the review corrections:
+  gen/native/host-win/host-linux/fw/fw-nolog/fw-hil-app. All three IDF builds
+  were warning-free. Native/host suites include the new cancellation/uncertain
+  commit, bounded batch, reduced payload and reboot-fence regressions.
+- Self-review plus one independent Codex reviewer at high effort. Both valid
+  findings were fixed: the unsafe Ready ABORT metadata sequence (user-approved
+  R1), and native dispatch past an asynchronous reboot reply. Follow-up review
+  found no further actionable issues. No findings were rejected.
+- Bare ESP32-S3 reported 16 MiB flash. Guarded normal UART migration succeeded;
+  all 24,576 NVS bytes matched the pre-migration snapshot (SHA-256
+  `992fdf9543943f8933e04101d04637472c2a07fbe6811af846d2c38964e80159`).
+  GET_INFO loaded the original configuration over core v8.
+- Distinct normal baseline/candidate binaries (470,400 bytes each) passed the
+  shared physical campaign: duplicate/conflict/gap/incomplete/hash checks,
+  partial reset, prepared ABORT, confirmed update retained on reset, unconfirmed
+  candidate rolled back, and baseline/settings restored through OTA.
+- Time/diag framing, core, safety and CLI hardware smokes passed afterward.
+  Normal b6b5f84 F9 is confirmed in slot 0, ELF hash starts `602b102c17f781fc`;
+  original loops 1000/100 Hz, status 10 Hz, watchdog 200 ms, two loops/no modules,
+  idle groups and no pending confirmation. Bench stall is refused; XiP/bench off.
+- Console stack minima in bytes: main 3688, uart_rx 2924, uart_tx 3064, diag
+  1576, esp_timer 3272, core_cfg 1956, core_loop_0 3084, core_loop_1 2892, and
+  temporary CLI-test core_loop_2 3112. All exceed 1 KiB. COM4 capture is closed.
+- No F9 motor/IMU/Pi check was needed. Existing deferred hardware rows remain.
+  Local build/validate, bench, raw backup and console evidence stays ignored;
+  no raw NVS content is committed or published.

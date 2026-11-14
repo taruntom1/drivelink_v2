@@ -23,6 +23,7 @@ The API headers in `include/core_os/` are common to both. Each backend has its o
 | `diag_sink.hpp` | `reportDiag(code, err, arg0, arg1)` and `countDiag(code, n)` |
 | `kv_store.hpp` | `KvStore`: `get(ns, key, buf, len)` (a null `buf` gives the size), `set` (commits), `eraseNamespace`, `listNamespaces(fn, ctx)`; `nvsInit()` |
 | `boot_info.hpp` | `resetWasCrash()`, `loadCrashCount()` / `storeCrashCount()` (RTC no-init), `reboot()` |
+| `ota.hpp` | `Ota`: boot info, sequential begin/write/read, finish/validate, select, abort and confirm. One config caller; fixed buffers supplied by the core |
 | `one_shot.hpp` | `OneShotTimer`: `start(name, delay_us, fn, ctx, realtime=false)` calls `fn(ctx)` once; `cancel()` |
 | `atomics.hpp` | `lockFreeAtomic<T>()`: always lock-free, or a word-sized atomic served by IDF's IRAM S32C1I helpers when PSRAM makes IDF build with `-mdisable-hardware-atomics` (`kAtomicsOutOfLine`). Atomics must never live in PSRAM |
 | `capture_memory.hpp` | `captureCapacity(limit)`, `captureAlloc(bytes)`, `captureFree(ring)`: the capture ring. IDF: PSRAM through `heap_caps_malloc(MALLOC_CAP_SPIRAM)` (the largest free PSRAM block at boot is the capacity), or a 32 KB internal ring when the board has no PSRAM. Native: malloc, 4 MiB unless `native::setCaptureCapacity`; `native::failNextCaptureAlloc()` (in `native_task.hpp`) injects a failure. Configure time only |
@@ -88,3 +89,22 @@ remain task-only, while raise/clear and safety queries are allowed in ticks.
 F4b enables CONFIG_ESP_TASK_WDT_PANIC in firmware defaults and requires the
 initialized panic-reset Task WDT at build time. Existing generated sdkconfigs
 must be regenerated when taking this default.
+
+## OTA backend (F9)
+
+IDF uses app_update APIs with sequential erasure and compile-time rollback
+enforcement. `finish()` closes/validates the upload without selecting it;
+`select()` is the explicit reboot commit. `abort()` never restores or rewrites
+boot metadata, and refuses a different selected slot. `confirm()` marks only
+the pending running image valid. Errors retain their ESP-IDF cause for the
+core's diagnostic stage. No direct otadata bit programming is used.
+
+Native `native_ota.hpp` defaults to isolated in-memory slots. Vdev sets its
+exclusive state directory and initial source build identity before Core
+construction. Checked, atomically replaced `ota.bin` metadata models selection,
+pending verification and rollback across process/soft resets. A prepared image
+and its handle do not survive reset; FINISH/ABORT do not write this metadata.
+`failOtaOperation` injects before-operation errors; `select_after` reports an
+error after durable selection to test an uncertain commit. A corrupt/torn
+metadata file fails closed. This backend simulates identity/boot state and
+does not execute uploaded ESP machine code or prove physical flash timing.

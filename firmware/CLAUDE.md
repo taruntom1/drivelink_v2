@@ -242,3 +242,19 @@ overrides and receipts, fresh-command handoff, and config-task completion events
 It never feeds the watchdog. See the core README and `docs/protocol/core.md`.
 XiP remains disabled by default; the isolated `bench_fw.py xip` profile and
 its measured tradeoffs are recorded in `plans/f7b-implementation.md`.
+
+## OTA (F9)
+
+The main app uses core v8 and the dual-slot `firmware/partitions.csv`, with
+rollback enabled and NVS unchanged at 0x9000/0x6000. A board still on the old
+single-app table needs one UART migration; `python tools/bench_fw.py normal`
+builds, verifies normal/rollback/partition settings and flashes without erasing
+NVS. Never use erase-flash as an OTA migration step. The bootloader initializes
+the first slot as VALID; candidate images are confirmed only by host CONFIRM.
+
+FINISH prepares an image. Explicit SYSTEM REBOOT selects it after reply drain
+and immediately restarts. Other reset paths do not commit. Prepared ABORT never
+rewrites boot metadata; an already selected candidate requires reset/rollback.
+Receiving, Ready, errors and pending confirmation block ARM. Flash access stays
+on core_cfg, with fixed internal-RAM buffers; there is no OTA task. Exact wire,
+integrity/identity and recovery rules are in `docs/protocol/ota.md`.

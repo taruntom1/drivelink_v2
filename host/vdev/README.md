@@ -16,7 +16,7 @@ A failed PTY drain cancels/drops queued replies and effects, retaining the maste
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v7, time v1, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v8, time v1, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock
@@ -86,3 +86,25 @@ F8 time requests use the shared exact codecs, take RX time at dispatch, and
 patch TX time/CRC only when their queued write begins. They have the same
 reliable-response deadline as core/diag replies, including on PTY. Malformed
 requests are dropped and counted. See `docs/protocol/time.md`.
+
+## OTA simulation (F9)
+
+The actual core OTA service operates on a native two-slot backend. `ota.bin`
+stores checked slot/build identities and boot state in the exclusive state
+directory. A fresh baseline uses the compiled source build ID (zero-extended
+for the simulated full hash). A candidate's descriptor supplies its simulated
+identity/version, while GET_INFO keeps a -vdev suffix. This preserves existing
+physical-hardware preflight refusals.
+
+FINISH prepares only; explicit SYSTEM REBOOT commits after its reply is written.
+The peer fences later CoreCommand dispatch while an after-reply action is
+queued, replying Busy/StagingBusy; fast DISARM/time remain available. A failed
+drain/cancelled queue cannot commit, and a failed select keeps the service
+gated for STATUS-based recovery. Pending boot, confirmation and the next-reset
+rollback are modeled across soft/process restarts. Corrupt metadata fails
+closed. Uploaded bytes/handles are not resumed after reset.
+
+The same native executable continues running after a simulated update. It
+cannot establish ESP image execution, eFuse compatibility, physical flash
+timing or power-loss behavior; those need the bare board. Shared integration
+and failure-proxy cases are documented in the host README and OTA spec.
