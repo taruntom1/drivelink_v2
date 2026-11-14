@@ -150,6 +150,29 @@ struct Session::Impl
             // Asio's Windows open() already disables flow control, DTR and
             // RTS. Its flow_control(none) option re-enables both lines, which
             // toggles ESP32 auto-reset circuitry on every CLI invocation.
+            if (!ec)
+            {
+                // Asio 1.30.2 waits for a 1 ms inter-byte gap or a full read
+                // buffer. Continuous streams can therefore hide a ping reply
+                // in a 2048-byte read for tens of ms. Return on the first byte
+                // instead (Win32 COMMTIMEOUTS documented special mode).
+                // The constant only bounds idle reads; bytes return at once.
+                COMMTIMEOUTS timeouts{};
+                if (!::GetCommTimeouts(serial.native_handle(), &timeouts))
+                {
+                    ec = asio::error_code(static_cast<int>(::GetLastError()), asio::error::get_system_category());
+                }
+                else
+                {
+                    timeouts.ReadIntervalTimeout = MAXDWORD;
+                    timeouts.ReadTotalTimeoutMultiplier = MAXDWORD;
+                    timeouts.ReadTotalTimeoutConstant = 1000;
+                    if (!::SetCommTimeouts(serial.native_handle(), &timeouts))
+                    {
+                        ec = asio::error_code(static_cast<int>(::GetLastError()), asio::error::get_system_category());
+                    }
+                }
+            }
 #endif
         }
         else

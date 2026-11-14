@@ -37,6 +37,12 @@ The SDK timestamps its send on the I/O thread when the queued ping starts
 writing, and its receive when the matching complete response is scanned. Caller
 wakeup and time spent waiting in the application's TX queue are excluded.
 Host timestamps use `steady_clock` microseconds, with no UTC interpretation.
+On Windows, the host overrides Asio 1.30.2's inter-byte-gap read timeout with
+Win32's first-byte return mode (`MAXDWORD`, `MAXDWORD`, idle constant 1000 ms).
+Available bytes return immediately; the constant bounds only a no-data wait.
+Write timeouts and DTR/RTS remain unchanged. This prevents continuous telemetry
+from holding a reply until the 2048-byte input buffer fills. See the
+[COMMTIMEOUTS special mode](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-commtimeouts).
 
 Given host send/receive `h0,h3` and device receive/send `d1,d2`:
 
