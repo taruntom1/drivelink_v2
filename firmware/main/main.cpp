@@ -42,7 +42,7 @@ namespace {
 // task (a manager that did not start) is skipped.
 // esp_timer runs the timer callbacks (the loop timers, the safety monitor and
 // the IMU sampling timer).
-constexpr std::array<const char *, 7> kLoggedTasks = {
+constexpr std::array kLoggedTasks = {
     "main", "uart_rx", "uart_tx", "diag", "esp_timer", "core_cfg",
 };
 
