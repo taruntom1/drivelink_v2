@@ -86,9 +86,18 @@ Read with [host-architecture.md](host-architecture.md), section "`drivelink-gui`
 | Loops are edited on Layout | A loop is an instance of the built-in `loop` type (firmware F3d). Selecting a loop header in the Layout tree opens it in the detail pane like any instance: its params, its live statistics and the instances that run in it. The Device loop table stays read-only, and each row links to the loop on Layout. G7b, user decision 2026-11-13. |
 | Remove follows the firmware | The device refuses to remove an instance that another one is wired to, and a loop that still holds an instance (`Referenced`). So Remove is disabled in those cases, and a tooltip names what must be rewired, moved or removed first. Nothing is staged and the layout does not go invalid. This replaces the G4 "Remove with dependents" dialog. G7b, user decision 2026-11-13. |
 | Loop at add | `ADD_INSTANCE` takes a loop id. The Add instance dialog lists the loops the type may run in, by name: a type is `realtime: required`, `forbidden` or `any`, and a loop is real-time or not. The device's default (the lowest-numbered compatible loop) is preselected. With no compatible loop the dialog says so and offers Add loop. G7b. |
-| Sources (provisional) | A source is a param that names a signal of another instance, in any loop (firmware F4c, planned but not built). It gets its own row: a signal picker, the sampled value, its age, and the states valid, stale, missing and not connected. Designed now and marked provisional; checked again when F4c lands. G7b, user decision 2026-11-13. |
+| Sources | A source is a reboot-required param that names a signal or input of another instance, in any loop. It gets its own row: a target picker, the sampled value, its age, and the states valid, stale, missing and not connected. Originally provisional (2026-11-13); checked against the built F4c/core v8 contract on 2026-11-14. |
 | Sample device has three loops | The sample device gains a `fusion` loop (200 Hz, not real-time) with one fusion instance, so the screens show more than the factory pair. Every frame that shows the instance tree or the loop table is updated. G7b, user decision 2026-11-13. |
 | Limits and source state | The device reports its limits as read-only system params (firmware F4b), and a source's value and age are ordinary signals named `<source>.value` and `<source>.age_us` (firmware F4c). The GUI shows counts against the limits, disables Add at the limit, and reads a source's state like any live signal. Settled with the firmware plan on 2026-11-13. |
+| G7 review during G7b | Proceed with G7b and leave G7 Custom panel in review. G7 acceptance and reconciliation with the built F6 calibration support remain open. User decision 2026-11-14. |
+| G7b Add control | One Add button on the Instances card opens an Instance / Loop menu. User decision 2026-11-14. |
+| G7b loop headers | Selectable loop headers show name, rate, a neutral Real-time badge when applicable, and budget % (run time divided by the period). CPU load remains per core. User decision 2026-11-14. |
+| G7b obsolete invalid-layout frame | Delete "After remove, wiring invalid" (`89:5729`), without replacing it with a boot-invalid screen. Refused removals leave the layout unchanged. User decision 2026-11-14. |
+| G7b cross-loop wiring example | Keep the wiring picker's disabled-with-reason example by adding a second real-time loop to that scenario. `sim_motor` runs there, so its type is compatible with its loop, while wiring it to `left_drive` in another loop is refused. User decision 2026-11-14. |
+| G7b source sample | Use the shipped `fusion.mock` type and its actual `feedback` and `imu` source params, generated value/age signals and `combined` signal. Replace the illustrative `fusion.odometry` and its three invented source items. User decision 2026-11-14. |
+| G7b scope approved | Parts A–G, including G2 extensions, 17 new Layout frames, shared-screen updates, two G4 deletions, Cover/flow records and size/theme checks, approved by the user on 2026-11-14 before construction. G7 remains in review. |
+| G7b accepted | The user accepted G7b and its G2 extensions on 2026-11-14. Parts A–G are done. G7 remains in review; inherited G5 responsive issues remain open for G8/H2. |
+| G7 accepted | The user also accepted G7 Custom panel on 2026-11-14, including CalibrationLevel, OrientationPreview, the 11 screens and retained checks. G8 discussion is next; calibration alignment and host contracts remain in the handoff notes. |
 | Figma account | The files live in the `drivelink` team (Education plan: unlimited pages). The MCP seat is still a View seat, so reads (screenshots of the canvas) are kept for final checks; diagrams are checked from the thumbnails `generate_diagram` returns. |
 
 ## Ground rules for every design
@@ -112,8 +121,8 @@ A two-wheel bench rig, used in every wireframe and screen so the data is consist
 
 - in `control`: `controller.cascade_pid` `left_drive` and `right_drive`, each wired to an `actuator.pwm_dir` (`left_pwm`, `right_pwm`) and a `feedback.quadrature` (`left_enc`, `right_enc`)
 - in `sensor`: `imu.bno055` `imu`
-- in `fusion` (from G7b): `fusion.odometry` `odom`, with three sources: `left` → `left_enc.count`, `right` → `right_enc.count`, `heading` → `imu.yaw`. The type and its item names are illustrative; the firmware plan only says "a fusion type".
-- `actuator.mock` and `feedback.mock` `sim_motor` (for safe testing)
+- in `fusion` (from G7b): `fusion.mock` `odom`, with two f32 sources: `feedback` → `left_enc.position` and `imu` → `imu.yaw`. Show `feedback.value`, `feedback.age_us`, `imu.value`, `imu.age_us` and `combined` using the shipped descriptors. `fusion.mock` accepts real-time and non-real-time loops; the label `odom` is retained for continuity and the type is always visible.
+- wiring-picker scenario: a fourth loop `test` (id 3, 500 Hz, real-time, core 1, priority 18, stack 4096) holds `actuator.mock` `sim_motor`. This is the second real-time loop and the reason the picker can show a compatible actuator disabled for cross-loop wiring. The capacity example also uses this fourth loop, empty. Other normal frames use the three-loop baseline; first boot, no-loops and failure frames use their stated scenario.
 - example faults: `feedback.SignalLost` on `right_enc` (active, disarms), `core.WatchdogTimeout` (history)
 
 ## State inventory
@@ -129,7 +138,7 @@ The states the designs must cover, completed in G0. G1 gives each one a place on
 | Param row | normal, edited (not sent), sending, applied, applied but clamped (applied value shown), rejected (non-finite, invalid enum), busy (`StagingBusy`, retry), cross-loop batch refused, pending reboot (staged vs current), locked while armed, read-only, changed since the last save (tracked by the GUI). Types: f32 and integers with unit and range, enum, bool, `Ref` (picker), source (signal picker, from G7b) |
 | Instance | running, failed to start (`InitFailed`), invalid at boot (failed layout validation), left out (`DependencyMissing`), offline (safe mode), pending add, pending remove, label change pending, has an active fault |
 | Loop (G7b) | running (real-time or not), failed to start (its instances are `DependencyMissing`), offline (safe mode: no loop runs), pending add, pending remove, pending change (`realtime`, `core`, `priority`, `stack_bytes` need a reboot), rate changed live (unsaved), rate locked while armed, overruns rising, over budget (run time above the period), no loop at all (a saved empty layout) |
-| Source (G7b, provisional) | not connected, valid (value and age), fresh or held, stale (age above the consumer's limit, or the producer loop paused or stalled), missing (the producer is not running), pending (a new target after the reboot), refused (unknown signal, wrong value type: `BadRef`) |
+| Source (G7b) | not connected, waiting for first sample, valid (value and age), stale (age above the displayed host threshold or a consumer limit), missing (the producer is not running), telemetry unavailable, pending (a new target after the reboot), refused (`BadRef`, `WiringCycle`, `Capacity`). `fresh` is internal to the module and is not a separate wire signal. |
 | Layout op | accepted (pending), rejected (`GpioConflict`, `LabelInUse`, `LoopMismatch`, wrong `Ref` type, empty label, `Referenced` on a remove, `Capacity` when the loop or instance limit is reached), discard pending |
 | Action | idle, running, done with outputs, failed (result, detail), refused while armed (`paused` actions on an instance in a real-time loop) |
 | Capture | not configured, Idle, Armed (waiting for the trigger), Triggered (recording), Done, reading (progress), read failed, config over capacity |
@@ -170,8 +179,8 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G4 Layout | Hi-fi Layout screen: instance tree by loop, add and remove instances, labels, wiring with `Ref` pickers, GPIO and validation errors, the pending-reboot banner and discard. The param table for an instance, and the custom panel slot. | Screens page | done |
 | G5 Tune and Monitor | Hi-fi Tune screen: pick a controller, live gains, test signal and capture set-up, run, overlay runs, the session file (name, save, open, export CSV), plant identification and suggested gains, save or revert. Hi-fi Monitor screen: free-form live plots of any signals, subscription set-up, pause and cursors. | Screens page | done |
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
-| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Custom panels | in review |
-| G7b Loops and sources rework | Bring G2 to G7 in line with the firmware's configurable loops (F3d) and planned sources (F4c): loop items in the Layout tree, loop detail, add and remove loop, the reworked Add instance dialog and Remove rule, the Device loop table, source rows, and the three-loop sample device on every frame that shows loops. See "G7b Loops and sources rework". | Design system, Screens – Local, Screens – Remote, Custom panels | planned |
+| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. Accepted with its G2 extensions on 2026-11-14. | Custom panels | done |
+| G7b Loops and sources rework | Parts A–G built and accepted 2026-11-14: G2 extensions, 17 Layout frames, shared trees/tables/Monitor browsers, two obsolete G4 frames deleted, Cover/flow updates and size/theme checks. Inherited G5 responsive issues remain open. | Design system, Screens – Local, Screens – Remote, Custom panels | done |
 | G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
 
 ## G1 wireframes
@@ -332,17 +341,17 @@ Guidance and the full-calibration prerequisite for reading a profile follow [Bos
 
 ## G7b Loops and sources rework
 
-State: planned on 2026-11-13, nothing built yet. This section is the brief for the session that builds it. The frame ids are in [gui-design-status.md](gui-design-status.md) ("Figma reference"); check that they still exist before use.
+State: done; Parts A–G built and accepted 2026-11-14, including the G2 extensions. G7 was also accepted on 2026-11-14. New frame ids are recorded below; earlier ids and working notes are in [gui-design-status.md](gui-design-status.md). Check ids before use.
 
 ### Why
 
 The designs up to G7 assume two fixed loops, `control` and `sensor`, and a per-type list of loop classes. The firmware changed after they were made:
 - **F3d (built):** loops are instances of a built-in `loop` type and part of the saved layout. A device has between zero and `CORE_MAX_LOOPS` loops (default 4, at most 8).
-- **F4c (planned, not built):** an instance can read a signal of an instance in another loop through a source param.
+- **F4b and F4c (built):** the device reports limits, and an instance can read a signal or input from another loop through a source param. Core wire v8 is the current contract; sources no longer need provisional labels.
 
 ### What the firmware does now
 
-Read these before building: `docs/protocol/core.md` (the layout family, "Built-in loop and factory layout", the status stream), `docs/protocol/types/loop.md`, and "Configurable loops, the real-time flag and sources" in [firmware-architecture.md](firmware-architecture.md).
+Read these before building: `docs/protocol/core.md` (Sources, layout, groups and status stream), `docs/protocol/types/loop.md`, `docs/protocol/types/fusion.mock.md`, and "Configurable loops, the real-time flag and sources" in [firmware-architecture.md](firmware-architecture.md). These were read during orientation on 2026-11-14. Reading the firmware specs does not authorize editing them.
 
 **Loops (built):**
 - **Identity.** A loop is an instance of type `loop`. Its instance id is the loop id, and its label is its name. Loop ids can have gaps.
@@ -365,37 +374,40 @@ Read these before building: `docs/protocol/core.md` (the layout family, "Built-i
 - **Add, remove, rename:** the same ops as for any instance (`ADD_INSTANCE` with type `loop`, `REMOVE_INSTANCE`, `SET_LABEL`). They are staged, then applied by SAVE and a reboot, and refused while armed.
 - **Limits.** One more loop than the device allows is refused with `Capacity`. From firmware F4b the device reports its limits as read-only system params (`limits.loops`, `limits.instances`, and the group limits), so the GUI can show "4 of 4 loops" and disable Add loop beforehand. The refusal stays as the fallback.
 - **Remove.** A loop that still holds an instance can't be removed (`Referenced`). An instance that another one is wired to can't be removed either (`Referenced`).
-- **Real-time.** A type declares `realtime: required`, `forbidden` or `any`. `GET_TYPES` gives a mask: bit 0 the type may run in a real-time loop, bit 1 in the other loops. The shipped mock actuator and feedback are `required`, the mock IMU is `forbidden`, and no shipped type is `any` yet.
+- **Real-time.** A type declares `realtime: required`, `forbidden` or `any`. `GET_TYPES` gives a mask: bit 0 the type may run in a real-time loop, bit 1 in the other loops. The shipped mock actuator and feedback are `required`, the mock IMU is `forbidden`, and `fusion.mock` is `any`.
 - **Add instance.** The op takes a loop id. `0xFF` picks the lowest-numbered compatible loop. With no compatible loop it answers `LoopMismatch`.
 - **Paused actions** are refused while armed on instances in any real-time loop, not only in `control`.
 - **Wiring** still needs both instances in the same loop (`LoopMismatch`).
-- **Factory layout.** A blank device has `control` and `sensor` and no module instance. A saved layout may hold zero loops.
+- **Factory layout.** The normal sample board starts with `control` and `sensor` and no module instance. A build limited to one loop starts with `control` only. A saved layout may hold zero loops; the GUI uses the discovered layout.
 - **Safe mode** starts no loop. The configured loops are listed as offline.
 - **A loop that fails to start** is Failed, and its instances are `DependencyMissing`. The other loops keep running.
 - **Where the numbers come from.** `GET_INFO` lists the running loops (id, name, rate, real-time flag). The status stream carries `loop_id, overruns` per running loop. Run times come from the loop's signals. CPU load is per core, not per loop.
 
-**Sources (planned, F4c):**
+**Sources (built, F4c):**
 - A source is a param whose value names one signal (or input) of another instance, in any loop. 0 means not connected. It needs a reboot.
-- The consumer gets a sampled copy with `value`, `age_us`, `valid` and `fresh`.
+- The module gets a sampled copy with `value`, `age_us`, `valid` and `fresh`. The GUI sees the generated value and age signals, not separate `valid` or `fresh` signals.
 - A missing producer does not stop the consumer: it runs and sees `valid == false`.
-- A target that does not exist or has the wrong value type is refused (`BadRef`). An instance that a source points at can't be removed (`Referenced`).
+- A target that does not exist or has the wrong value type is refused (`BadRef`). An instance that a source points at can't be removed (`Referenced`). Same-loop source cycles return `WiringCycle`; exceeding the distinct-value limit per ordered cross-loop pair returns `Capacity`. A refusal leaves the pending layout unchanged.
 - **How the GUI reads a source's state** (settled 2026-11-13, firmware plan "What the host sees"): a source is three items. The param holds the target and carries a `Source` flag. Two signals carry the state: `<name>.value` (the sampled copy) and `<name>.age_us` (its age in µs). The GUI reads them like any live signal.
-  - `age_us` of `0xFFFFFFFF` means no valid sample. The GUI then says why: the param is 0 (not connected), the target instance is not running (missing), or no sample has arrived yet.
+  - `age_us` of `0xFFFFFFFF` means no valid sample; hide the sampled value. The GUI then says why: the current target param is 0 (not connected), the target instance is not running (missing), or no sample has arrived yet. Missing subscription data is labelled telemetry unavailable instead of being treated as this sentinel.
   - Stale is the GUI's rule: an age above three periods of the producer's loop, unless the consumer's type has its own limit param.
   - The age can be plotted on Monitor like any signal.
+  - A paused producer retains its last snapshot and its age grows. Age alone does not prove that a loop is paused or stalled; say "No recent sample" unless that reason is independently known. Same-loop samples have age zero. Never present a pending target's value as live before reboot.
 
 ### Decided
 
-The six rows of 2026-11-13 in the Decisions table: loops are edited on Layout; Remove follows the firmware; Loop at add; sources are designed now as provisional; the sample device has three loops; limits and source state.
+The earlier choices remain: loops are edited on Layout; Remove follows the firmware; compatible loop at add; three-loop baseline; discovered limits and source state. Sources are now checked against the built contract. The six answers of 2026-11-14 are recorded in the Decisions table above.
 
-### To ask the user before building
+### Discussion outcome and scope approval
 
-Ask these in the Discuss stage, with the recommendation first. Record the answers in the Decisions table.
+1. Proceed with G7b; leave G7 in review.
+2. One Add menu with Instance and Loop.
+3. Loop headers show name, rate, neutral Real-time badge and budget %.
+4. Delete `89:5729`; do not create the suggested boot-invalid replacement.
+5. Keep cross-loop wiring refusal visible using a second real-time loop in that scenario.
+6. Use shipped `fusion.mock`, with two actual source params and their generated signals.
 
-1. **The Add control on the Instances card.** Recommended: one Add button with a menu (Instance, Loop). Alternative: two buttons.
-2. **What a loop header shows in the tree.** Recommended: name, rate, a real-time badge and the budget % (run time over the period). The current design shows "CPU load" there, which the device does not report per loop.
-3. **The frame "After remove, wiring invalid" (`89:5729`).** The state can no longer be reached by a remove. Recommended: turn it into "Layout invalid at boot" (an entry that fails validation at boot is listed as invalid, and ARM is blocked), which keeps the Invalid RefPicker and the banner in use. Alternative: delete it.
-4. **The wiring picker's disabled entry (`85:4111`).** It shows `sim_motor` pending in the `sensor` loop, which the mock types no longer allow (they need a real-time loop). Recommended: remove that entry from the frame and keep the disabled-with-reason state in the G2 MenuItem preview. Alternative: give the frame a second real-time loop.
+The user approved this scope on 2026-11-14 before construction: G2 additions, 17 new Layout frames, updates to retained G3/G4/G6/G7 and Monitor frames, deletion of two obsolete G4 frames, the FigJam first-boot text and Cover row, and size/theme checks. This is design work only. G7 was subsequently accepted; calibration alignment with F6 and the explicit H2/H3 contracts remain handoff items.
 
 ### Work list
 
@@ -404,8 +416,8 @@ Build in this order. Each part can be its own session; the state table in the st
 **A. Design system (page G2 `2:4`)**
 - **TreeItem `36:347`:** the loop header becomes a selectable loop item. Variants: default, hover, selected, pending add, pending change, pending remove, failed, offline. It shows the name, the rate, a real-time badge and the budget %.
 - **Real-time badge:** use Badge `33:189` with the text "Real-time" in a neutral tone. Add a tone only if none fits. It must not look like the arm state.
-- **Source row and picker (provisional):** a row made of the name, a signal picker and the sampled value with its age. States: not connected, valid, stale, missing, pending, refused. The picker lists instances, then their signals of the right value type, with the loop and rate in the detail line (MenuItem `Show detail`). Build the picker from RefPicker `32:169` if it fits, else add a SourcePicker set. Mark both "provisional (F4c)" in their descriptions.
-- **Add menu:** per question 1. The Instances card also shows the counts against the limits ("3 of 4 loops", and the same for instances).
+- **Source row and picker:** name, target picker, sampled value and age. States: not connected, waiting, valid, stale, missing, telemetry unavailable, pending, refused. The picker lists instances, then signals and inputs of the required value type, with loop and rate in the detail line (MenuItem `Show detail`). Build from RefPicker `32:169` if it fits, else add a SourcePicker set. Component descriptions document the current F4c contract; no provisional label. Reuse existing variables, text styles and G2 instances.
+- **Add menu:** one Add button with Instance / Loop entries. The Instances card shows separate counts against `limits.loops` and `limits.instances` (normally "3 of 4 loops"; "4 of 4 loops" in the wiring-picker scenario). Loop capacity and module capacity are separate.
 - Add a QML mapping row for every new set, and check the section bounds afterwards (the mapping table has overlapped Icons before).
 
 **B. New Layout frames (page Screens – Local `2:5`)**
@@ -418,21 +430,25 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 | Loop detail, pending and unsaved (`fusion`) | `priority` changed: Pending (violet), old → new. `rate_hz` changed: applied live, Unsaved. The pending banner. |
 | Loop detail while armed | Rename, Remove and the reboot params disabled with a tooltip. `rate_hz` Locked. Statistics still live. |
 | Add loop | The dialog: label, rate, real-time switch, core, priority, stack, with the defaults filled in. A note that it takes effect after SAVE and a reboot. |
-| Add loop at the limit | Add loop disabled in the menu with "4 of 4 loops". A second state: the dialog with a `Capacity` refusal next to Add, for a device that does not report its limits. |
+| Add loop at the limit | Add loop disabled in the menu with "4 of 4 loops". |
+| Add loop, device refusal | Dialog with `Capacity` next to Add if an operation is refused despite the earlier limit check. Keep the form; nothing was staged. No older wire version is implied. |
 | Remove refused: loop in use | `fusion` selected; Remove loop disabled; the tooltip names `odom`. |
 | Remove refused: wired from | `left_pwm` selected; Remove instance disabled; the tooltip names `left_drive` and its `actuator` wiring. Replaces "Remove with dependents" `89:5301`. |
 | Loop failed to start | `fusion` Failed and `odom` `DependencyMissing` in the tree; the failure card with Open faults; ARM disabled with the reason. |
-| Add instance, loop choice | Type list with each type's need ("needs a real-time loop", "any loop", "not in a real-time loop"). `fusion.odometry` picked (an `any` type); the Loop combo lists all three loops with rate and real-time, the device's default first. |
+| Add instance, loop choice | Type list with each type's need ("needs a real-time loop", "any loop", "not in a real-time loop"). `fusion.mock` picked (an `any` type); the Loop combo lists all three loops with rate and real-time, the device's default first. |
 | Add instance, no compatible loop | A `required` type on a layout with no real-time loop: the reason, and an Add loop link. |
 | No loops | A saved layout with zero loops: the empty tree and a banner that leads to Add loop. |
-| Sources (`odom`, provisional) | A Sources card under Wiring: `left` valid (value, age 0.4 ms), `heading` stale (amber, age 2.1 s, "sensor loop paused"), `right` missing ("right_enc is not running"). |
-| Source picker open | Instances, then signals; other loops are allowed; entries of the wrong value type are left out. |
+| Sources (`odom`), valid | Two source rows: `feedback` → `left_enc.position` (f32, 0.4 ms) and `imu` → `imu.yaw` (f32, 4 ms). Values and age are the generated signals; `combined` is in Signals. No invented third source. |
+| Sources, stale and missing | `feedback` missing because `left_enc` is not running: value hidden. `imu` has its last sampled value and age 2.1 s, labelled Stale / No recent sample. Reflect actual failed dependencies and ARM blocking in the shell; do not infer a paused producer from age alone. |
+| Sources, disconnected and waiting | Current `feedback` target is 0: Not connected. `imu` has a target but age sentinel: Waiting for first sample. Both values hidden. Document telemetry unavailable separately in G2 and the frame annotation. |
+| Sources, pending and refused | Accepted `feedback` target change is violet with current → pending and current live telemetry still labelled. An `imu` target refused as `BadRef` retains the proposed target and error locally; the device pending target is unchanged. Document `WiringCycle` / link `Capacity` variants in G2. |
+| Source picker open | Instances, then signals and inputs; other loops allowed; wrong value types omitted. `left_enc.count` (i32) is not offered for the f32 `feedback` source. Show Disconnect and current/pending targets distinctly. |
 
 **C. Existing Layout frames to change (G4, y 10040 to 14960)**
-- **All of them:** the tree gets the `fusion` loop and `odom`, and the loop headers use the new TreeItem variants.
-- **Wiring picker open `85:4111`:** per question 4.
+- **All retained frames:** trees use the three-loop baseline with `fusion.mock` `odom` and new TreeItem loop variants, except explicit first-boot/no-loop/failure scenarios.
+- **Wiring picker open `85:4111`:** use the fourth `test` loop, real-time, with `actuator.mock` `sim_motor`. The disabled picker entry says "test loop; left_drive runs in control". This frame shows 4 of 4 loops; no mock actuator is placed in `sensor`.
 - **Remove with dependents `89:5301`:** delete it once its replacement in B exists.
-- **After remove, wiring invalid `89:5729`:** per question 3.
+- **After remove, wiring invalid `89:5729`:** delete it. No replacement boot-invalid screen.
 - **First boot, Add instance `89:6715`:** the tree is no longer empty. It shows the two factory loops with no instances; the dialog is the reworked Add instance.
 - **Armed, layout locked `85:5034`:** check the tooltip wording ("real-time loop", not "control loop").
 - **The checks `89:7040` and `89:7326`:** rebuild them from the changed frames.
@@ -446,7 +462,7 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 **E. Monitor and the custom panel**
 - **Monitor (`109:8621`, `109:9147`, `109:9731`, check `116:9143`, G6 observer `141:12188`, `143:4234`):** the signal browser lists three loops in its rates block, and the loop instances appear as signal owners with their statistics. No layout change.
 - **Tune:** no change. It has no tree and no loop table.
-- **Calibration (G7, page `2:7`):** the tree gets `fusion` and `odom` on all 11 frames and the 2 checks. The IMU runs in `sensor`, which is not real-time, so its paused calibration actions are not refused while armed; check that no text says they are.
+- **Calibration (G7, page `2:7`):** the tree gets `fusion` and `fusion.mock` `odom` on all 11 frames and the 2 checks. The IMU runs in a non-real-time loop, so do not invent a real-time-loop armed refusal. G7 is accepted; F6 persistence/action sequencing alignment and H3 remote calibration permissions remain handoff items.
 
 **F. Records outside the screens**
 - **FigJam flow 5** (first-boot layout): the first boot now has two loops. Change the text of the first step.
@@ -454,8 +470,44 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 - **Cover:** add a G7b row next to the phase labels.
 
 **G. Checks and record**
-- Check every new or changed frame at 1920×1080 and in Light. Keep two copies as the record: Loop detail at 1920×1080, and Sources in Light.
+- Check all 17 new frames and every retained changed frame at 2560×1440 Dark and 1920×1080 Light. Keep two check copies: Loop detail and Sources, both 1920×1080 Light. Confirm no clipped tables, loop-header collisions, moved scrims or hidden DISARM; return affected IDs and screenshot each composition. Assert Inter / JetBrains Mono and the variable/style bindings.
 - Then follow the skill's Record and Finish stages.
+
+### Built 2026-11-14 — Parts A–G complete
+
+On Screens – Local (`2:5`), under header `187:13623` and note `187:13624`. All 17 new frames are editable, use G2 instances, local variables and text styles, and were checked at 2560×1440 Dark and 1920×1080 Light. No flattened image UI was used.
+
+| Frame | Id |
+|---|---|
+| Loop detail · control | `182:10790` |
+| Loop detail · fusion pending and unsaved | `183:10951` |
+| Loop detail · armed | `183:11384` |
+| Add loop | `183:11898` |
+| Add loop · capacity reached | `183:12402` |
+| Add loop · Capacity refusal | `183:12848` |
+| Remove refused · loop in use | `183:13351` |
+| Remove refused · wired from left_drive | `183:13749` |
+| Loop failed to start | `183:14040` |
+| Add instance · loop choice | `183:14362` |
+| Add instance · no compatible loop | `183:14818` |
+| No loops · saved empty layout | `183:15212` |
+| Sources · valid | `183:15439` |
+| Sources · stale and missing | `183:15772` |
+| Sources · disconnected and waiting | `183:16106` |
+| Sources · pending and refused | `183:16413` |
+| Source picker open | `183:16738` |
+
+**G2 additions:** Loops and sources section `176:1181`; SourcePicker `176:1231` (6 states), SourceRow `176:1369` (9 states), AddMenu `176:1385`; mapping rows `176:1388`, `176:1397`, `176:1406`. TreeItem `36:347` now has 8 loop states and an optional neutral Real-time badge; its module variants are retained. Loop headers use two lines at 52 px so budget and state remain explicit; module rows and editors stay 32 px. Dark review `176:1415` and compact Light review `176:2588` show instances. Existing tokens and Inter / JetBrains Mono were reused and checked. Navigation was fitted and Shell moved to y 4322 to avoid overlap; mapping bounds were fitted.
+
+**Shared screens:** the 9 retained G4 frames and all 13 G7 frames/checks have selectable loop headers and the three-loop baseline, with scenario exceptions. Wiring picker `85:4111` puts pending `sim_motor` under real-time `test` and names its cross-loop refusal. First boot `89:6715` has factory loops and a type/label/compatible-loop form. Deleted `89:5301` and `89:5729`; replaced the old G4 checks with `191:13815` (Instance detail) and `191:14162` (Pending changes), both 1920×1080 Light.
+
+Every local Device table, including overlays and retained checks, has three rows and the expanded columns. Safe mode shows configured loops offline and no live runtime values. GET_INFO totals include the loops: 11 entries (3 loops, 8 modules). Six remote Device/lease-over-Device states include a compact read-only loop table while preserving lease controls and history. Protocol metadata and Loading/OTA/reboot/reset copy were aligned with core v8 and factory loops. Pending layouts disable status-bar and secondary ARM controls.
+
+Local and remote Monitor browsers show the three loop signal owners, `odom` (`fusion.mock`), and a fusion rate entry without subscribing or changing the illustrated link load. G7's design is accepted; its shared tree and check layouts were updated. FigJam flow 5 (`15:949`) starts with factory loops (`6:441`) and includes a compatible loop in Add (`6:444`). Cover row `190:19106`, state text `190:19110`, is done after acceptance.
+
+**Checks and handoff:** all 44 changed existing primary frames were inspected in their full-size theme and at 1080p Light, with inherited G5 exceptions recorded below. Retained copies were inspected too. G7b keeps only Loop detail `191:13355` and Sources `191:13619` at 1920×1080 Light (x 12000, y 0 and 1280). Temporary QA copies were removed. Compact G4 checks use a 460 px right column, filling wiring pickers and full refusal notes beneath fields. Device table minimum columns total 500 px, with RT/Pri abbreviations explained in a legend. Calibration checks reuse wrapped file controls and tighter metadata/activity spacing. Monitor's compact browser collapses right_drive/imu groups so the new owners and rates remain visible; the budget-refusal state instead keeps the candidate duty row, its reason and lower-rate action visible, with other signal rows behind Show other signals.
+
+G5's fixed plot dimensions still clip traces/third plots during a simple 1080p resize, and its paused toolbar remains a known responsive issue. This phase changes browser data, not those plot layouts; the accepted G6 responsive Monitor is the reference for the G8/H2 repair. Earlier Tune/A–B issues remain open too. The full G5 1080p layout is not recorded as passing.
 
 ### Rules to keep while reworking
 
@@ -467,8 +519,9 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 
 ### Open issues from this plan
 
-- **Both firmware gaps this plan found are settled** (2026-11-13) and scheduled in [overhaul-status.md](overhaul-status.md): the limits come with F4b, the source signals with F4c. Neither is built yet, so the frames that show them are ahead of the firmware.
-- **Sources are provisional** until F4c is merged: recheck the source row, the picker and the sample `fusion.odometry` items then.
+- **Firmware contract checked:** F4b limits and F4c sources are merged. The sample uses shipped `fusion.mock`; no firmware or protocol change is requested.
+- **Accepted 2026-11-14:** Parts A–G and the G2 extensions are done. No further G7b construction or acceptance is pending.
+- **G7 accepted:** its older F6 action/persistence assumptions still need reconciliation in the G8/H2 handoff. Acceptance does not resolve the explicitly open H3 calibration-action permissions.
 
 ## Open issues
 
@@ -483,7 +536,7 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 - **G4 notes for H2:** the GUI keeps the pending changes list (GET_PENDING plus the layout ops it staged) to fill the Review popover; a layout op refused by the device is not staged, so the row keeps the typed value with the reason until the user edits it or presses Esc (which also disarms). `color/text/tertiary` is 3.8:1 on surface in Light, so small caps group headers use `color/text/secondary`.
 - **Status bar faults badge:** the G3 Device frames show "2 faults" (history) next to a Faults card with "0 active"; decide in G8 whether the badge counts active faults only.
 - Tabular numerals can't be set through Figma's plugin API, so the numeric styles only say so in their descriptions; QML sets `font.features: { "tnum": 1 }`.
-- **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. To settle in H2 (for example gain history as a tab, or one column of gains with scrolling).
+- **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. G7b verification also confirms that a simple resize leaves G5 Monitor's plot areas fixed, clipping traces and the third plot; G6 already has the fitting/wrapping reference. The new loop browser entries fit with compact module groups. Settle the remaining responsive work in G8/H2 (for example gain history as a tab, or one column of gains with scrolling).
 - **G5 notes for H2:** slider ticks in the Figma frames are only approximate (marker positions inside an instance can't be moved); in QML each tick sits at its value on the log scale. CheckItem has no warning state; Plant identification shows its open-loop caution with a neutral icon and "warning".
 - **G6 notes for H3:** reset the live-edit warning opt-out on reconnect; while confirmation is open, keep the proposed gain local and send nothing until Apply live. A lease-revoked event cancels auto re-run and any pending command/test start. The takeover checkbox is unchecked by default. Agent history is an illustrative recent-event sample; its retention limit and transport details remain part of H3. The full prototype and lease-chip navigation are connected in G8.
 - **G7 notes for F6/H2/H3:** F6 defines calibration signal/action descriptors, payload, paused-action sequencing and persistence. H2 defines the PC file format, physical-sensor provenance, Euler convention and host conversion, result handling and cancellation/reconnect behavior. Map device errors verbatim; a timeout is not proof that an apply did not occur. Before using this panel remotely, H3 must settle calibration-action authorization while another client owns the lease; the live-param permission does not automatically authorize sensor reconfiguration. This phase changes no firmware, protocol or safety policy.

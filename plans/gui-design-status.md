@@ -4,7 +4,9 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-13 (G7b loops and sources rework planned; G7 still in review; PR #42 merged).
+Last updated: 2026-11-14 (G7 and G7b accepted, including their G2 extensions; G8 is next; handoff issues remain recorded).
+
+PR: [#62](https://github.com/taruntom1/drivelink_v2/pull/62), accepted G7/G7b records, into `firmware_overhaul` (opened at the user's request).
 
 ## Where things stand
 
@@ -12,14 +14,14 @@ Last updated: 2026-11-13 (G7b loops and sources rework planned; G7 still in revi
 |---|---|---|
 | G0 Foundations | done | FigJam screen map and flows 1–11; state inventory in gui-design.md |
 | G1 Wireframes | done | 21 frames. Tune (12) and Monitor (14) updated after G2 with the tuning controls |
-| G2 Design system | done | Accepted 2026-11-12. Extensions through G6 accepted; G7 CalibrationLevel and OrientationPreview reviewed with G7 |
+| G2 Design system | done | Accepted 2026-11-12; extensions through G6 accepted earlier, G7 and G7b extensions accepted 2026-11-14 |
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
-| G4 Layout | done | Accepted 2026-11-12. 11 frames on Screens – Local plus 2 kept check copies |
+| G4 Layout | done | Accepted 2026-11-12. G7b retains 9 frames, deletes the two obsolete removal states and rebuilds the 2 check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
-| G7 Custom panel | in review | 11 Calibration screens on Custom panels, 2 retained 1080p Light checks; awaiting acceptance |
-| G7b Loops and sources rework | planned | Planned 2026-11-13 after firmware F3d. Brief and work list in gui-design.md, "G7b Loops and sources rework". Parts A to G; note here which are done |
-| G8 Prototype and handoff | planned | After G7b |
+| G7 Custom panel | done | Accepted 2026-11-14, including CalibrationLevel/OrientationPreview, 11 screens and 2 retained 1080p Light checks; calibration contract alignment remains in handoff notes |
+| G7b Loops and sources rework | done | Parts A–G and G2 extensions accepted 2026-11-14: 17 Layout frames, shared updates, two G4 deletions, Cover/flow records and checks |
+| G8 Prototype and handoff | planned | Next: discuss scope and open handoff issues before building |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
@@ -31,23 +33,20 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
   Device table in the next GUI edit/H2; Figma has not been changed by this
   firmware task. See `todo-loop-affinity.md` and `gui-design.md`.
 
-1. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised. G7 and G7b don't block each other: if the user wants to go straight to G7b, leave G7 `in review`.
-2. Build **G7b Loops and sources rework**. The brief is the section of that name in [gui-design.md](gui-design.md): read all of it first.
-   - Start with its four questions ("To ask the user before building"), recommendation first, and record the answers in the Decisions table.
-   - Then build its work list in order: A design system, B new Layout frames, C existing Layout frames, D Device and its remote copies, E Monitor and the custom panel, F records outside the screens, G checks and record.
-   - A session may stop after any part. Write in the state table which parts are done, and add the new Figma ids below.
-3. After G7 and G7b are accepted, discuss **G8 Prototype and handoff**: key G0 flows to wire, the status-bar fault count, responsive behavior (including the known G5 issues) and the H2/H3 handoff scope before building.
+1. Discuss **G8 Prototype and handoff** before building: key G0 flows, status-bar fault count, responsive behavior (including inherited G5 fixed plots/paused toolbar and Tune/A–B issues), calibration alignment with built F6 and the H2/H3 handoff scope. G7 and G7b are accepted; do not repeat their acceptance requests.
+2. Record the G8 scope decisions, then obtain scope agreement as required by gui-design-step before construction. Acceptance of G7/G7b does not settle the explicitly open host file-format or remote calibration-action contracts.
 
 ## Handoff note
 
-- **Branch:** `claude/gui-loop-rework`, cut from `origin/firmware_overhaul` at `28a97e3` on 2026-11-13. That commit has firmware F3d (configurable loops) and every GUI record up to G7 (PR [#42](https://github.com/taruntom1/drivelink_v2/pull/42), merged). Work on this branch. If it has been merged or is gone, cut a new one from `origin/firmware_overhaul` and write its name here. Don't use `origin/claude/gui-design` or `Codex/gui-design`: both are older than F3d.
-- **G7b in one paragraph:** the firmware now has configurable loops. A loop is an instance of the built-in `loop` type, edited on the Layout screen; types need a real-time loop, forbid one, or take any; removes with dependents are refused by the device. Sources (reading a signal across loops) are planned in the firmware and designed now as provisional. The sample device gains a third loop, `fusion`, with `odom`. The brief in gui-design.md has the firmware facts, the decisions, four open questions and the frame-by-frame work list.
+- **Branch:** this session uses local `codex/gui-design-g7b` in worktree `86ff`, based on `0f70c6a` (completed firmware overhaul, also the fetched `origin/firmware_overhaul`). Publish with `git push origin HEAD:Codex/gui-design` per the invoked skill; no PR unless the user requests it. The local `Codex/gui-design` branch is checked out in worktree `7805`, so it was not moved or edited. Its fetched remote tip was verified to be an ancestor of this base; publication is a normal fast-forward. The old instruction to use `claude/gui-loop-rework` is superseded. Never target `main`.
+- **G7b complete:** Parts A–G and G2 extensions were accepted 2026-11-14. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. G7 was also accepted; G8 discussion is next.
 - **G7b traps:**
-  - Every frame that shows the instance tree or the Device loop table must show the three-loop sample device: all G4 frames, all G7 frames, every Device frame and the G6 frames cloned from it. Do it as one scripted pass per page (find the tree or the table card by name, add the rows), then screenshot each frame.
-  - Adding a loop means adding rows in each frame. As far as the records say, the trees and the loop table are rows of G2 instances placed in each frame, not one shared component; this was not checked in Figma, so confirm it in Orient.
+  - Retained normal frames with a tree or Device loop table use the three-loop baseline: G4, G7, Device and its G6 copies. Preserve explicit scenario differences: four loops for wiring refusal, factory loops for first boot, no loops for the saved-empty layout, offline/failed states where appropriate. Update in one scripted pass per page, then screenshot each frame.
+  - The G4 tree (`84:4122`) is a FRAME with separate G2 TreeItem INSTANCE rows, not a shared tree component. Trees and Device table rows were updated per frame. Six remote Device/lease-over-Device states did not contain the local loop card; a compact read-only table was added there while preserving lease/history controls.
   - Loop names and the loop count come from the device. Nothing may assume `control` and `sensor`.
-  - The mock actuator and feedback now need a real-time loop, so "sim_motor in the sensor loop" (wiring picker frame `85:4111`) is no longer a possible state.
-  - Read the built loop behaviour in `docs/protocol/core.md` and `docs/protocol/types/loop.md` (reading is fine; the scope rule below is about not editing them).
+  - The mock actuator and feedback need a real-time loop. In wiring picker `85:4111`, move the scenario's `sim_motor` into second real-time loop `test`; its cross-loop entry stays disabled with a reason.
+  - Read `docs/protocol/core.md`, `docs/protocol/types/loop.md` and `docs/protocol/types/fusion.mock.md`. The source target picker accepts signals and inputs of the required value type; `left_enc.count` is i32 and cannot feed fusion.mock's f32 feedback source. Use `left_enc.position` instead.
+  - Source validity is derived from the age sentinel and discovered instance state; `fresh` is not a wire signal. Hide invalid values, distinguish telemetry unavailable from no valid sample, and do not infer that a producer is paused from age alone. Pending targets must not relabel current live values.
 - **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [overhaul-status.md](overhaul-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
@@ -59,7 +58,7 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 - **G6 rules:** remote connections observe first and create their command group only after a lease grant (host plan clarified). Lease ownership is separate from arm state. ARM needs the lease; DISARM stays available with a device link, above every scrim. A grant leaves the board disarmed; revocation stops auto re-run/test starts. Live edits confirm before sending while another client drives; opt-out lasts one connection. Device holds the Clients and lease card; the chip navigates there in G8.
 - **G6 at 1080p:** Tune gain history uses a compact View history entry. Monitor legends wrap, its three plots share height, and the axes are fitted without shrinking the text. These fixes are scoped to G6; G5's accepted 1080p issues remain open. All 16 G6 frames checked at 1920×1080 in Light; only Tune/ROS and Monitor/observer copies kept.
 - **Naming:** the manual-command toggle is **Latch**, not Hold, because "hold" already means an input left at its hold value (Remove, Hold all).
-- **G7 rules:** Calibration tab uses a dashboard; import and validation stay local, Apply reviews the target, and Read / Export are separate. Full calibration is needed before reading a profile. A level of 3 is not an ARM permission. Missing data hides the pose; stale or paused telemetry freezes and labels it. Device SAVE is not presented as calibration persistence. F6 payload/persistence and H3 remote calibration-action permissions remain open; do not treat the live-param rule as permission for calibration actions.
+- **G7 rules and unresolved reconciliation:** the existing design uses local import, explicit target-reviewed Apply, separate Read / Export and stale/no-data handling. A level of 3 is not an ARM permission. F6 is now built and persists typed calibration through explicit SAVE; the older G7 statement that SAVE is not calibration persistence must be reconciled during G7 review. G7b changes the tree only. H3 remote calibration-action permissions remain open; do not infer them from live-param permission.
 - **G7 at 1080p:** wrapped file controls, compact metadata/activity spacing and 110/80/fill generic signal columns. All 11 screens checked in Light at 1920×1080; only Live calibration and Confirm apply retained. G2 review instances also checked in both themes.
 
 ## Figma reference
@@ -81,7 +80,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 **G3 frames** (page `2:5`, Screens – Local): Connect · Serial port `64:942`, Loading `65:1018`, Protocol mismatch `65:1225`; Device · Disarmed `67:1154` (the base the others were cloned from), Armed `69:1328`, ARM refused `69:1729`, Fault with drawer `70:1694`, Safe mode `70:2136`, Rename `73:2066`, Factory reset `73:2240`, Firmware update writing `73:2407`, waiting to confirm `73:2666`, rolled back `73:2949`; Overlay · Link lost `74:2992`, Device rebooted `74:3268`; checks: 1920×1080 Connect `75:2574` and Device `75:2721`, Light Connect `75:3039` and Fault `75:3186`. Header `75:3587`. Rows at y 0, 1640, 3280, 4920, 6560, 8200; frames 2760 apart.
 
-**G4 frames** (page `2:5`): header `89:7038`, notes `89:7039`, row labels `89:7034`–`89:7037`. Row y 10040: Instance detail `84:3890`, Wiring picker open `85:4111`, Custom panel slot `85:4679`, Armed, layout locked `85:5034`. Row y 11680: Pending changes, refused op `87:4704`, Review pending changes `87:5149`, Discard all confirm `87:5221`. Row y 13320: Remove with dependents `89:5301`, After remove, wiring invalid `89:5729`, Failed instance `89:6270`, First boot, Add instance `89:6715`. Checks y 14960: 1920×1080 Instance detail `89:7040`, Light Pending changes `89:7326`.
+**G4 retained frames** (page `2:5`): header `89:7038`, notes `89:7039`, row labels `89:7034`–`89:7037` (updated in G7b). Row y 10040: Instance detail `84:3890`, Wiring picker open `85:4111`, Custom panel slot `85:4679`, Armed, layout locked `85:5034`. Row y 11680: Pending changes, refused op `87:4704`, Review pending changes `87:5149`, Discard all confirm `87:5221`. Row y 13320: Failed instance `89:6270`, First boot, Add instance `89:6715`; the two earlier removal states were deleted. Rebuilt checks y 14960: Instance detail `191:13815`, Pending changes `191:14162`, both 1920×1080 Light. Removal refusals are now in G7b.
 
 **G5 frames** (page `2:5`): header `111:8758`, notes `111:8759`, row labels `111:8760`–`111:8763`. Row y 16840: Tune · Run results `99:6359`, Run in progress `103:6756`, Run stopped by disarm `104:7169`, Disarmed, new session `105:7584`. Row y 18480: A/B compare `106:7916`, Plant identification `107:8318`. Row y 20120: Monitor · Live plots and manual command `109:8621`, Paused with cursors `109:9147`, Link budget full `109:9731`. Checks y 21760: 1920×1080 Tune · Run results `111:8764`, Light Monitor · Live plots `116:9143`.
 
@@ -94,6 +93,19 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 **G7 frames** (page `2:7`, Custom panels): header `162:2714`, note `162:2715`. Three columns 2760 px apart. Row y 0: Live calibration `161:1030`, Fully calibrated `161:1344`, Read snapshot/export `161:1647`. Row y 1640: Imported file review `161:1965`, Applying `161:2344`, Applied `161:2669`. Row y 3280: File rejected `161:2988`, Apply failed `161:3291`, IMU data unavailable `161:3615`. Row y 4920: Confirm apply `162:2565`, Waiting for first sample `165:3124`. Checks y 6560: Live calibration `162:2887`, Confirm apply `163:8006` (x 2120), both 1920×1080 Light.
 
 **G2 changes in G7:** Sensor panels section `160:992` at x 5544, y 4200. CalibrationLevel set `160:999`, variants 0 `160:994`, 1 `160:995`, 2 `160:996`, 3 `160:997`, Unavailable `160:998`; Label text property. OrientationPreview set `160:1050`, Live `160:1047`, Stale `160:1048`, Unavailable `160:1049`. Mapping rows `160:1132`, `160:1141`. Instance reviews Dark `160:1087`, Light `164:1030`. Existing variables/styles only.
+
+**G7b G2:** Loops and sources section `176:1181`; SourcePicker `176:1231` (6 states), SourceRow `176:1369` (9), AddMenu `176:1385`; mapping rows `176:1388`, `176:1397`, `176:1406`. TreeItem `36:347` retains module variants and has 8 loop states plus Real-time visibility. Reviews Dark `176:1415`, compact Light `176:2588`. Shell `63:1180` moved to y 4322 after Navigation grew. No new tokens or styles.
+
+**G7b Layout frames** (Screens – Local `2:5`): header `187:13623`, note `187:13624`; 4 columns, 2760 px apart, rows 1640 px apart. Full names and contents in gui-design.md, "Built 2026-11-14".
+
+- y 23640: Loop detail/control `182:10790`, fusion pending/unsaved `183:10951`, armed `183:11384`, Add loop `183:11898`.
+- y 25280: capacity reached `183:12402`, Capacity refusal `183:12848`, loop-in-use removal refusal `183:13351`, wired-instance removal refusal `183:13749`.
+- y 26920: failed loop `183:14040`, Add instance/loop choice `183:14362`, no compatible loop `183:14818`, saved empty layout `183:15212`.
+- y 28560: Sources valid `183:15439`, stale/missing `183:15772`, disconnected/waiting `183:16106`, pending/refused `183:16413`.
+- y 30200: Source picker `183:16738`.
+- Kept checks at x 12000: Loop detail `191:13355` (y 0), Sources `191:13619` (y 1280), both 1920×1080 Light. Temporary QA copies removed.
+- Rebuilt G4 checks at y 14960: Instance detail `191:13815` (x 0), Pending changes `191:14162` (x 2120), both 1920×1080 Light. Old `89:7040` / `89:7326` are deleted, as are obsolete removal frames `89:5301` / `89:5729`.
+- Cover G7b row `190:19106`, state text `190:19110`. FigJam flow 5 `15:949`: first state `6:441`, Add `6:444` updated.
 
 **G2 changes in G4:** Banner `37:359` booleans `Button 2`, `Button 3`; MenuItem `31:154` boolean `Show detail` and a Detail text; mapping rows `40:928` (Banner) and `40:820` (Menu / MenuItem) extended.
 
@@ -142,11 +154,18 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Growing the QML mapping table can make its section overlap Icons. G6 moved the mapping section below the other sections in its column; check section bounds after adding mapping rows.
 - Returning every descendant id for many cloned screens can exceed the 48 KB use_figma return limit and roll back the call. G7 split check creation into bounded groups after inspecting the canvas; do not silently omit affected ids.
 - Narrowing a generic table card does not shrink fixed-width TableCell instances. Resize the columns explicitly or values can disappear beyond the card. Likewise, shorten or wrap the signal-card header action when its title changes to paused/stale.
+- Old TreeItem instances retain explicit 32 px height overrides after their loop main component grows. Resize loop instances to 52 px; otherwise the budget/state line clips into the next row.
+- Overlay rectangles, dialogs, popups and tooltips appended to an auto-layout screen must be ABSOLUTE before positioning; otherwise the body can collapse and the dialog falls below the frame. Recenter INSTANCE dialogs as well as FRAME dialogs at 1080p.
+- For the RGBA scrim token, construct the fallback RGB and paint opacity from `resolveForConsumer()` and keep the binding. A generic grey fallback can render grey despite a black RGBA alias. Avoid reading `visible` after hiding a nested instance: its proxy can become invalid; compute the flag before setting it.
+- Compact G4: right column 460 px, wiring pickers fill their row, and full param refusal/pending notes sit below the editor. Compact Device table widths total 500 px; rate/Core need enough room to avoid ellipses. Compact Calibration: wrapped controls, file-card gap 8 and vertical padding 12, activity gap 8/padding 12. These checks supplement the earlier retained compact views.
 
 ## Session log
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-14 | G7/G7b acceptance | User accepted G7b, then G7, including their G2 extensions. Both phases and Cover labels marked done. Next is G8 discussion; inherited G5 responsive issues and calibration/host contracts remain explicit handoff items |
+| 2026-11-14 | G7b build | User approved Parts A–G. Built 8 loop header states, SourcePicker, SourceRow and AddMenu with mappings/reviews; 17 new Layout frames; updated G4/G7 trees, local/remote Device tables and Monitor browsers; deleted 2 obsolete G4 states; rebuilt G4 checks; updated Cover/flow 5. Checked all new frames and 44 changed primary frames in full size and 1080p Light, inspected retained copies, fixed header heights/compact fields/overlays/pending ARM controls. G5 inherited fixed plot/toolbar issues remain open. G7b in review; G7 left in review |
+| 2026-11-14 | G7b planning | Recorded six user answers: leave G7 in review, one Add menu, detailed loop headers, delete obsolete invalid-layout frame, second real-time loop for wiring refusal, shipped fusion.mock. Read current core v8/loop/source contracts; inspected G7 and G4 structure/screenshots. Revised Parts A–G to 17 new Layout frames, two G4 deletions and shared-screen updates with size/theme checks. No Figma mutations. Awaiting scope approval before Part A |
 | 2026-11-13 | loop design (firmware session) | After firmware F3d: compared the designs with the built loops and the planned sources; user decisions (loops edited on Layout, Remove follows the firmware, sources designed as provisional, third sample loop `fusion`); wrote the G7b brief in gui-design.md, updated the sample device and the state inventory, closed todo-layout-ops.md. Nothing built in Figma |
 | 2026-11-13 | gui design 5 | G6 accepted, including LeaseChip, StatusBar Lease, Dialog Confirmation and PlotFrame Remote live. User requested a PR into firmware_overhaul, followed by G7 in this session |
 | 2026-11-13 | gui design 5 | Opened PR #39 into firmware_overhaul; started G7 orientation and discussion. Custom panels page is empty; G4 Calibration slot inspected. Layout, file workflow and orientation preview await user decisions |
