@@ -2,7 +2,7 @@
 
 A virtual ESP using the actual firmware `core`, native `core_os` and `mod_mock`.
 One config caller runs the existing `CommandService`; real loop threads execute
-mock motor/feedback and IMU logic. It has no legacy managers or physical HALs.
+mock motor/feedback and IMU logic. It has no physical HALs.
 
 `drivelink-vdev --port 8765 --state DIR` listens on loopback TCP and prints
 `READY tcp://127.0.0.1:8765`. Port 0 chooses an ephemeral port. Linux `--pty`

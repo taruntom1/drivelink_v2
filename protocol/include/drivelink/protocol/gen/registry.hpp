@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xD05D60D2;
+inline constexpr uint32_t kDescriptorHash = 0xDBE8D3E4;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -277,7 +277,7 @@ inline constexpr std::array<uint8_t, 10> kAllMsgTypes = {{
     msg::kCoreEvent,
 }};
 
-/// Stream channel ranges. The count is the usable run: legacy entries at the top of a range cut it.
+/// Stream channel ranges: the first channel and the channel count.
 inline constexpr uint8_t kSubGroupChannelFirst = 0x81;
 inline constexpr size_t kSubGroupChannelCount = 31;
 inline constexpr uint8_t kCmdGroupChannelFirst = 0xA0;

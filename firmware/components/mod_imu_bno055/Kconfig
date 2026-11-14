@@ -1,2 +1,0 @@
-# Configuration is per-instance through discovered parameters: pins, port,
-# address, bus_hz, timeout_ms and startup_mode. No component-global tunables.

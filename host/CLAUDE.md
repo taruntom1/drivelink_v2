@@ -1,7 +1,8 @@
 # Host rules
 
 The root CLAUDE.md holds cross-area rules. The architecture target is
-plans/host-architecture.md; F3c is the first service slice, not the full H1 model.
+plans/host-architecture.md. Today's library is the first service slice (F3c-F9),
+not the H1a typed API and device model.
 
 - `libdrivelink/` is C++20 with no Qt, ROS or firmware dependencies. Its public
   namespace is `drivelink`; protocol code stays in `drivelink::protocol`.
@@ -23,7 +24,8 @@ plans/host-architecture.md; F3c is the first service slice, not the full H1 mode
   scratch buffers and bounded diagnostics. Keep real-time firmware rules when
   touching native core_os. The native test backend remains in-memory by default.
 - Dependencies are version- and SHA256-pinned in `cmake/Dependencies.cmake`.
-  Standalone Asio is private; nlohmann JSON is a public service result type.
+  Standalone Asio is private. nlohmann JSON is today's public service result
+  type; H1a replaces it with typed results and keeps JSON only in the CLI.
   No vendored dependency source edits. Builds treat warnings as errors.
 - Host binaries on Windows use Qt's MinGW kit exclusively. Native firmware
   tests may retain Strawberry's separate toolchain. Never share binary dirs.

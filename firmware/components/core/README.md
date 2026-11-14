@@ -13,7 +13,7 @@ F4a adds preallocated groups on the configurable loops. The wire contract is
 |---|---|
 | `core.hpp` | `Core`: the facade. `init(module list)`, `boot(KvStore&)`, `start()` / `stop()`, the layout ops, `save()` / `revert()` / `factoryReset()` / `exitSafeMode()`, the state getters, `params()`, `findLoop(id)`, `loopAt(slot)`, `loopCount()`, `loop(id)` (known ids only). `kInitStage*` for `core.InitFailed`. |
 | `core_config.hpp` | `CoreConfig` (`max_loops`; `max_instances`; `gpio_allowed_mask`; `crash_clear_delay_us`) and `coreConfigFromKconfig()` (IDF only) |
-| `gpio_policy.hpp` | The ESP32-S3 pin policy (`kEsp32s3Allowed`), ported from motor_manager |
+| `gpio_policy.hpp` | The ESP32-S3 pin policy (`kEsp32s3Allowed`) |
 | `module_type.hpp` | `ModuleType {desc, create}` and `InstanceConfig` |
 | `registry.hpp` | `Registry` (reserves system 0 and loop 5; rejects duplicates, a null `create`) and `descIsInTable()` |
 | `instance.hpp` | `Instance` (`start`, `tick`), `InstanceContext` (the bind API and `ref()`), `InstanceState`, `TickContext`, `OnChange`, `kStartStage*` |

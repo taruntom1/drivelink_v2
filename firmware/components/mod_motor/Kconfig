@@ -1,3 +1,0 @@
-menu "Motor modules"
-    # Runtime tuning and mock plant settings live in generated module params.
-endmenu

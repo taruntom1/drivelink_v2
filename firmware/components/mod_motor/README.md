@@ -98,7 +98,7 @@ and obtain physical feedback from a separate feedback module.
 - `open_loop`: bounded `duty_sp` to duty.
 - `velocity`: bounded `velocity_sp` through the velocity PID to duty.
 - `position`: position PID through `velocity_limit`, then velocity PID through
-  `duty_limit`. This is a true cascade, unlike the legacy position-to-duty PID.
+  `duty_limit`. This is a true cascade: position feeds velocity, velocity feeds duty.
 - `vel.*`/`pos.*` gains and derivative cutoffs are live persisted parameters.
   Gains default to zero, mode to open-loop, velocity limit to 100 rad/s and
   duty limit to 1. The duty interval is symmetric and includes zero.
@@ -130,10 +130,8 @@ actuator force always takes precedence over commanded duty; the duty signal
 is a controller command, not proof of physical effort.
 
 The PID kernel is allocation-free and nonlogging, with derivative on
-measurement and conditional integration at saturation. Shared derivative/output
-math also serves the legacy PID wrapper, which retains its old integration
-policy. Encoder count differencing handles int32 wrap. The legacy estimator
-header forwards to this component until F5b removes the old controller.
+measurement and conditional integration at saturation. Encoder count
+differencing handles int32 wrap.
 
 ## Validation
 

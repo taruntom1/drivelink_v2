@@ -12,14 +12,14 @@ The GUI design is design work only, in Figma. One session can run one phase or p
 - Design only: no QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`.
 - A firmware or protocol need found while designing becomes a `plans/todo-<topic>.md` file plus a line in the Notes of `plans/overhaul-status.md`, only after the user agrees. Wire changes are the user's decision.
 - Decisions are the user's. Ask with options and a recommendation (AskUserQuestion, recommended option first, at most 4 questions per round). Record every answer in `plans/gui-design.md`.
-- Commit and push to the design branch named in the status file's handoff note. Open a PR only when the user asks; it goes into `firmware_overhaul`, never `main`.
+- Commit and push to the design branch named in the status file's handoff note. Open a PR only when the user asks; it goes into `host_overhaul`, never `main`.
 
 ## 1. Orient
 
 1. Git:
    - `git fetch origin`.
-   - Read the "Branch" line of the handoff note in `plans/gui-design-status.md` on `origin/firmware_overhaul` (`git show origin/firmware_overhaul:plans/gui-design-status.md`). If that branch exists on origin and is not merged, switch to it and pull.
-   - Otherwise create a new branch from `origin/firmware_overhaul`, say so, and write its name into the handoff note. Never start from an older design branch: it lacks the newer firmware and design records.
+   - Read the "Branch" line of the handoff note in `plans/gui-design-status.md` on `origin/host_overhaul` (`git show origin/host_overhaul:plans/gui-design-status.md`). If that branch exists on origin and is not merged, switch to it and pull.
+   - Otherwise create a new branch from `origin/host_overhaul`, say so, and write its name into the handoff note. Never start from an older design branch: it lacks the newer firmware and design records.
    - If the session sits on a branch with unrelated work, stop and tell the user.
 2. Read:
    - all of `plans/gui-design-status.md` (state, next step, handoff note, Figma ids, working notes)

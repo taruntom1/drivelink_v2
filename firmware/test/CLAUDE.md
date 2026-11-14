@@ -12,15 +12,15 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 
 **How it is built:**
 - A plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`).
-- It builds `protocol/` as the host library `drivelink::protocol`. It compiles `core_os/backend/native`, the `core` sources (all but `src/idf/`) and the legacy sources directly with the host compiler.
-- `firmware/test/native/shim/` stands in for the two IDF headers the legacy sources include: `sdkconfig.h` with the Kconfig defaults they read (none today), and a no-op `esp_log.h`. The core needs neither.
+- It builds `protocol/` as the host library `drivelink::protocol`. It compiles `core_os/backend/native`, the `core` sources (all but `src/idf/`) and the pure sources of other components (`FIRMWARE_SOURCES`, module logic) directly with the host compiler.
+- `firmware/test/native/shim/` stands in for the two IDF headers that non-core sources may include: `sdkconfig.h` with the Kconfig defaults they read (none today), and a no-op `esp_log.h`. The core needs neither.
 - It needs no IDF export. On this machine, Strawberry Perl ships `g++` (MinGW-w64, posix threads), `cmake` and `ninja`.
 - It needs Python 3 with PyYAML: the build runs the generator on the fixtures in `tools/gen/tests/fixtures` to make the type headers the tests include.
 
 **Adding a source:**
 - A new `core` source goes in `CORE_SOURCES` in `firmware/test/native/CMakeLists.txt`. It must not need the shims.
-- A legacy source can join only if it builds without ESP-IDF beyond the shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES`.
-- If a legacy source reads a new `CONFIG_*` symbol, add it to `firmware/test/native/shim/sdkconfig.h`.
+- A non-core component source can join only if it builds without ESP-IDF beyond the shims. Keep codecs and math in their own files (`*_protocol.cpp`, `velocity_estimator.cpp`), apart from the code that touches FreeRTOS or drivers, and add them to `FIRMWARE_SOURCES`.
+- If such a source reads a new `CONFIG_*` symbol, add it to `firmware/test/native/shim/sdkconfig.h`.
 
 **Writing core tests:**
 - The generator's fixture types serve as test module types (`tests/core_test_modules.hpp`): `fixture.full`, `fixture.sensor`, and the wiring set `actuator.fixture`, `feedback.fixture`, `fixture.wired`.
@@ -39,7 +39,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 
 Standalone scripts in `firmware/test/uart_comm/`, for the **main** firmware, not the test app. Update them with any change to what they check.
 
-- `smoke_main_firmware.py --port COMx` checks diag v3 and time v1 (including malformed-ping drops and TX CRC). The legacy IMU protocol was removed in F6.
+- `smoke_protocol_firmware.py --port COMx` checks diag v3 and time v1 (including malformed-ping drops and TX CRC). The legacy IMU protocol was removed in F6.
 - `smoke_core_firmware.py` exercises the core with mock instances and removes them again. `--safe-mode` needs a build with `CONFIG_CORE_BENCH_CRASH=y`; flash the normal firmware again afterwards.
 
 The ports and the state of the bench board are in `plans/overhaul-status.md` ("Hardware notes").
@@ -76,7 +76,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 ## CI (`.github/workflows/ci.yml`)
 
-Runs on every pull request and on pushes to `main` and `firmware_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
+Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
 - `gen` and `native` on Ubuntu.
 - `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.

@@ -1,30 +1,26 @@
 # DriveLink v2
 
-DriveLink is a robot motion stack: ESP32-S3 firmware for motor control, encoder and IMU feedback and time synchronization, and host software that talks to it over a binary UART protocol. The firmware is written in C++ on ESP-IDF 5.5.2.
+DriveLink is a robot motion stack: ESP32-S3 firmware that runs motor control, encoder and IMU feedback in configurable loops, and generic host software that talks to it over a binary UART protocol. The firmware is self-describing, so the host needs no code for a new module type. The firmware is written in C++ on ESP-IDF 5.5.2; the host is C++20.
 
-The first host library, CLI and virtual device are available; see [host/README.md](host/README.md). The GUI, robot-host agent and ROS 2 interface are planned. The firmware and host overhaul is tracked in [plans/overhaul-status.md](plans/overhaul-status.md).
+> **Status.** The firmware has not yet run on motors or a real IMU: the bench board has neither, and those checks are scripted and waiting (see "Deferred hardware checks" in [plans/overhaul-status.md](plans/overhaul-status.md)). The previous firmware is tagged `legacy-final`.
+
+The host library, CLI and virtual device are available; see [host/README.md](host/README.md). The typed host API, GUI, robot-host agent and ROS 2 interface are planned in [plans/host-architecture.md](plans/host-architecture.md) and tracked in [plans/overhaul-status.md](plans/overhaul-status.md).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| [firmware/](firmware/README.md) | The ESP-IDF project: `main/`, `components/`, host unit tests, hardware-in-the-loop tests |
-| `docs/protocol/` | The wire spec and the diag code table |
-| `tools/` | Generators and scripts |
-| `plans/` | The architecture plans and the overhaul status |
+| [firmware/](firmware/README.md) | The ESP-IDF project: `main/`, `components/`, native unit tests, hardware-in-the-loop tests |
+| [protocol/](protocol/CLAUDE.md) | The shared C++20 wire library and the definitions (`protocol/defs/`) it is generated from |
+| [host/](host/README.md) | `libdrivelink`, `drivelink-cli`, `drivelink-vdev`, the superbuild and host tests |
+| [docs/](docs/protocol/) | The wire spec (`docs/protocol/`) and [adding a module type](docs/adding-a-module.md) |
+| `tools/` | The definitions generator, `validate.py` (every check) and `bench_fw.py` (bench flashing) |
+| `plans/` | The architecture plans, the step status and the GUI design records |
 
-`protocol/` holds the shared C++20 wire library and generated definitions.
-`host/` holds the host library, CLI, virtual device and superbuild.
-
-## Plans
-
-- [plans/firmware-architecture.md](plans/firmware-architecture.md): the target firmware architecture and its phases.
-- [plans/host-architecture.md](plans/host-architecture.md): the host software and the repo layout.
-
-## Build
+## Build and test
 
 ```bash
-idf.py -C firmware build
+python tools/validate.py full
 ```
 
-See [firmware/README.md](firmware/README.md) for flashing and configuration, and [CLAUDE.md](CLAUDE.md) for the repo rules.
+runs every firmware build, the generator checks, the native tests and the host tests on Windows and Linux. See [firmware/README.md](firmware/README.md) for flashing and [CLAUDE.md](CLAUDE.md) for the repo rules.

@@ -1,6 +1,6 @@
 # To-do (firmware): device name and id in `GET_INFO`
 
-Status: open, added 2026-11-12 during the GUI design (G1). Not scheduled. Proposed for **F3b**, the step that builds `GET_INFO` and the system family. It changes the wire protocol, so it follows the "host and firmware change together" rule.
+Status: **scheduled for H1b** (decided 2026-11-14 in F10), as core v9 on `host_overhaul`. Added 2026-11-12 during the GUI design (G1). It changes the wire protocol, so it follows the "host and firmware change together" rule. The H1b session settles the open questions below with the user before building; the field layout must be rechecked against `GET_INFO` in `docs/protocol/core.md`, which has grown since this was written.
 
 ## Why
 

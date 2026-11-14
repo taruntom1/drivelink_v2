@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, firmware_overhaul]
+    branches: [main, host_overhaul]
   pull_request:
 
 permissions:

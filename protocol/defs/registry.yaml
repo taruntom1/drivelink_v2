@@ -12,12 +12,9 @@
 #     classes of docs/protocol/framing.md: command 0x01-0x3F, response
 #     0x40-0x7F, stream 0x80-0xBF, event 0xC0-0xFE.
 #   - direction: host_to_esp | esp_to_host | both
-#   - legacy: the overhaul step that removes the entry. A legacy entry is
-#     the old manager protocol, kept until that step ports the manager.
-#   - channel_ranges: stream channels the core will hand out in groups. A
-#     range holds no entries, except legacy entries at its tail. They cut
-#     the usable channel count, which the generated header exports. The
-#     count grows when the legacy entries are removed.
+#   - channel_ranges: stream channels the core hands out in groups. A range
+#     holds no msg_type entries; the generated header exports its first
+#     channel and channel count.
 #   - `symbol` names the generated constants: k<symbol>ChannelFirst and
 #     k<symbol>ChannelCount.
 #   - Module type ids live in each type's own file. Only the id reserved for

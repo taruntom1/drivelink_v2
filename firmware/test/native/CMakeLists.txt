@@ -7,8 +7,8 @@ cmake_minimum_required(VERSION 3.16)
 #     loops, the param service, the layout, NVS persistence, safe mode and the
 #     boot), with the generator's fixture types as test module types
 #   - time v1, diag and its slot table, the PID and the velocity estimator
-# The legacy sources include two IDF headers; shim/ provides them (sdkconfig.h,
-# esp_log.h). The core includes neither.
+# Non-core sources may include two IDF headers; shim/ provides them
+# (sdkconfig.h, esp_log.h). The core includes neither.
 #
 #   cmake -S firmware/test/native -B firmware/test/native/build -G Ninja
 #   cmake --build firmware/test/native/build
@@ -70,8 +70,8 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/wiring_order.cpp
 )
 
-# Legacy firmware sources under test. Add a file here only if it builds
-# without ESP-IDF (beyond the shims).
+# Pure sources of other firmware components under test. Add a file here only
+# if it builds without ESP-IDF (beyond the shims).
 set(FIRMWARE_SOURCES
     ${COMPONENTS_DIR}/diag/src/diag_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_table.cpp

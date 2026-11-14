@@ -49,13 +49,13 @@ TEST_CASE("Registry values are unique and sorted, and none is reserved")
     CHECK(isResponse(msg::kCoreResponse));
 }
 
-TEST_CASE("Channel ranges: the legacy IMU stream cuts the command groups")
+TEST_CASE("Channel ranges: subscription and command groups fill the stream class")
 {
     CHECK(kSubGroupChannelFirst == 0x81);
     CHECK(kSubGroupChannelCount == 31);
     CHECK(kCmdGroupChannelFirst == 0xA0);
     CHECK(kCmdGroupChannelCount == 32);
-    // The usable command channels end just below the legacy IMU stream (F6).
+    // 0x80 is the status stream; the two ranges cover the rest of the class.
     CHECK(kSubGroupChannelFirst + kSubGroupChannelCount == kCmdGroupChannelFirst);
 }
 

@@ -44,7 +44,7 @@ import time
 
 PID, MOCK_ACT, MOCK_FB, PWM_DIR, QUAD = 0x20, 112, 113, 0x21, 0x22
 # Bench pins for the extra pool-check instances. They avoid the strapping pins
-# (0, 3, 45, 46), the legacy IMU's I2C (8, 9), possible RGB LEDs (38, 48),
+# (0, 3, 45, 46), the example IMU's I2C (8, 9), possible RGB LEDs (38, 48),
 # USB (19, 20), PSRAM (26-37) and the protocol UART (43, 44).
 POOL_PINS = [1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 39, 40, 41, 42, 47]
 

@@ -1,11 +1,11 @@
 ---
 name: overhaul-step
-description: Run one step of the DriveLink firmware overhaul (S1, F1a ... F10, H1 ...) from start to PR. Use when the user says to start, continue or do the next overhaul step, or names a step id from plans/overhaul-status.md. Optional argument is the step id; without one, take the next planned step.
+description: Run one step of the DriveLink overhaul (HW, H1a, H1b ... H4; the firmware steps F1-F10 are done) from start to PR. Use when the user says to start, continue or do the next overhaul step, or names a step id from plans/overhaul-status.md. Optional argument is the step id; without one, take the next planned step.
 ---
 
 # Run one overhaul step
 
-One session runs one step and ends with one PR into `firmware_overhaul`. Follow these stages in order, and don't skip the approval points. Use the tools available in the current environment; no particular agent API or dedicated plan mode is required.
+One session runs one step and ends with one PR into `host_overhaul`. Follow these stages in order, and don't skip the approval points. Use the tools available in the current environment; no particular agent API or dedicated plan mode is required.
 
 ## Token efficiency
 
@@ -25,11 +25,11 @@ Apply these rules throughout the step without weakening approval points, safety 
 
 ## 1. Orient
 
-1. Run `git fetch origin`. Create a fresh branch from `origin/firmware_overhaul`, using the environment's branch prefix and `overhaul-<step id>` suffix. If the session already sits on a branch with unrelated work, stop and tell the user.
+1. Run `git fetch origin`. Create a fresh branch from `origin/host_overhaul`, using the environment's branch prefix and `overhaul-<step id>` suffix. If the session already sits on a branch with unrelated work, stop and tell the user.
 2. Read these:
-   - the "Firmware overhaul in progress" section of the root `CLAUDE.md`
+   - the "Host overhaul in progress" section of the root `CLAUDE.md`
    - all of `plans/overhaul-status.md`
-   - the parts of `plans/firmware-architecture.md` and `plans/host-architecture.md` that the step touches
+   - the parts of `plans/host-architecture.md` that the step touches, and of `plans/firmware-architecture.md` (the firmware's design record) and `docs/protocol/` when the step touches the firmware or the wire
 3. Pick the step:
    - the argument, if one was given
    - otherwise the first step in the table whose state is `planned`, provided every step it depends on is `merged`
@@ -48,7 +48,7 @@ Use plan mode if available; otherwise present a short step plan for approval:
 - **Plan deviations:**
   - Internal choices you will make and log.
   - Anything that changes the wire protocol, a safety rule or a later phase. These need the user's decision now.
-- **Docs:** `docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, READMEs of new components, and the status file.
+- **Docs:** `docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`, `host/README.md`, READMEs of new components, and the status file.
 
 Wait for the user's approval. Answer any deviation questions before you build.
 
@@ -56,7 +56,7 @@ Wait for the user's approval. Answer any deviation questions before you build.
 
 The session builds the step itself, right after the approval, with no model switch. Don't hand the build to a subagent. Authorized read-only search helpers may still help find code when useful.
 
-- Follow the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`, especially the real-time rules, the error rules and the "allocate only at setup" rule.
+- Follow the root `CLAUDE.md` and the area files the step touches (`firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`), especially the real-time rules, the error rules and the "allocate only at setup" rule.
 - Don't improve legacy code that a later phase deletes, unless it blocks this step.
 - Validate with `python tools/validate.py` from the repository root (the guide is in `firmware/test/CLAUDE.md`, "Validation"):
   - While building, run `quick` (generator, native tests, Windows host tests), or one check with `--only`.
@@ -70,13 +70,13 @@ The session builds the step itself, right after the approval, with no model swit
 
 ## 4. Review
 
-First review the diff yourself (`git diff origin/firmware_overhaul...HEAD`). Look for correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans.
+First review the diff yourself (`git diff origin/host_overhaul...HEAD`). Look for correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans.
 
 Then decide whether an **independent review agent** is needed. Spawn one when the step changes the wire protocol, a safety path (arming, the monitor, the watchdog, `emergencyStop`, disarm triggers), persistence or concurrency in a way your own review can't fully cover, or when the diff is large. Skip it for docs-only, tooling or mechanical steps. Say which you chose, and why, in the PR description. If the user says to skip it (or to run it), do that.
 
-Use the environment's independent-review capability on `git diff origin/firmware_overhaul...HEAD`, with the model required by the approved role policy and the step's **Review effort** (`high` or `xhigh`). Supply equivalent settings without assuming a particular agent type or tool argument. If a required independent review cannot be performed, report that limitation before proceeding past the review gate. Give the reviewer:
+Use the environment's independent-review capability on `git diff origin/host_overhaul...HEAD`, with the model required by the approved role policy and the step's **Review effort** (`high` or `xhigh`). Supply equivalent settings without assuming a particular agent type or tool argument. If a required independent review cannot be performed, report that limitation before proceeding past the review gate. Give the reviewer:
 - the step plan and the relevant plan sections
-- the rules in the root `CLAUDE.md`, `firmware/CLAUDE.md` and `firmware/components/CLAUDE.md`
+- the rules in the root `CLAUDE.md` and the area files the step touches (`firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`)
 - the brief above
 
 Verify each finding, yours or the agent's, against the code. Fix the ones that hold up, run `python tools/validate.py full` again, and note any you rejected, with the reason, for the PR description.
@@ -102,7 +102,7 @@ Record the result in the status file's hardware table, with the date, the step, 
    - any decision log rows
 2. Update the docs listed in the plan.
 3. Commit with a message that says what changed and why, then push.
-4. Open the PR with `gh pr create --base firmware_overhaul`. The description covers:
+4. Open the PR with `gh pr create --base host_overhaul`. The description covers:
    - the step id and what was done
    - the validation: the text of `build/validate/summary.txt` from the last `full` run
    - the plan deviations

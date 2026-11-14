@@ -1,7 +1,7 @@
 """CLI smoke against main firmware on a bare ESP32. Temporary mocks only.
 
 Refuses pending edits and restores the original configured layout and system
-params. Never factory-resets or drives legacy motor hardware.
+params. Never factory-resets or creates real motor or IMU instances.
 """
 import argparse
 import json
