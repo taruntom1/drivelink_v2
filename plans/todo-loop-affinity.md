@@ -1,6 +1,6 @@
 # Plan: automatic initial core placement for loops
 
-Status: implemented and validated, in review. Approved by the user on 2026-11-14.
+Status: implemented and validated, in review in [PR #63](https://github.com/taruntom1/drivelink_v2/pull/63). Approved by the user on 2026-11-14.
 
 ## Accepted behavior
 
