@@ -58,7 +58,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
 | T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | no | high, self | merged | [#68](https://github.com/taruntom1/drivelink_v2/pull/68) |
-| H1a-1 | Typed values/descriptors, errors and synchronous services; CLI formatting with unchanged output. Depends on T0 | bare board: all planned CLI/mock/OTA smokes passed | high, independent | in review | |
+| H1a-1 | Typed values/descriptors, errors and synchronous services; CLI formatting with unchanged output. Depends on T0 | bare board: all planned CLI/mock/OTA smokes passed | high, independent | in review | [#69](https://github.com/taruntom1/drivelink_v2/pull/69) |
 | H1a-2 | Device snapshot and host-windows CI. Depends on H1a-1 | bare board: CLI smokes | high, independent | planned | |
 | H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a-2 | bare board: time, 1 kHz groups, smokes | high, independent | planned | |
 | H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | planned | |

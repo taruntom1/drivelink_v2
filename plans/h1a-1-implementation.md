@@ -1,6 +1,6 @@
 # H1a-1: typed services and CLI
 
-Status: approved by the user on 2026-11-15; implemented; in review. Base: `origin/host_overhaul`
+Status: approved by the user on 2026-11-15; implemented; [PR #69 in review](https://github.com/taruntom1/drivelink_v2/pull/69). Base: `origin/host_overhaul`
 (`2793125`); branch: `codex/overhaul-H1a-1`; PR target: `host_overhaul`.
 
 ## Approved scope decisions
