@@ -90,7 +90,7 @@ TEST_CASE("OTA status parser rejects invalid states limits and truncated payload
             if (mode==4) { b.pop_back(); }out.insert(out.end(),b.begin(),b.end());send(s,out);
         }
     });
-    Session session(device.endpoint());Client client(session);CHECK(client.otaStatus()["state"]==0);
+    Session session(device.endpoint());Client client(session);CHECK(client.otaStatus().state==0);
     for (unsigned i=0;i<4;++i) { CHECK_THROWS_AS(client.otaStatus(),Error); }
 }
 TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
@@ -106,8 +106,8 @@ TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
     });
     SessionOptions options;options.timeout=std::chrono::milliseconds(150);options.read_retries=0;
     Session session(device.endpoint(),options);Client client(session);const auto image=otaFixture();
-    CHECK(client.otaUpload(image)["state"]==2);CHECK(client.otaStatus()["offset"]==image.size());
-    CHECK(client.otaAbort()["aborted"]==true);CHECK(client.otaStatus()["state"]==0);
+    CHECK(client.otaUpload(image).state==2);CHECK(client.otaStatus().offset==image.size());
+    CHECK(client.otaAbort().ok==true);CHECK(client.otaStatus().state==0);
 }
 TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
     Device device([](Socket &s) {
@@ -117,7 +117,25 @@ TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
     });
     Session session(device.endpoint());Client client(session);const auto image=otaFixture();
     CHECK_THROWS_AS(client.otaUpload(image,1,[](uint32_t,uint32_t){return false;}),Error);
-    CHECK(client.otaStatus()["state"]==0);
+    CHECK(client.otaStatus().state==0);
+}
+TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
+    Device device([](Socket &s) {
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
+        for (;;) {
+            const auto req=readFrame(s);const auto n=commands.handle(req,response);
+            if(req[2]==9 && req[3]==1) { send(s,{p::core_wire::kVersion,req[1],9,1,1,10}); }
+            else { send(s,Bytes(response.begin(),response.begin()+n)); }
+        }
+    });
+    Session session(device.endpoint());Client client(session);
+    try { client.otaUpload(otaFixture());FAIL("accepted BEGIN refusal"); }
+    catch(const DeviceError &e) {
+        CHECK(e.kind==ErrorKind::Rejected);CHECK(e.result==1);CHECK(e.detail==10);
+        CHECK(e.family==9);CHECK(e.op==1);CHECK(e.has_request_context);CHECK_FALSE(e.outcome_unknown);
+        CHECK(std::string(e.what()).find("update aborted")!=std::string::npos);
+    }
 }
 TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgements") {
     Device device([](Socket &s) {
@@ -126,6 +144,6 @@ TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgement
         for (;;) { const auto req=readFrame(s);CHECK(req.size()<=512);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
     Session session(device.endpoint());Client client(session);client.info();
-    CHECK(client.otaStatus()["chunk_bytes"]==502);
-    const auto image=otaFixture();CHECK(client.otaUpload(image)["state"]==2);client.otaAbort();
+    CHECK(client.otaStatus().chunk_bytes==502);
+    const auto image=otaFixture();CHECK(client.otaUpload(image).state==2);client.otaAbort();
 }

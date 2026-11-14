@@ -18,6 +18,7 @@ def main():
         source.mkdir()
         (source / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.24)
 project(consumer LANGUAGES CXX)
+set(CMAKE_DISABLE_FIND_PACKAGE_nlohmann_json TRUE)
 find_package(drivelink REQUIRED)
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE drivelink::drivelink)
@@ -30,7 +31,7 @@ target_link_libraries(consumer PRIVATE drivelink::drivelink)
 int main() {
     std::expected<int, int> value = 42;
     if (value.value() != 42) { return 4; }
-    drivelink::Json descriptor={{"value_type",1}};
+    const auto descriptor=drivelink::ValueType::U8;
     if(drivelink::parseValue(descriptor,"42")!=42) { return 1; }
     try {
         drivelink::Session session("invalid-endpoint");
