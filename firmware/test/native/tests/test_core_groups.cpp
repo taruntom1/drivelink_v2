@@ -208,13 +208,26 @@ TEST_CASE("Subscription samples retain config and epoch coherence during concurr
             std::this_thread::yield();continue;
         }
         ++swaps;
-        if(f.g().takeStream(0,bytes) && bytes[1]==f.g().info(sub,0)->epoch) {
-            drivelink::protocol::wire::Reader r(bytes.data()+12,4);
-            CHECK(r.readU32Le()==testmod::f(loop==0?3.F:7.F));++samples;
-        }
+        // configure() acknowledges beginTick's swap, before endTick publishes
+        // a sample. Give the owning loop time to run before reconfiguring it
+        // again; an immediate read can miss every sample on a CI scheduler.
+        const auto epoch=f.g().info(sub,0)->epoch;
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
+        bool sampled=false;
+        do {
+            if(const auto n=f.g().takeStream(0,bytes)) {
+                CHECK(n==16);CHECK(bytes[1]==epoch);
+                drivelink::protocol::wire::Reader r(bytes.data()+12,4);
+                CHECK(r.readU32Le()==testmod::f(loop==0?3.F:7.F));CHECK(r.done());
+                ++samples;sampled=true;break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while(std::chrono::steady_clock::now()<deadline);
+        CHECK(sampled);
+        if(!sampled) { break; }
     }
     done.store(true);first.join();second.join();
-    CHECK(swaps==100);CHECK(samples>0);
+    CHECK(swaps==100);CHECK(samples==100);
 }
 TEST_CASE("Group wire rejects malformed requests before any mutation and pages resources") {
     Groups f; core::CommandService service(f.c,{});std::array<uint8_t,1024> out{};
