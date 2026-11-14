@@ -1,4 +1,5 @@
 #include "core/core_link.hpp"
+#include <algorithm>
 #include "drivelink/protocol/time_codec.hpp"
 #include "core/command_service.hpp"
 #include "core/cpu_load.hpp"
@@ -56,7 +57,7 @@ struct CoreLink::Impl {
 #else
         false
 #endif
-        }) {}
+        ,static_cast<uint8_t>(std::min<int>(CONFIG_CORE_COMMAND_QUEUE_DEPTH,drivelink::protocol::kOtaWindow))}) {}
     void run() {
         if(xQueueReceive(queue,&frame,0)==pdTRUE) {
             const auto n=service.handle({frame.payload,frame.len},reply);
@@ -69,6 +70,9 @@ struct CoreLink::Impl {
             if(after!=AfterReply::None && err==ESP_OK) {
                 if(uart.waitTxIdle(1000)!=ESP_OK) { ESP_LOGE(TAG,"TX drain timed out; reboot cancelled");return; }
                 if(after==AfterReply::Crash) { esp_system_abort("bench crash command"); }
+                if(after==AfterReply::CommitAndReboot && !core.ota().commit().ok()) {
+                    ESP_LOGE(TAG,"OTA selection failed; reboot cancelled, query OTA STATUS");return;
+                }
                 core_os::reboot();
             }
         }

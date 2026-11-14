@@ -136,3 +136,11 @@ used, in internal RAM. See the core README for ownership and snapshot rules.
 F8 time pings bypass the config queue and never block/retry in RX. A queued
 time reply owns its bytes and stamp flag; only TX patches it. Device time is
 monotonic since boot, never host-set. See `docs/protocol/time.md`.
+
+F9 adds config-caller-owned `OtaService` and the `core_os::Ota` platform seam.
+BEGIN/WRITE/FINISH never select a boot image; only explicit SYSTEM REBOOT's
+CommitAndReboot after-reply action commits after TX drain. ABORT never rewrites
+boot metadata, and selected-candidate uncertainty keeps ARM blocked. Fixed
+chunk/hash scratch and the atomic gate stay in internal RAM, off task stacks.
+The IDF adapter requires rollback at compile time. Never call OTA or its native
+file helpers from a tick/RX/monitor callback. See `docs/protocol/ota.md`.

@@ -42,3 +42,14 @@ clock generations and timeout retirement distinct from ordinary core sequence
 IDs. ClockEstimator is single-caller, bounded and monotonic; H1 will integrate
 periodic ownership and application-data mapping. Wire/bias limits are in
 `docs/protocol/time.md`.
+
+F9's OTA service is the explicit retry exception for WRITE: only the same
+offset/data may be retried under the device's duplicate contract. Session's
+OTA-only batch path holds call ownership, keeps at most four requests in flight,
+and retires missing IDs. Respect both advertised window and payload/chunk limits.
+Reconcile uncertain BEGIN/FINISH/CONFIRM through STATUS; never broaden mutation
+retries elsewhere or automatically repeat REBOOT. A reboot reply proves only
+acceptance. Verify full running ELF identity, slot and core version before
+confirmation and recheck identity afterward. Cancellation never confirms.
+Vdev must retain its -vdev version marker after simulated updates so physical
+hardware preflights still refuse it. See `docs/protocol/ota.md`.

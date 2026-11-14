@@ -1,6 +1,8 @@
 #pragma once
 #include "drivelink/session.hpp"
 #include <array>
+#include <functional>
+#include "drivelink/protocol/sha256.hpp"
 #include <nlohmann/json.hpp>
 static_assert(NLOHMANN_JSON_VERSION_MAJOR == 3 && NLOHMANN_JSON_VERSION_MINOR == 11 &&
                   NLOHMANN_JSON_VERSION_PATCH == 3,
@@ -80,6 +82,16 @@ class Client
     Json testgenStart(const TestgenConfig &config);
     Json testgenStop(uint8_t loop);
     Json testgenStatus(uint8_t loop);
+    Json otaStatus();
+    uint32_t otaBegin(uint32_t size,const protocol::Sha256Digest &digest);
+    uint32_t otaWrite(uint32_t offset,std::span<const uint8_t> bytes);
+    Json otaFinish();
+    Json otaAbort();
+    Json otaConfirm();
+    // Upload/FINISH only. Caller owns reboot, reconnect and confirmation.
+    // Progress returns false to cancel; cancellation/error attempts ABORT.
+    Json otaUpload(std::span<const uint8_t> image,uint8_t window=4,
+                   const std::function<bool(uint32_t,uint32_t)> &progress={});
 
   private:
     Reply accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
@@ -94,6 +106,7 @@ class Client
 uint32_t parseValue(const Json &descriptor, const std::string &text, const Json &enums = Json::array());
 Json valueJson(uint8_t type, uint32_t bits);
 Bytes parseHex(const std::string &text);
+Bytes readOtaImage(const std::string &path);
 std::string hex(std::span<const uint8_t> bytes);
 Ref parseRef(const std::string &text);
 uint8_t parseCaptureTrigger(const std::string &text); // manual, value_change, threshold, ...

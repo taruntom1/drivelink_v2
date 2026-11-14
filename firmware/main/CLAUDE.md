@@ -32,3 +32,18 @@ isolated, ignored `firmware/build_xip/`; it verifies bench is off and XiP,
 instruction fetch and rodata relocation are all on before flashing. `normal`
 verifies all three are off. Always restore normal after evaluation. This
 profile never changes `firmware/sdkconfig`; measurements are in the F7b plan.
+
+## F9 update builds and startup
+
+Core boot queries OTA state before starting loops; a pending candidate or
+unreadable boot state blocks ARM while leaving the link available for recovery.
+Startup never confirms a candidate. No OTA task or task-list entry is added.
+The first UART-installed OTA baseline is initialized VALID by the bootloader.
+
+`python tools/bench_fw.py ota-image` builds a distinct `f9-candidate` image in
+isolated `firmware/build_ota/`, verifies normal bench/XiP settings and the F9
+partition/rollback/16MB settings, and never flashes. Its app binary is
+`firmware/build_ota/drivelink_v2.bin`; use the CLI OTA workflow to install it.
+All helper modes now verify rollback/custom partitions/16MB before flashing;
+normal restoration still verifies bench and every XiP relocation option off.
+The partition table retains NVS at 0x9000/0x6000. See `docs/protocol/ota.md`.

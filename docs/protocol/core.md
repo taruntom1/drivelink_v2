@@ -1,19 +1,22 @@
-# Core protocol v7 (F7b)
+# Core protocol v8 (F9)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
 the capture family, the core event stream and the status capture state.
 F7b (v7) adds test generation, its completion event and capture trigger.
-Firmware, host library, CLI and vdev use v7 together; older peers are
+F9 (v8) adds OTA, its status/identity query and the OTA ARM gate.
+Firmware, host library, CLI and vdev use v8 together; older peers are
 incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
 F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 7.
+`core_response` (0x41). All integers are little-endian. Version is 8.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
-version. Fixed bodies have exact lengths. Rejected operations have no body.
+version. Fixed bodies have exact lengths. Rejected operations have no body,
+except OTA WRITE's documented OtaOffset error body.
+The [OTA family, state machine and boot contract](ota.md) is family 9.
 Result, detail, family and operation numbers come from `registry.yaml`'s
 `wire_enums`, exported by generated `registry.hpp`; never renumber them.
 `Ok` and `PendingReboot` are accepted outcomes.
@@ -443,7 +446,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=7 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=8 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.

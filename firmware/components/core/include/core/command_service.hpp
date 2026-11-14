@@ -7,8 +7,9 @@ struct DeviceInfo {
     const char *build_id = "native";
     uint16_t max_payload = 1024;
     bool bench_crash = false;
+    uint8_t ota_window = 1; // <= config queue depth and protocol's four-chunk bound
 };
-enum class AfterReply : uint8_t { None, Reboot, Crash };
+enum class AfterReply : uint8_t { None, Reboot, Crash, CommitAndReboot };
 inline constexpr size_t kCaptureDoneEventBytes = 11;
 // Config task: the CaptureDone event payload once per completed capture, else 0.
 size_t captureDoneEvent(Core &core, std::span<uint8_t> payload);
@@ -26,6 +27,8 @@ public:
     size_t handle(std::span<const uint8_t> request, std::span<uint8_t> response);
     AfterReply takeAfterReply() { auto a=m_after; m_after=AfterReply::None; return a; }
 private:
+    Status ota(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
+               drivelink::protocol::wire::Writer &w);
     Status dispatch(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
                     drivelink::protocol::wire::Writer &w);
     Status capture(drivelink::protocol::core_wire::Header h, drivelink::protocol::wire::Reader &r,
@@ -39,6 +42,7 @@ private:
     std::array<Ref,kMaxBatchEntries> m_refs{};
     std::array<uint32_t,kMaxBatchEntries> m_values{};
     ActionOut m_action_out{};
+    std::array<uint8_t,drivelink::protocol::kOtaChunkBytes> m_ota_chunk{};
     std::array<uint32_t,kCaptureReadBytes/4> m_capture_values{};
 };
 }

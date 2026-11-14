@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v7](../../../docs/protocol/core.md).
+[core v8](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -353,3 +353,27 @@ TX-task timestamp/CRC patch. Malformed/version-mismatched requests increment
 Neither path blocks, feeds the watchdog, allocates or starts a task. Callback
 registration is reset before captured state is destroyed. The pure codecs and
 wire boundaries are in [time.md](../../../docs/protocol/time.md).
+
+## OTA (F9)
+
+`Core::ota()` exposes the config-caller-owned `OtaService` (`ota_service.hpp`).
+BEGIN starts the inactive slot, WRITE appends or checks exact duplicates,
+FINISH verifies the complete-file SHA-256 and prepares a validated image, and
+ABORT releases it without writing boot metadata. Only `commit()` selects it,
+called by explicit SYSTEM REBOOT after its reply drains and followed by an
+immediate restart. EXIT_SAFE_MODE and other reset paths do not commit.
+
+The ARM gate covers Receiving/Ready/Error, selected-boot uncertainty and a
+pending running candidate. Only successful cleanup/confirmation or reset can
+resolve it. ABORT refuses already selected or pending images. STATUS remains
+readable on error; all other OTA state belongs to the config caller. The
+separate atomic gate is safe for status queries, stays in internal RAM and
+does not add work to loop ticks. No new task is created.
+
+During a transaction, SAVE/REVERT/FACTORY_RESET, layout and wire PARAM SET
+mutations, capture ARM and testgen START are refused. BEGIN refuses active
+capture/testgen. The OS adapter owns flash/image validation; fixed upload/read
+scratch lives on the heap-owned service, not a task stack. Native tests cover
+preparation/cancellation/reset, uncertain commit before/after metadata change,
+rollback/confirmation and exact wire/error behavior. The authoritative
+[wire contract](../../../docs/protocol/ota.md) includes offset error bodies.

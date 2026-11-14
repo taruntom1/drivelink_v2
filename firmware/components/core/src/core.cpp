@@ -105,6 +105,7 @@ Core::Core(const CoreConfig &config)
       m_capture(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.capture_refs,
                 core_os::captureCapacity(m_config.capture_max_bytes)),
       m_testgen(m_table, std::span(m_loops.data(), m_config.max_loops), m_arm, m_capture),
+      m_ota(*this),
       m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values})
 {
     m_params.setPendingLayout(&m_pending);
@@ -230,6 +231,7 @@ void Core::createObject(detail::InstanceRecord &record)
 
 Status Core::boot(core_os::KvStore &store)
 {
+    m_ota.initialize();
     if (!m_system_ok) {
         return Status::fail(Result::Fault, Detail::StartFailed);
     }
@@ -495,6 +497,7 @@ size_t Core::loopCount() const
 
 Status Core::layoutOpAllowed() const
 {
+    if (m_ota.transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
     if (!m_booted) {
         return Status::fail(Result::Busy, Detail::NotAtBoot);
     }
@@ -558,6 +561,7 @@ Status Core::getPending(std::span<const Ref> refs, std::span<uint32_t> values) c
 
 Status Core::save()
 {
+    if (m_ota.transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
     if (m_store == nullptr) {
         return Status::fail(Result::Busy, Detail::NotAtBoot);
     }
@@ -614,6 +618,7 @@ Status Core::save()
 
 Status Core::revert()
 {
+    if (m_ota.transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
     if (m_store == nullptr) {
         return Status::fail(Result::Busy, Detail::NotAtBoot);
     }
@@ -669,6 +674,7 @@ Status Core::revert()
 
 Status Core::factoryReset()
 {
+    if (m_ota.transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
     if (m_store == nullptr) {
         return Status::fail(Result::Busy, Detail::NotAtBoot);
     }

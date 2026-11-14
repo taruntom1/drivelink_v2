@@ -23,9 +23,14 @@ The wire library shared by the firmware and the host: framing, CRCs, the frame s
 Core codecs are in core_codec.hpp; enums come from registry.yaml wire_enums.
 Descriptor enum values in defs.hpp are wire values. Complete descriptor sizes
 are generator-checked; firmware's payload cap must meet kDescriptorMinPayload.
-Core v7 and diagnostic v3 are documented in docs/protocol/core.md and diag.md.
+Core v8 and diagnostic v3 are documented in docs/protocol/core.md and diag.md.
 
-Time protocol v1 is independent of core v7: exact 3/19-byte payloads and a
+Time protocol v1 is independent of core v8: exact 3/19-byte payloads and a
 validated full-frame TX timestamp/CRC patch are in `time_codec.hpp`. It has no
 clock or allocation. Malformed requests are counted/dropped by adapters; see
 `docs/protocol/time.md` for this explicit result/detail exception.
+
+F9's `sha256.hpp` and `ota_image.hpp` are pure and allocation-free. Keep
+complete-file SHA, appended ESP image digest and ELF build identity distinct.
+OTA is core family 9; only its OtaOffset WRITE rejection has a four-byte error
+body. The remaining rejected-command bodies stay empty. See `docs/protocol/ota.md`.

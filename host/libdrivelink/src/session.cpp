@@ -41,6 +41,10 @@ struct Session::Impl
     bool closed = false, waiting = false, ready = false, protocol_error = false;
     uint8_t expected_type = 0, expected_seq = 0, expected_family = 0, expected_op = 0;
     Bytes response;
+    struct OtaPending { uint8_t seq=0;bool ready=false;Bytes response; };
+    std::array<OtaPending,4> ota_pending{};
+    size_t ota_count=0;
+    bool ota_error=false;
     std::bitset<65536> ping_retired;
     uint32_t ping_sequence = 0;
     uint64_t boot_generation = next_clock_generation.fetch_add(1);
@@ -208,6 +212,17 @@ struct Session::Impl
             boot_generation=next_clock_generation.fetch_add(1);
             // An in-flight ping must not span a device reboot.
             if (ping_waiting && ping_written) { ping_error=true;cv.notify_all(); }
+            if (ota_count) { ota_error=true;cv.notify_all(); }
+        }
+        if (ota_count && f.msg_type==msg::kCoreResponse && f.len>=2) {
+            for (size_t i=0;i<ota_count;++i) {
+                auto &pending=ota_pending[i];
+                if (f.payload[1]!=pending.seq || pending.ready) { continue; }
+                if (f.len<6 || f.payload[0]!=p::core_wire::kVersion) { ota_error=true;cv.notify_all();return; }
+                if (f.payload[2]!=static_cast<uint8_t>(p::defs::Family::Ota) ||
+                    f.payload[3]!=static_cast<uint8_t>(p::defs::OtaOp::Write)) { return; }
+                pending.response.assign(f.payload,f.payload+f.len);pending.ready=true;cv.notify_all();return;
+            }
         }
         if (f.msg_type==msg::kTimeResponse) {
             if (!ping_waiting || !ping_written || ping_ready || f.len<3) { return; }
@@ -466,9 +481,61 @@ Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body
 {
     const bool read_only = (family == 1 && op == 1) || family == 3 || (family == 2 && op == 1) ||
                            (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6) ||
-                           (family == 6 && (op == 4 || op == 5));
+                           (family == 6 && (op == 4 || op == 5)) || (family==9 && op==6);
     auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
     return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
+}
+std::vector<Reply> Session::otaWriteBatch(std::span<const Bytes> bodies)
+{
+    auto &d=*m_impl;
+    if (bodies.empty() || bodies.size()>d.ota_pending.size()) { throw Error(ErrorKind::Usage,"OTA window must be 1..4"); }
+    std::lock_guard calls(d.call_mutex);
+    std::unique_lock lock(d.mutex);
+    if (d.closed) { throw Error(ErrorKind::Connection,d.failure); }
+    // Preflight the entire batch before posting any bytes or claiming IDs.
+    size_t available=0;for (bool retired:d.retired) { available+=!retired; }
+    if (available<bodies.size()) { throw Error(ErrorKind::Connection,"sequence IDs exhausted after timeouts; reconnect"); }
+    for (const auto &body:bodies) {
+        p::wire::Reader r(body.data(),body.size());(void)r.readU32Le();const auto n=r.readU16Le();
+        if (!r.ok() || !n || n>512 || n!=r.remaining() || body.size()+4>d.max_payload) {
+            throw Error(ErrorKind::Usage,"invalid OTA WRITE body");
+        }
+    }
+    std::array<std::shared_ptr<Bytes>,4> frames;
+    for (size_t i=0;i<bodies.size();++i) {
+        while (d.retired[d.sequence%256]) { ++d.sequence; }
+        auto &pending=d.ota_pending[i];pending={static_cast<uint8_t>(d.sequence++%256),false,{}};
+        const auto &body=bodies[i];Bytes payload{p::core_wire::kVersion,pending.seq,9,2};
+        payload.insert(payload.end(),body.begin(),body.end());
+        frames[i]=std::make_shared<Bytes>(p::frameSize(payload.size()));
+        p::encodeFrame(frames[i]->data(),frames[i]->size(),msg::kCoreCommand,payload.data(),payload.size());
+    }
+    d.ota_count=bodies.size();d.ota_error=false;
+    asio::post(d.io,[&d,frames,count=bodies.size()] {
+        { std::lock_guard guard(d.mutex);if (d.closed) { return; } }
+        if (d.writes.size()+count>16) { d.fail("TX queue full");return; }
+        const bool start=d.writes.empty();
+        for (size_t i=0;i<count;++i) { d.writes.push_back(frames[i]); }
+        if (start) { d.write(); }
+    });
+    d.cv.wait_for(lock,d.options.timeout,[&d] {
+        return d.closed || d.ota_error || std::all_of(d.ota_pending.begin(),d.ota_pending.begin()+d.ota_count,
+                                                    [](const auto &v){return v.ready;});
+    });
+    const bool complete=std::all_of(d.ota_pending.begin(),d.ota_pending.begin()+d.ota_count,[](const auto &v){return v.ready;});
+    std::vector<Reply> replies;replies.reserve(bodies.size());
+    for (size_t i=0;i<d.ota_count;++i) {
+        const auto &pending=d.ota_pending[i];
+        if (!complete || d.ota_error) { d.retired[pending.seq]=true; }
+        if (pending.ready) {
+            const auto &p=pending.response;replies.push_back({p[4],p[5],Bytes(p.begin()+6,p.end())});
+        }
+    }
+    d.ota_count=0;
+    if (d.ota_error) { throw Error(ErrorKind::Protocol,"invalid OTA response or device reboot during upload"); }
+    if (d.closed && !complete) { throw Error(ErrorKind::Connection,d.failure); }
+    if (!complete) { throw Error(ErrorKind::Timeout,"OTA batch timed out; outcome uncertain; query ota-status"); }
+    return replies;
 }
 TimeSample Session::timePing()
 {

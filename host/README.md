@@ -200,3 +200,44 @@ power switch. A positive step response is required before the chirp.
 This real-motor check remains deferred; the same workflow passed with mocks
 on vdev and the bare board. XiP measurements and commands are recorded in
 `plans/f7b-implementation.md`; normal firmware keeps XiP disabled.
+
+## OTA (F9)
+
+The device must be disarmed and already use the F9 dual-slot table. A board on
+F8 needs one UART migration through `python tools/bench_fw.py normal`, retaining
+NVS. Build a distinct normal-config candidate without flashing it:
+
+```sh
+python tools/bench_fw.py ota-image
+drivelink-cli --endpoint serial://COM3 ota-upload firmware/build_ota/drivelink_v2.bin
+drivelink-cli --endpoint serial://COM3 ota-status
+```
+
+Normal upload preflights/hashes the unsigned ESP32-S3 app, streams bounded
+chunks, prepares it with FINISH, requests the explicit REBOOT commit, reconnects,
+checks GET_INFO/core v8 and full ELF identity, and confirms that image. Progress
+uses stderr; `--json` stdout retains JSON envelopes. `--window 1..4` is bounded
+by the device's advertised limit and chunk size fits its payload cap.
+
+`--upload-only` stops in Ready with boot selection untouched; `ota-abort`
+cancels it. `--no-confirm` boots the candidate but leaves it pending; a reset
+without `ota-confirm` rolls back. ABORT refuses an already selected/pending
+image. An accepted-but-uncommitted reboot is reported for STATUS-based recovery,
+never automatically repeated. SDK `Client::otaUpload` only uploads/prepares;
+its caller owns reboot/reconnect/verification/confirmation. Low-level
+`ota-begin SIZE SHA256_HEX`, `ota-write OFFSET CHUNK_HEX` and `ota-finish` expose
+the same contract for diagnostics. See [OTA wire/recovery](../docs/protocol/ota.md).
+
+Bare-board regression (normal firmware; no motors/IMU):
+
+```sh
+python host/test/ota_smoke.py --cli <cli> --endpoint serial://COM3 --baseline firmware/build/drivelink_v2.bin --candidate firmware/build_ota/drivelink_v2.bin --stack-wait 45
+```
+
+It checks retried/conflicting/gapped chunks, incomplete/hash-invalid FINISH,
+partial reset, prepared cancellation, confirmed boot, unconfirmed rollback,
+NVS settings and baseline restoration. `--stack-wait` lets the normal console
+logger capture the OTA config stack before reset. Host integration runs the
+same campaign on vdev with non-executable fixtures; those fixtures are never
+for hardware. TCP proxies cover lost replies, identity mismatch, an accepted
+but uncommitted reboot, and pipelined commands crossing the commit fence.

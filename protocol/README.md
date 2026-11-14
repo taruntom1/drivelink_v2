@@ -70,3 +70,11 @@ Time protocol v1 is the pure `time_codec.hpp`: exact request/reply codecs and
 `time_wire::stampFrame` for a validated encoded reply's TX timestamp and CRC.
 It takes the timestamp from its caller and never reads a clock or allocates.
 The contract and transport boundaries are in [time.md](../docs/protocol/time.md).
+
+F9 adds allocation-free incremental `Sha256`/`sha256` and `Sha256Digest`, with
+known-answer/split-update tests. `ota_image.hpp` preflights complete unsigned
+ESP32-S3 application binaries: segment bounds, descriptor magic, checksum and
+optional appended digest. It extracts the full ELF build hash; that hash is
+distinct from the SHA of the complete upload. IDF remains the authoritative
+chip/revision/image validator. These helpers have no OS/firmware dependency.
+The OTA family uses [core v8](../docs/protocol/ota.md).

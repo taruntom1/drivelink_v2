@@ -9,6 +9,7 @@
 #include "core_os/native_kv.hpp"
 #include "diag_table.hpp"
 #include "drivelink/client.hpp"
+#include "core_os/native_ota.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/time_codec.hpp"
 #include "drivelink/protocol/scanner.hpp"
@@ -141,7 +142,7 @@ struct Peer : std::enable_shared_from_this<Peer>
         std::chrono::steady_clock::time_point expires;
     };
     std::deque<Output> output;
-    bool closed = false;
+    bool closed = false, reset_pending = false;
     uint64_t generation = 0;
     explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
     ~Peer()
@@ -177,6 +178,8 @@ struct Server
     uint64_t last_rt_violations = 0;
     int64_t next_status = 0;
     bool crash_enabled = false, stopping = false;
+    std::array<char,17> ota_build_id{};
+    std::string ota_version;
     explicit Server(bool bench) : crash_enabled(bench) {}
     ~Server()
     {
@@ -211,8 +214,13 @@ struct Server
         {
             throw std::runtime_error("core boot failed");
         }
+        const auto &boot_info=core->ota().bootInfo();
+        const auto build=drivelink::hex(boot_info.elf);
+        std::copy_n(build.data(),16,ota_build_id.data());
+        ota_version=boot_info.version.data();
+        if (!ota_version.ends_with("-vdev")) { ota_version+="-vdev"; }
         commands = std::make_unique<core::CommandService>(
-            *core, core::DeviceInfo{"0.1.0-vdev", DRIVELINK_BUILD_ID, 1024, crash_enabled});
+            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow});
         counter = 0;
         next_status = 0;
         if (peer && !peer->closed)
@@ -242,6 +250,14 @@ struct Server
         }
         else if (frame.msg_type == msg::kCoreCommand)
         {
+            if (from.reset_pending) {
+                // Match the firmware's config fence while its after-reply
+                // action drains/commits. Later commands cannot change Ready.
+                p::core_wire::Header h;p::wire::Reader r(frame.payload,frame.len);
+                (void)p::core_wire::decodeHeader(r,h);p::wire::Writer w(reply.data(),reply.size());
+                p::core_wire::response(w,h,core::Result::Busy,core::Detail::StagingBusy);
+                from.send(msg::kCoreResponse,reply.data(),w.size());return;
+            }
             const auto n = commands->handle({frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
         }
@@ -544,6 +560,7 @@ bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply af
     p::encodeFrame(bytes->data(), bytes->size(), type, data, n);
     output.push_back({bytes, after, stream, type == msg::kCoreResponse || type == msg::kDiagQueryResponse || type == msg::kTimeResponse,
                       std::chrono::steady_clock::now() + std::chrono::seconds(2)});
+    if (after!=core::AfterReply::None) { reset_pending=true; }
     armDeadline();
     if (output.size() == 1)
     {
@@ -564,6 +581,7 @@ void Peer::recoverPty()
         stale.cancel();
         write_deadline.cancel();
         output.clear();
+        reset_pending=false;
         scanner = p::Scanner(1024);
         read();
         return;
@@ -625,7 +643,9 @@ void Peer::write()
             return;
         }
         self->output.pop_front();
-        if (item.after != core::AfterReply::None)
+        if (item.after != core::AfterReply::None) { self->reset_pending=false; }
+        if (item.after != core::AfterReply::None &&
+            (item.after != core::AfterReply::CommitAndReboot || self->server.core->ota().commit().ok()))
         {
             if (item.after == core::AfterReply::Crash)
             {
@@ -789,6 +809,11 @@ int main(int argc, char **argv)
         }
         std::filesystem::create_directories(state);
         DirectoryLock lock(state / "process.lock");
+        p::Sha256Digest baseline_elf{};
+        const auto source_id=drivelink::parseHex(DRIVELINK_BUILD_ID);
+        std::copy_n(source_id.begin(),std::min(source_id.size(),baseline_elf.size()),baseline_elf.begin());
+        core_os::native::setOtaBaseline(baseline_elf,"0.1.0-vdev");
+        core_os::native::setOtaDirectory(state);
         Server s(bench);
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)
