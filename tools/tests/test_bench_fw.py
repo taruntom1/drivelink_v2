@@ -36,6 +36,9 @@ class BenchTest(unittest.TestCase):
             header = self.firmware / build / 'config' / 'sdkconfig.h'
             header.parent.mkdir(parents=True)
             content = '#define CONFIG_CORE_BENCH_CRASH 1\n' if self.enabled else '/* #undef CONFIG_CORE_BENCH_CRASH */\n'
+            content += ''.join(f'#define CONFIG_{x} 1\n' for x in (
+                'PARTITION_TABLE_CUSTOM', 'BOOTLOADER_APP_ROLLBACK_ENABLE', 'ESPTOOLPY_FLASHSIZE_16MB'))
+            content += '#define CONFIG_PARTITION_TABLE_CUSTOM_FILENAME "partitions.csv"\n'
             if self.xip:
                 content += ''.join(f'#define CONFIG_{x} 1\n' for x in (
                     'SPIRAM_XIP_FROM_PSRAM', 'SPIRAM_FETCH_INSTRUCTIONS', 'SPIRAM_RODATA'))
@@ -102,11 +105,29 @@ class BenchTest(unittest.TestCase):
         self.assertEqual(self.run_main('normal'), 1)
         self.assertEqual([s.title for s in self.calls], ['build'])
 
+    def test_ota_candidate_is_isolated_and_never_flashes(self):
+        before = self.normal_config.read_bytes()
+        self.assertEqual(self.run_main('ota-image'), 0)
+        self.assertEqual([s.title for s in self.calls], ['build'])
+        self.assertIn('PROJECT_VER=f9-candidate', self.calls[0].argv)
+        self.assertIn('SDKCONFIG=build_ota/sdkconfig', self.calls[0].argv)
+        self.assertEqual(self.normal_config.read_bytes(), before)
+
+    def test_rollback_guard_fails_before_flash(self):
+        original = self.run_step
+        def missing_rollback(*args, **kwargs):
+            original(*args, **kwargs)
+            header = self.firmware / 'build' / 'config' / 'sdkconfig.h'
+            header.write_text(header.read_text().replace('#define CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE 1', ''))
+        self.run_step = missing_rollback
+        self.assertEqual(self.run_main('normal'), 1)
+        self.assertEqual([s.title for s in self.calls], ['build'])
+
     def test_dry_runs_and_help_never_export_idf_or_run_commands(self):
         with mock.patch.object(validate, 'idf_env') as export, \
                 mock.patch.object(validate, 'run_step') as run, \
                 contextlib.redirect_stdout(io.StringIO()):
-            for mode in ('bench', 'normal', 'xip'):
+            for mode in ('bench', 'normal', 'xip', 'ota-image'):
                 self.assertEqual(bench_fw.main([mode, '--dry-run']), 0)
             with self.assertRaises(SystemExit) as caught:
                 bench_fw.main(['--help'])

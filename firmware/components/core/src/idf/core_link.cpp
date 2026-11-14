@@ -1,4 +1,5 @@
 #include "core/core_link.hpp"
+#include <algorithm>
 #include "drivelink/protocol/time_codec.hpp"
 #include "core/command_service.hpp"
 #include "core/cpu_load.hpp"
@@ -56,7 +57,7 @@ struct CoreLink::Impl {
 #else
         false
 #endif
-        }) {}
+        ,static_cast<uint8_t>(std::min<int>(CONFIG_CORE_COMMAND_QUEUE_DEPTH,drivelink::protocol::kOtaWindow))}) {}
     void run() {
         if(xQueueReceive(queue,&frame,0)==pdTRUE) {
             const auto n=service.handle({frame.payload,frame.len},reply);

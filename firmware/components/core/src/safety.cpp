@@ -13,6 +13,7 @@ Status Core::arm() {
     if (m_safe_mode) { return Status::fail(Result::Fault, Detail::SafeMode); }
     if (m_layout_invalid) { return Status::fail(Result::Fault, Detail::LayoutInvalid); }
     if (pendingReboot()) { return Status::fail(Result::Fault, Detail::RebootPending); }
+    if (m_ota.blocksArm()) { return Status::fail(Result::Busy,m_ota.pending() ? Detail::OtaPendingConfirm : Detail::OtaActive); }
     if (instancesFailed()) { return Status::fail(Result::Fault, Detail::StartFailed); }
     if (core_os::diagBlocksArm()) { return Status::fail(Result::Fault, Detail::BlocksArm); }
     bool configured = false;

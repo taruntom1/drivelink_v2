@@ -53,6 +53,44 @@ size_t testgenDoneEvent(Core &core, std::span<uint8_t> payload)
     w.appendU8(loop); w.appendU32Le(snap.run); w.appendU8(static_cast<uint8_t>(snap.reason));
     return w.size();
 }
+Status CommandService::ota(cw::Header h,wire::Reader &r,wire::Writer &w)
+{
+    auto &ota=m_core.ota();
+    switch (static_cast<defs::OtaOp>(h.op)) {
+    case defs::OtaOp::Begin: {
+        const auto size=r.readU32Le();drivelink::protocol::Sha256Digest digest{};
+        for (auto &b:digest) { b=r.readU8(); }
+        if (!r.done()) { return bad(); }
+        if (w.remaining()<4) { return bad(Detail::BufferTooSmall); }
+        const auto st=ota.begin(size,digest);if (st.ok()) { w.appendU32Le(ota.offset()); }return st;
+    }
+    case defs::OtaOp::Write: {
+        const auto offset=r.readU32Le();const auto n=r.readU16Le();
+        if (!r.ok() || !n || n>drivelink::protocol::kOtaChunkBytes || r.remaining()!=n) { return bad(); }
+        if (w.remaining()<4) { return bad(Detail::BufferTooSmall); }
+        // Reader's view is valid for this config call only.
+        for (size_t i=0;i<n;++i) { m_ota_chunk[i]=r.readU8(); }
+        const auto st=ota.write(offset,{m_ota_chunk.data(),n});
+        if (st.ok() || st.detail==Detail::OtaOffset) { w.appendU32Le(ota.offset()); }return st;
+    }
+    case defs::OtaOp::Finish:if (!r.done()) { return bad(); }return ota.finish();
+    case defs::OtaOp::Abort:if (!r.done()) { return bad(); }return ota.abort();
+    case defs::OtaOp::Confirm:if (!r.done()) { return bad(); }return ota.confirm();
+    case defs::OtaOp::Status: {
+        if (!r.done()) { return bad(); }
+        if (w.remaining()<88) { return bad(Detail::BufferTooSmall); }
+        // STATUS is still readable on an error; its state/error explain it.
+        (void)ota.refresh();const auto &boot=ota.bootInfo();
+        w.appendU8(static_cast<uint8_t>(ota.state()));w.appendU8(boot.running);w.appendU8(boot.selected);w.appendU8(boot.pending);
+        w.appendU32Le(ota.size());w.appendU32Le(ota.offset());w.appendU32Le(boot.capacity);
+        w.appendU16Le(std::min<uint16_t>(drivelink::protocol::kOtaChunkBytes,m_info.max_payload-10U));
+        w.appendU8(std::clamp<uint8_t>(m_info.ota_window,1,drivelink::protocol::kOtaWindow));
+        w.appendU32Le(static_cast<uint32_t>(ota.lastError()));w.appendU8(static_cast<uint8_t>(ota.stage()));
+        for (auto b:ota.digest()) { w.appendU8(b); }for (auto b:boot.elf) { w.appendU8(b); }return {};
+    }
+    default:return bad(Detail::Unsupported);
+    }
+}
 Status CommandService::testgen(cw::Header h, wire::Reader &r, wire::Writer &w)
 {
     auto &gen = m_core.testgen();
@@ -60,6 +98,7 @@ Status CommandService::testgen(cw::Header h, wire::Reader &r, wire::Writer &w)
     if (!r.ok()) { return bad(); }
     switch (static_cast<defs::TestgenOp>(h.op)) {
     case defs::TestgenOp::Start: {
+        if (m_core.ota().transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
         TestgenConfig c; c.loop = loop; c.target = ref(r);
         c.waveform = static_cast<TestgenWaveform>(r.readU8());
         c.offset = defs::f32FromBits(r.readU32Le()); c.amplitude = defs::f32FromBits(r.readU32Le());
@@ -109,7 +148,8 @@ Status CommandService::capture(cw::Header h,wire::Reader &r,wire::Writer &w)
         for(size_t i=0;i<count;++i) { m_refs[i]=ref(r); }
         return cap.configure(loop,divider,samples,pre,trigger,{m_refs.data(),count});
     }
-    case defs::CaptureOp::Arm: if(!r.done()) { return bad(); } return cap.arm();
+    case defs::CaptureOp::Arm: if(!r.done()) { return bad(); }
+        if (m_core.ota().transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }return cap.arm();
     case defs::CaptureOp::Abort: if(!r.done()) { return bad(); } return cap.abort();
     case defs::CaptureOp::Trigger: if(!r.done()) { return bad(); } return cap.trigger();
     case defs::CaptureOp::Status: {
@@ -157,11 +197,14 @@ size_t CommandService::handle(std::span<const uint8_t> request,std::span<uint8_t
     if (!body.ok()) { st=bad(Detail::BufferTooSmall); m_after=AfterReply::None; }
     wire::Writer header(response.data(),cap);
     cw::response(header,h,st.result,st.detail);
-    return cw::kResponseHeader+(st.accepted() ? body.size() : 0);
+    const bool offset_body=parsed && h.family==static_cast<uint8_t>(defs::Family::Ota) &&
+        h.op==static_cast<uint8_t>(defs::OtaOp::Write) && st.detail==Detail::OtaOffset;
+    return cw::kResponseHeader+((st.accepted() || offset_body) ? body.size() : 0);
 }
 Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
 {
     switch (static_cast<defs::Family>(h.family)) {
+    case defs::Family::Ota:return ota(h,r,w);
     case defs::Family::System: {
         if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::BenchStall) {
             const auto loop = r.readU8(); const auto ms = r.readU16Le();
@@ -259,6 +302,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
     case defs::Family::Param: {
         const auto n=r.readU8();const bool set=h.op==static_cast<uint8_t>(defs::ParamOp::Set);
         if(h.op<1 || h.op>3 || !r.ok() || n>kMaxBatchEntries || r.remaining()!=n*(set?8U:4U)) { return bad(); }
+        if (set && m_core.ota().transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
         if(w.remaining()<1+4U*n) { return bad(Detail::BufferTooSmall); }
         for(size_t i=0;i<n;++i) {
             m_refs[i]=ref(r);if(set) { m_sets[i]={m_refs[i],r.readU32Le()}; }

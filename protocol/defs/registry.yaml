@@ -109,6 +109,12 @@ wire_enums:
     MonitorUnavailable: 44
     RebootPending: 45
     WrongState: 46
+    OtaActive: 47
+    OtaPendingConfirm: 48
+    OtaOffset: 49
+    OtaHash: 50
+    OtaImage: 51
+    OtaBackend: 52
   Family:
     System: 1
     Layout: 2
@@ -198,3 +204,25 @@ wire_enums:
     Disarmed: 3
   ActionOp:
     Run: 1
+  OtaOp:
+    Begin: 1
+    Write: 2
+    Finish: 3
+    Abort: 4
+    Confirm: 5
+    Status: 6
+  OtaState:
+    Idle: 0
+    Receiving: 1
+    Ready: 2
+    Error: 3
+  OtaStage:
+    None: 0
+    Info: 1
+    Begin: 2
+    Write: 3
+    Read: 4
+    Finish: 5
+    Select: 6
+    Abort: 7
+    Confirm: 8

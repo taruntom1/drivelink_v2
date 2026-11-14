@@ -33,6 +33,8 @@ target_compile_options(drivelink_protocol PRIVATE -Werror)
 # core_os, native backend (backend/native), and the pure core: every core
 # source except src/idf/, which reads Kconfig.
 set(CORE_SOURCES
+    ${COMPONENTS_DIR}/core_os/backend/native/src/ota_native.cpp
+    ${COMPONENTS_DIR}/core/src/ota_service.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/realtime_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/core_os_native.cpp
     ${COMPONENTS_DIR}/core_os/backend/native/src/periodic_timer_native.cpp
@@ -110,8 +112,10 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_scanner.cpp
     ${PROTOCOL_DIR}/test/test_wire_codec.cpp
     ${PROTOCOL_DIR}/test/test_time_codec.cpp
+    ${PROTOCOL_DIR}/test/test_sha256.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
     tests/test_core_commands.cpp
+    tests/test_core_ota.cpp
     tests/test_core_groups.cpp
     tests/test_core_capture.cpp
     tests/test_core_testgen.cpp

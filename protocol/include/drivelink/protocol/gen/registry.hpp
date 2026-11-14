@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x55851465;
+inline constexpr uint32_t kDescriptorHash = 0x32713D40;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -81,6 +81,12 @@ enum class Detail : uint8_t {
     MonitorUnavailable = 44,
     RebootPending = 45,
     WrongState = 46,
+    OtaActive = 47,
+    OtaPendingConfirm = 48,
+    OtaOffset = 49,
+    OtaHash = 50,
+    OtaImage = 51,
+    OtaBackend = 52,
 };
 
 enum class Family : uint8_t {
@@ -202,6 +208,34 @@ enum class TestgenReason : uint8_t {
 
 enum class ActionOp : uint8_t {
     Run = 1,
+};
+
+enum class OtaOp : uint8_t {
+    Begin = 1,
+    Write = 2,
+    Finish = 3,
+    Abort = 4,
+    Confirm = 5,
+    Status = 6,
+};
+
+enum class OtaState : uint8_t {
+    Idle = 0,
+    Receiving = 1,
+    Ready = 2,
+    Error = 3,
+};
+
+enum class OtaStage : uint8_t {
+    None = 0,
+    Info = 1,
+    Begin = 2,
+    Write = 3,
+    Read = 4,
+    Finish = 5,
+    Select = 6,
+    Abort = 7,
+    Confirm = 8,
 };
 
 inline constexpr size_t kDescriptorMinPayload = 142;

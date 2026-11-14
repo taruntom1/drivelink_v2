@@ -169,7 +169,7 @@ def main():
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 7' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 8' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
@@ -204,7 +204,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 7
+                assert cli('info')['protocol_version'] == 8
                 assert cli('time-ping')['samples'][0]['accepted']
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
@@ -229,7 +229,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 7
+                assert cli('info')['protocol_version'] == 8
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire
@@ -288,6 +288,8 @@ def main():
             capture_smoke(args.cli, url, loop_rate=200)
             from testgen_smoke import run as testgen_smoke
             testgen_smoke(args.cli, url, loop_rate=50, flash_write=True)
+            from ota_smoke import simulated as ota_smoke
+            ota_smoke(args.cli, url)
             # The loop-stall scenario needs the bench stall: restart the same
             # state with --allow-crash, on the same transport.
             kill()

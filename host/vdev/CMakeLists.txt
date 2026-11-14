@@ -1,5 +1,6 @@
 set(COMPONENTS ${CMAKE_CURRENT_LIST_DIR}/../../firmware/components)
 set(CORE_SOURCES
+  ota_service
   testgen_service capture_service config_blob command_service group_service source_service core safety crc32 instance layout_validation loop loop_instance
   param_service pending_layout persistence registry value wiring_order)
 set(SOURCES)
@@ -7,6 +8,7 @@ foreach(source IN LISTS CORE_SOURCES)
   list(APPEND SOURCES ${COMPONENTS}/core/src/${source}.cpp)
 endforeach()
 add_library(drivelink_native_core STATIC ${SOURCES}
+  ${COMPONENTS}/core_os/backend/native/src/ota_native.cpp
   ${COMPONENTS}/mod_mock/src/modules.cpp
   ${COMPONENTS}/mod_imu_bno055/src/state.cpp
   ${COMPONENTS}/mod_motor/src/controller.cpp
@@ -38,7 +40,8 @@ set(BUILD_ID ${DRIVELINK_VDEV_BUILD_ID})
 if(NOT BUILD_ID)
   execute_process(COMMAND git rev-parse --short=16 HEAD WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} OUTPUT_VARIABLE BUILD_ID OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 endif()
-if(NOT BUILD_ID MATCHES "^[0-9a-fA-F]+$" OR NOT BUILD_ID)
+string(LENGTH "${BUILD_ID}" BUILD_ID_LENGTH)
+if(NOT BUILD_ID MATCHES "^[0-9a-fA-F]+$" OR NOT BUILD_ID_LENGTH EQUAL 16)
   # Source archives and Windows worktree gitfiles viewed from WSL have no
   # usable Git metadata. Keep the wire identity defined in either case.
   set(BUILD_ID "0000000000000000")

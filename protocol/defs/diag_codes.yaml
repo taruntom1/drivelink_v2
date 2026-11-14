@@ -544,6 +544,17 @@ codes:
   - {source: feedback_quadrature, code: 2, name: ReadFailed, severity: error, kind: latched, disarms: true, description: "Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required."}
 
   # F6 instance diagnostics
+  - source: core
+    code: 263
+    name: OtaFailed
+    severity: error
+    kind: record
+    clears: false
+    arg0: OtaStage (1 info, 2 begin, 3 write, 4 read, 5 finish, 6 select, 7 abort, 8 confirm)
+    arg1: expected upload offset
+    description: OTA backend operation failed; esp_err carries the cause. ARM remains blocked until explicit recovery.
+
+  # F6 instance diagnostics
   - source: imu_bno055
     code: 1
     name: InitFailed

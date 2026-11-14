@@ -12,6 +12,7 @@ set(DRIVELINK_PROTOCOL_SOURCES
     src/crc.cpp
     src/framing.cpp
     src/scanner.cpp
+    src/sha256.cpp
 )
 
 if(ESP_PLATFORM)

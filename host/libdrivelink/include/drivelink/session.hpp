@@ -58,6 +58,9 @@ class Session
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     Reply request(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
+    // OTA WRITE only, 1..4 owned request bodies. Holds ordinary call ownership
+    // until every reply arrives; timeouts retire missing IDs before throwing.
+    std::vector<Reply> otaWriteBatch(std::span<const Bytes> bodies);
     TimeSample timePing(); // no automatic retries; timestamps taken by the I/O thread
     Bytes diagRequest(uint8_t op, std::span<const uint8_t> body = {});
     // Queue a command-group payload without waiting for a peer. False means

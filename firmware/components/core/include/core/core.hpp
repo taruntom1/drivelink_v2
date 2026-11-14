@@ -11,6 +11,7 @@
 
 #include "core/capture_service.hpp"
 #include "core/testgen_service.hpp"
+#include "core/ota_service.hpp"
 #include "core/core_config.hpp"
 #include "core/group_service.hpp"
 #include "core/instance.hpp"
@@ -136,7 +137,7 @@ public:
     Status acknowledgeFault();
     ArmStatus armStatus() const { return m_arm.status(); }
     DisarmReason lastDisarmReason() const { return m_arm.reason(); }
-    bool blocksArm() const { return core_os::diagBlocksArm(); }
+    bool blocksArm() const { return core_os::diagBlocksArm() || m_ota.blocksArm(); }
     // Timer-owned. Public for deterministic native tests; never call in
     // parallel with its timer, or before boot has fixed the loop table.
     void monitor(int64_t now_us);
@@ -157,6 +158,7 @@ public:
     GroupService &groups() { return m_groups; }
     CaptureService &capture() { return m_capture; }
     TestgenService &testgen() { return m_testgen; }
+    OtaService &ota() { return m_ota; }
     Loop &loop(uint8_t id) { return *findLoop(id); } ///< known running loop only
     Loop *findLoop(uint8_t id) const;
     Loop *loopAt(size_t slot) const { return slot < m_config.max_loops ? m_loops[slot] : nullptr; }
@@ -210,6 +212,7 @@ private:
     GroupService m_groups;
     CaptureService m_capture;
     TestgenService m_testgen;
+    OtaService m_ota;
     SourceService m_sources;
     PendingLayout m_pending;
     core_os::OneShotTimer m_crash_clear;

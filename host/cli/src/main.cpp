@@ -1,5 +1,6 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/defs.hpp"
+#include "drivelink/protocol/ota_image.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <chrono>
@@ -21,6 +22,9 @@ struct InterruptScope {
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
   time-ping | time-sync [DURATION_S]
+  ota-status | ota-abort | ota-confirm
+  ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]
+  ota-begin SIZE SHA256_HEX | ota-write OFFSET CHUNK_HEX | ota-finish
   info | types | items TYPE | enums TYPE ITEM | codes
   instances [pending] | add TYPE LABEL [LOOP] | remove TYPE INSTANCE
   label TYPE INSTANCE LABEL | discard
@@ -126,6 +130,16 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         count(0);
         return client.info();
     }
+    if (cmd=="ota-status") { count(0);return client.otaStatus(); }
+    if (cmd=="ota-abort") { count(0);return client.otaAbort(); }
+    if (cmd=="ota-confirm") { count(0);return client.otaConfirm(); }
+    if (cmd=="ota-finish") { count(0);return client.otaFinish(); }
+    if (cmd=="ota-begin") {
+        count(2);const auto bytes=parseHex(args[2]);if (bytes.size()!=32) { usage("OTA SHA256 must be 32 bytes"); }
+        protocol::Sha256Digest digest{};std::copy(bytes.begin(),bytes.end(),digest.begin());
+        return {{"offset",client.otaBegin(id(1,protocol::kOtaSlotBytes),digest)}};
+    }
+    if (cmd=="ota-write") { count(2);return {{"offset",client.otaWrite(id(1,protocol::kOtaSlotBytes),parseHex(args[2]))}}; }
     if (cmd == "types")
     {
         count(0);
@@ -638,6 +652,67 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     }
     usage("unknown command: " + cmd);
 }
+Json upload(const std::vector<std::string> &args,const std::string &endpoint,SessionOptions options)
+{
+    if (args.size()<2) { usage("ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]"); }
+    bool upload_only=false,no_confirm=false;uint8_t window=4;
+    for (size_t i=2;i<args.size();++i) {
+        if (args[i]=="--upload-only" && !upload_only) { upload_only=true; }
+        else if (args[i]=="--no-confirm" && !no_confirm) { no_confirm=true; }
+        else if (args[i]=="--window" && i+1<args.size()) { window=static_cast<uint8_t>(parseUnsigned(args[++i],4)); }
+        else { usage("unknown/repeated OTA option"); }
+    }
+    if ((upload_only && no_confirm) || !window) { usage("invalid OTA options"); }
+    const auto image=readOtaImage(args[1]);protocol::Sha256Digest identity;
+    if (!protocol::otaImageIdentity(image,identity)) { usage("invalid OTA image"); }
+    auto session=std::make_unique<Session>(endpoint,options);
+    auto client=std::make_unique<Client>(*session);client->info();
+    const auto before=client->otaStatus();
+    InterruptScope interrupt;unsigned last_percent=101;
+    auto state=client->otaUpload(image,window,[&](uint32_t offset,uint32_t size) {
+        const auto percent=100U*offset/size;
+        if (percent/5!=last_percent/5) { std::cerr<<"OTA "<<percent<<"%\n";last_percent=percent; }
+        return !interrupted;
+    });
+    if (upload_only) { state["rebooted"]=false;state["confirmed"]=false;return state; }
+    if (interrupted) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }
+    try { client->system(static_cast<uint8_t>(protocol::defs::SystemOp::Reboot)); }
+    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection) { throw; } }
+    client.reset();session->close();session.reset();
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+    std::string failure="device did not reconnect";
+    while (std::chrono::steady_clock::now()<deadline) {
+        if (interrupted) { throw Error(ErrorKind::Usage,"OTA cancelled after reboot; candidate left unconfirmed; inspect ota-status"); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        try {
+            auto reconnect_options=options;
+            reconnect_options.timeout=std::min(options.timeout,std::chrono::milliseconds(1500));
+            session=std::make_unique<Session>(endpoint,reconnect_options);client=std::make_unique<Client>(*session);
+            const auto info=client->info();state=client->otaStatus();
+            if (state["elf_sha256"]!=hex(identity) || state["running_slot"]==before["running_slot"] ||
+                state["running_slot"]!=state["boot_slot"] || info["build_id"]!=hex(identity).substr(0,16) ||
+                state["state"]!=0) {
+                throw Error(ErrorKind::Protocol,"running image/slot does not match uploaded candidate; not confirmed");
+            }
+            if (!no_confirm && state["pending_confirm"]==true) {
+                if (interrupted) { throw Error(ErrorKind::Usage,"candidate left unconfirmed"); }
+                try { client->otaConfirm(); }
+                catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; } }
+                state=client->otaStatus();
+                if (state["pending_confirm"]==true) { throw Error(ErrorKind::Timeout,"confirmation uncertain; inspect ota-status and use ota-confirm"); }
+                if (state["elf_sha256"]!=hex(identity) || state["running_slot"]==before["running_slot"] ||
+                    state["running_slot"]!=state["boot_slot"] || state["state"]!=0) {
+                    throw Error(ErrorKind::Protocol,"running image changed during confirmation; inspect ota-status");
+                }
+            }
+            state["rebooted"]=true;state["confirmed"]=state["pending_confirm"]==false;return state;
+        } catch (const Error &e) {
+            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout) { throw; }
+            failure=e.what();client.reset();if (session) { session->close();session.reset(); }
+        }
+    }
+    throw Error(ErrorKind::Timeout,"OTA reconnect/confirmation failed: "+failure+"; inspect ota-status; confirmation remains uncertain");
+}
 } // namespace
 int main(int argc, char **argv)
 {
@@ -703,6 +778,7 @@ int main(int argc, char **argv)
         {
             usage("--endpoint and COMMAND required; use --help");
         }
+        if (args[0]=="ota-upload") { emit(upload(args,endpoint,options),json);return 0; }
         Session session(endpoint, options);
         Client client(session);
         client.info();

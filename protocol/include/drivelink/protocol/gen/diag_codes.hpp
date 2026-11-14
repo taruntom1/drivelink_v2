@@ -125,6 +125,9 @@ inline constexpr Code kCommandFrameRejected{29, Source::Core, 0x0103, Severity::
 inline constexpr Code kLoopStalled{30, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
 /// No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.
 inline constexpr Code kWatchdogTimeout{31, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
+/// OTA backend operation failed; esp_err carries the cause. ARM remains blocked until explicit recovery.
+/// arg0: OtaStage (1 info, 2 begin, 3 write, 4 read, 5 finish, 6 select, 7 abort, 8 confirm). arg1: expected upload offset.
+inline constexpr Code kOtaFailed{36, Source::Core, 0x0107, Severity::Error, CodeKind::Record, false, "OtaFailed", false, false};
 } // namespace core
 
 namespace actuator_pwm_dir {
@@ -146,12 +149,12 @@ inline constexpr Code kReadFailed{35, Source::FeedbackQuadrature, 0x0002, Severi
 namespace imu_bno055 {
 /// Instance failed to start; esp_err carries the underlying bus or driver error.
 /// arg0: stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages 0x100 through 0x103 retain their meaning. arg1: unused.
-inline constexpr Code kInitFailed{36, Source::ImuBno055, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{37, Source::ImuBno055, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// The latest sensor read failed; numeric values are retained and valid is false. Clears after a complete successful sample.
-inline constexpr Code kReadFailed{37, Source::ImuBno055, 0x0002, Severity::Warning, CodeKind::Latched, true, "ReadFailed", false, false};
+inline constexpr Code kReadFailed{38, Source::ImuBno055, 0x0002, Severity::Warning, CodeKind::Latched, true, "ReadFailed", false, false};
 /// A mode or calibration bus operation failed. esp_err carries the first bus error.
 /// arg0: action id. arg1: actual mode (255 when mode restoration failed).
-inline constexpr Code kActionFailed{38, Source::ImuBno055, 0x0003, Severity::Error, CodeKind::Record, false, "ActionFailed", false, false};
+inline constexpr Code kActionFailed{39, Source::ImuBno055, 0x0003, Severity::Error, CodeKind::Record, false, "ActionFailed", false, false};
 } // namespace imu_bno055
 
 namespace actuator_mock {
@@ -178,7 +181,7 @@ inline constexpr Code kInitFailed{24, Source::ImuMock, 0x0001, Severity::Error, 
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 39;
+inline constexpr size_t kSlotCount = 40;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
@@ -218,6 +221,7 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::actuator_mock::kArmBlocked,
     codes::actuator_pwm_dir::kDriverFault,
     codes::feedback_quadrature::kReadFailed,
+    codes::core::kOtaFailed,
     codes::imu_bno055::kInitFailed,
     codes::imu_bno055::kReadFailed,
     codes::imu_bno055::kActionFailed,

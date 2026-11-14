@@ -92,3 +92,4 @@ build_variant/
 # Bench-only safe-mode verification build
 build_bench/
 build_xip/
+build_ota/

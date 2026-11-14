@@ -9,6 +9,7 @@
 #include "core_os/native_kv.hpp"
 #include "diag_table.hpp"
 #include "drivelink/client.hpp"
+#include "core_os/native_ota.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/time_codec.hpp"
 #include "drivelink/protocol/scanner.hpp"
@@ -177,6 +178,8 @@ struct Server
     uint64_t last_rt_violations = 0;
     int64_t next_status = 0;
     bool crash_enabled = false, stopping = false;
+    std::array<char,17> ota_build_id{};
+    std::string ota_version;
     explicit Server(bool bench) : crash_enabled(bench) {}
     ~Server()
     {
@@ -211,8 +214,13 @@ struct Server
         {
             throw std::runtime_error("core boot failed");
         }
+        const auto &boot_info=core->ota().bootInfo();
+        const auto build=drivelink::hex(boot_info.elf);
+        std::copy_n(build.data(),16,ota_build_id.data());
+        ota_version=boot_info.version.data();
+        if (!ota_version.ends_with("-vdev")) { ota_version+="-vdev"; }
         commands = std::make_unique<core::CommandService>(
-            *core, core::DeviceInfo{"0.1.0-vdev", DRIVELINK_BUILD_ID, 1024, crash_enabled});
+            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow});
         counter = 0;
         next_status = 0;
         if (peer && !peer->closed)
@@ -789,6 +797,11 @@ int main(int argc, char **argv)
         }
         std::filesystem::create_directories(state);
         DirectoryLock lock(state / "process.lock");
+        p::Sha256Digest baseline_elf{};
+        const auto source_id=drivelink::parseHex(DRIVELINK_BUILD_ID);
+        std::copy_n(source_id.begin(),std::min(source_id.size(),baseline_elf.size()),baseline_elf.begin());
+        core_os::native::setOtaBaseline(baseline_elf,"0.1.0-vdev");
+        core_os::native::setOtaDirectory(state);
         Server s(bench);
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)
