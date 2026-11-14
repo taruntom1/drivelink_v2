@@ -4,6 +4,16 @@
 namespace core {
 namespace lp = drivelink::protocol::defs::loop;
 
+bool loopCoreAffinity(uint8_t placement, int8_t &affinity)
+{
+    switch (static_cast<LoopCore>(placement)) {
+    case LoopCore::Core0: affinity = 0; return true;
+    case LoopCore::Core1: affinity = 1; return true;
+    case LoopCore::Any: affinity = core_os::kNoAffinity; return true;
+    }
+    return false;
+}
+
 bool LoopInstance::start(InstanceContext &ctx)
 {
     ctx.bindParam(lp::kRateHz, &rate);

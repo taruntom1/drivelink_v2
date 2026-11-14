@@ -20,7 +20,7 @@ inline constexpr uint8_t kTypeId = 0x05;
 inline constexpr uint16_t kRateHz = 0x0001;
 /// param realtime
 inline constexpr uint16_t kRealtime = 0x0002;
-/// param core
+/// param core: Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task.
 inline constexpr uint16_t kCore = 0x0003;
 /// param priority
 inline constexpr uint16_t kPriority = 0x0004;
@@ -36,6 +36,11 @@ inline constexpr uint16_t kLastRunUs = 0x0102;
 inline constexpr uint16_t kMaxRunUs = 0x0103;
 
 namespace detail {
+inline constexpr std::array<EnumValue, 3> kValues0003{{
+    {"core_0", 0},
+    {"core_1", 1},
+    {"any", 2},
+}};
 } // namespace detail
 
 inline constexpr std::array<ItemDesc, 9> kItems{{
@@ -82,17 +87,17 @@ inline constexpr std::array<ItemDesc, 9> kItems{{
     ItemDesc{
         .id = 0x0003,
         .kind = ItemKind::Param,
-        .type = ValueType::U8,
+        .type = ValueType::Enum,
         .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
         .name = "core",
         .unit = "",
-        .description = "",
+        .description = "Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task.",
         .min_bits = 0x00000000,
-        .max_bits = 0x00000001,
-        .default_bits = 0x00000000,
-        .has_min = true,
-        .has_max = true,
-        .enum_values = {},
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000002,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = detail::kValues0003,
         .ref = nullptr,
         .runs_in = ActionPlacement::None,
         .args = {},

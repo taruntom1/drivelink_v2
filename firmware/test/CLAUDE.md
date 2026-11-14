@@ -105,6 +105,19 @@ The default-off bench stall command supports bare-board monitor/WDT checks.
 with one temporary actuator mock. A bench-enabled build additionally runs
 `--bench --wdt` to test stalls in real-time/background loops and the Task WDT
 reset; inspect COM4 for the panic. It restores the saved layout and settings.
+Add `--any-core` to run its real-time control loop with automatic initial
+placement; cleanup restores the original placement too.
+
+`host/test/loop_affinity_smoke.py --cli <cli> --endpoint serial://COM3
+--console COM4` checks discovered enum choices, the new-loop Any-core default,
+pending edits, persistence, ticking mocks in real-time/background loops and
+all task stacks above 1 KiB, then restores a clean loops-only layout. Add
+`--bench` on the isolated bench build to require initial no-affinity and the
+post-tick FPU pinning observations; restore normal firmware afterward. The
+console closes before cleanup reboots. Without console options, the same
+workflow runs on vdev under the existing host integration/validator checks.
+Native configurable-loop tests observe requested OS affinity and cover saved
+0/1 values, missing params, invalid choices, DISCARD/REVERT and safe-mode edits.
 
 F4c adds native source binding/validation, ordering, capacity, persistence,
 failed-producer, age/freshness and concurrent triple-buffer coherence tests.

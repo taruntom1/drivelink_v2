@@ -412,8 +412,11 @@ void Core::createLoop(detail::InstanceRecord &record)
     m_loops[slot]->setTestgen(&m_testgen);
     m_loops[slot]->setArmState(&m_arm);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
-    const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,
-        m_loops[slot]->periodUs(), &Loop::taskEntry, m_loops[slot], instance.realtime);
+    int8_t affinity = core_os::kNoAffinity;
+    const auto err = loopCoreAffinity(static_cast<uint8_t>(instance.core), affinity)
+        ? m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, affinity,
+            m_loops[slot]->periodUs(), &Loop::taskEntry, m_loops[slot], instance.realtime)
+        : static_cast<core_os::Err>(-1);
     if (err != core_os::kOk) {
         record.state = InstanceState::Failed;
         m_loops[slot] = nullptr;

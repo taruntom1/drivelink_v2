@@ -417,6 +417,19 @@ locked while armed, and applies on the config task with rollback on timer failur
 The other settings require reboot. A running real-time loop refuses paused actions
 while armed and subscribes to the Task WDT. A stall of any loop still disarms in F4b.
 
+`core` is a discovered enum: `core_0` (0), `core_1` (1), `any` (2). New loop
+instances default to `any`. This is the configured placement policy, not the
+current CPU: Any core starts the task without affinity and lets FreeRTOS choose
+initial placement. On ESP32-S3, ESP-IDF pins a task when it uses the hardware
+FPU; the ordinary loop tick computes floating-point `dt_s`, so it normally pins
+early. Automatic placement does not promise load balancing or continued migration,
+and the selected core can change after reboot. SET stages a selection; SAVE and
+reboot apply it. DISCARD clears pending edits; REVERT restores live params only.
+Existing saved 0/1 values retain their placement. A saved record missing this
+param uses the descriptor default, as other missing params do. The descriptor
+type, enum choices, default and hash change; the existing enum/scalar wire
+encoding and core version do not.
+
 A blank store, factory reset or incompatible old layout creates control (id 0,
 1000 Hz, real-time, core 1, priority 20) and sensor (id 1, 100 Hz, non-real-time,
 core 0, priority 10), both with 4096-byte stacks. CORE_MAX_LOOPS=1 creates only
