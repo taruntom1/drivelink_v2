@@ -4,7 +4,7 @@ The working state of the DriveLink GUI design in Figma, so a new session can pic
 
 The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
 
-Last updated: 2026-11-14 (G7b Parts A–G built and in review; G7 remains in review; inherited G5 responsive issues recorded).
+Last updated: 2026-11-14 (G7 and G7b accepted, including their G2 extensions; G8 is next; handoff issues remain recorded).
 
 ## Where things stand
 
@@ -12,27 +12,26 @@ Last updated: 2026-11-14 (G7b Parts A–G built and in review; G7 remains in rev
 |---|---|---|
 | G0 Foundations | done | FigJam screen map and flows 1–11; state inventory in gui-design.md |
 | G1 Wireframes | done | 21 frames. Tune (12) and Monitor (14) updated after G2 with the tuning controls |
-| G2 Design system | done | Accepted 2026-11-12. Extensions through G6 accepted; CalibrationLevel/OrientationPreview reviewed with G7; loop TreeItem, SourcePicker, SourceRow and AddMenu extensions reviewed with G7b |
+| G2 Design system | done | Accepted 2026-11-12; extensions through G6 accepted earlier, G7 and G7b extensions accepted 2026-11-14 |
 | G3 Shell, Connect and Device | done | Accepted 2026-11-12. 15 frames on Screens – Local plus 4 kept check copies |
 | G4 Layout | done | Accepted 2026-11-12. G7b retains 9 frames, deletes the two obsolete removal states and rebuilds the 2 check copies |
 | G5 Tune and Monitor | done | Accepted 2026-11-13, including Auto re-run default. 9 frames plus 2 kept check copies; documented 1080p issues remain open |
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
-| G7 Custom panel | in review | 11 Calibration screens on Custom panels, 2 retained 1080p Light checks; awaiting acceptance |
-| G7b Loops and sources rework | in review | Parts A–G complete 2026-11-14: G2 extensions, 17 Layout frames, shared data updates, two G4 deletions, Cover/flow records and size/theme checks. Awaiting user acceptance |
-| G8 Prototype and handoff | planned | After G7b |
+| G7 Custom panel | done | Accepted 2026-11-14, including CalibrationLevel/OrientationPreview, 11 screens and 2 retained 1080p Light checks; calibration contract alignment remains in handoff notes |
+| G7b Loops and sources rework | done | Parts A–G and G2 extensions accepted 2026-11-14: 17 Layout frames, shared updates, two G4 deletions, Cover/flow records and checks |
+| G8 Prototype and handoff | planned | Next: discuss scope and open handoff issues before building |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
 ## Next step
 
-1. Ask the user to accept **G7b Loops and sources rework** and its G2 extensions. Parts A–G are built; do not rebuild or repeat the six discussion questions. Review loop live/pending edits, add/remove refusals, the second real-time wiring example, source current/pending values and shared three-loop data. Start at Loop detail `182:10790` or Sources `183:15439` on Screens – Local.
-2. Review **G7 Custom panel** separately before G8, including its G2 components and reconciliation with built F6 calibration actions/persistence. The user explicitly left G7 in review; G7b's shared-tree update does not accept it.
-3. After G7 and G7b are accepted, discuss **G8 Prototype and handoff**: key G0 flows, status-bar fault count, responsive behavior (including the inherited G5 fixed plots/paused toolbar and Tune/A–B issues) and H2/H3 handoff scope before building.
+1. Discuss **G8 Prototype and handoff** before building: key G0 flows, status-bar fault count, responsive behavior (including inherited G5 fixed plots/paused toolbar and Tune/A–B issues), calibration alignment with built F6 and the H2/H3 handoff scope. G7 and G7b are accepted; do not repeat their acceptance requests.
+2. Record the G8 scope decisions, then obtain scope agreement as required by gui-design-step before construction. Acceptance of G7/G7b does not settle the explicitly open host file-format or remote calibration-action contracts.
 
 ## Handoff note
 
 - **Branch:** this session uses local `codex/gui-design-g7b` in worktree `86ff`, based on `0f70c6a` (completed firmware overhaul, also the fetched `origin/firmware_overhaul`). Publish with `git push origin HEAD:Codex/gui-design` per the invoked skill; no PR unless the user requests it. The local `Codex/gui-design` branch is checked out in worktree `7805`, so it was not moved or edited. Its fetched remote tip was verified to be an ancestor of this base; publication is a normal fast-forward. The old instruction to use `claude/gui-loop-rework` is superseded. Never target `main`.
-- **G7b complete:** Parts A–G are built, in review. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. Await acceptance, not construction approval.
+- **G7b complete:** Parts A–G and G2 extensions were accepted 2026-11-14. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. G7 was also accepted; G8 discussion is next.
 - **G7b traps:**
   - Retained normal frames with a tree or Device loop table use the three-loop baseline: G4, G7, Device and its G6 copies. Preserve explicit scenario differences: four loops for wiring refusal, factory loops for first boot, no loops for the saved-empty layout, offline/failed states where appropriate. Update in one scripted pass per page, then screenshot each frame.
   - The G4 tree (`84:4122`) is a FRAME with separate G2 TreeItem INSTANCE rows, not a shared tree component. Trees and Device table rows were updated per frame. Six remote Device/lease-over-Device states did not contain the local loop card; a compact read-only table was added there while preserving lease/history controls.
@@ -156,6 +155,7 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-14 | G7/G7b acceptance | User accepted G7b, then G7, including their G2 extensions. Both phases and Cover labels marked done. Next is G8 discussion; inherited G5 responsive issues and calibration/host contracts remain explicit handoff items |
 | 2026-11-14 | G7b build | User approved Parts A–G. Built 8 loop header states, SourcePicker, SourceRow and AddMenu with mappings/reviews; 17 new Layout frames; updated G4/G7 trees, local/remote Device tables and Monitor browsers; deleted 2 obsolete G4 states; rebuilt G4 checks; updated Cover/flow 5. Checked all new frames and 44 changed primary frames in full size and 1080p Light, inspected retained copies, fixed header heights/compact fields/overlays/pending ARM controls. G5 inherited fixed plot/toolbar issues remain open. G7b in review; G7 left in review |
 | 2026-11-14 | G7b planning | Recorded six user answers: leave G7 in review, one Add menu, detailed loop headers, delete obsolete invalid-layout frame, second real-time loop for wiring refusal, shipped fusion.mock. Read current core v8/loop/source contracts; inspected G7 and G4 structure/screenshots. Revised Parts A–G to 17 new Layout frames, two G4 deletions and shared-screen updates with size/theme checks. No Figma mutations. Awaiting scope approval before Part A |
 | 2026-11-13 | loop design (firmware session) | After firmware F3d: compared the designs with the built loops and the planned sources; user decisions (loops edited on Layout, Remove follows the firmware, sources designed as provisional, third sample loop `fusion`); wrote the G7b brief in gui-design.md, updated the sample device and the state inventory, closed todo-layout-ops.md. Nothing built in Figma |

@@ -96,6 +96,8 @@ Read with [host-architecture.md](host-architecture.md), section "`drivelink-gui`
 | G7b cross-loop wiring example | Keep the wiring picker's disabled-with-reason example by adding a second real-time loop to that scenario. `sim_motor` runs there, so its type is compatible with its loop, while wiring it to `left_drive` in another loop is refused. User decision 2026-11-14. |
 | G7b source sample | Use the shipped `fusion.mock` type and its actual `feedback` and `imu` source params, generated value/age signals and `combined` signal. Replace the illustrative `fusion.odometry` and its three invented source items. User decision 2026-11-14. |
 | G7b scope approved | Parts A–G, including G2 extensions, 17 new Layout frames, shared-screen updates, two G4 deletions, Cover/flow records and size/theme checks, approved by the user on 2026-11-14 before construction. G7 remains in review. |
+| G7b accepted | The user accepted G7b and its G2 extensions on 2026-11-14. Parts A–G are done. G7 remains in review; inherited G5 responsive issues remain open for G8/H2. |
+| G7 accepted | The user also accepted G7 Custom panel on 2026-11-14, including CalibrationLevel, OrientationPreview, the 11 screens and retained checks. G8 discussion is next; calibration alignment and host contracts remain in the handoff notes. |
 | Figma account | The files live in the `drivelink` team (Education plan: unlimited pages). The MCP seat is still a View seat, so reads (screenshots of the canvas) are kept for final checks; diagrams are checked from the thumbnails `generate_diagram` returns. |
 
 ## Ground rules for every design
@@ -177,8 +179,8 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G4 Layout | Hi-fi Layout screen: instance tree by loop, add and remove instances, labels, wiring with `Ref` pickers, GPIO and validation errors, the pending-reboot banner and discard. The param table for an instance, and the custom panel slot. | Screens page | done |
 | G5 Tune and Monitor | Hi-fi Tune screen: pick a controller, live gains, test signal and capture set-up, run, overlay runs, the session file (name, save, open, export CSV), plant identification and suggested gains, save or revert. Hi-fi Monitor screen: free-form live plots of any signals, subscription set-up, pause and cursors. | Screens page | done |
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
-| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. | Custom panels | in review |
-| G7b Loops and sources rework | Parts A–G built 2026-11-14: G2 extensions, 17 Layout frames, shared trees/tables/Monitor browsers, two obsolete G4 frames deleted, Cover/flow updates and size/theme checks. Awaiting user acceptance; inherited G5 responsive issues remain open. | Design system, Screens – Local, Screens – Remote, Custom panels | in review |
+| G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. Accepted with its G2 extensions on 2026-11-14. | Custom panels | done |
+| G7b Loops and sources rework | Parts A–G built and accepted 2026-11-14: G2 extensions, 17 Layout frames, shared trees/tables/Monitor browsers, two obsolete G4 frames deleted, Cover/flow updates and size/theme checks. Inherited G5 responsive issues remain open. | Design system, Screens – Local, Screens – Remote, Custom panels | done |
 | G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
 
 ## G1 wireframes
@@ -339,7 +341,7 @@ Guidance and the full-calibration prerequisite for reading a profile follow [Bos
 
 ## G7b Loops and sources rework
 
-State: in review; Parts A–G built 2026-11-14 after approval of the six choices and revised scope. G7 remains in review by user choice. New frame ids are recorded below; earlier ids and working notes are in [gui-design-status.md](gui-design-status.md). Check ids before use.
+State: done; Parts A–G built and accepted 2026-11-14, including the G2 extensions. G7 was also accepted on 2026-11-14. New frame ids are recorded below; earlier ids and working notes are in [gui-design-status.md](gui-design-status.md). Check ids before use.
 
 ### Why
 
@@ -400,7 +402,7 @@ The earlier choices remain: loops are edited on Layout; Remove follows the firmw
 5. Keep cross-loop wiring refusal visible using a second real-time loop in that scenario.
 6. Use shipped `fusion.mock`, with two actual source params and their generated signals.
 
-The user approved this scope on 2026-11-14 before construction: G2 additions, 17 new Layout frames, updates to retained G3/G4/G6/G7 and Monitor frames, deletion of two obsolete G4 frames, the FigJam first-boot text and Cover row, and size/theme checks. This is design work only. G7's calibration workflow reconciliation with F6 stays open for its own review; G7b updates its shared tree without accepting that workflow.
+The user approved this scope on 2026-11-14 before construction: G2 additions, 17 new Layout frames, updates to retained G3/G4/G6/G7 and Monitor frames, deletion of two obsolete G4 frames, the FigJam first-boot text and Cover row, and size/theme checks. This is design work only. G7 was subsequently accepted; calibration alignment with F6 and the explicit H2/H3 contracts remain handoff items.
 
 ### Work list
 
@@ -455,7 +457,7 @@ Put them under a new header "G7b · Loops and sources", below the G5 checks row.
 **E. Monitor and the custom panel**
 - **Monitor (`109:8621`, `109:9147`, `109:9731`, check `116:9143`, G6 observer `141:12188`, `143:4234`):** the signal browser lists three loops in its rates block, and the loop instances appear as signal owners with their statistics. No layout change.
 - **Tune:** no change. It has no tree and no loop table.
-- **Calibration (G7, page `2:7`):** the tree gets `fusion` and `fusion.mock` `odom` on all 11 frames and the 2 checks. The IMU runs in a non-real-time loop, so do not invent a real-time-loop armed refusal. G7 remains in review; F6 persistence/action sequencing reconciliation and H3 remote calibration permissions are not decided by this tree update.
+- **Calibration (G7, page `2:7`):** the tree gets `fusion` and `fusion.mock` `odom` on all 11 frames and the 2 checks. The IMU runs in a non-real-time loop, so do not invent a real-time-loop armed refusal. G7 is accepted; F6 persistence/action sequencing alignment and H3 remote calibration permissions remain handoff items.
 
 **F. Records outside the screens**
 - **FigJam flow 5** (first-boot layout): the first boot now has two loops. Change the text of the first step.
@@ -496,7 +498,7 @@ On Screens – Local (`2:5`), under header `187:13623` and note `187:13624`. All
 
 Every local Device table, including overlays and retained checks, has three rows and the expanded columns. Safe mode shows configured loops offline and no live runtime values. GET_INFO totals include the loops: 11 entries (3 loops, 8 modules). Six remote Device/lease-over-Device states include a compact read-only loop table while preserving lease controls and history. Protocol metadata and Loading/OTA/reboot/reset copy were aligned with core v8 and factory loops. Pending layouts disable status-bar and secondary ARM controls.
 
-Local and remote Monitor browsers show the three loop signal owners, `odom` (`fusion.mock`), and a fusion rate entry without subscribing or changing the illustrated link load. G7's calibration workflow remains in review; its shared tree and check layouts were updated. FigJam flow 5 (`15:949`) starts with factory loops (`6:441`) and includes a compatible loop in Add (`6:444`). Cover row `190:19106`, state text `190:19110`, is in review.
+Local and remote Monitor browsers show the three loop signal owners, `odom` (`fusion.mock`), and a fusion rate entry without subscribing or changing the illustrated link load. G7's design is accepted; its shared tree and check layouts were updated. FigJam flow 5 (`15:949`) starts with factory loops (`6:441`) and includes a compatible loop in Add (`6:444`). Cover row `190:19106`, state text `190:19110`, is done after acceptance.
 
 **Checks and handoff:** all 44 changed existing primary frames were inspected in their full-size theme and at 1080p Light, with inherited G5 exceptions recorded below. Retained copies were inspected too. G7b keeps only Loop detail `191:13355` and Sources `191:13619` at 1920×1080 Light (x 12000, y 0 and 1280). Temporary QA copies were removed. Compact G4 checks use a 460 px right column, filling wiring pickers and full refusal notes beneath fields. Device table minimum columns total 500 px, with RT/Pri abbreviations explained in a legend. Calibration checks reuse wrapped file controls and tighter metadata/activity spacing. Monitor's compact browser collapses right_drive/imu groups so the new owners and rates remain visible; the budget-refusal state instead keeps the candidate duty row, its reason and lower-rate action visible, with other signal rows behind Show other signals.
 
@@ -513,8 +515,8 @@ G5's fixed plot dimensions still clip traces/third plots during a simple 1080p r
 ### Open issues from this plan
 
 - **Firmware contract checked:** F4b limits and F4c sources are merged. The sample uses shipped `fusion.mock`; no firmware or protocol change is requested.
-- **Awaiting acceptance:** Parts A–G are built. Review the G2 extensions, loop states/rate edits, add/remove refusals, cross-loop wiring example, source current/pending distinction and shared three-loop data before accepting G7b.
-- **G7 remains in review:** its older F6 action/persistence assumptions need reconciliation during G7 review. This phase does not accept the calibration workflow or resolve H3 permissions.
+- **Accepted 2026-11-14:** Parts A–G and the G2 extensions are done. No further G7b construction or acceptance is pending.
+- **G7 accepted:** its older F6 action/persistence assumptions still need reconciliation in the G8/H2 handoff. Acceptance does not resolve the explicitly open H3 calibration-action permissions.
 
 ## Open issues
 
