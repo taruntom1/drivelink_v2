@@ -1,13 +1,13 @@
 # Plan: firmware architecture v3 (self-describing core)
 
-Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [overhaul-status.md](overhaul-status.md)). The per-phase implementation plans are in [archive/](archive/).
+Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [host-status.md](host-status.md)). The per-phase implementation plans are in [archive/](archive/).
 
 **Baseline.** This plan assumes:
 - `main` at `b72655b`
 - the whole `diag` plan, phases 1–3 (error codes over UART, the `Boot` event, `GetInfo`, `diag_codes.yaml` with its generator, the `detail` byte, motor and IMU configure protocols at v4)
 - the repo restructure (step S1, detailed in [host-architecture.md](host-architecture.md)): the firmware lives in `firmware/`
 
-The work ran on the `firmware_overhaul` branch, one session and one PR per step, and was merged into `main` after F10; the HW and host steps continue on `host_overhaul`. [overhaul-status.md](overhaul-status.md) holds the step list, the current state and the decision log.
+The work ran on the `firmware_overhaul` branch, one session and one PR per step, and was merged into `main` after F10; the HW and host steps continue on `host_overhaul`. Its step list, decision log and hardware results are archived in [archive/firmware-status.md](archive/firmware-status.md); the host work is tracked in [host-status.md](host-status.md).
 
 All paths below are relative to the repo root.
 
@@ -621,7 +621,7 @@ CI adds three jobs: the native core and module tests, a vdev integration job, an
 
 ## Phases
 
-Each phase is one PR, or a short series of PRs. The steps are listed in [overhaul-status.md](overhaul-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
+Each phase is one PR, or a short series of PRs. The steps are listed in [archive/firmware-status.md](archive/firmware-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
 
 | Phase | Content | Done when |
 |---|---|---|
@@ -637,7 +637,7 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F8 Time | The ping on `0x02`, with TX-time stamping in the TX task. Delete `time_sync`. | The host's offset and drift estimate is stable over the bench's USB-UART adapter (USB-UART adapters add up to 1 ms of USB frame jitter; their target is a stable estimate, not a jitter bound). Deferred to HW: jitter below 100 µs over the Pi's GPIO UART |
 | F9 OTA | The partition table (NVS unchanged), the OTA family with sequential and idempotent writes, and rollback. | Updating with the CLI, a retried chunk is acknowledged, and rollback when `CONFIRM` isn't sent |
 | F10 Cleanup | Remove the leftover Kconfig and legacy registry entries. Rewrite `firmware/CLAUDE.md` for the new architecture and remove the temporary overhaul section from the root `CLAUDE.md`. A full docs consistency pass. Tag `main`'s last legacy commit `legacy-final`, then merge `firmware_overhaul` into `main`, marked as not yet run on motors or an IMU. | Every rule in the docs matches the code, and `main` holds the new firmware |
-| HW Hardware campaign | Run every deferred hardware check its phase wrote (see "Deferred hardware checks" in the status file). Fixes go to `host_overhaul` as PRs. | Every deferred check has passed on real motors, a real BNO055, the Pi and the robot |
+| HW Hardware campaign | Run every deferred hardware check its phase wrote (see "Deferred hardware checks" in [host-status.md](host-status.md)). Fixes go to `host_overhaul` as PRs. | Every deferred check has passed on real motors, a real BNO055, the Pi and the robot |
 
 Arming lands (F4) before any real motor is driven through the core, so the board is never driven by the new code without the watchdog and the monitor. From F3 to F5 the old `motor_manager` keeps working alongside the core. Each manager is deleted in the phase that ports it, so no module ever exists in both forms.
 

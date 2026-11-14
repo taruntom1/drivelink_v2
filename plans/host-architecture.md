@@ -1,22 +1,29 @@
 # Plan: host software architecture
 
-Status: architecture target, revised 2026-11-14 (F10) against the firmware as
-built. The first host slice exists: `libdrivelink` (transport, session, the
-core families, the F8 clock estimator and the F9 OTA service, all returning
-JSON), `drivelink-cli`, `drivelink-vdev` and the superbuild. Still to build:
-the typed API and device model, automatic timestamp mapping, the GUI, the
-agent and ROS. The steps are H1a to H4 in [overhaul-status.md](overhaul-status.md),
-run on the `host_overhaul` branch.
+Status: architecture target, re-planned 2026-11-14 after the firmware overhaul
+(F1–F10, LP) against the firmware as built. The first host slice exists:
+`libdrivelink` (transport, session, the core families, the F8 clock estimator
+and the F9 OTA service, all returning JSON), `drivelink-cli`, `drivelink-vdev`
+and the superbuild. Still to build: the typed API and device model, the
+asynchronous path and timestamp mapping, device identity, the GUI, the agent
+and ROS.
 
-**Baseline.** The host is written against the firmware on `main` after F10
+This file is the design record. The steps that build it (T0, H1a–H6, HW), with
+a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
+in [host-status.md](host-status.md). Everything runs on the
+`host_overhaul` branch.
+
+**Baseline.** The host is written against the firmware on `host_overhaul`
 ([firmware-architecture.md](firmware-architecture.md) is the design record;
-`docs/protocol/` is the wire spec and wins where they differ). That firmware is:
+`docs/protocol/` is the wire spec and wins where they differ). That firmware is
+core v8, time v1, diag v3, and is:
 - self-describing: module types, instances, params, signals, inputs, actions,
   sources and diag codes, all served by the device
 - configured through a pending layout that SAVE writes to NVS (A/B) and a
   reboot applies; loops are instances of the built-in `loop` type (0x05) with
-  a rate and a `realtime` flag, and each module type requires, forbids or
-  accepts a real-time loop
+  a rate, a `realtime` flag and a discovered core placement enum (`core_0` 0,
+  `core_1` 1, `any` 2; new loops default to Any, LP), and each module type
+  requires, forbids or accepts a real-time loop
 - limited by read-only `limits.*` system params (loops, instances, groups,
   link values), so a host can show "4 of 4 loops" before it tries an op
 - streamed through subscription groups (31 channels, 0x81–0x9F) and command
@@ -32,6 +39,9 @@ run on the `host_overhaul` branch.
 - updated over the link (disarmed OTA: FINISH prepares, explicit REBOOT
   commits after reply drain, the host CONFIRMs after verifying identity)
 
+The only firmware change the host phase plans is device identity (core v9,
+H1c). Any other firmware need found while building goes to the user first.
+
 ## Goals
 
 1. A GUI on the PC to tune the controllers while the ESP is plugged straight into the PC.
@@ -39,24 +49,39 @@ run on the `host_overhaul` branch.
 3. Tuning from the PC while the ESP is plugged into the robot host, over the network.
 4. Adding a new sensor, actuator or control system needs no host code. The firmware module and its YAML are enough ([docs/adding-a-module.md](../docs/adding-a-module.md)).
 
+The build order follows the goals: the library, then the GUI in local mode,
+then the agent and the GUI's remote mode, then ROS.
+
 ## Decisions
 
 | Topic | Decision |
 |---|---|
-| Robot host | Raspberry Pi 5, Ubuntu 26.04 arm64, ROS 2 Lyrical Luth (LTS, supported to May 2031). |
-| PC GUI | C++ with Qt 6 and QML. Built with MinGW on Windows (Qt's own MinGW kit). |
-| Host core | `libdrivelink`, plain C++20 with no Qt and no ROS. Used by the GUI, the agent, the ROS plugin and the CLI. |
+| Robot host | Raspberry Pi 5, Ubuntu 26.04 arm64, ROS 2 Lyrical Luth (LTS, supported to May 2031). Not available yet: Pi checks are deferred like the motor and IMU checks. |
+| PC GUI | C++ with Qt 6 and QML. A Windows product, built with Qt's MinGW kit. Linux CI also builds it and runs its tests against Ubuntu's Qt, to keep the code portable; there is no Linux packaging. |
+| Qt version | Qt 6.12.0 `win64_mingw` on Windows (installed locally, pinned in CI through aqtinstall). Qt 6.10 (Ubuntu 26.04's `6.10.2`) is the API floor, enforced by the Linux CI build. Decided 2026-11-14. |
+| Language | The host (libdrivelink, CLI, vdev, GUI, agent, ROS packages) is C++23, with GCC 13.1 (Qt's MinGW) as the feature floor, enforced by host-windows CI. No C++26. `protocol/` keeps C++20 as its declared minimum, because the firmware builds it. Decided 2026-11-14 (T0). |
+| Host core | `libdrivelink`, plain C++23 with no Qt and no ROS. Used by the GUI, the agent, the ROS plugin and the CLI. |
 | Host API | **Typed** (decided 2026-11-14). The public `libdrivelink` API returns typed C++ results and exposes a device model; nlohmann JSON leaves the public API. JSON formatting moves into `drivelink-cli`, whose readable and `--json` output stays as it is, so the smoke scripts keep working. |
+| Errors | Sync calls throw typed exceptions: `drivelink::Error` (the existing kinds) and `DeviceError` with the device result, detail and `outcome_unknown`. Async completions receive `std::expected<T, drivelink::Error>`. The ROS `read()` / `write()` paths are `noexcept`. Decided 2026-11-14. |
+| Async | Callbacks on a dispatcher the caller supplies (contract under "Session"). No Qt or Asio in public headers; the agent may use coroutines internally. Decided 2026-11-14. |
 | Generic host | The host has no module-specific code. It reads the descriptors (items and diag codes) from the device at every connect and builds its models from them. The descriptor hash in `GET_INFO` tells it when the definitions changed; a disk cache keyed by the hash is deferred until connecting gets slow. It uses the generated headers from `protocol/` only for core and system ids. |
-| Device identity | A read-only device id (the factory MAC) and a user-set name in `GET_INFO`, set with a new system op (decided 2026-11-14, built in H1b as core v9; the proposal is [todo-device-name.md](todo-device-name.md)). The host keys recent devices and session files on the id. |
-| Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the port. The ROS plugin and the remote GUI are its clients. |
+| Device identity | A read-only device id (the factory MAC) and a user-set name in `GET_INFO`, set with a new system op `SET_NAME` (core v9, H1c). The name applies live, sets `nvs_dirty`, is persisted by SAVE and restored by REVERT, and may be set while armed. The host keys recent devices and session files on the id. Decided 2026-11-14; proposal in [todo-device-name.md](todo-device-name.md). |
+| Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the ports. The ROS plugin and the remote GUI are its clients. |
+| Devices per agent | One agent serves several ESPs, one serial port each, every one with its own session, I/O, lease, groups, clock model and history, so one failing port doesn't affect the others. A client opens one TCP connection per device and names it in the hello by its config alias (for example `base`, `arm`) or its device id; after the hello the connection carries that device's frames unchanged. The lease is per device. Decided 2026-11-14. |
 | Port ownership on the bench | The GUI opens the serial port itself through `libdrivelink`. No agent is needed on Windows. |
 | Agent API | The device protocol over TCP, plus a few agent-only messages. Clients use the same frames as over serial. gRPC is out because of MinGW, and Zenoh would add a Rust toolchain. |
+| Agent access | Listens on `127.0.0.1` by default; a LAN address is opt-in in its config. Every client sends the agent's shared token (one per agent, not per device) in the hello, and a wrong token is refused before any device frame. No TLS: a trusted lab network is assumed. Decided 2026-11-14. |
+| Agent discovery | With LAN listening on, the agent advertises itself over mDNS/DNS-SD, and the GUI's Agent tab lists what it finds beside typed addresses and recent devices. Decided 2026-11-14. |
+| Agent deployment | Built from source on the Pi with an install script (binary, systemd unit, udev rules giving each ESP's port a stable name, config file) in H3c; an arm64 `.deb` follows in H5. Decided 2026-11-14. |
+| Device actions over the agent | Actions (including paused actions with blobs, such as IMU calibration apply) are exclusive operations: they need the lease, or a disarmed device with nobody holding it. Live param writes stay open to every client. Decided 2026-11-14. |
 | Clock | `libdrivelink` runs the time pings and fits offset and drift (the F8 `ClockEstimator`). The agent owns the clock model and sends it to its clients. |
-| Configuration | Lives on the ESP (NVS). The host reads it and writes it, and never stores it. |
-| Transport | UART at 921600 baud, behind a transport interface. USB can be added later without changes above the transport. |
-| Repo and branches | One repo. The firmware is in `firmware/`, definitions and codecs shared with the host in `protocol/`. The host steps and the HW campaign run on `host_overhaul`, cut from `main` after F10; `main` stays frozen until `host_overhaul` merges. HW fixes to the firmware also go to `host_overhaul`. |
-| Versioning | One version for the whole repo. The host compares the core protocol version and the descriptor hash, and refuses to connect on a protocol mismatch with a clear message. Every wire change bumps the version byte of the protocol it changes. |
+| Configuration | Lives on the ESP (NVS). The host reads it and writes it, and never stores it. Host-side files hold only GUI settings, recent devices, tuning sessions and calibration exports. |
+| Transport | UART at 921600 baud, behind a transport interface. USB can be added later without changes above the transport. No baud-rate change is planned. |
+| Python bindings | Not in this plan. The CLI's `--json` stays the scripting interface, and `firmware/test/uart_comm/protocol.py` stays for HIL. Decided 2026-11-14. |
+| Repo and branches | One repo. The firmware is in `firmware/`, definitions and codecs shared with the host in `protocol/`. The host steps and the HW campaign run on `host_overhaul`, cut from `main` after F10; `main` stays frozen until `host_overhaul` merges (H6). HW fixes to the firmware also go to `host_overhaul`. |
+| License | Proprietary, all rights reserved (root `LICENSE`, `package.xml` `Proprietary`). The repo is public to read only. Distributed artifacts (the installer, the `.deb`) ship third-party notices for what they bundle: Qt (LGPLv3, dynamically linked), Inter and JetBrains Mono (OFL), Lucide (ISC), Asio (BSL-1.0), nlohmann JSON (MIT) and any later dependency. Decided 2026-11-14. |
+| Installer signing | Unsigned for now (SmartScreen shows an unknown publisher). Signing can be added to the CI job later. Decided 2026-11-14. |
+| Versioning | One semver version for the whole repo in a root `VERSION` file, read by the firmware (`PROJECT_VER`), the CMake projects, the `package.xml` files, the installer and the `.deb`; `validate.py` checks they match, and dev builds add the `git describe` suffix. Introduced in H2g; H6 tags `vX.Y.Z` on `main`. Decided 2026-11-14. The host compares the core protocol version and the descriptor hash, and refuses to connect on a protocol mismatch with a clear message. Every wire change bumps the version byte of the protocol it changes; the agent protocol has its own version in its hello. |
 
 ## Architecture
 
@@ -64,8 +89,8 @@ run on the `host_overhaul` branch.
  PC (Windows)                          Robot host (Raspberry Pi 5, Ubuntu 26.04, ROS 2 Lyrical)
  ┌───────────────────────┐   TCP       ┌──────────────────────────────────────────────┐
  │ drivelink-gui         │◄───────────►│ drivelink-agent                              │
- │  (Qt/QML)             │             │  libdrivelink: serial link, session,         │
- │  libdrivelink         │             │  time model, device model, arbitration       │
+ │  (Qt/QML)             │  token,     │  libdrivelink: serial link, session,         │
+ │  libdrivelink         │  mDNS       │  time model, device model, arbitration       │
  │   ├ LocalDevice ──┐   │             │         ▲ TCP on localhost                   │
  │   └ RemoteDevice  │   │             │ drivelink_hardware (ros2_control plugin)     │
  └───────────────────│───┘             └──────────────────────┬───────────────────────┘
@@ -75,12 +100,13 @@ run on the `host_overhaul` branch.
                  ESP32-S3
 
  CI and development: drivelink-vdev (the firmware core built natively, with mock modules)
- stands in for the ESP on TCP or a pty.
+ stands in for the ESP on TCP or a pty. On the PC, an agent in WSL can own the bench
+ board's CH343 through usbipd, so remote mode is tested before a Pi is ready.
 ```
 
 ### `libdrivelink` (host core)
 
-**What exists (F3c–F9).** `Session` is a thread-safe synchronous facade over
+**What exists (F3c–F9, LP).** `Session` is a thread-safe synchronous facade over
 one Asio I/O thread: it allocates `seq`, correlates responses, retries only
 idempotent reads, retires timed-out ids until reconnect, queues command-group
 frames without blocking, and hands every other frame to a bounded event queue
@@ -89,21 +115,29 @@ system, param, action, diag, group, capture, testgen, OTA) and returns JSON.
 `ClockEstimator` fits offset and drift from pings with I/O-thread timestamps.
 The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
 
-**Target (H1a/H1b):**
+**Target (H1a, H1b, H1c):**
 
 - **Transport.**
   - `SerialTransport` uses standalone Asio and works on Linux and MinGW (kept: bootstrap lines stay disabled so opening the port doesn't reset the board).
-  - `TcpTransport` connects to the agent or to `drivelink-vdev`.
+  - `TcpTransport` connects to the agent or to `drivelink-vdev`. Toward an agent it sends the hello with the token first (H3a).
   - `UsbTransport` comes later, if needed.
 - **Link.** Frame encoding and the frame scanner come from `protocol/`: a `u16` LEN with a header CRC8, and the protocol constant `MAX_PAYLOAD` (1024) as the scanner's hard bound before `GET_INFO` gives the device's `max_payload`.
-- **Session.** As today, plus an asynchronous request path for the GUI and the agent (completion callbacks or futures delivered off the I/O thread). The synchronous facade stays for the CLI and tests. Pages bulk transfers (descriptors, capture reads, OTA writes) with a bounded number of chunks in flight; OTA WRITE keeps its own retry exception.
-- **Time.**
-  - Sends a ping on `0x02` every 1 s, and faster during the first few seconds (periodic ownership is H1a; F8 has the single-shot ping and the estimator).
+- **Errors (H1a).** `drivelink::Error` keeps its kinds (usage, connection, protocol, timeout). `DeviceError` adds the device's result and detail, the family and op, and `outcome_unknown` (a mutation that was sent and not answered). Sync calls throw; async completions carry the error as a value.
+- **Session (async in H1b).** As today, plus an asynchronous request path for the GUI and the agent:
+  - `Completion<T> = std::move_only_function<void(std::expected<T, Error>)>`. The dispatcher is set per session: the GUI posts a queued Qt invoke, the agent posts to its strand.
+  - Every request completes exactly once (success, refusal, timeout, close or cancel), through the dispatcher, never inline and never on the I/O thread. Completions arrive in reply order.
+  - Cancel stops waiting; it doesn't undo. A mutation already sent completes as `outcome_unknown`. Close fails every pending request.
+  - The sync facade wraps the async path; the CLI and tests keep using it.
+  - Bulk transfers (descriptors, capture reads, OTA writes) are paged with a bounded number of chunks in flight; OTA WRITE keeps its own retry exception.
+  - Model, status and diag changes are dispatched event callbacks. High-rate group data is pulled, not pushed (see "Threading").
+- **Time (H1b).**
+  - Sends a ping on `0x02` every 1 s, and faster during the first few seconds (F8 has the single-shot ping and the estimator).
   - Keeps the pings with the smallest round trip and fits ESP time to host time (offset and drift) over a sliding window, restarting on a Boot event.
   - Gives every timestamped item (group frames, status, capture, events) both the ESP µs and the mapped host time, with the estimator's uncertainty.
-- **Device model** (typed, H1a).
+  - Over the agent, a client takes the agent's clock model instead of pinging (H3a).
+- **Device model** (typed; the snapshot in H1a, event-driven updates in H1b).
   - At connect, or after a Boot event, it:
-    1. reads `GET_INFO`: versions, build id, descriptor hash, `max_payload`, capture capacity, flags (pending reboot, layout invalid, config from NVS, safe mode) and the running loops (from H1b also the device id and name)
+    1. reads `GET_INFO`: versions, build id, descriptor hash, `max_payload`, capture capacity, flags (pending reboot, layout invalid, config from NVS, safe mode), the running loops and, from H1c, the device id and name
     2. checks the core protocol version, and the `safe_mode` flag
     3. reads the descriptors: types (with their realtime requirement), items and diag codes
     4. lists the configured and the pending instances, including the loop instances
@@ -111,6 +145,7 @@ The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
   - This builds a tree of type → instance (label, loop, state) → params, signals, inputs, sources and actions, with typed values, units, ranges, enum names and flags (`reboot_required`, `locked_while_armed`, `testgen`, GPIO, `ref` wiring).
   - It follows the arm state, the last disarm reason, the pending-reboot and NVS-dirty flags, the per-loop overruns, the capture and testgen state and the active faults through the status stream, core events and diag events.
   - The pending layout is a second view of the tree: added, removed and relabelled instances, applied by SAVE and a reboot.
+  - Loop ids can have gaps: everything is keyed by id, never by position.
 - **Services** (typed wrappers of the firmware families):
   - param batches, including atomic multi-param writes within one loop (cross-loop batches are refused by the device)
   - layout: add (with a loop, or the lowest compatible one), remove (refused with `Referenced` while dependents exist), label, discard; save, revert, factory reset, reboot, exit safe mode
@@ -120,13 +155,15 @@ The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
   - OTA (stream and prepare the image; explicit reboot commits it after reply drain; reconnect, verify full running build identity and confirm; reconcile uncertain outcomes with STATUS without automatically repeating REBOOT)
   - diag (decode events, query entries, name codes from the code descriptors the device serves)
   - arming (arm with the refusal detail reported, `DISARM` through the fast-path MSG_TYPE, `ACK_FAULT`)
-  - command groups with prefix-only keepalives; NaN-to-hold mapping and automatic keepalives in the client, since the device rejects non-finite values and only a valid frame feeds the watchdog
-  - device identity (H1b): read id and name, set name
-- **Plant identification** (H1b): fit a first-order-plus-deadtime model to an open-loop duty capture and suggest starting gains. Pure math with unit tests.
+  - command groups with prefix-only keepalives; NaN-to-hold mapping and automatic keepalives in the client (H1b), since the device rejects non-finite values and only a valid frame feeds the watchdog
+  - device identity (H1c): read id and name, set name
+  - agent session (H3a): hello and token, lease request and release, lease events, clock model, client list, history
+- **Tuning math** (H2e, pure, unit-tested, in the library so the CLI can use it too): run metrics (rise time, overshoot, settling time, steady-state error) and plant identification (a first-order-plus-deadtime fit to an open-loop duty capture, with suggested starting gains).
 - **Threading.**
   - One I/O thread (Asio) does all the reading and writing.
-  - Clients get events through bounded thread-safe queues.
+  - Clients get events through the dispatcher; internal queues are bounded and count what they drop.
   - The latest value of each subscription group sits in a lock-free single-writer buffer (seqlock), so the ROS `read()` never blocks.
+  - Consumers that need every frame (GUI plots) pull from a bounded per-group sample ring that drops oldest and counts losses.
   - Command group frames are queued without blocking.
 
 ### `drivelink-cli`
@@ -134,12 +171,16 @@ The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
 Stays the scripting and test front end. It moves onto the typed API in H1a and
 owns all JSON formatting; its output formats and exit codes do not change, so
 the smoke scripts under `firmware/test/uart_comm/` and `host/test/` keep
-working. Python bindings stay an open question (below).
+working. It gains a `name` command (H1c) and agent options (`--token`, lease
+commands) in H3a. Python bindings are not planned.
 
 ### `drivelink-agent` (robot host)
 
-- Owns the serial port, runs as a systemd service, and keeps working while ROS is down.
-- Clients speak the device protocol over TCP. The agent arbitrates between them:
+- Owns the serial ports, runs as one systemd service, and keeps working while ROS is down. Linux only.
+- **Devices.** The config lists the devices, each with an alias, a serial device and a baud. Each device has its own `Session`, I/O, device model, lease, groups, clock model and history; a device whose port fails or disappears is reported as offline and retried without affecting the others.
+- **Access.** Listens on `127.0.0.1` unless its config enables a LAN address. A client's first message is the agent hello: agent protocol version, token and the device it wants (alias or device id). A wrong token or version, or an unknown device, is refused before any device frame is forwarded. A hello without a device opens a lobby connection that can only list the devices (alias, device id, name, port, online state, lease holder); the GUI's Agent tab uses it. With LAN listening on, the agent advertises itself over mDNS/DNS-SD.
+- **Config.** One file: bind address and port, token, history sizes, and the device list. The install script (H3c) writes it; command-line flags override it.
+- Clients speak the device protocol over TCP, one connection per device. Everything below is per device. The agent arbitrates between the clients of a device:
   - **`seq`.** It rewrites each client's `seq` before forwarding a request. It maps the response back and routes it to the client that sent the request.
   - **Groups.** Group ids are device resources (the pool sizes are in `limits.*`). The agent gives each client its own groups out of the device's pool, rewrites the group ids and stream channels both ways, and sends each client only its own subscription streams. It tracks each group's epoch, so frames left over from a group's previous owner are dropped. The status stream, core events and diag events go to every client.
   - **Time.** The agent alone answers to the ESP's clock. Clients never send pings; the agent sends them its clock model (offset, drift, reference) as an agent message whenever the model changes.
@@ -147,27 +188,29 @@ working. Python bindings stay an open question (below).
     - **Any client may disarm**, with or without the lease: the agent forwards `DISARM` (fast path or system op) from every client at once. Decided 2026-11-12 ([gui-design.md](gui-design.md)).
     - A lease change, or the lease holder disconnecting, makes the agent send `DISARM` on the fast-path MSG_TYPE. That leaves the device plain Disarmed, not in Fault.
     - The previous holder gets a lease-revoked message. ROS recovers as described under `drivelink_hardware`.
-  - **Exclusive operations.** Capture, test signals, `SAVE`, `REVERT`, `FACTORY_RESET`, layout ops and OTA need the lease, or need the device to be disarmed with nobody holding the lease.
+  - **Exclusive operations.** Capture, test signals, actions, `SAVE`, `REVERT`, `FACTORY_RESET`, `SET_NAME`, layout ops and OTA need the lease, or need the device to be disarmed with nobody holding the lease.
   - **Param writes.** Any client may write live params at any time. Batches are atomic on the device. This stays allowed while ROS holds the lease; the GUI warns before such an edit.
-  - **History.** The agent keeps recent diag events and arm-state changes, and sends them to a client when it connects. It keeps no captures.
-- **Agent-only messages** get their own MSG_TYPEs in `protocol/defs/registry.yaml`, allocated in H3 from the free command, response and event values: hello and version, lease request/grant/revoke, clock model, client list. They never reach the device.
+  - **History.** The agent keeps recent diag events and arm-state changes (bounded), and sends them to a client when it connects. It keeps no captures.
+- **Agent-only messages** get their own MSG_TYPEs in `protocol/defs/registry.yaml`, allocated in H3a from the free command, response and event values: hello and version, device list, lease request/grant/revoke, clock model, client list, history. They never reach the device. Their spec is `docs/protocol/agent.md`.
 
 ### `drivelink-gui` (Qt/QML)
 
-- Uses the current Qt 6 LTS with Qt's MinGW kit on Windows. On Linux it uses the Qt from Ubuntu 26.04.
-- The screens follow the Figma design ([gui-design.md](gui-design.md), [gui-design-status.md](gui-design-status.md)), including G7b's loops-and-sources rework.
+- Qt 6.12.0 with Qt's MinGW kit on Windows; Qt 6.10 is the API floor, which the Linux CI build against Ubuntu 26.04's Qt enforces.
+- The screens follow the Figma design ([gui-design.md](gui-design.md), [gui-design-status.md](gui-design-status.md)), including G7b's loops-and-sources rework and LP's placement enum (Any core is the Add loop default). G8 is folded into H2a: no clickable prototype; the tokens are exported and the open handoff issues are settled in code.
+- **Theme.** Figma's variables are exported to `tokens.json` in the repo and a script writes the `Theme` singleton with a dark and a light set; Figma stays the source of truth. Inter and JetBrains Mono (OFL) and the Lucide icons used (ISC) are bundled in the Qt resources.
+- **Style.** A custom DriveLink style built on the Basic style; each G2 component maps to one QML control (the mapping table in Figma).
 - **C++ backend:**
-  - A device connection, either local (serial) or remote (agent), behind one interface.
-  - Its own command group, with every input it can command at hold values and keepalives, so `ARM` is never refused with `NoCommandGroup`. A direct serial connection sets it up at connect. A remote connection starts as an observer and sets it up only after receiving the control lease, following the agent's command-group ownership rule.
+  - A device connection, either local (serial, or TCP to vdev) or remote (agent), behind one interface. Library completions and events reach QML through the session dispatcher (queued invokes onto the GUI thread).
+  - Its own command group, with every input it can command at hold values and keepalives, so `ARM` is never refused with `NoCommandGroup`. A direct connection sets it up at connect. A remote connection starts as an observer and sets it up only after receiving the control lease.
   - Models built from the device model:
     - an instance tree (type, label, loop, health), with loops as instances
     - a param table per instance (typed editors, units, ranges, enums, a pending-reboot marker, a dirty marker)
     - a signal list, including sources' value and age signals
     - action forms
-- **QML:** entirely generic, with no screen for any particular module. A module can still add an optional custom panel under `gui/modules/<type>/`, matched by type name (the IMU calibration panel is the first).
-- **Plots:** a custom `QQuickItem` that draws line strips through the scene graph from a C++ ring buffer. Live plots use subscription groups the GUI sets up itself; captures are plotted from uploaded buffers.
+- **QML:** entirely generic, with no screen for any particular module. A module can still add an optional custom panel under `host/gui/modules/<type>/`, matched by type name and compiled into the resources (the IMU calibration panel is the first).
+- **Plots:** a custom `QQuickItem` that draws line strips through the scene graph from a C++ ring buffer fed by the library's per-group sample rings. Live plots use subscription groups the GUI sets up itself; captures are plotted from uploaded buffers.
 - **Screens:**
-  - **Connect:** a serial port, or an agent address; recent devices keyed by device id.
+  - **Connect:** a serial port (or a TCP address for vdev), or an agent (found by mDNS or typed, with its token) and then one of its devices from the agent's device list; recent devices keyed by device id. The device list is not in the G6 frames; H3b adds it.
   - **Device:** info (name, id, versions), loops and their rates and overruns, limits, arm/disarm with the reasons `ARM` was refused, fault acknowledgement, faults (diag entries with the names and descriptions the device serves), save/revert, reboot, OTA, rename, and a safe-mode banner with `EXIT_SAFE_MODE`.
   - **Layout:** add or remove instances (including loops), the loop each module runs in, wiring (`Ref` params with pickers), sources, labels, pending-reboot banner.
   - **Tune:**
@@ -176,13 +219,18 @@ working. Python bindings stay an open question (below).
     3. Run, then overlay the results against earlier runs.
     4. Save or revert.
   - **Monitor:** free-form live plots of any signals, and a manual command panel that sets inputs by hand while armed.
-- **Tuning sessions** (captures plus the params used) are saved as files on the PC, keyed by device id, and can be reopened and exported to CSV.
+- **Files on the PC:**
+  - Tuning sessions (runs: capture, the params used and the test signal; gain history) are one versioned JSON file each, keyed by device id, with capture columns stored as base64 little-endian arrays. Each run exports to CSV.
+  - IMU calibration exports get their own versioned JSON format (H2f).
+  - App settings and recent devices use `QSettings`.
+- **Tests.** C++ backend and model tests against vdev; Qt Quick Test for key controls and flows, offscreen, in CI on both OSes; and a scenario-screenshot tool that renders named screens from vdev scenarios (and, where a step says so, from the bench board) to PNG at 2560×1440 and 1920×1080, dark and light, for comparison with the Figma frames. vdev gains scenario hooks (inject faults, safe mode, a stalled link, a reboot, slow replies) for this.
+- **Distribution.** An Inno Setup installer, built by host-windows CI from a `windeployqt` staging directory (H2g).
 
 ### `drivelink_hardware` (ROS 2)
 
 - A ros2_control `SystemInterface`.
 - **Parameters:**
-  - how to connect: the agent address, or a serial port for running without the agent
+  - how to connect: the agent address, token and device (alias or device id), or a serial port for running without the agent. One hardware component per device; a robot with two ESPs has two components.
   - for each joint: the label of its controller instance, and which interfaces map to which signals and inputs (by item name, for example `position` → `position`, `velocity` → `velocity`, command `velocity` → `velocity_sp`)
   - for each sensor: the label of its instance and its signal names (for the IMU, the quaternion, gyro and linear acceleration signals)
 - **`on_configure`:**
@@ -197,18 +245,18 @@ working. Python bindings stay an open question (below).
   2. Set command values to hold (current position, zero velocity, zero duty) and send a fresh value frame after the mode write completes. The controller ignores old queued/inactive setpoints; keepalives do not satisfy the new mode's fresh-command requirement.
   3. When the first command interface is claimed, `ARM`. When the last one is released, `DISARM`.
 - **`on_deactivate`:** `DISARM`, then release the lease.
-- **`read()`:** copies the latest group values out of the seqlock buffers, with timestamps mapped to ROS time.
-- **`write()`:** queues one command group frame and never blocks.
+- **`read()`** (`noexcept`): copies the latest group values out of the seqlock buffers, with timestamps mapped to ROS time through the agent's clock model.
+- **`write()`** (`noexcept`): queues one command group frame and never blocks.
   - A NaN command value (the ros2_control default before a controller writes) is sent as hold: the last measured position, or zero velocity or duty. The firmware rejects non-finite frames, and a rejected frame doesn't feed the watchdog.
-- **Status and faults:** diag events and the status stream are published on `/diagnostics` through a small node in `drivelink_bringup`.
+- **Status and faults:** diag events and the status stream are published on `/diagnostics` through a small node in `drivelink_bringup`, which also offers a fault-acknowledge service.
 - **Losing the device while active.** A disarm (watchdog, fault, a loop stall, or the GUI taking the lease) makes `read()` return `ERROR`. ros2_control then deactivates the component. Recovery is documented and done by an operator or a supervisor node:
-  1. acknowledge any fault (from the GUI, or a service on the diagnostics node)
+  1. acknowledge any fault (from the GUI, or the diagnostics node's service)
   2. hand the lease back
   3. reactivate the component with `ros2 control set_hardware_component_state`
 
   ros2_control does not reactivate a component on its own.
 - **IMU:** exposed as sensor state interfaces, published with `imu_sensor_broadcaster`. `imu.bno055` runs in a non-real-time loop, so its group is separate from the motor loop's.
-- **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets.
+- **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets, for an example two-wheel diff-drive robot with an IMU that runs against vdev mocks. The real robot's config is added when it is on the bench.
 
 ## Link budget
 
@@ -233,15 +281,17 @@ What follows from the tables:
 - Normal running at 100–200 Hz uses a small share of 921600 baud. A subscription group's divider sets its rate below the loop rate.
 - Tuning doesn't depend on the link, because capture records on the device at the full loop rate.
 - The control rate itself never uses the link.
-- At high rates with many motors, consider 2–3 Mbaud, or a USB transport later.
+- At high rates with many motors, consider 2–3 Mbaud, or a USB transport later. Neither is planned.
+- The GUI's signal browser uses the same arithmetic to show what a plot would add, and refuses an add over 100 % (G5).
 
 ## Repository layout
 
-What exists after F10, and what the host steps add (marked *planned*). Each directory is created by the step that first puts something in it. No empty placeholder directories.
+What exists after F10, and what the host steps add (marked with the step). Each directory is created by the step that first puts something in it. No empty placeholder directories.
 
 ```
 drivelink_v2/
-├─ CLAUDE.md  README.md
+├─ CLAUDE.md  README.md  LICENSE
+├─ VERSION                    H2g: the one repo version
 ├─ firmware/                  ESP-IDF project (CLAUDE.md, README.md)
 │  ├─ main/
 │  ├─ components/             uart_comm, diag, rtos_util, core_os, core, mod_motor,
@@ -262,19 +312,22 @@ drivelink_v2/
 │  ├─ vdev/                   drivelink-vdev: links the firmware core, core_os, mod_mock and the pure motor controller natively
 │  ├─ cli/                    drivelink-cli
 │  ├─ test/                   host unit and integration tests, hardware smoke scripts
-│  ├─ agent/                  planned (H3)
-│  ├─ gui/                    planned (H2, COLCON_IGNORE)
-│  │  └─ modules/<type>/      optional custom panels
-│  └─ ros/                    planned (H4)
+│  ├─ gui/                    H2a (COLCON_IGNORE): app, style, theme (tokens.json + generator), tests, shots tool
+│  │  ├─ modules/<type>/      optional custom panels (H2f: imu.bno055)
+│  │  └─ installer/           H2g: Inno Setup script
+│  ├─ agent/                  H3a (COLCON_IGNORE); deploy/ install script, unit, udev rule (H3c), debian/ (H5)
+│  └─ ros/                    H4a/H4b
 │     ├─ drivelink_hardware/
 │     └─ drivelink_bringup/
 ├─ docs/
-│  ├─ adding-a-module.md
-│  └─ protocol/               generated tables + hand-written family specs
+│  ├─ adding-a-module.md  development.md
+│  └─ protocol/               generated tables + hand-written family specs (+ agent.md, H3a)
 ├─ tools/
 │  ├─ gen/                    YAML → C++ / docs generator
 │  ├─ validate.py             every check, locally and in CI
-│  └─ bench_fw.py             guarded bench/normal/XiP/OTA-image builds and flashing
+│  ├─ bench_fw.py             guarded bench/normal/XiP/OTA-image builds and flashing
+│  ├─ setup_linux.sh          H2a: the Linux package list for WSL and CI (ROS added in H4a)
+│  └─ wsl_serial.py           H3b: guarded usbipd attach/detach of the CH343 to WSL
 ├─ plans/                     plans, status, GUI design records; archive/ holds finished step plans
 └─ .github/workflows/
 ```
@@ -286,17 +339,30 @@ drivelink_v2/
   - Under IDF (`ESP_PLATFORM`), `protocol/` calls `idf_component_register`.
   - Otherwise each one is an ordinary library that installs and exports a CMake package (`find_package(drivelink_protocol)`, `find_package(drivelink)`).
   - Each one also has a `package.xml` with `<build_type>cmake</build_type>`, so colcon builds it as a dependency in the same workspace.
-- **Host superbuild:** `host/superbuild/CMakeLists.txt` brings in `protocol/` and builds libdrivelink, vdev, cli, and later agent and gui, together (`add_subdirectory` with explicit binary dirs).
+- **Host superbuild:** `host/superbuild/CMakeLists.txt` brings in `protocol/` and builds libdrivelink, vdev, cli, gui and agent together (`add_subdirectory` with explicit binary dirs).
   - It lives in its own directory, not at `host/CMakeLists.txt`. colcon treats any directory with a `CMakeLists.txt` that calls `project()` as a package and does not look for packages inside it, so a superbuild at `host/` would hide `host/libdrivelink` and `host/ros/*`.
   - `vdev` compiles the firmware core and the pure modules against `core_os`'s native backend.
-  - `CMakePresets.json` has `windows-mingw`, `linux` and `linux-no-gui` presets (the last is the same as `linux` until the GUI lands).
-  - The Windows preset names Qt's MinGW compiler explicitly.
+  - `CMakePresets.json` has `windows-mingw` (with the GUI), `linux` (with the GUI and the agent) and `linux-no-gui` (the agent and the libraries, for the ROS and agent jobs) presets.
+  - The Windows preset names Qt's MinGW compiler explicitly; the agent is not built on Windows.
 - **ROS:** `colcon build` from the repo root. `firmware/`, `host/superbuild/`, `host/gui/`, `host/vdev/`, `host/cli/` and `host/agent/` carry `COLCON_IGNORE`. colcon finds `protocol/`, `host/libdrivelink/` and `host/ros/*` through their `package.xml`.
+- **Standards:** the host is C++23 with GCC 13.1 as the floor (MinGW 13.1 on Windows, GCC 15 on Ubuntu 26.04); `protocol/` declares C++20. The firmware native tests build with MSYS2 UCRT64 GCC 16.2 from T0 on.
 - **MinGW notes:**
   - Never mix compilers. Qt, libdrivelink, vdev and the GUI all build with Qt's MinGW kit.
-  - Strawberry Perl puts a different `g++` on `PATH` (the firmware native tests use it). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
+  - Another `g++` may be on `PATH` (Strawberry Perl; MSYS2 UCRT64 for the native tests after T0). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
   - Asio on MinGW needs `ws2_32` and `mswsock`, and `_WIN32_WINNT` defined.
-- **Dependencies:** keep them few and mostly header-only, version- and SHA256-pinned in `host/cmake/Dependencies.cmake` (standalone Asio, doctest, nlohmann JSON for the CLI). No vcpkg, because its MinGW support is community-only. The generator needs Python 3 and PyYAML.
+- **Dependencies:** keep them few and mostly header-only, version- and SHA256-pinned in `host/cmake/Dependencies.cmake` (standalone Asio, doctest, nlohmann JSON for the CLI; a small mDNS library in H3b, chosen there). No vcpkg, because its MinGW support is community-only. Qt comes from Qt's installer (Windows) and Ubuntu's packages (Linux). The generator needs Python 3 and PyYAML.
+
+## Development environment
+
+Decided 2026-11-14. Sessions run in the Claude desktop app on Windows; only builds go to WSL.
+
+- **Windows** (native): ESP-IDF, the firmware native tests, the host with Qt's MinGW (`host-win`), the GUI, flashing and the serial ports.
+- **WSL** (the `Ubuntu-26.04` distro): `host-linux`, and later the `agent` and `ros` checks. `tools/validate.py` runs them there from the Windows session, as it does `host-linux` today, with build directories under `~/.cache/drivelink/<worktree>/` in the distro.
+- **`tools/setup_linux.sh`** is the one list of Linux packages. It skips anything already installed (apt packages, then from H4a ROS Lyrical, ros2_control and rosdep). The WSL distro runs it once (by hand, or an agent with sudo approved). CI's host-linux and agent jobs run it in `ubuntu:26.04`, where ROS isn't needed; the ros job runs it in the `ros:lyrical` image, where it only adds the extra packages. `ci.yml` holds no package list. It lands in H2a, the first step that needs new Linux packages (Qt 6 for the GUI's Linux build).
+- **validate.py checks** for the new areas (`agent` in H3a, `ros` in H4a) are built like `host-linux`: each first checks for missing tools and stops with one line naming the exact fix, keeps its output short with full logs in `build/validate/`, reports in `build/validate/summary.json` like every check (PR #66), and is skipped when unchanged.
+- **`tools/wsl_serial.py attach|detach|status`** (with `--dry-run`, H3b) hands the CH343 to WSL through usbipd for agent hardware tests, and always gives it back to Windows afterwards. The one-time `usbipd bind` is done by hand in an admin shell.
+- **No devcontainer for now.** Revisit if cloud sessions should build the Linux side.
+- Later speed-ups, if CI time matters: run the ros job only when `host/ros/`, `host/libdrivelink/` or `protocol/` change, or build a CI image from the setup script.
 
 ## Adding a module
 
@@ -309,33 +375,33 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 | Job | Runs on | What | State |
 |---|---|---|---|
 | firmware | `espressif/idf:v5.5.2` | the main, nolog and HIL test-app builds, zero warnings | exists |
-| native-tests | Ubuntu | generator checks and tests, firmware native and protocol tests | exists |
-| host-linux | Ubuntu | superbuild, libdrivelink/CLI tests, vdev integration, installed-package smoke | exists |
-| host-windows | Windows, Qt `win64_mingw` + its MinGW | superbuild, tests; with the GUI from H2 | H1a (local `host-win` check exists) |
-| agent | Ubuntu | agent ↔ vdev integration tests | H3 |
-| ros | `ros:lyrical` | `colcon build` + `colcon test`, including a launch test against vdev | H4 |
+| native-tests | `ubuntu:26.04` container (T0) | generator checks and tests, firmware native and protocol tests | exists; container in T0 |
+| host-linux | `ubuntu:26.04` + `setup_linux.sh` | superbuild, libdrivelink/CLI tests, vdev integration, installed-package smoke; GUI build and tests against Qt 6.10 from H2a | exists |
+| host-windows | Windows, Qt 6.12.0 `win64_mingw` + MinGW 13.1 via aqtinstall | superbuild, tests, the C++23/GCC 13.1 floor; GUI and Quick Tests from H2a; the Inno Setup installer as an artifact from H2g | H1a |
+| agent | `ubuntu:26.04` + `setup_linux.sh` | agent ↔ vdev integration tests | H3a |
+| ros | `ros:lyrical` + `setup_linux.sh` | `colcon build` + `colcon test`, including a launch test against vdev and the agent | H4a |
+| deb | arm64 Linux, `ubuntu:26.04` | the agent `.deb`, installed and removed in a container | H5 |
 
 ## Phases
 
-| Phase | Content |
+The steps, their dependencies and briefs are in [host-steps.md](host-steps.md); their state is in [host-status.md](host-status.md).
+
+| Phase | Steps |
 |---|---|
-| S0, S1, F1–F10 | Done: the workflow, the repo restructure and the firmware plan ([firmware-architecture.md](firmware-architecture.md)), with the first host slice growing alongside from F3. |
-| HW | Run every deferred hardware check (motors, IMU, Pi). Can run beside the host steps as hardware allows; fixes go to `host_overhaul`. |
-| H1a | Typed `libdrivelink`: the device model, typed services, the asynchronous request path and the seqlock group buffers; periodic time and automatic timestamp mapping over F8's estimator; the CLI on the typed API with its JSON formatting; the host-windows CI job. Tested against vdev. |
-| H1b | Device identity (core v9: id and name in `GET_INFO`, a set-name system op, NVS storage; firmware, host, vdev and docs together, bare-board check) and the plant identification math. |
-| H2 | GUI in local mode: connect, device, layout, tune and monitor screens, per the Figma design. |
-| H3 | Agent: arbitration, lease, clock model distribution, agent MSG_TYPEs. The GUI's remote mode. |
-| H4 | `drivelink_hardware` and `drivelink_bringup`, the diagnostics node, the ROS CI job. |
+| Done | S0, S1, F1–F10, LP: the workflow, the repo restructure, the firmware ([firmware-architecture.md](firmware-architecture.md)) and the first host slice. |
+| Tooling | T0: C++23 for the host and the native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, the native-tests job in `ubuntu:26.04`. |
+| Library | H1a typed API and device model; H1b async path, events, group buffers, time mapping; H1c device identity (core v9). |
+| GUI, local | H2a foundation; H2b Connect and Device; H2c Layout; H2d Monitor; H2e Tune; H2f IMU calibration panel; H2g installer and close-out. |
+| Agent and remote | H3a agent; H3b GUI remote mode; H3c Pi deployment. |
+| ROS | H4a `drivelink_hardware`; H4b `drivelink_bringup`. |
+| Finish | H5 agent `.deb`; H6 cleanup and the merge into `main`. |
+| Hardware | HW, whenever hardware arrives. |
 
 The S1 restructure details are in git history (`git show 272575d:plans/host-architecture.md`).
 
 ## Open questions
 
-- ~~While ROS holds the lease, may the GUI change live params, or only read them?~~ Decided 2026-11-11 ([gui-design.md](gui-design.md)): it may, and the GUI warns that the robot is being driven and changes apply live.
-- ~~Should the agent keep a short history of captures and diag records, so a GUI that connects later can see them?~~ Decided 2026-11-11: diag events and arm-state changes only. Captures stay with the client that ran them.
-- ~~Should the GUI save "tuning sessions" (captures plus the params used) as files on the PC?~~ Decided 2026-11-11: yes, as session files that can be reopened and exported to CSV.
-- ~~Typed host API or JSON results?~~ Decided 2026-11-14: typed; JSON only in the CLI.
-- Python bindings for `libdrivelink` (for scripts and to replace `firmware/test/uart_comm/protocol.py`): when, if ever? Until then, scripts drive the CLI's `--json` output.
+All earlier open questions are decided (live params under a lease, agent history, tuning session files, typed API, Python bindings). New ones are raised with the user by the step that meets them.
 
 ## IMU calibration contract
 
@@ -344,4 +410,5 @@ stages configuration, explicit SAVE commits it, and boot restores it. A generic
 action form can pass the versioned blob; a custom GUI panel is optional. Vdev
 uses `imu.mock` and the shared pure state/codec, without a physical bus backend.
 Calibration quality comes from levels, while `calibration.valid` means a staged
-blob exists. See `docs/protocol/imu.md`.
+blob exists. See `docs/protocol/imu.md`. Through the agent, calibration actions
+need the lease (see "Exclusive operations").

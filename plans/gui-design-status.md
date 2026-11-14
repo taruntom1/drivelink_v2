@@ -1,12 +1,8 @@
 # GUI design status
 
-The working state of the DriveLink GUI design in Figma, so a new session can pick up where the last one stopped. Start a session with `/gui-design-step`.
+**The design phase is complete** (G0–G7b accepted; G8 folded into host step H2a on 2026-11-14). This file is now the Figma reference for the GUI steps H2a–H3b: the node ids, the rules to keep and the Figma traps. The plan, the decisions and the open issues are in [gui-design.md](gui-design.md); the build is tracked in [host-status.md](host-status.md).
 
-The plan, the decisions and the phase contents are in [gui-design.md](gui-design.md). This file holds only the state: where things stand, what comes next, and what the next session must know.
-
-Last updated: 2026-11-14 (G7 and G7b accepted, including their G2 extensions; G8 is next; handoff issues remain recorded).
-
-PR: [#62](https://github.com/taruntom1/drivelink_v2/pull/62), accepted G7/G7b records, into `firmware_overhaul` (opened at the user's request).
+Last updated: 2026-11-14 (host re-plan). The last design PR was [#62](https://github.com/taruntom1/drivelink_v2/pull/62).
 
 ## Where things stand
 
@@ -21,25 +17,19 @@ PR: [#62](https://github.com/taruntom1/drivelink_v2/pull/62), accepted G7/G7b re
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | done | Accepted 2026-11-14, including CalibrationLevel/OrientationPreview, 11 screens and 2 retained 1080p Light checks; calibration contract alignment remains in handoff notes |
 | G7b Loops and sources rework | done | Parts A–G and G2 extensions accepted 2026-11-14: 17 Layout frames, shared updates, two G4 deletions, Cover/flow records and checks |
-| G8 Prototype and handoff | planned | Next: discuss scope and open handoff issues before building |
+| G8 Prototype and handoff | moved to H2a | Decided 2026-11-14: no clickable prototype; H2a exports the tokens and assigns the open handoff issues to the screen steps ([host-steps.md](host-steps.md)) |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
 ## Next step
 
-- **Firmware placement follow-up (2026-11-14):** `loop.core` becomes a discovered
-  enum (Core 0, Core 1, Any core), with Any core the Add loop default. Factory
-  control/sensor remain pinned 1/0. Apply this to Add loop, loop detail and the
-  Device table in the next GUI edit/H2; Figma has not been changed by this
-  firmware task. See `todo-loop-affinity.md` and `gui-design.md`.
-
-1. Discuss **G8 Prototype and handoff** before building: key G0 flows, status-bar fault count, responsive behavior (including inherited G5 fixed plots/paused toolbar and Tune/A–B issues), calibration alignment with built F6 and the H2/H3 handoff scope. G7 and G7b are accepted; do not repeat their acceptance requests.
-2. Record the G8 scope decisions, then obtain scope agreement as required by gui-design-step before construction. Acceptance of G7/G7b does not settle the explicitly open host file-format or remote calibration-action contracts.
+1. **G8 is folded into host step H2a** (user decision 2026-11-14). No further Figma phase is planned. H2a exports the tokens to `host/gui/theme/tokens.json` and the `Theme` singleton, and assigns the open handoff issues: the faults badge to H2b, the G5 1080p issues to H2d (Monitor) and H2e (Tune), calibration alignment with F6 and the calibration file format to H2f. Remote calibration actions need the lease (decided 2026-11-14).
+2. **Not yet in Figma:** LP made `loop.core` a discovered enum (Core 0, Core 1, Any core) with Any core as the Add loop default; factory control/sensor stay 1/0. H2c builds it into Add loop, loop detail and the Device table; applying it to the frames is optional (H2a). The agent's device list (H3b) has no frame either.
+3. A Figma edit from now on is made by the H step that needs it, on that step's branch, following the `/gui-design-step` rules for the file.
 
 ## Handoff note
 
-- **Branch:** this session uses local `codex/gui-design-g7b` in worktree `86ff`, based on `0f70c6a` (completed firmware overhaul, also the fetched `origin/firmware_overhaul`). Publish with `git push origin HEAD:Codex/gui-design` per the invoked skill; no PR unless the user requests it. The local `Codex/gui-design` branch is checked out in worktree `7805`, so it was not moved or edited. Its fetched remote tip was verified to be an ancestor of this base; publication is a normal fast-forward. The old instruction to use `claude/gui-loop-rework` is superseded. Never target `main`.
-- **G7b complete:** Parts A–G and G2 extensions were accepted 2026-11-14. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. G7 was also accepted; G8 discussion is next.
+- **G7b complete:** Parts A–G and G2 extensions were accepted 2026-11-14. The baseline has `control`, `sensor` and `fusion`, with `fusion.mock` labelled `odom` and two f32 sources (`left_enc.position`, `imu.yaw`). The wiring picker adds real-time `test` with pending `sim_motor`; the capacity example uses an empty fourth loop. Loop headers are selectable and show rate, neutral Real-time badge, budget and state in 52 px; module rows remain 32 px. All 17 new frames passed their Dark/1080p Light checks. Existing shared frames were inspected too, with inherited G5 responsive exceptions left open. G7 was also accepted.
 - **G7b traps:**
   - Retained normal frames with a tree or Device loop table use the three-loop baseline: G4, G7, Device and its G6 copies. Preserve explicit scenario differences: four loops for wiring refusal, factory loops for first boot, no loops for the saved-empty layout, offline/failed states where appropriate. Update in one scripted pass per page, then screenshot each frame.
   - The G4 tree (`84:4122`) is a FRAME with separate G2 TreeItem INSTANCE rows, not a shared tree component. Trees and Device table rows were updated per frame. Six remote Device/lease-over-Device states did not contain the local loop card; a compact read-only table was added there while preserving lease/history controls.
@@ -47,18 +37,18 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
   - The mock actuator and feedback need a real-time loop. In wiring picker `85:4111`, move the scenario's `sim_motor` into second real-time loop `test`; its cross-loop entry stays disabled with a reason.
   - Read `docs/protocol/core.md`, `docs/protocol/types/loop.md` and `docs/protocol/types/fusion.mock.md`. The source target picker accepts signals and inputs of the required value type; `left_enc.count` is i32 and cannot feed fusion.mock's f32 feedback source. Use `left_enc.position` instead.
   - Source validity is derived from the age sentinel and discovered instance state; `fresh` is not a wire signal. Hide invalid values, distinguish telemetry unavailable from no valid sample, and do not infer that a producer is paused from age alone. Pending targets must not relabel current live values.
-- **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [overhaul-status.md](overhaul-status.md), after asking the user.
+- **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [host-status.md](host-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
 - **G4 rules to keep:** pending (reboot-required) is violet and never looks live; a refused layout op is not staged and its row says why, naming the clashing instance; ARM blocked by the layout shows as ArmButton "Arm disabled" with the reason in the status bar, not as Fault; there is no per-change undo, only Discard all.
-- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) is open and in the Notes of overhaul-status.md. [todo-layout-ops.md](archive/todo-layout-ops.md) (G4) is closed: the firmware has the loop at `ADD_INSTANCE` and refuses a remove with dependents.
+- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) is scheduled for host step H1c. [todo-layout-ops.md](archive/todo-layout-ops.md) (G4) is closed: the firmware has the loop at `ADD_INSTANCE` and refuses a remove with dependents.
 - **G3 rules to keep:** the scrim of a modal starts under the status bar (DISARM stays live); DISARM is enabled whenever there is a link; refused-while-armed buttons are disabled with a Tooltip saying why.
 - **Rename** assumes `SET_NAME` applies at once and sets `nvs_dirty` (an open question in todo-device-name.md; not yet put to the firmware side).
 - **G5 accepted:** gain of 0 and negative gains follow the Decisions table; Auto re-run on by default was explicitly accepted 2026-11-13. Keep the documented 1080p issues open for handoff.
 - **G6 rules:** remote connections observe first and create their command group only after a lease grant (host plan clarified). Lease ownership is separate from arm state. ARM needs the lease; DISARM stays available with a device link, above every scrim. A grant leaves the board disarmed; revocation stops auto re-run/test starts. Live edits confirm before sending while another client drives; opt-out lasts one connection. Device holds the Clients and lease card; the chip navigates there in G8.
 - **G6 at 1080p:** Tune gain history uses a compact View history entry. Monitor legends wrap, its three plots share height, and the axes are fitted without shrinking the text. These fixes are scoped to G6; G5's accepted 1080p issues remain open. All 16 G6 frames checked at 1920×1080 in Light; only Tune/ROS and Monitor/observer copies kept.
 - **Naming:** the manual-command toggle is **Latch**, not Hold, because "hold" already means an input left at its hold value (Remove, Hold all).
-- **G7 rules and unresolved reconciliation:** the existing design uses local import, explicit target-reviewed Apply, separate Read / Export and stale/no-data handling. A level of 3 is not an ARM permission. F6 is now built and persists typed calibration through explicit SAVE; the older G7 statement that SAVE is not calibration persistence must be reconciled during G7 review. G7b changes the tree only. H3 remote calibration-action permissions remain open; do not infer them from live-param permission.
+- **G7 rules and unresolved reconciliation:** the existing design uses local import, explicit target-reviewed Apply, separate Read / Export and stale/no-data handling. A level of 3 is not an ARM permission. F6 is now built and persists typed calibration through explicit SAVE; the older G7 statement that SAVE is not calibration persistence must be reconciled during G7 review. G7b changes the tree only. Remote calibration actions need the lease (decided 2026-11-14); do not infer them from live-param permission.
 - **G7 at 1080p:** wrapped file controls, compact metadata/activity spacing and 110/80/fill generic signal columns. All 11 screens checked in Light at 1920×1080; only Live calibration and Confirm apply retained. G2 review instances also checked in both themes.
 
 ## Figma reference

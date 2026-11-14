@@ -25,4 +25,4 @@ high/low limits (default the full 16-bit range, so overflows are rare).
 
 - It returns `esp_err_t`/`bool` and never reports through `diag`.
 - Not run on a real encoder yet: see "Deferred hardware checks" in
-  `plans/overhaul-status.md`.
+  `plans/host-status.md`.

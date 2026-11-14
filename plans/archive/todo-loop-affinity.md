@@ -1,6 +1,6 @@
 # Plan: automatic initial core placement for loops
 
-Status: implemented and validated, in review in [PR #63](https://github.com/taruntom1/drivelink_v2/pull/63). Approved by the user on 2026-11-14.
+Status: **done and archived** (merged in [PR #63]; the decision is in host-architecture.md's baseline and H2c's brief). Originally: implemented and validated, in review in [PR #63](https://github.com/taruntom1/drivelink_v2/pull/63). Approved by the user on 2026-11-14.
 
 ## Accepted behavior
 
@@ -71,7 +71,7 @@ needed. On that basis this is a descriptor change, with no core protocol version
 bump, like other discoverable module-definition changes. Confirm this against
 the final diff; if implementation requires a new wire encoding, stop for the
 repo-required wire decision and update firmware, host and Python reference
-together. Do not consume the core v9 currently planned for H1b device identity.
+together. Do not consume the core v9 currently planned for H1c device identity.
 
 Update `docs/protocol/core.md`, generated `docs/protocol/types/loop.md`, the core
 and core_os READMEs, and the loop section of `plans/firmware-architecture.md`.

@@ -2,7 +2,8 @@
 
 These add to [firmware rules](../CLAUDE.md). Bench, normal, XiP and OTA-candidate
 commands are in [the development guide](../../docs/development.md#guarded-bench-builds);
-ports/state live in the status file.
+the bench and its ports are in [bench.md](../../docs/bench.md), the board's
+current state in [host-status.md](../../plans/host-status.md).
 
 - Preserve startup order: diag, UART, NVS/core, CoreLink, then Reporter, so the
   Boot event has final instance counts/safe-mode state. Report partial failures

@@ -1,7 +1,7 @@
 # Repository rules
 
 DriveLink is an ESP32-S3 motion stack with a self-describing device and generic
-host. Read [plans/overhaul-status.md](plans/overhaul-status.md) first for current
+host. Read [plans/host-status.md](plans/host-status.md) first for current
 work, handoff and hardware state.
 
 ## Read for the task

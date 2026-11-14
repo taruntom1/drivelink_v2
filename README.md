@@ -2,9 +2,9 @@
 
 DriveLink is a robot motion stack: ESP32-S3 firmware that runs motor control, encoder and IMU feedback in configurable loops, and generic host software that talks to it over a binary UART protocol. The firmware is self-describing, so the host needs no code for a new module type. The firmware is written in C++ on ESP-IDF 5.5.2; the host is C++20.
 
-> **Status.** The firmware has not yet run on motors or a real IMU: the bench board has neither, and those checks are scripted and waiting (see "Deferred hardware checks" in [plans/overhaul-status.md](plans/overhaul-status.md)). The previous firmware is tagged `legacy-final`.
+> **Status.** The firmware has not yet run on motors or a real IMU: the bench board has neither, and those checks are scripted and waiting (see "Deferred hardware checks" in [plans/host-status.md](plans/host-status.md)). The previous firmware is tagged `legacy-final`.
 
-The host library, CLI and virtual device are available; see [host/README.md](host/README.md). The typed host API, GUI, robot-host agent and ROS 2 interface are planned in [plans/host-architecture.md](plans/host-architecture.md) and tracked in [plans/overhaul-status.md](plans/overhaul-status.md).
+The host library, CLI and virtual device are available; see [host/README.md](host/README.md). The typed host API, GUI, robot-host agent and ROS 2 interface are planned in [plans/host-architecture.md](plans/host-architecture.md) with the steps in [plans/host-steps.md](plans/host-steps.md) and tracked in [plans/host-status.md](plans/host-status.md).
 
 ## Layout
 
