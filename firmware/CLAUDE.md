@@ -236,3 +236,9 @@ stalls it like any loop. See the core README ("Capture") and `docs/protocol/core
   RAM and a critical section on a PSRAM address. **No atomic or shared state may
   live in PSRAM.** Lock-free checks use `core_os::lockFreeAtomic<T>()`
   (`core_os/atomics.hpp`), not `is_always_lock_free`, which is false there.
+
+F7b adds the pure per-loop `TestgenService`: fixed storage, loop-owned input
+overrides and receipts, fresh-command handoff, and config-task completion events.
+It never feeds the watchdog. See the core README and `docs/protocol/core.md`.
+XiP remains disabled by default; the isolated `bench_fw.py xip` profile and
+its measured tradeoffs are recorded in `plans/f7b-implementation.md`.

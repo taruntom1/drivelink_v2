@@ -17,6 +17,7 @@ struct BoundSignal {
     const defs::ItemDesc *item = nullptr;
     void *storage = nullptr;
     int64_t *receipt_us = nullptr;
+    detail::Binding *gate = nullptr;
 };
 void latchSignals(std::span<const BoundSignal> signals, std::span<uint32_t> values);
 // Resolve a bound signal or input (inputs only when `inputs_only`) of a

@@ -252,9 +252,10 @@ observation, so the new ARM always receives its own watchdog grace interval.
 unknown IDs return null. Interface IDs are not wire values. Motor modules use
 it to resolve compatible actuator/feedback APIs without RTTI or core coupling.
 
-`bindInput` optionally accepts an `int64_t*` for the last applied value-frame's
-RX timestamp. GroupService copies it with the input on the owning loop, only
-for a validated post-ARM value-bearing mailbox. Keepalives do not update it.
+`bindInput` optionally accepts an `int64_t*` for the last applied input's
+receipt timestamp. GroupService copies validated post-ARM value-frame RX times
+on the owning loop. Testgen writes its actual generated-sample write time on
+that loop. Keepalives do not update it.
 ARM/DISARM reset the timestamp to zero with the input; sources are unaffected.
 No RX/monitor thread accesses this plain binding storage. The existing monitor
 receipt API and exact-generation stop claim are unchanged. Motor controllers
@@ -305,3 +306,40 @@ capture of the device; the wire contract is in `docs/protocol/core.md`.
   the event on 0xC1 from their config task.
 - `bindSignal()` (group_service) is the shared ref resolution of groups and
   capture.
+
+## Test generation (F7b)
+
+`Core::testgen()` exposes `TestgenService`, one preallocated slot per loop
+capacity entry, routed by the running loop id (including sparse ids). Targets
+are bound f32 inputs flagged Testgen. Wire fields and waveform equations live
+in `docs/protocol/core.md`.
+
+- The single config caller validates/binds START, captures the arm generation,
+  and publishes a fixed request with a Ready release store. The owning loop
+  claims Ready, applies START/STOP before command consumption, and acknowledges
+  Applied after the generation step. A Ready timeout can withdraw with a
+  definite no-effect result; a claimed request waits for definite completion.
+- Inputs, receipts, active waveform state and each binding's handoff gate
+  belong only to the owning loop. Groups suppress the active target's value
+  and receipt while still applying other entries and feeding the watchdog.
+  After STOP/completion, commands received at or before termination remain
+  suppressed, even if their slot was busy; switching targets preserves the
+  previous target's boundary. Generation follows groups and precedes module
+  ticks. Its receipt uses the actual write time to honor controller mode
+  boundaries. ARM/DISARM reset inputs/gates; old arm generations never resume.
+- Runtime snapshots contain only internal-RAM, word-sized atomics. A bounded
+  sequence read returns Busy/StagingBusy if it cannot obtain a coherent view.
+  Effective state/running flags also check the current arm generation, so a
+  stalled loop cannot advertise an old run as active after disarm.
+- Each terminal snapshot is immutable while its pending flag is set. The loop
+  sets that flag before publishing live Done; START refuses until the config
+  caller consumes the event. `testgenDoneEvent` sends loop/run/reason from the
+  config task. STATUS remains authoritative if transport delivery fails.
+  Repetitions restart waveform phase without retriggering capture. The first
+  emitted sample requests capture's same-loop `testgen_start` trigger, and the
+  next due recorded sample consumes it. Capture continues after termination.
+
+No steady-state allocation, OS wait, spin, logging or watchdog feed occurs in
+generation. Disarm retains the monitor's independent emergency force. XiP is
+an isolated evaluation profile, off in normal firmware; all shared state stays
+internal even when code/rodata are mapped into PSRAM.

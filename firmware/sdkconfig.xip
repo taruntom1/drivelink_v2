@@ -1,0 +1,2 @@
+# F7b evaluation only. Isolated build; restore normal firmware after measuring.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y

@@ -1,5 +1,6 @@
 #include "core/loop.hpp"
 #include "core/capture_service.hpp"
+#include "core/testgen_service.hpp"
 #include "core/group_service.hpp"
 #include "core/source_service.hpp"
 
@@ -40,7 +41,8 @@ void Loop::addInputs(const detail::InstanceRecord &record) {
     for (size_t i = 0; i < record.desc->items.size(); ++i) {
         const auto &item = record.desc->items[i];
         if (item.kind == defs::ItemKind::Input) {
-            m_inputs.push_back({item.type, record.bindings[i].ptr, item.default_bits, record.bindings[i].receipt_us});
+            m_inputs.push_back({item.type, record.bindings[i].ptr, item.default_bits, record.bindings[i].receipt_us,
+                                &record.bindings[i]});
         }
     }
 }
@@ -48,6 +50,8 @@ void Loop::resetInputs() {
     for (const auto &input : m_inputs) {
         storeValue(input.type, input.ptr, input.bits);
         if (input.receipt_us) { *input.receipt_us = 0; }
+        input.gate->testgen_active = false;
+        input.gate->command_after_us = 0;
     }
 }
 
@@ -98,8 +102,10 @@ void Loop::runTick(uint32_t elapsed)
     }
 
     // 5. Group swaps and post-ARM command mailboxes.
+    if (m_testgen) { m_testgen->beginTick(m_id, start_us, coherent ? arm_word : 0); }
     if (m_groups) { m_groups->beginTick(m_id, armed, armed_at); }
     if (m_sources) { m_sources->beginTick(m_id, start_us); }
+    if (m_testgen) { m_testgen->sample(m_id, start_us); }
 
     // 7. Instances, in the wiring's tick order (the list order, set at boot).
     const uint32_t period_us = m_period_us.load(std::memory_order_relaxed);

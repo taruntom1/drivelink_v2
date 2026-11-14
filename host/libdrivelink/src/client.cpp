@@ -472,6 +472,14 @@ Json Client::event(const Frame &frame) const
         }
         const auto event = r.readU8();
         j["event"] = event;
+        if (event == static_cast<uint8_t>(protocol::defs::CoreEvent::TestgenDone))
+        {
+            j["name"] = "testgen_done"; j["loop"] = r.readU8(); j["run"] = r.readU32Le();
+            const auto reason = r.readU8();
+            if (reason < 1 || reason > 3 || j["loop"] == 255) { malformed(); }
+            static constexpr const char *kReasons[]{"none", "completed", "stopped", "disarmed"};
+            j["reason"] = kReasons[reason]; exact(r); return j;
+        }
         if (event != static_cast<uint8_t>(protocol::defs::CoreEvent::CaptureDone))
         {
             malformed();

@@ -96,6 +96,10 @@ struct Binding {
     OnChange hook = nullptr;
     bool bound = false;
     int64_t *receipt_us = nullptr; // owning loop only; value-bearing commands
+    // Owning loop only. Testgen's gate survives target changes until a fresh
+    // command or an arm transition; RX/config never access these fields.
+    bool testgen_active = false;
+    int64_t command_after_us = 0;
 };
 
 class InstanceTable;

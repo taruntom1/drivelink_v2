@@ -96,7 +96,7 @@ storage belongs to the consumer loop. ARM/DISARM do not reset it.
 F5a-1 motor interfaces use startup-only `Instance::queryInterface` and a shared
 control-port lifetime. Resolve/claim before loops start; never copy shared
 ownership in a tick. Commands, observations and control-port fields belong to
-the same loop. Optional input receipt timestamps are copied only with validated
+the same loop. Command input receipt timestamps are copied only with validated
 post-ARM value frames; keepalives never make a mode's stale setpoint fresh.
 
 F5a-2 hardware modules keep their logic pure and reach drivers only through
@@ -121,3 +121,14 @@ release store. The ring is the only PSRAM allocation; allocate it only at
 capture CONFIG through `core_os::captureAlloc`. Never put an atomic or other
 shared state in PSRAM (IDF serves atomics there with a critical section);
 assert lock-freedom with `core_os::lockFreeAtomic<T>()`.
+
+F7b testgen writes a generated input and its actual write-time receipt only
+on its owning loop, after command consumption and before instances tick.
+Each input binding retains a testgen-active gate and termination timestamp;
+command groups must suppress both the value and receipt for that target while
+active and reject mailboxes received at or before termination. Other entries
+and the frame's watchdog receipt are unaffected. ARM/DISARM reset the gates.
+Per-loop requests use Ready/Applying/Applied staging; terminal snapshots are
+immutable behind a release/acquire pending flag, published before live Done
+so restart cannot overwrite a completion. Only 32-bit-or-smaller atomics are
+used, in internal RAM. See the core README for ownership and snapshot rules.

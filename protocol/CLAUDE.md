@@ -23,4 +23,4 @@ The wire library shared by the firmware and the host: framing, CRCs, the frame s
 Core codecs are in core_codec.hpp; enums come from registry.yaml wire_enums.
 Descriptor enum values in defs.hpp are wire values. Complete descriptor sizes
 are generator-checked; firmware's payload cap must meet kDescriptorMinPayload.
-Core v5 and diagnostic v3 are documented in docs/protocol/core.md and diag.md.
+Core v7 and diagnostic v3 are documented in docs/protocol/core.md and diag.md.

@@ -23,6 +23,14 @@ struct CaptureTrigger
     uint8_t edge = 0;
     uint32_t value = 0;
 };
+struct TestgenConfig
+{
+    uint8_t loop = 0;
+    Ref target{};
+    uint8_t waveform = 0; // step, square, ramp, sine, chirp_linear, chirp_log
+    float offset = 0, amplitude = 0, frequency_start = 0, frequency_end = 0;
+    uint32_t duration_ms = 1000, repeat = 1; // zero repeat: until STOP/DISARM
+};
 // First service slice, without a cached device model. All descriptors come
 // from the connected device. The caller owns the Session and serializes Client.
 class Client
@@ -69,6 +77,9 @@ class Client
     // STATUS of a Done capture plus every sample (`data`, rows of slot bits),
     // paged within the device payload (call info() first to learn it).
     Json captureData();
+    Json testgenStart(const TestgenConfig &config);
+    Json testgenStop(uint8_t loop);
+    Json testgenStatus(uint8_t loop);
 
   private:
     Reply accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
@@ -86,6 +97,7 @@ Bytes parseHex(const std::string &text);
 std::string hex(std::span<const uint8_t> bytes);
 Ref parseRef(const std::string &text);
 uint8_t parseCaptureTrigger(const std::string &text); // manual, value_change, threshold, ...
+uint8_t parseTestgenWaveform(const std::string &text);
 uint32_t parseUnsigned(const std::string &text, uint32_t max = UINT32_MAX);
 Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> values);
 // Returns null for a stale epoch/channel. Descriptor order matches group refs.

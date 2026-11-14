@@ -69,8 +69,8 @@ TEST_CASE("Capture CONFIG validates everything before changing the capture") {
     CHECK(cap.configure(0, 1, 10, 0, manual(), {&kOther, 1}).detail == core::Detail::LoopMismatch);
     const core::Ref param{fx::kTypeId, 0, fx::kGain};
     CHECK(cap.configure(0, 1, 10, 0, manual(), {&param, 1}).detail == core::Detail::WrongKind);
-    CHECK(cap.configure(0, 1, 10, 0, {Kind::TestgenStart, {}, CaptureEdge::Rising, 0}, refs).detail ==
-          core::Detail::Unsupported);
+    CHECK(cap.configure(0, 1, 10, 0, {Kind::TestgenStart, kPos, CaptureEdge::Rising, 0}, refs).detail ==
+          core::Detail::BadValue);
     CHECK(cap.configure(0, 1, 10, 0, {Kind::Manual, kPos, CaptureEdge::Rising, 0}, refs).detail ==
           core::Detail::BadValue);
     CHECK(cap.configure(0, 1, 10, 0, {Kind::ValueChange, kPos, CaptureEdge::Falling, 0}, refs).detail ==

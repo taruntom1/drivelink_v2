@@ -166,3 +166,21 @@ the wire ops/READ paging/STATUS and the done event. Thread tests drive
 `runTick` can overrun and count `LoopOverBudget`, which the native sink
 records (an allocation the guard reports). `host/test/capture_smoke.py` runs on
 vdev in host integration and on the bare board.
+
+F7b adds `test_core_testgen.cpp`: waveform phases/repeats/clipping, validation
+without side effects, staging withdrawal, sparse/concurrent loops, arm epochs,
+terminal-event/restart races, delayed command mailboxes and fresh handoff,
+same-loop capture triggering/dividers and the real-time guard. Controller tests
+verify mode-activation receipts and that generation never feeds the watchdog.
+Host unit tests cover strict testgen request/reply/event encoding. Integration
+runs `testgen_smoke.py` at 50 Hz on vdev; `testgen_cli_failure.py` proxies the
+actual vdev and drops ARM replies, requiring cleanup DISARM from both run
+commands. All join existing validator checks (`native`, `host-win`, `host-linux`).
+
+On the bare board, `testgen_smoke.py --cli <cli> --endpoint serial://COM3
+--loop-rate 1000 --flash-write` checks step/chirp captures, handoff, watchdog
+cancellation and disarmed SAVE timing. `capture_smoke.py` supplies the matched
+1/16-ref tick-cost measurement. Compare normal and isolated XiP firmware via
+`bench_fw.py normal` / `bench_fw.py xip`, then restore normal and verify the
+bench op is refused. Close COM4 before cleanup reboots. The real-motor mode
+and pass criteria are in Deferred hardware checks; no motor has run yet.

@@ -293,7 +293,7 @@ The rules follow the protocol conventions:
 - **Ops refused while armed:** `SAVE`, `FACTORY_RESET`, `REBOOT`, `ota.*`, all layout ops, `CMD_CONFIG` and `CMD_CLEAR` for a group in an armed loop, and `paused` actions on instances in a real-time loop.
 - **Capture `trigger`:**
   - `manual` (fired by the `TRIGGER` op, which also forces any other kind)
-  - `testgen_start` (refused until F7b)
+  - `testgen_start` (same-loop first generated sample; F7b)
   - `value_change(Ref)`: a signal or an input whose value differs from the previous sample (F7a; the plan had `input_change`, inputs only)
   - `threshold(Ref, rising|falling, value)`
 
@@ -413,7 +413,7 @@ The RX time is taken in the RX callback. `esp_tx_us` is written into the frame b
 - NVS and OTA writes disable the cache on both cores, so the loops can stall for several ms. That is why `SAVE` and OTA are refused while armed.
 - The status stream counts the overruns this causes while disarmed.
 - `CONFIG_UART_ISR_IN_IRAM` keeps the UART receiving during those stalls (set in F1).
-- `CONFIG_SPIRAM_XIP_FROM_PSRAM` could remove the stalls altogether by running code from PSRAM. F7 evaluates it against its cost in control-loop latency.
+- `CONFIG_SPIRAM_XIP_FROM_PSRAM` could remove the stalls altogether by running code from PSRAM. F7b measured lower tick costs on the bench, but keeps it off by default in an isolated evaluation profile; see [F7b results](f7b-implementation.md#measured-results-2026-11-14). SAVE/OTA armed restrictions remain.
 
 **Boot sequence:**
 1. `diag::init()`
@@ -525,7 +525,7 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
 - **F4a.** A group is bound to a loop id, for any loop. Its "latch a list of bound signals at the end of the tick" code is written so that F4c's links can use it.
 - **F4b.** The monitor walks the loop table. "Armed loop" and the `paused` rule use the `realtime` flag. It also adds the read-only `limits.*` system params (see "Limits" under the notes on the ops).
 - **F5 and F6.** The motor types are `realtime: required`; `imu.bno055` is `forbidden` and runs in the factory `sensor` loop.
-- **F7.** Capture takes a loop id. F7b decides whether the test signal generator stays one per loop, now that the number of loops varies.
+- **F7.** Capture takes a loop id. F7b keeps one independent test generator per running loop, addressed by loop id.
 - **Host.** `libdrivelink` and the CLI see loops as instances. The GUI's layout screen (H2) edits them.
 
 ## diag v2
@@ -553,15 +553,18 @@ The safety monitor watches the heartbeat of every running loop, and a stall of a
   - `GET_INFO` reports the capacity.
   - **Atomics (F7a, user decision).** With PSRAM, IDF builds the S3 with `-mdisable-hardware-atomics`: atomics become IRAM helper calls that use S32C1I on internal RAM and a critical section only on PSRAM addresses. The lock-free asserts use `core_os::lockFreeAtomic<T>()`, and no atomic or shared state may live in PSRAM.
 - **Access from the loop.** The control loop writes `n` values per due tick into PSRAM through the cache. That is fixed work, and it never allocates. During a flash write the cache is disabled anyway, and the loop is stalled.
-- States: `Idle → Armed → Triggered → Done`. A `Done` event goes out on `0xC1` (F7a: core events are `version u8, event u8, body`; CaptureDone is the only one so far). `READ` pages through the samples in chunks of 512 B or less. The capacity in bytes is the smaller of `CORE_CAPTURE_MAX_KB` and the largest free PSRAM block at boot; `limits.capture_refs` is the ref limit.
+- States: `Idle → Armed → Triggered → Done`. A `Done` event goes out on `0xC1` (F7a: core events are `version u8, event u8, body`; F7b also sends TestgenDone). `READ` pages through the samples in chunks of 512 B or less. The capacity in bytes is the smaller of `CORE_CAPTURE_MAX_KB` and the largest free PSRAM block at boot; `limits.capture_refs` is the ref limit.
 - Capture may run while disarmed (sensors only), as long as no testgen is running.
 
 **Test signal generator**
-- One generator for each loop.
+- One independent generator for each running loop; sparse loop ids are supported.
 - Waveforms: `step`, `square`, `ramp`, `sine`, and `chirp` (linear or log). Parameters: offset, amplitude, period or frequency start and end, duration, repeat.
-- Targets: inputs flagged `testgen: true` in the YAML. For now those are the `velocity_sp`, `position_sp` and `duty_sp` inputs of `controller.cascade_pid`.
+- Targets: inputs flagged `testgen: true` in the YAML. F7b accepts running f32 inputs: the `velocity_sp`, `position_sp` and `duty_sp` inputs of `controller.cascade_pid`, and `actuator.mock` duty.
 - Every generated value is clamped to the input's range.
 - The generator runs only while armed and stops on disarm. While it runs, command group values for its target are ignored, but command frames still feed the watchdog.
+- STOP/completion holds the last emitted value until a command received strictly after termination. Commands for that target received during generation are discarded even if their mailbox is consumed later. Other command entries and watchdog feeds remain effective. ARM/DISARM retain their existing resets.
+- Generated receipts use the actual owning-loop write time, so controller mode changes still require a fresh sample. Runs are tied to their exact arm generation and never resume on re-arm. Config-task TestgenDone events carry loop/run/reason, with pending terminal snapshots protected from restart.
+- Waveforms use device elapsed time; positive duration is per repetition, repeat 0 runs until STOP/DISARM, phase restarts on each repetition, and completion emits no hidden endpoint sample. The exact equations, frequency validation, core v7 wire and event fields are in `docs/protocol/core.md`.
 - **Plant identification** uses `duty_sp` in `open_loop` mode with capture triggered by `testgen_start`. The host fits the model; the firmware only generates and records.
 
 ## OTA

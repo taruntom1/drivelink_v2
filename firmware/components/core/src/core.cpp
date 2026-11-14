@@ -104,6 +104,7 @@ Core::Core(const CoreConfig &config)
                m_config.command_groups, m_config.group_entries),
       m_capture(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.capture_refs,
                 core_os::captureCapacity(m_config.capture_max_bytes)),
+      m_testgen(m_table, std::span(m_loops.data(), m_config.max_loops), m_arm, m_capture),
       m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values})
 {
     m_params.setPendingLayout(&m_pending);
@@ -406,6 +407,7 @@ void Core::createLoop(detail::InstanceRecord &record)
     m_loops[slot]->setGroups(&m_groups);
     m_loops[slot]->setSources(&m_sources);
     m_loops[slot]->setCapture(&m_capture);
+    m_loops[slot]->setTestgen(&m_testgen);
     m_loops[slot]->setArmState(&m_arm);
     std::snprintf(m_task_names[slot].data(), m_task_names[slot].size(), "core_loop_%u", record.instance);
     const auto err = m_tasks[slot].start(m_task_names[slot].data(), instance.stack, instance.priority, instance.core,

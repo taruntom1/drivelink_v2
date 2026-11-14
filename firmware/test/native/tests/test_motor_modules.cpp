@@ -97,6 +97,22 @@ TEST_CASE("Cascade PID kernel tracks output without kick and recovers from satur
     p.reset(); CHECK(p.i==0); CHECK(p.d==0);
     p.kp=p.ki=p.kd=0; CHECK(p.compute(0,100,.001F,1)==0);
 }
+TEST_CASE("Testgen receipts activate switched controller modes without feeding watchdog") {
+    Motor f; f.arm();
+    core::TestgenConfig cfg; cfg.loop=0; cfg.target={32,0,512}; cfg.amplitude=2; cfg.repeat=0;
+    uint32_t run;
+    REQUIRE(f.c.testgen().stageStart(cfg,run).ok()); f.tick(); REQUIRE(f.c.testgen().complete(0,0).ok());
+    f.set(32,16,1); // velocity mode: first tick is the bumpless switch
+    CHECK(f.get(32,260)==1);
+    f.tick(3); CHECK(f.get(32,260)==0); CHECK(f.get(32,259)==doctest::Approx(2));
+    int64_t receipt=123;
+    REQUIRE(f.c.groups().lastCommandUs(0,receipt)); CHECK(receipt==0); // generator never feeds it
+    f.c.monitor(core_os::nowUs());
+    f.tick(); f.c.monitor(core_os::nowUs()+250000); // fresh heartbeat, expired command grace
+    CHECK(f.c.armStatus()==core::ArmStatus::Disarmed);
+    CHECK(f.c.lastDisarmReason()==core::DisarmReason::Watchdog);
+    CHECK_FALSE(f.c.testgen().running()); f.tick(); CHECK(f.get(32,258)==0);
+}
 TEST_CASE("Motor controller shares quantized feedback and controls velocity and position") {
     Motor f; f.arm();
     f.set(32,16,1); REQUIRE(f.send(0,2)); f.tick(5000);
