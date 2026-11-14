@@ -12,7 +12,7 @@ A built-in periodic loop, configured through the layout.
 |---|---|---|---|---|---|---|---|
 | 0x0001 | `rate_hz` | u16 | Hz | 1 .. 2000 | 100 | persist, locked_while_armed |  |
 | 0x0002 | `realtime` | bool |  |  | false | reboot_required, persist |  |
-| 0x0003 | `core` | u8 |  | 0 .. 1 | 0 | reboot_required, persist |  |
+| 0x0003 | `core` | enum (core_0=0, core_1=1, any=2) |  |  | any | reboot_required, persist | Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task. |
 | 0x0004 | `priority` | u8 |  | 1 .. 20 | 10 | reboot_required, persist |  |
 | 0x0005 | `stack_bytes` | u16 | bytes | 3072 .. 16384 | 4096 | reboot_required, persist |  |
 

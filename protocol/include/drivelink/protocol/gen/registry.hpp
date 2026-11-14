@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xDBE8D3E4;
+inline constexpr uint32_t kDescriptorHash = 0xDF9F21A5;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -239,7 +239,7 @@ enum class OtaStage : uint8_t {
     Confirm = 8,
 };
 
-inline constexpr size_t kDescriptorMinPayload = 142;
+inline constexpr size_t kDescriptorMinPayload = 149;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
 inline constexpr uint8_t kCoreCommand = 0x01;

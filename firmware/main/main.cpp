@@ -19,6 +19,7 @@
 #include "core/module_type.hpp"
 #include "core/registry.hpp"
 #include "core_os/kv_store.hpp"
+#include "core_os/bench_affinity.hpp"
 #include "diag.hpp"
 #include "diag_reporter.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
@@ -52,6 +53,9 @@ constexpr std::array kLoggedTasks = {
 /// scan every stack inside the kernel's critical section.)
 void logStackHighWater(const core::Core *core = nullptr)
 {
+#if CONFIG_CORE_BENCH_CRASH
+    core_os::logBenchTaskAffinities();
+#endif
     for (const char *name : kLoggedTasks) {
         TaskHandle_t handle = xTaskGetHandle(name);
         if (handle != nullptr) {

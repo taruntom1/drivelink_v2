@@ -25,6 +25,12 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 
 ## Next step
 
+- **Firmware placement follow-up (2026-11-14):** `loop.core` becomes a discovered
+  enum (Core 0, Core 1, Any core), with Any core the Add loop default. Factory
+  control/sensor remain pinned 1/0. Apply this to Add loop, loop detail and the
+  Device table in the next GUI edit/H2; Figma has not been changed by this
+  firmware task. See `todo-loop-affinity.md` and `gui-design.md`.
+
 1. Ask the user to accept **G7 Custom panel** on Custom panels (`2:7`), including CalibrationLevel and OrientationPreview in G2. Review local import versus explicit Apply, target confirmation and stale/no-data states. Fix anything raised. G7 and G7b don't block each other: if the user wants to go straight to G7b, leave G7 `in review`.
 2. Build **G7b Loops and sources rework**. The brief is the section of that name in [gui-design.md](gui-design.md): read all of it first.
    - Start with its four questions ("To ask the user before building"), recommendation first, and record the answers in the Decisions table.

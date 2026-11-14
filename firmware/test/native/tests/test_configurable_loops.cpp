@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "core/core.hpp"
+#include "core/loop_instance.hpp"
 #include "core/command_service.hpp"
 #include "core/persistence.hpp"
 #include "core_os/native_boot.hpp"
@@ -13,6 +14,7 @@
 #include "drivelink/protocol/gen/type_actuator_mock.hpp"
 #include "mod_mock/modules.hpp"
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 
@@ -42,11 +44,36 @@ core::Status set(core::Core &c, uint8_t type, uint8_t instance, uint16_t id, uin
     const core::SetEntry e{{type,instance,id},value}; uint32_t applied=0;
     return c.params().set({&e,1},{&applied,1});
 }
+
+std::array<int8_t, 8> requested_affinities{};
+void observeStart(const char *name, int8_t affinity)
+{
+    unsigned id = 0;
+    if (std::sscanf(name, "core_loop_%u", &id) == 1 && id < requested_affinities.size()) {
+        requested_affinities[id] = affinity;
+    }
+}
+struct PlacementObservation {
+    bool previous_manual = core_os::native::manualScheduling();
+    core_os::native::PeriodicStartObserver previous_observer = core_os::native::setPeriodicStartObserver(observeStart);
+    PlacementObservation() { core_os::native::setManualScheduling(true); requested_affinities.fill(99); }
+    ~PlacementObservation() {
+        core_os::native::setPeriodicStartObserver(previous_observer);
+        core_os::native::setManualScheduling(previous_manual);
+    }
+};
+uint32_t placement(core::Core &c, uint8_t id, bool pending = false)
+{
+    const core::Ref ref{defs::kLoopTypeId, id, lp::kCore}; uint32_t value = 99;
+    REQUIRE((pending ? c.getPending({&ref, 1}, {&value, 1}) : c.params().get({&ref, 1}, {&value, 1})).ok());
+    return value;
+}
 }
 
 TEST_CASE("Configurable loops: factory defaults and a one-loop build")
 {
     for (uint8_t limit : {uint8_t{1},uint8_t{4},uint8_t{8}}) {
+        PlacementObservation observation;
         core_os::KvStore store; core::CoreConfig cfg; cfg.max_loops=limit;
         core::Core c(cfg); boot(c,store);
         CHECK(c.loopCount()==(limit==1?1:2));
@@ -54,7 +81,97 @@ TEST_CASE("Configurable loops: factory defaults and a one-loop build")
         if (limit>1) { REQUIRE(c.findLoop(1)); CHECK_FALSE(c.loop(1).realtime()); CHECK(c.loop(1).periodUs()==10000); }
         CHECK(c.findLoop(19)==nullptr);
         CHECK(c.findRecord(defs::kLoopTypeId,0)->loop==core::kNoLoop);
+        CHECK(placement(c, 0) == 1); CHECK(requested_affinities[0] == 1);
+        if (limit > 1) { CHECK(placement(c, 1) == 0); CHECK(requested_affinities[1] == 0); }
     }
+}
+
+TEST_CASE("Loop placement: only declared choices map to an OS affinity")
+{
+    for (unsigned value = 0; value <= 255; ++value) {
+        int8_t affinity = 99;
+        const bool ok = core::loopCoreAffinity(static_cast<uint8_t>(value), affinity);
+        CHECK(ok == (value <= 2));
+        CHECK(affinity == (value < 2 ? static_cast<int8_t>(value) : (value == 2 ? core_os::kNoAffinity : 99)));
+    }
+}
+
+TEST_CASE("Loop placement: new default, strict enum validation and pending lifecycle")
+{
+    PlacementObservation observation;
+    core_os::KvStore store;
+    uint8_t id = 255;
+    {
+        core::Core c(core::CoreConfig{}); boot(c, store); REQUIRE(c.save().ok());
+        REQUIRE(c.addInstance(defs::kLoopTypeId, core::kNoLoop, "automatic", id).ok());
+        CHECK(placement(c, id, true) == 2);
+        CHECK(requested_affinities[id] == 99); // no task until SAVE/reboot
+        for (uint32_t invalid : {3U, 255U, 256U, 0xFFFFFFFFU}) {
+            const auto st = set(c, defs::kLoopTypeId, id, lp::kCore, invalid);
+            CHECK(st.result == core::Result::InvalidArgument); CHECK(st.detail == core::Detail::BadEnum);
+            CHECK(placement(c, id, true) == 2);
+        }
+        REQUIRE(set(c, defs::kLoopTypeId, id, lp::kCore, 1).accepted());
+        CHECK(placement(c, id, true) == 1);
+        REQUIRE(set(c, defs::kLoopTypeId, id, lp::kCore, 2).accepted());
+        REQUIRE(c.save().ok());
+    }
+    {
+        core::Core c(core::CoreConfig{}); boot(c, store);
+        REQUIRE(c.findLoop(id)); CHECK(placement(c, id) == 2);
+        CHECK(requested_affinities[id] == core_os::kNoAffinity);
+        REQUIRE(set(c, defs::kLoopTypeId, id, lp::kCore, 0).accepted());
+        CHECK(c.pendingReboot()); CHECK(placement(c, id) == 2); CHECK(placement(c, id, true) == 0);
+        CHECK(requested_affinities[id] == core_os::kNoAffinity);
+        REQUIRE(c.revert().ok()); // REVERT changes live params, not reboot-required edits.
+        CHECK(placement(c, id, true) == 0);
+        REQUIRE(c.discardPending().ok()); CHECK_FALSE(c.pendingReboot());
+        CHECK(placement(c, id) == 2);
+        REQUIRE(c.save().ok());
+    }
+    core::Core reloaded(core::CoreConfig{}); boot(reloaded, store);
+    CHECK(placement(reloaded, id) == 2); CHECK(requested_affinities[id] == core_os::kNoAffinity);
+}
+
+TEST_CASE("Loop placement: saved byte values retain meaning in both realtime modes")
+{
+    PlacementObservation observation;
+    for (bool realtime : {false, true}) {
+        core_os::KvStore store;
+        auto a = storedLoop(0, realtime), b = storedLoop(1, realtime), missing = storedLoop(7, realtime);
+        // The pre-change instance blob is id/u32 pairs, with no scalar type tag.
+        a.pairs.push_back({lp::kCore, 0}); b.pairs.push_back({lp::kCore, 1});
+        const std::array entries{a, b, missing};
+        REQUIRE(core::persist::saveConfig(store, 1, entries, {}).ok());
+        for (int generation = 0; generation < 2; ++generation) {
+            core::Core c(core::CoreConfig{}); boot(c, store);
+            CHECK(placement(c, 0) == 0); CHECK(requested_affinities[0] == 0);
+            CHECK(placement(c, 1) == 1); CHECK(requested_affinities[1] == 1);
+            CHECK(placement(c, 7) == 2); CHECK(requested_affinities[7] == core_os::kNoAffinity);
+            REQUIRE(c.start().ok());
+            REQUIRE(c.save().ok()); // writes explicit core=any for the previously missing pair
+        }
+    }
+}
+
+TEST_CASE("Loop placement: safe-mode edits are applied only on the next normal boot")
+{
+    PlacementObservation observation;
+    core_os::KvStore store;
+    { core::Core c(core::CoreConfig{}); boot(c, store); REQUIRE(c.save().ok()); }
+    requested_affinities.fill(99);
+    core_os::native::setResetWasCrash(true); core_os::storeCrashCount(2);
+    {
+        core::Core c(core::CoreConfig{});
+        REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(store).ok()); REQUIRE(c.safeMode());
+        REQUIRE(set(c, defs::kLoopTypeId, 0, lp::kCore, 2).accepted());
+        CHECK(placement(c, 0, true) == 2); CHECK(requested_affinities[0] == 99);
+        REQUIRE(c.save().ok());
+    }
+    core_os::native::resetBootInfo();
+    core::Core c(core::CoreConfig{}); boot(c, store);
+    CHECK(placement(c, 0) == 2); CHECK(requested_affinities[0] == core_os::kNoAffinity);
+    CHECK(placement(c, 1) == 0); CHECK(requested_affinities[1] == 0);
 }
 
 TEST_CASE("Configurable loops: old layout format falls back to the factory layout")

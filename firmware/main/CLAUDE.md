@@ -24,6 +24,10 @@ Rules for `firmware/main/main.cpp`, which starts the firmware. The firmware-wide
   - Never use `uxTaskGetSystemState()`: it scans every stack inside a critical section and stalls the control loop on the other core.
 - **Bench-only options** in `Kconfig.projbuild`, default off in normal firmware:
   - `CONFIG_CORE_BENCH_CRASH` enables BenchCrash for the safe-mode check and BenchStall for monitor/Task WDT checks. Normal builds reject the op.
+  - The same bench build records initial and first pinned post-callback task
+    affinity/CPU in fixed internal storage. Main's stack log prints these
+    snapshots (`Bench affinity`, -1 means no affinity); loop tasks never log
+    them. This is a bench observation, not a wire signal. Normal builds omit it.
   - From the repository root, run `python tools/bench_fw.py bench` on the bare board, then `python tools/bench_fw.py normal` after the checks. Both export IDF and flash COM3 (`--port` overrides it); full output is in `build/bench_fw/<mode>.log`. `bench` uses the committed `firmware/sdkconfig.bench` fragment and isolated, git-ignored `firmware/build_bench/`, without touching `firmware/sdkconfig`. `normal` reconfigures and builds, then refuses to flash if the generated header enables bench or XiP/code/rodata relocation. Still verify bench commands are refused on the board after restoration.
   - `--dry-run` after any subcommand prints the commands without exporting IDF, building or flashing. This helper never runs as part of validation; its hardware-free tests run under `gen`.
 

@@ -54,6 +54,16 @@ Getters for F3b's `GET_INFO`: `safeMode()`, `layoutInvalid()`, `configLoadedFrom
 
 ## Loops and concurrency
 
+- **Placement.** `loop.core` is the byte-sized enum `core_0=0`, `core_1=1`,
+  `any=2`; new loops default to `any`. `Core::createLoop` explicitly maps it
+  to OS affinity 0, 1 or `core_os::kNoAffinity`; invalid internal choices fail
+  loop startup. Factory loops retain their explicit cores 1/0, and saved 0/1
+  values keep their meaning. A missing stored pair follows the new descriptor
+  default. Selection is reboot-required: SET stages, SAVE/reboot applies, and
+  DISCARD cancels pending edits (REVERT restores live params only). Any core
+  delegates initial placement to FreeRTOS; ESP-IDF's FPU use pins the task early
+  because `runTick` computes float `dt_s`. It does not rebalance running loops.
+
 - **The loops.** Each built-in loop instance owns config-task params and tick-owned statistic signals. Its id is the loop id, its label the name, and its own loop is kNoLoop. `core_loop_<id>` tasks use persisted rate, core, priority, stack and real-time settings. Configured loop count defaults to at most 4, configurable up to 8; sparse ids are supported. Capacity for modules (default 16) is separate. The factory control loop is 1 kHz, real-time, core 1, priority 20; sensor is 100 Hz, non-real-time, core 0, priority 10. Each stack defaults to 4096 bytes. Live rate changes restart the timer from the config task. Every real-time task subscribes to the Task WDT; paused actions on it are refused while armed. A tick longer than its period counts core.LoopOverBudget using the loop id as diagnostic instance. All loop stalls remain subject to F4b's unchanged disarm rule.
 - **A tick:** the heartbeat, then the staged param batch, then a queued action, then group swaps/commands, each instance's `tick()` with `dt = elapsed × period`, subscription latching, then the stats. Instances tick in the wiring's tick order, fixed at boot (see Boot, step 6). Creation is always dependencies first.
 - **The staging slot.** A param batch reaches a loop only through its one staging slot, an atomic state (Empty → Filling → Ready → Applying → Applied) that the config task and the loop move with stores and compare-and-swaps. The config task waits on a `core_os::Event` for up to 3 periods plus 5 ms, then withdraws the batch (Ready → Empty). The loop never waits for the config task.

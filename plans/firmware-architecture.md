@@ -455,12 +455,20 @@ Decided by the user on 2026-11-13, after F3c. F3d builds the loops and the flag;
   |---|---|---|
   | `rate_hz` | u16, 1–2000, default 100 | Live and `locked_while_armed`. Applied on the config task by restarting the loop's timer, as the system rate params were. |
   | `realtime` | bool, default false | `reboot_required`. See the next section. |
-  | `core` | u8, 0–1, default 0 | `reboot_required`. |
+  | `core` | enum: `core_0` 0, `core_1` 1, `any` 2; default `any` | `reboot_required`. Configured initial-placement policy. |
   | `priority` | u8, 1–20, default 10 | `reboot_required`. The ceiling keeps every loop below the esp_timer task (22), where the safety monitor runs. |
   | `stack_bytes` | u16, 3072–16384, default 4096 | `reboot_required`. |
   | `ticks`, `overruns`, `last_run_us`, `max_run_us` | u32 signals | The loop statistics, so a group bound to the loop can stream them. |
 
 - **Managing loops.** A loop is added and removed with `ADD_INSTANCE` and `REMOVE_INSTANCE` of type `loop`, through the pending layout, `SAVE` and a reboot, like any instance. `REMOVE_INSTANCE` is refused while a layout entry still runs in the loop (`Referenced`). A loop's params are in the system domain of a param batch.
+- **Automatic initial placement (2026-11-14).** New loops default to Any core;
+  factory loops retain their explicit 1/0 placements. The core maps `any` to
+  `core_os::kNoAffinity` (-1), not OS core 2. FreeRTOS chooses initial placement;
+  hardware floating-point use pins an ESP32-S3 task early (`runTick` computes
+  float `dt_s`). This does not provide balancing or continued migration.
+  Saved 0/1 pairs remain valid; missing pairs follow the descriptor default.
+  The descriptor/hash changes use existing enum/scalar encodings, with no core
+  version bump. DISCARD removes pending placement edits; REVERT is live-only.
 - **Limits.** `CORE_MAX_LOOPS` (Kconfig, default 4, range 1–8). A loop costs about 7 KB of RAM: its stack, one staging slot and one action slot. The Kconfig options for the control and sensor task stack, priority and core go away.
 - **The factory layout.** With no saved layout (first boot, factory reset) the device has `control` (id 0: 1000 Hz, real-time, core 1, priority 20) and `sensor` (id 1: 100 Hz, not real-time, core 0, priority 10), and no module instance. With CORE_MAX_LOOPS=1 the factory layout contains only control (user decision for F3d). A saved layout may hold any set of loops, including none. Loop capacity is separate from the module capacity CORE_MAX_INSTANCES.
 - **Boot.** Loops are created before the module instances. If a loop's task can't be created, the loop is `Failed` and its instances are `DependencyMissing`. Loop tasks start with their callbacks gated until module creation and tick lists are complete; Core::start releases the gates. In safe mode no loop task is started.

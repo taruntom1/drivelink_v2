@@ -346,13 +346,18 @@ Read these before building: `docs/protocol/core.md` (the layout family, "Built-i
 
 **Loops (built):**
 - **Identity.** A loop is an instance of type `loop`. Its instance id is the loop id, and its label is its name. Loop ids can have gaps.
+- **Placement follow-up (2026-11-14).** Use the device-served enum choices for
+  loop placement. Add loop defaults to **Any core**. The Device table shows
+  configured placement, not the current CPU. Optional help: "Automatic placement
+  is chosen at startup and can change after a reboot." The existing Figma
+  screens need this follow-up; this firmware change does not edit them.
 - **Its items:**
 
   | Item | Kind | Behaviour in the GUI |
   |---|---|---|
   | `rate_hz` (1–2000 Hz, default 100) | param | Live. Locked while armed. Sets Unsaved. |
   | `realtime` (bool, default off) | param | Needs a reboot: Pending (violet). |
-  | `core` (0–1) | param | Needs a reboot. |
+  | `core` (discovered enum: Core 0, Core 1, Any core) | param | Needs a reboot. New loops default to Any core; factory loops remain on cores 1/0. |
   | `priority` (1–20) | param | Needs a reboot. |
   | `stack_bytes` (3072–16384) | param | Needs a reboot. |
   | `ticks`, `overruns`, `last_run_us`, `max_run_us` | signals | Live statistics. They can be plotted like any signal. |

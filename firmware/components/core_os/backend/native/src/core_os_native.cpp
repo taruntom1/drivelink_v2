@@ -34,6 +34,7 @@ std::atomic<int64_t> s_boot_offset{0};
 std::atomic<int32_t> s_start_after{-1};
 std::atomic<int32_t> s_period_after{-1};
 std::atomic<bool> s_manual_scheduling{false};
+native::PeriodicStartObserver s_periodic_start_observer = nullptr;
 std::atomic<size_t> s_capture_capacity{4U * 1024U * 1024U};
 std::atomic<bool> s_capture_fail_next{false};
 
@@ -62,6 +63,12 @@ int64_t nowUs()
 }
 namespace native {
 void setManualScheduling(bool manual) { s_manual_scheduling.store(manual); }
+PeriodicStartObserver setPeriodicStartObserver(PeriodicStartObserver observer)
+{
+    const auto previous = s_periodic_start_observer;
+    s_periodic_start_observer = observer;
+    return previous;
+}
 bool manualScheduling() { return s_manual_scheduling.load(); }
 void failPeriodicStartAfter(int32_t successes) { s_start_after.store(successes); }
 void failNextPeriodChange() { s_period_after.store(0); }
@@ -146,6 +153,7 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
     if (m_state.running.load() || fn == nullptr || period_us == 0U) {
         return kNativeError;
     }
+    if (s_periodic_start_observer) { s_periodic_start_observer(name, core); }
     m_state.fn = fn;
     m_state.ctx = ctx;
     m_state.period_us.store(period_us);

@@ -51,6 +51,18 @@ Native only, for the tests:
 
 ## Rules
 
+- **Periodic task affinity.** `start` accepts 0, 1 or `kNoAffinity` (-1).
+  The IDF backend maps the sentinel to `tskNO_AFFINITY`; native scheduling
+  ignores placement. IDF pins unpinned ESP32-S3 tasks when they use the FPU.
+  The native `setPeriodicStartObserver` is a setup-only test seam: install or
+  restore it only while all tasks are stopped; it observes requested affinity
+  without emulating ESP scheduling. On a `CORE_BENCH_CRASH` build, fixed internal
+  storage records initial and first pinned post-callback affinity/CPU. The task
+  publishes once with release/acquire; the owner that serializes start/stop
+  calls `logBenchTaskAffinities` outside real-time paths. The console stack
+  logger does this on main. Snapshot pointers are removed after task join.
+  Observations are console-only, and normal firmware compiles them out.
+
 - **Allocate only in `start()`.** `PeriodicTask::start` creates the task (and the IDF timer), `OneShotTimer::start` its timer or thread. Nothing allocates after it. `KvStore` calls are configure-time operations (`listNamespaces` allocates).
 - **NVS writes stall both cores' caches.** Never call `KvStore` from a real-time path; the core refuses SAVE while armed.
 - **Real-time use:** a loop tick may call `Event::signal()`, `Mutex::tryLock()`, `nowUs()` and `countDiag()`. Nothing else here belongs on a real-time path. (The native `Event::signal` takes a mutex for a few instructions; it is a test backend.)

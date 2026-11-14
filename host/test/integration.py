@@ -282,6 +282,8 @@ def main():
             cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             from motor_smoke import run as motor_smoke
+            from loop_affinity_smoke import run as loop_affinity_smoke
+            loop_affinity_smoke(args.cli, url)
             from imu_smoke import run as imu_smoke
             imu_smoke(args.cli, url)
             from capture_smoke import run as capture_smoke

@@ -33,6 +33,14 @@ struct PeriodicTaskState {
     void *ctx = nullptr;
     std::atomic<uint32_t> period_us{0};
     std::atomic<int32_t> watchdog_ready{0};
+#if CONFIG_CORE_BENCH_CRASH
+    const char *bench_name = nullptr;
+    int32_t bench_requested = -2;
+    int32_t bench_initial = -2;
+    int32_t bench_initial_cpu = -2;
+    int32_t bench_after_cpu = -2;
+    std::atomic<int32_t> bench_after{-2}; ///< release publishes the after snapshot
+#endif
 };
 
 /// The KvStore opens an NVS handle per call, so it keeps no state.
