@@ -78,6 +78,7 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 - `removeInstance(type, inst)`: refused while another entry is wired to it (`Referenced`).
 - `setLabel`, `discardPending`, `getPending(refs, values)` (added instances and `reboot_required` params from the pending values, other params from the records).
 - A `reboot_required` param SET, and any SET on an instance that exists only in the pending layout, goes to the pending values and answers `PendingReboot` with the applied values (`Status::accepted()`).
+- A `reboot_required` **system** param is refused (`Unsupported`): the system instance is not a layout entry and has no pending copy. None exist today.
 - The pending copy is made at the first op from the configured records. The whole layout is validated on every op; an op is undone and refused when an entry that passed before fails after it, or the entry it added or changed fails.
 - Layout ops are refused while armed (`Armed`) and before `boot()`.
 - `pendingReboot()`: the pending copy is active, or the last SAVE wrote it.

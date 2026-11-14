@@ -8,7 +8,7 @@ own: the configuration lives in the device's NVS.
 
 > **Not yet run on motors or a real IMU.** The bench board has neither. The
 > motor, IMU and Pi checks are scripted and listed under "Deferred hardware
-> checks" in [plans/overhaul-status.md](../plans/overhaul-status.md). Until
+> checks" in [plans/host-status.md](../plans/host-status.md). Until
 > they pass, treat real-motor and real-IMU behaviour as unverified. The last
 > commit of the previous firmware is tagged `legacy-final`.
 

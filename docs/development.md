@@ -59,7 +59,7 @@ python tools/gen/gen.py --check    # what CI runs
 python -m unittest discover -s tools/gen/tests
 ```
 
-**Hardware-in-the-loop and smoke tests** (from `firmware/test/uart_comm/`, after `pip install -r requirements.txt`; the board's ports are in `plans/overhaul-status.md`):
+**Hardware-in-the-loop and smoke tests** (from `firmware/test/uart_comm/`, after `pip install -r requirements.txt`; the board and its ports are in [bench.md](bench.md)):
 
 ```bash
 pytest pytest_uart_comm.py --port COM3                           # needs the HIL test app flashed
@@ -136,14 +136,14 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
 - `gen` and `native` on Ubuntu.
 - `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.
-- There is no Windows job yet (H1 adds one). `host-win` runs only locally.
+- There is no Windows job yet (H1a adds one). `host-win` runs only locally.
 
 ## Guarded bench builds
 
 Use `python tools/bench_fw.py <mode>` rather than editing the normal sdkconfig.
 The helper exports IDF; flashing modes default to COM3 (`--port` overrides it).
-Read the current ports and board state in
-[overhaul-status.md](../plans/overhaul-status.md#hardware-notes) before a run.
+Read the ports and traps in [bench.md](bench.md) and the current board state in
+[host-status.md](../plans/host-status.md#board-state) before a run.
 `--dry-run` after a subcommand prints its commands without exporting IDF,
 building or flashing. Logs are in `build/bench_fw/<mode>.log`.
 

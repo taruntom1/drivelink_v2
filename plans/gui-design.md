@@ -181,7 +181,7 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
 | G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. Accepted with its G2 extensions on 2026-11-14. | Custom panels | done |
 | G7b Loops and sources rework | Parts A–G built and accepted 2026-11-14: G2 extensions, 17 Layout frames, shared trees/tables/Monitor browsers, two obsolete G4 frames deleted, Cover/flow updates and size/theme checks. Inherited G5 responsive issues remain open. | Design system, Screens – Local, Screens – Remote, Custom panels | done |
-| G8 Prototype and handoff | A clickable prototype of the key flows from G0. A handoff page: screen and component specs, the QML mapping, and the open issues for H2 and H3. | Prototype and handoff pages | planned |
+| G8 Prototype and handoff | **Folded into host step H2a** (user decision 2026-11-14, [host-steps.md](host-steps.md)): no clickable prototype. H2a exports the Figma variables to `tokens.json` and the `Theme` singleton, and assigns each open issue below to the screen step that settles it in code. | `host/gui/theme/`, issue assignment in this file | moved to H2a |
 
 ## G1 wireframes
 
@@ -238,7 +238,7 @@ Every variable has scopes set, and its description gives its QML name (`Theme.bg
 - The Figma `SpinBox` becomes `DLNumberField` (a `TextField` with a validator), because QML `SpinBox` is integer-only.
 - `DLArmButton` owns the application-wide Esc shortcut that always sends DISARM.
 - `DLParamRow` picks its editor with a `Loader` by item type.
-- `DLPlot`: QtGraphs if it keeps up with the subscription rates, otherwise a custom scene-graph item. Decided in H2.
+- `DLPlot`: a custom scene-graph item, as the host plan says; H2d measures it at 1 kHz and uses QtGraphs only if that proves better.
 
 ## G3 Shell, Connect and Device
 
@@ -521,14 +521,14 @@ G5's fixed plot dimensions still clip traces/third plots during a simple 1080p r
 
 - **Firmware contract checked:** F4b limits and F4c sources are merged. The sample uses shipped `fusion.mock`; no firmware or protocol change is requested.
 - **Accepted 2026-11-14:** Parts A–G and the G2 extensions are done. No further G7b construction or acceptance is pending.
-- **G7 accepted:** its older F6 action/persistence assumptions still need reconciliation in the G8/H2 handoff. Acceptance does not resolve the explicitly open H3 calibration-action permissions.
+- **G7 accepted:** its older F6 action/persistence assumptions still need reconciliation in the G8/H2 handoff. Remote calibration-action permissions were decided on 2026-11-14: actions need the lease (host-architecture.md, "Exclusive operations").
 
 ## Open issues
 
 - **Rename and the firmware to-do:** the Rename dialog assumes `SET_NAME` applies at once and sets `nvs_dirty`, so SAVE writes it (one of the open questions in [todo-device-name.md](todo-device-name.md)).
 - **G3 notes for H2:** loop overruns and CPU per core come from the status stream; the "Budget" column (run time over the period) is computed on the host. The reboot notice needs the GUI to remember which params were changed since the last save.
 - **Device name (firmware to-do):** `GET_INFO` carries no device name or id yet, so until the firmware adds them the GUI lists recent devices by port and firmware. The to-do for the firmware side is [todo-device-name.md](todo-device-name.md). From G2 on, the designs show the name and id (status bar, Connect's recent list, Device info with Rename).
-- Run metrics on Tune (rise time, overshoot, settling, steady error) are computed on the host. That is a small addition to `libdrivelink`'s plant-identification math (H1).
+- Run metrics on Tune (rise time, overshoot, settling, steady error) are computed on the host. That is a small addition to `libdrivelink`'s plant-identification math (H2e).
 - G2 details noted while wireframing (done in G2): the Arm button has a disabled state for Fault and safe mode; the plot frame has real traces and a legend.
 - `series/2` (orange) is close to Armed amber: fine inside plots, but never next to the arm state (G5 check). The Unsaved badge contrast in Light was fixed in G3.
 - **Layout ops:** closed. The firmware has the loop argument on `ADD_INSTANCE` and refuses a remove with dependents (`Referenced`); G7b brings the G4 frames in line. [todo-layout-ops.md](archive/todo-layout-ops.md) records the outcome.
@@ -538,5 +538,6 @@ G5's fixed plot dimensions still clip traces/third plots during a simple 1080p r
 - Tabular numerals can't be set through Figma's plugin API, so the numeric styles only say so in their descriptions; QML sets `font.features: { "tnum": 1 }`.
 - **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. G7b verification also confirms that a simple resize leaves G5 Monitor's plot areas fixed, clipping traces and the third plot; G6 already has the fitting/wrapping reference. The new loop browser entries fit with compact module groups. Settle the remaining responsive work in G8/H2 (for example gain history as a tab, or one column of gains with scrolling).
 - **G5 notes for H2:** slider ticks in the Figma frames are only approximate (marker positions inside an instance can't be moved); in QML each tick sits at its value on the log scale. CheckItem has no warning state; Plant identification shows its open-loop caution with a neutral icon and "warning".
+- **Agent device list (H3b):** one agent serves several ESPs (decided 2026-11-14), so Connect's Agent tab needs a device list (alias, id, name, online state, lease holder) after connecting to the agent. G6 has no frame for it; H3b builds it from the G2 components and records it here.
 - **G6 notes for H3:** reset the live-edit warning opt-out on reconnect; while confirmation is open, keep the proposed gain local and send nothing until Apply live. A lease-revoked event cancels auto re-run and any pending command/test start. The takeover checkbox is unchecked by default. Agent history is an illustrative recent-event sample; its retention limit and transport details remain part of H3. The full prototype and lease-chip navigation are connected in G8.
-- **G7 notes for F6/H2/H3:** F6 defines calibration signal/action descriptors, payload, paused-action sequencing and persistence. H2 defines the PC file format, physical-sensor provenance, Euler convention and host conversion, result handling and cancellation/reconnect behavior. Map device errors verbatim; a timeout is not proof that an apply did not occur. Before using this panel remotely, H3 must settle calibration-action authorization while another client owns the lease; the live-param permission does not automatically authorize sensor reconfiguration. This phase changes no firmware, protocol or safety policy.
+- **G7 notes for F6/H2/H3:** F6 defines calibration signal/action descriptors, payload, paused-action sequencing and persistence. H2 defines the PC file format, physical-sensor provenance, Euler convention and host conversion, result handling and cancellation/reconnect behavior. Map device errors verbatim; a timeout is not proof that an apply did not occur. Remotely, calibration actions need the lease (decided 2026-11-14); the live-param permission does not authorize sensor reconfiguration. This phase changes no firmware, protocol or safety policy.

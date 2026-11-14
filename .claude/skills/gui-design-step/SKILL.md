@@ -10,9 +10,9 @@ The GUI design is design work only, in Figma. One session can run one phase or p
 ## Hard rules
 
 - Design only: no QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`.
-- A firmware or protocol need found while designing becomes a `plans/todo-<topic>.md` file plus a line in the Notes of `plans/overhaul-status.md`, only after the user agrees. Wire changes are the user's decision.
+- A firmware or protocol need found while designing becomes a `plans/todo-<topic>.md` file plus a line in the Notes of `plans/host-status.md`, only after the user agrees. Wire changes are the user's decision.
 - Decisions are the user's. Ask with options and a recommendation (AskUserQuestion, recommended option first, at most 4 questions per round). Record every answer in `plans/gui-design.md`.
-- Commit and push to the design branch named in the status file's handoff note. Open a PR only when the user asks; it goes into `host_overhaul`, never `main`.
+- The design phase is complete: a Figma edit now belongs to the H step that needs it and is committed on that step's branch into `host_overhaul`, never `main`.
 
 ## 1. Orient
 

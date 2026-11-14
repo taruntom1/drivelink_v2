@@ -27,12 +27,14 @@ Commands/toolchains, check selection, logs and CI behavior are in
 ## Hardware tests
 
 - `pytest_uart_comm.py` requires the separate HIL app; smoke scripts require
-  main firmware. Ports/board state are in the status file. Keep
+  main firmware. Ports and serial traps are in `docs/bench.md`, board state in
+  `plans/host-status.md`. Keep
   `firmware/test/uart_comm/protocol.py` in sync with framing changes.
 - Restore layouts/settings after smoke checks. Bench tests require normal
-  restoration; close the console before cleanup reboots (the status file has
-  the USB driver trap). Use real IDF images for physical OTA tests, never native
-  fixtures. Deferred scripts/pass criteria stay in the status file.
+  restoration; close the console before cleanup reboots (`docs/bench.md`).
+  Use real IDF images for physical OTA tests, never native
+  fixtures. Deferred scripts/pass criteria stay in `plans/host-status.md`;
+  results go to `plans/hardware-log.md`.
 
 ## Validation
 

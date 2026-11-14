@@ -1,112 +1,101 @@
 ---
 name: overhaul-step
-description: Run one step of the DriveLink overhaul (HW, H1a, H1b ... H4; the firmware steps F1-F10 are done) from start to PR. Use when the user says to start, continue or do the next overhaul step, or names a step id from plans/overhaul-status.md. Optional argument is the step id; without one, take the next planned step.
+description: Runs one step of the DriveLink host overhaul from a fresh branch to a pull request into host_overhaul - orient, plan for the user's approval, build, validate, review, hardware check, status update and PR. Use whenever the user asks to start, continue, resume or do the next overhaul step, names a step id from plans/host-status.md (T0, H1a to H6, HW, or a split row such as H3a-1), or asks to implement the next part of the host plan, even without the word "overhaul". Takes an optional step id; without one it picks the next ready step. Not for Figma GUI design work, which is gui-design-step.
 ---
 
 # Run one overhaul step
 
-One session runs one step and ends with one PR into `host_overhaul`. Follow these stages in order, and don't skip the approval points. Use the tools available in the current environment; no particular agent API or dedicated plan mode is required.
+One session takes one step from a fresh branch to one PR into `host_overhaul`. The user approves the plan before any code is written, because decisions about the wire protocol, safety rules and later steps are theirs. Use whatever this environment offers (plan mode, a task list, review agents); plain messages work too.
 
-## Token efficiency
+Terms used below: **the status file** is `plans/host-status.md`; **the brief** is the step's section in `plans/host-steps.md`.
 
-Apply these rules throughout the step without weakening approval points, safety rules, required tests or independent review:
+Track progress with this checklist:
 
-- **Read once, then retrieve narrowly.** Current material already in context counts as read. Reopen instructions or source only when changed, lost from context or needed to resolve a specific gap. Use targeted searches, excerpts and diffs instead of repeated whole-file reads.
-- **Keep a compact working record.** Retain approved decisions, safety invariants, relevant paths, unresolved issues, completed checks and the next action in working context or the existing step plan. Update changed facts; avoid repeatedly reconstructing the task or rewriting settled plans.
-- **Debug from evidence.** On failure, collect the smallest discriminating diagnostics, such as timestamps, state, failure reason and relevant log lines. Investigate the best-supported explanation before expanding the search. Capture transient evidence before cleanup when safe; stopping unsafe behavior takes priority.
-- **Bound tool output from the first run.** Store full build, flash and test output in logs; cap command output with tail, cut or script summaries. Read concise summaries and relevant failure excerpts. Avoid loading generated tables or large output batches unless the investigation needs them.
-- **Focus independent review.** Use one independent reviewer by default when required. Supply the exact diff/base, approved plan and relevant rules/invariants. List what the session already verified (for example, "leftover-reference grep done") and focus the brief on risky changes. Follow up with changed diffs and unresolved findings; broaden review when a change invalidates earlier assumptions.
-- **Use device evidence for hardware checks.** Read the status file's trap notes first. Use device timestamps and counters, never host-side timing over the CH343.
-- **Write docs once results are known.** Update docs and the status file in one pass after review and hardware results, apart from edits validation needs earlier and the final PR link.
-- **Use files for multi-line work.** Put multi-line edits or scripts in a file with the Write tool or a scratchpad script; do not use shell heredocs.
-- **Use the bench helper.** Run `tools/bench_fw.py bench` and `tools/bench_fw.py normal` for bench and normal flashes; keep the review-before-hardware and restoration checks.
-- **Keep routine work mechanical.** Use existing scripts/checklists for status updates, validation polling and PR preparation. Keep progress reports brief. Revisit settled design only when new evidence warrants it.
-- **Use soft checkpoints when agreed.** If the user supplies a soft token target, report usage when measurable, remaining work and ways to narrow scope at the checkpoint. State uncertainty if usage metrics are unavailable. Do not invent a budget, silently reduce verification or stop unfinished work merely to save tokens; honor explicit hard limits.
+```
+- [ ] 1 Orient: step, branch, reading, code
+- [ ] 2 Plan approved by the user
+- [ ] 3 Built; validate.py full gate passes
+- [ ] 4 Self-review; independent review if required
+- [ ] 5 Hardware check run, or deferred with a script and a row
+- [ ] 6 Status, docs, commit, PR, PR link
+```
 
 ## 1. Orient
 
-1. Run `git fetch origin`. Create a fresh branch from `origin/host_overhaul`, using the environment's branch prefix and `overhaul-<step id>` suffix. If the session already sits on a branch with unrelated work, stop and tell the user.
-2. Read these:
-   - the "Host overhaul in progress" section of the root `CLAUDE.md`
-   - all of `plans/overhaul-status.md`
-   - the parts of `plans/host-architecture.md` that the step touches, and of `plans/firmware-architecture.md` (the firmware's design record) and `docs/protocol/` when the step touches the firmware or the wire
-3. Pick the step:
-   - the argument, if one was given
-   - otherwise the first step in the table whose state is `planned`, provided every step it depends on is `merged`
-   - If a step it depends on isn't merged, stop and tell the user.
-4. Read the step's **Review effort** and the "Models and effort" rules in the status file. Apply that policy and any user-approved exceptions using the current environment's model/effort controls. Honor existing authorization without asking again. Resolve an unavailable required model or capability before planning.
-5. Read the code the step will change before planning. Use targeted searches first. Use a bounded read-only search helper only when allowed by the role policy, available and likely to reduce context duplication. Give it a specific question and paths; it never writes code.
+1. Run `git fetch origin`, then choose the step:
+   - the argument, if one was given;
+   - else a step already `in progress` or `waiting on hardware`: resume it on its existing branch;
+   - else the first `planned` step whose dependencies (the brief's "Depends on") are all `merged`.
+
+   Stop and tell the user if a dependency isn't merged, or if the session sits on a branch with unrelated work. If an earlier step's PR has merged since the table was updated, mark it `merged` in this step's status edit.
+2. For a new step, branch from `origin/host_overhaul` with the environment's branch prefix and the suffix `overhaul-<step id>`.
+3. Read the "Host overhaul in progress" section of the root `CLAUDE.md`, the whole status file, the brief, and the architecture sections the brief names; add `docs/protocol/` and `plans/firmware-architecture.md` when the step touches the wire or the firmware. Then read the scoped `CLAUDE.md` of each area the step edits.
+4. Read the code the step changes, starting with targeted searches. A read-only search helper may help in a wide area; give it a specific question and paths. It never writes code.
+5. Apply "Models and effort" in the status file and any exception the user approved. If a required model or capability is unavailable, settle that with the user before planning.
 
 ## 2. Plan (approval point)
 
-Use plan mode if available; otherwise present a short step plan for approval:
-- **Scope:** what this PR does, and what it leaves for later steps. If the step is too big for one reviewable PR, propose splitting it into rows such as `F3a-1` and `F3a-2`.
-- **Changes:** the files and components touched.
-- **Tests:** which existing tests change, and which new ones are added (host or native tests for every piece of pure logic).
-- **Hardware check:** needed or not. If it is, say what the session runs on the bare board, which checks are deferred (motors, IMU, robot) and the scripts written for them, or what the user will be asked to run.
-- **Review:** whether an independent review agent is needed (see stage 4), and why.
-- **Plan deviations:**
-  - Internal choices you will make and log.
-  - Anything that changes the wire protocol, a safety rule or a later phase. These need the user's decision now.
-- **Docs:** `docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`, `host/README.md`, READMEs of new components, and the status file.
+Present the plan (in plan mode if the environment has one) and wait for approval. Keep it short:
 
-Wait for the user's approval. Answer any deviation questions before you build.
+- **Scope:** what this PR does and what it leaves to later steps. If it would pass about 4–5k lines, propose a split into rows such as H3a-1 and H3a-2.
+- **Changes:** the files and components touched.
+- **Tests:** changed and new tests; every piece of pure logic gets host or native tests.
+- **Hardware check:** what the session runs on the bench board, which checks are deferred and the scripts written for them, and anything the user must do.
+- **Review:** self-review or independent review, from the brief's Review column, and why.
+- **Deviations:** internal choices you will make and log; anything that changes the wire protocol, a safety rule or a later step, put to the user now.
+- **Docs:** which of `docs/protocol/`, `docs/development.md`, `docs/bench.md`, the scoped `CLAUDE.md` files, `host/README.md` and component READMEs change.
+
+Settle every deviation question before building.
 
 ## 3. Build
 
-The session builds the step itself, right after the approval, with no model switch. Don't hand the build to a subagent. Authorized read-only search helpers may still help find code when useful.
+Build in this session, right after approval, on the model that planned it; don't hand the build to a subagent, because the planning context would be lost. Follow the scoped `CLAUDE.md` rules of every area touched; in firmware the real-time, error and allocate-at-setup rules matter most. Leave legacy code that a later step deletes alone unless it blocks this one.
 
-- Follow the root `CLAUDE.md` and the area files the step touches (`firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`), especially the real-time rules, the error rules and the "allocate only at setup" rule.
-- Don't improve legacy code that a later phase deletes, unless it blocks this step.
-- Validate with `python tools/validate.py` from the repository root (the guide is in `firmware/test/CLAUDE.md`, "Validation"):
-  - While building, run `quick` (generator, native tests, Windows host tests), or one check with `--only`.
-  - Before moving on, `full` must pass with nothing skipped: the three zero-warning IDF builds, the generator checks, the native tests and the host tests on Windows and Linux.
-  - It runs the checks one at a time and sets up each toolchain itself. Start it once, in the background, and wait for it. Never start a second build or test run beside it.
-  - After a fix, verify the affected check or scenario first; once stable, rerun `full` before moving on. The validator reuses passing checks whose inputs are unchanged.
-  - A test suite the step introduces becomes a `Check` in `tools/validate.py`, and CI calls it by name.
-- If something in the plans turns out wrong while building:
-  - A small internal choice: decide, and log it in the decision log.
-  - Anything that changes the wire protocol, a safety rule or a later phase: stop and ask the user, then update the plan document in this PR.
+Validate with `python tools/validate.py` from the repository root (guide: `docs/development.md`, "Validation"):
+
+1. While iterating, run `quick` or `--only <check>`; after a fix, rerun the affected check first.
+2. Before review, run `full` once in the background and wait for it. Checks run one at a time because the timing tests fail under parallel load, so never start another build beside it. Passing checks whose inputs are unchanged are reused.
+3. Read the outcome from `build/validate/summary.json`, not from console output. First confirm `finished_at` and `source` belong to your current revision, since the file describes the last completed run. Then read `full_gate_passed`, and for a failed check its `failure_reason` and `diagnostic_excerpt`; open its `log_path` only when the excerpt isn't enough. A `reused` check counts as passed.
+4. Fix and repeat until `full_gate_passed` is true with nothing skipped.
+
+A new test suite becomes a `Check` in `tools/validate.py` and is named in the CI job that has its toolchain.
+
+When the plan turns out wrong while building: decide a small internal choice and log it in the status file's decision log. Stop and ask about anything touching the wire protocol, a safety rule or a later step, then update the plan document in this PR.
 
 ## 4. Review
 
-First review the diff yourself (`git diff origin/host_overhaul...HEAD`). Look for correctness bugs, real-time violations, safety holes, protocol inconsistencies, missing tests, and mismatches with the plans.
+Review your own diff (`git diff origin/host_overhaul...HEAD`) for correctness bugs, real-time violations, safety holes (arming, DISARM, the watchdog, the lease, command paths), protocol inconsistencies, missing tests and mismatches with the plan.
 
-Then decide whether an **independent review agent** is needed. Spawn one when the step changes the wire protocol, a safety path (arming, the monitor, the watchdog, `emergencyStop`, disarm triggers), persistence or concurrency in a way your own review can't fully cover, or when the diff is large. Skip it for docs-only, tooling or mechanical steps. Say which you chose, and why, in the PR description. If the user says to skip it (or to run it), do that.
+Run an independent review when the brief's Review column requires it, or when the diff is large or touches those safety paths beyond what your own review covers; the user may override either way. Use the environment's review agent with the model and effort from "Models and effort". Give it the diff base, the approved plan, the brief, the scoped rules of the areas touched, what you already verified, and the risky parts to focus on. One reviewer is the default; send it the changed diff and the unresolved findings as follow-ups, and widen the review only when a fix breaks an earlier assumption. If a required review can't run, tell the user before going further.
 
-Use the environment's independent-review capability on `git diff origin/host_overhaul...HEAD`, with the model required by the approved role policy and the step's **Review effort** (`high` or `xhigh`). Supply equivalent settings without assuming a particular agent type or tool argument. If a required independent review cannot be performed, report that limitation before proceeding past the review gate. Give the reviewer:
-- the step plan and the relevant plan sections
-- the rules in the root `CLAUDE.md` and the area files the step touches (`firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, `host/CLAUDE.md`)
-- the brief above
+Check every finding against the code. Fix those that hold, rerun `validate.py full`, and note rejected findings with their reasons for the PR.
 
-Verify each finding, yours or the agent's, against the code. Fix the ones that hold up, run `python tools/validate.py full` again, and note any you rejected, with the reason, for the PR description.
+## 5. Hardware check
 
-## 5. Hardware check (only if the step needs one)
+Run the check the brief and the approved plan name, after review. Read `docs/bench.md` first.
 
-- **Bare bench board** (nothing attached: boot checks, HIL pytest, mock modules, smoke tests, OTA): the session builds, flashes and runs it itself, after the review. Stop and tell the user if a port is missing or the board doesn't respond. The board's ports are in the status file's hardware notes.
-- **Motors, a real IMU or the robot:** deferred, because the bench has none. Follow "Deferred hardware checks" in the status file: write the script, dry-run it against vdev or the bare board with mocks, and add its row there. The step doesn't wait for it.
-- **A Pi or a PC** (or deferred hardware the user says has arrived): don't run it yourself. Set the step to `waiting on hardware`, and give the user a short script:
-  - what to build and flash, with exact commands
-  - what to run
-  - what output or behavior means pass or fail
+- **Bench board** (mock modules, smoke tests, HIL, OTA, bench builds): the session flashes and runs it. Use `tools/bench_fw.py` for bench and normal images, restore the board to "Board state" in the status file afterwards, and confirm it refuses bench commands. Judge timing only from device timestamps and counters, because the CH343 delivers status frames late. If a port is missing or the board doesn't answer, stop and tell the user.
+- **Motors, a real IMU, the Pi or the robot:** deferred. Write the script with a mock mode, dry-run it on vdev or the bench board, and add its row to "Deferred hardware checks" in the status file. The step doesn't wait.
+- **A check that needs the user's hands** (wiring, a Pi, a one-time admin command): set the step to `waiting on hardware` and give the user the exact build and flash commands, what to run, and what result means pass. Wait for their result.
 
-  Wait for their result.
-
-Record the result in the status file's hardware table, with the date, the step, the board, what was run and the result. Fix and repeat if it fails.
+Log each run as one row in `plans/hardware-log.md`, and update "Board state" if the board changed. On a failure, fix and repeat.
 
 ## 6. Finish
 
-1. Update `plans/overhaul-status.md`:
-   - the step's row: state `in review`
-   - "Next step" and the handoff note: what the next session must know, traps, unfinished edges
-   - any decision log rows
-2. Update the docs listed in the plan.
-3. Commit with a message that says what changed and why, then push.
-4. Open the PR with `gh pr create --base host_overhaul`. The description covers:
-   - the step id and what was done
-   - the validation: the text of `build/validate/summary.txt` from the last `full` run
-   - the plan deviations
-   - the review: self-review only or with a review agent (and why), and the findings you rejected
-   - the hardware result
-5. Put the PR link in the step's row, then commit and push that.
-6. Tell the user the PR link and anything they must do. The next step starts in a new session after this PR is merged. The next session sees the merge and records the state as `merged`.
+1. Update the status file: the step's row to `in review`; replace "Next step" and the handoff with what the next session needs (traps, unfinished edges); add decision rows, and drop rows that the plans or docs now state.
+2. Update the docs named in the plan, now that the results are known.
+3. Commit with a message saying what changed and why, then push.
+4. Open the PR with `gh pr create --base host_overhaul`. The description covers the step and what was done; the text of `build/validate/summary.txt` from the last `full` run, once `summary.json` shows `full_gate_passed` for the pushed revision; the deviations; the review (self or independent, why, and rejected findings); the hardware result.
+5. Put the PR link in the step's row, then commit and push.
+6. Tell the user the PR link and anything they must do. The next step starts in a new session after the merge.
+
+## Working efficiently
+
+A step is long, so keep context lean without weakening any gate above:
+
+- Read a file once; afterwards use targeted searches, excerpts and diffs. Keep a short working record (approved decisions, invariants, paths, open issues, checks done, next action) instead of rebuilding the task.
+- Send long build, flash and test output to logs, and read summaries and failure excerpts.
+- Debug from the smallest evidence that discriminates (timestamps, state, failure reason, the relevant log lines). Capture transient evidence before cleanup when that is safe; stopping unsafe behaviour comes first.
+- Put multi-line edits and scripts in files, not shell heredocs.
+- Write docs and the status file once, after review and hardware results.
+- If the user sets a soft token target, report usage, remaining work and ways to narrow scope when it is reached. Never cut verification to save tokens, and honour a hard limit.

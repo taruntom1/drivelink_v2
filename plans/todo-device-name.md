@@ -1,6 +1,6 @@
 # To-do (firmware): device name and id in `GET_INFO`
 
-Status: **scheduled for H1b** (decided 2026-11-14 in F10), as core v9 on `host_overhaul`. Added 2026-11-12 during the GUI design (G1). It changes the wire protocol, so it follows the "host and firmware change together" rule. The H1b session settles the open questions below with the user before building; the field layout must be rechecked against `GET_INFO` in `docs/protocol/core.md`, which has grown since this was written.
+Status: **scheduled for H1c** (re-planned 2026-11-14; brief in [host-steps.md](host-steps.md)), as core v9 on `host_overhaul`. Added 2026-11-12 during the GUI design (G1). It changes the wire protocol, so it follows the "host and firmware change together" rule. The field layout must be rechecked against `GET_INFO` in `docs/protocol/core.md`, which has grown since this was written.
 
 ## Why
 
@@ -24,8 +24,12 @@ Status: **scheduled for H1b** (decided 2026-11-14 in F10), as core v9 on `host_o
 - GUI (later, H2): the status bar, Connect's recent list keyed by device id, and Rename on the Device screen
 - tests: native core tests, and the HIL test app if it checks `GET_INFO`
 
-## Open questions
+## Decided (2026-11-14, host planning)
 
-- Store the name under its own NVS key, or in the layout blob so it gets the A/B generation?
-- Does `SET_NAME` set `nvs_dirty` and wait for `SAVE`, like other config, or save at once?
-- Allow it while armed? It never touches the loops, so probably yes.
+- `SET_NAME` applies live and sets `nvs_dirty`; SAVE persists it and REVERT restores the saved name, like a `persist` param. This matches the GUI's Rename dialog.
+- It is allowed while armed: it never touches the loops.
+- Through the agent it is an exclusive operation (needs the lease, or a disarmed device with no holder).
+
+## Left to the H1c plan
+
+- Store the name under its own NVS key, or in the saved config so it gets the A/B generation? An internal choice, made against `persistence.cpp` and logged.
