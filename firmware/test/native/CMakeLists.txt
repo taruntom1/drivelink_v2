@@ -6,8 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 #   - core_os's native backend and the pure core (registry, bind API, values,
 #     loops, the param service, the layout, NVS persistence, safe mode and the
 #     boot), with the generator's fixture types as test module types
-#   - the legacy protocol codecs (motor, IMU, time_sync, diag and its slot
-#     table), the PID and the velocity estimator
+#   - time v1, diag and its slot table, the PID and the velocity estimator
 # The legacy sources include two IDF headers; shim/ provides them (sdkconfig.h,
 # esp_log.h). The core includes neither.
 #
