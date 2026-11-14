@@ -55,153 +55,133 @@ struct Code {
 
 namespace codes {
 
-namespace system {
-/// A manager failed to start. It is left out, and the rest of the firmware keeps running.
-/// arg0: manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6). arg1: unused.
-inline constexpr Code kManagerStartFailed{0, Source::System, 0x0001, Severity::Error, CodeKind::Record, false, "ManagerStartFailed", false, false};
-/// time_sync started, but its periodic sync task did not. esp_err gives the reason.
-/// arg0: unused. arg1: unused.
-inline constexpr Code kPeriodicSyncStartFailed{1, Source::System, 0x0002, Severity::Error, CodeKind::Record, false, "PeriodicSyncStartFailed", false, false};
-} // namespace system
-
 namespace uart_comm {
 /// A frame candidate with a valid header was rejected for a CRC16 mismatch.
-inline constexpr Code kCrcError{2, Source::UartComm, 0x0001, Severity::Warning, CodeKind::Counter, false, "CrcError", false, false};
+inline constexpr Code kCrcError{0, Source::UartComm, 0x0001, Severity::Warning, CodeKind::Counter, false, "CrcError", false, false};
 /// A partial frame was dropped because the sender stopped mid-frame.
-inline constexpr Code kPartialFrame{3, Source::UartComm, 0x0002, Severity::Warning, CodeKind::Counter, false, "PartialFrame", false, false};
+inline constexpr Code kPartialFrame{1, Source::UartComm, 0x0002, Severity::Warning, CodeKind::Counter, false, "PartialFrame", false, false};
 /// The UART reported a framing or parity error.
-inline constexpr Code kFrameOrParityError{4, Source::UartComm, 0x0003, Severity::Warning, CodeKind::Counter, false, "FrameOrParityError", false, false};
+inline constexpr Code kFrameOrParityError{2, Source::UartComm, 0x0003, Severity::Warning, CodeKind::Counter, false, "FrameOrParityError", false, false};
 /// The RX hardware FIFO overflowed or the ring buffer was full.
-inline constexpr Code kRxOverflow{5, Source::UartComm, 0x0004, Severity::Warning, CodeKind::Counter, false, "RxOverflow", false, false};
+inline constexpr Code kRxOverflow{3, Source::UartComm, 0x0004, Severity::Warning, CodeKind::Counter, false, "RxOverflow", false, false};
 /// A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload.
-inline constexpr Code kLengthError{6, Source::UartComm, 0x0005, Severity::Warning, CodeKind::Counter, false, "LengthError", false, false};
+inline constexpr Code kLengthError{4, Source::UartComm, 0x0005, Severity::Warning, CodeKind::Counter, false, "LengthError", false, false};
 /// Received bytes that were not part of any valid frame (counts bytes, not events).
-inline constexpr Code kDiscardedBytes{7, Source::UartComm, 0x0006, Severity::Warning, CodeKind::Counter, false, "DiscardedBytes", false, false};
+inline constexpr Code kDiscardedBytes{5, Source::UartComm, 0x0006, Severity::Warning, CodeKind::Counter, false, "DiscardedBytes", false, false};
 /// A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.
-inline constexpr Code kHeaderCrcError{8, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false, "HeaderCrcError", false, false};
+inline constexpr Code kHeaderCrcError{6, Source::UartComm, 0x0007, Severity::Warning, CodeKind::Counter, false, "HeaderCrcError", false, false};
 /// A stream write was skipped because its slot was busy.
-inline constexpr Code kStreamSkipped{31, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
+inline constexpr Code kStreamSkipped{27, Source::UartComm, 0x0008, Severity::Warning, CodeKind::Counter, false, "StreamSkipped", false, false};
 } // namespace uart_comm
 
 namespace diag {
 /// A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet).
-inline constexpr Code kRecordDropped{9, Source::Diag, 0x0001, Severity::Warning, CodeKind::Counter, false, "RecordDropped", false, false};
+inline constexpr Code kRecordDropped{7, Source::Diag, 0x0001, Severity::Warning, CodeKind::Counter, false, "RecordDropped", false, false};
 /// A diag query response could not be queued for UART transmission and was dropped.
-inline constexpr Code kEventTxDropped{10, Source::Diag, 0x0002, Severity::Warning, CodeKind::Counter, false, "EventTxDropped", false, false};
+inline constexpr Code kEventTxDropped{8, Source::Diag, 0x0002, Severity::Warning, CodeKind::Counter, false, "EventTxDropped", false, false};
 /// A diag query was dropped because the reporter's query queue was full.
-inline constexpr Code kQueryDropped{11, Source::Diag, 0x0003, Severity::Warning, CodeKind::Counter, false, "QueryDropped", false, false};
+inline constexpr Code kQueryDropped{9, Source::Diag, 0x0003, Severity::Warning, CodeKind::Counter, false, "QueryDropped", false, false};
 } // namespace diag
 
 namespace core {
 /// Core startup failed. Stage 2 leaves the named loop Failed and its modules DependencyMissing; other loops and the config link stay available. Other stages leave the core out; legacy managers keep running. esp_err gives the loop task error.
 /// arg0: stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main). arg1: for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused.
-inline constexpr Code kInitFailed{12, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{10, Source::Core, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.
 /// arg0: type id << 8 | instance id. arg1: stage (the instance's own stage from fail() - controller.cascade_pid 1 missing or incompatible refs, 2 actuator already claimed - or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound).
-inline constexpr Code kInstanceStartFailed{13, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false, "InstanceStartFailed", false, false};
+inline constexpr Code kInstanceStartFailed{11, Source::Core, 0x0002, Severity::Error, CodeKind::Record, false, "InstanceStartFailed", false, false};
 /// A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.
 /// arg0: loop instance id. arg1: the period that failed, in us.
-inline constexpr Code kTimerRestartFailed{14, Source::Core, 0x0003, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
+inline constexpr Code kTimerRestartFailed{12, Source::Core, 0x0003, Severity::Error, CodeKind::Record, false, "TimerRestartFailed", false, false};
 /// The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; no loop task starts. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.
 /// arg0: the crash counter (consecutive boots after a panic or a watchdog reset). arg1: unused.
-inline constexpr Code kSafeModeEntered{15, Source::Core, 0x0004, Severity::Error, CodeKind::Record, false, "SafeModeEntered", false, false};
+inline constexpr Code kSafeModeEntered{13, Source::Core, 0x0004, Severity::Error, CodeKind::Record, false, "SafeModeEntered", false, false};
 /// A layout entry loaded from NVS failed validation at boot and was left out. layout_invalid is set. Instances wired to it are left out too (core.DependencyMissing).
 /// arg0: type id << 8 | instance id. arg1: the core Detail of the check that failed (UnknownType, LoopMismatch, BadLabel, LabelInUse, GpioNotAllowed, GpioConflict, BadRef, WiringCycle, Capacity, ...; numbered in registry.yaml from F3b).
-inline constexpr Code kLayoutInvalid{16, Source::Core, 0x0005, Severity::Error, CodeKind::Record, false, "LayoutInvalid", false, false};
+inline constexpr Code kLayoutInvalid{14, Source::Core, 0x0005, Severity::Error, CodeKind::Record, false, "LayoutInvalid", false, false};
 /// An instance was left out at boot because an instance it is wired to (a ref param) is invalid, failed to start or is itself missing a dependency. Its configuration is kept.
 /// arg0: type id << 8 | instance id of the instance left out. arg1: type id << 8 | instance id of the instance it is wired to, which is not running.
-inline constexpr Code kDependencyMissing{17, Source::Core, 0x0006, Severity::Error, CodeKind::Record, false, "DependencyMissing", false, false};
+inline constexpr Code kDependencyMissing{15, Source::Core, 0x0006, Severity::Error, CodeKind::Record, false, "DependencyMissing", false, false};
 /// NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the factory layout. config_loaded_from_nvs is false. Not reported on a blank NVS.
 /// arg0: the newest layout generation that passed its checks (0 when none did). arg1: cause (1 no layout blob passed its checks, 2 no generation had every instance blob).
-inline constexpr Code kConfigLoadFailed{18, Source::Core, 0x0007, Severity::Error, CodeKind::Record, false, "ConfigLoadFailed", false, false};
+inline constexpr Code kConfigLoadFailed{16, Source::Core, 0x0007, Severity::Error, CodeKind::Record, false, "ConfigLoadFailed", false, false};
 /// An NVS write or erase failed during SAVE or FACTORY_RESET. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
 /// arg0: the namespace, type id << 8 | instance id (0xFFFF for the layout namespace `core`). arg1: operation (1 write a blob, 2 erase a namespace).
-inline constexpr Code kNvsWriteFailed{19, Source::Core, 0x0008, Severity::Error, CodeKind::Record, false, "NvsWriteFailed", false, false};
+inline constexpr Code kNvsWriteFailed{17, Source::Core, 0x0008, Severity::Error, CodeKind::Record, false, "NvsWriteFailed", false, false};
 /// Reported by main at boot. esp_err is the error that nvs_flash_init returned (stage 1) or the final error (stage 2).
 /// arg0: what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved). arg1: unused.
-inline constexpr Code kNvsInitFailed{20, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false, "NvsInitFailed", false, false};
+inline constexpr Code kNvsInitFailed{18, Source::Core, 0x0009, Severity::Error, CodeKind::Record, false, "NvsInitFailed", false, false};
+/// A time ping was dropped because its exact length or independent protocol version was invalid.
+inline constexpr Code kBadTimeRequest{19, Source::Core, 0x0106, Severity::Warning, CodeKind::Counter, false, "BadTimeRequest", false, false};
 /// The core command queue was full.
-inline constexpr Code kCommandDropped{29, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
+inline constexpr Code kCommandDropped{25, Source::Core, 0x0100, Severity::Warning, CodeKind::Counter, false, "CommandDropped", false, false};
 /// A core reply could not be queued for transmission.
-inline constexpr Code kResponseDropped{30, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
+inline constexpr Code kResponseDropped{26, Source::Core, 0x0101, Severity::Warning, CodeKind::Counter, false, "ResponseDropped", false, false};
 /// A loop tick took longer than its period; instance identifies the loop.
-inline constexpr Code kLoopOverBudget{32, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
+inline constexpr Code kLoopOverBudget{28, Source::Core, 0x0102, Severity::Warning, CodeKind::Counter, false, "LoopOverBudget", false, false};
 /// A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.
-inline constexpr Code kCommandFrameRejected{33, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
+inline constexpr Code kCommandFrameRejected{29, Source::Core, 0x0103, Severity::Warning, CodeKind::Counter, false, "CommandFrameRejected", false, false};
 /// A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required.
-inline constexpr Code kLoopStalled{34, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
+inline constexpr Code kLoopStalled{30, Source::Core, 0x0104, Severity::Error, CodeKind::Latched, true, "LoopStalled", false, true};
 /// No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.
-inline constexpr Code kWatchdogTimeout{35, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
+inline constexpr Code kWatchdogTimeout{31, Source::Core, 0x0105, Severity::Warning, CodeKind::Latched, true, "WatchdogTimeout", false, true};
 } // namespace core
-
-namespace time_sync {
-/// TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
-/// arg0: stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback. arg1: unused.
-inline constexpr Code kInitFailed{21, Source::TimeSync, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
-/// A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.
-/// arg0: stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock. arg1: host status byte (stage 3), else 0.
-inline constexpr Code kSyncFailed{22, Source::TimeSync, 0x0002, Severity::Warning, CodeKind::Record, true, "SyncFailed", false, false};
-/// A time sync response was dropped because it could not be decoded (bad length or version).
-inline constexpr Code kBadResponseFrame{23, Source::TimeSync, 0x0003, Severity::Warning, CodeKind::Counter, false, "BadResponseFrame", false, false};
-} // namespace time_sync
 
 namespace actuator_pwm_dir {
 /// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
 /// arg0: stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{26, Source::ActuatorPwmDir, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{22, Source::ActuatorPwmDir, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required.
-inline constexpr Code kDriverFault{38, Source::ActuatorPwmDir, 0x0002, Severity::Error, CodeKind::Latched, true, "DriverFault", false, true};
+inline constexpr Code kDriverFault{34, Source::ActuatorPwmDir, 0x0002, Severity::Error, CodeKind::Latched, true, "DriverFault", false, true};
 } // namespace actuator_pwm_dir
 
 namespace feedback_quadrature {
 /// The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.
 /// arg0: stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{27, Source::FeedbackQuadrature, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{23, Source::FeedbackQuadrature, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required.
-inline constexpr Code kReadFailed{39, Source::FeedbackQuadrature, 0x0002, Severity::Error, CodeKind::Latched, true, "ReadFailed", false, true};
+inline constexpr Code kReadFailed{35, Source::FeedbackQuadrature, 0x0002, Severity::Error, CodeKind::Latched, true, "ReadFailed", false, true};
 } // namespace feedback_quadrature
 
 namespace imu_bno055 {
 /// Instance failed to start; esp_err carries the underlying bus or driver error.
 /// arg0: stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages 0x100 through 0x103 retain their meaning. arg1: unused.
-inline constexpr Code kInitFailed{40, Source::ImuBno055, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{36, Source::ImuBno055, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// The latest sensor read failed; numeric values are retained and valid is false. Clears after a complete successful sample.
-inline constexpr Code kReadFailed{41, Source::ImuBno055, 0x0002, Severity::Warning, CodeKind::Latched, true, "ReadFailed", false, false};
+inline constexpr Code kReadFailed{37, Source::ImuBno055, 0x0002, Severity::Warning, CodeKind::Latched, true, "ReadFailed", false, false};
 /// A mode or calibration bus operation failed. esp_err carries the first bus error.
 /// arg0: action id. arg1: actual mode (255 when mode restoration failed).
-inline constexpr Code kActionFailed{42, Source::ImuBno055, 0x0003, Severity::Error, CodeKind::Record, false, "ActionFailed", false, false};
+inline constexpr Code kActionFailed{38, Source::ImuBno055, 0x0003, Severity::Error, CodeKind::Record, false, "ActionFailed", false, false};
 } // namespace imu_bno055
 
 namespace actuator_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{24, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{20, Source::ActuatorMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 /// A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT.
-inline constexpr Code kFaultInjected{36, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
+inline constexpr Code kFaultInjected{32, Source::ActuatorMock, 0x0002, Severity::Error, CodeKind::Latched, true, "FaultInjected", false, true};
 /// A mock diagnostic action raised an arm-blocking condition.
-inline constexpr Code kArmBlocked{37, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
+inline constexpr Code kArmBlocked{33, Source::ActuatorMock, 0x0003, Severity::Warning, CodeKind::Latched, true, "ArmBlocked", true, false};
 } // namespace actuator_mock
 
 namespace feedback_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{25, Source::FeedbackMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{21, Source::FeedbackMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 } // namespace feedback_mock
 
 namespace imu_mock {
 /// The module instance failed to start.
 /// arg0: stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound). arg1: unused.
-inline constexpr Code kInitFailed{28, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
+inline constexpr Code kInitFailed{24, Source::ImuMock, 0x0001, Severity::Error, CodeKind::Record, false, "InitFailed", false, false};
 } // namespace imu_mock
 
 } // namespace codes
 
-inline constexpr size_t kSlotCount = 43;
+inline constexpr size_t kSlotCount = 39;
 
 /// Every live code, indexed by slot.
 inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
-    codes::system::kManagerStartFailed,
-    codes::system::kPeriodicSyncStartFailed,
     codes::uart_comm::kCrcError,
     codes::uart_comm::kPartialFrame,
     codes::uart_comm::kFrameOrParityError,
@@ -221,9 +201,7 @@ inline constexpr std::array<Code, kSlotCount> kCodeTable = {{
     codes::core::kConfigLoadFailed,
     codes::core::kNvsWriteFailed,
     codes::core::kNvsInitFailed,
-    codes::time_sync::kInitFailed,
-    codes::time_sync::kSyncFailed,
-    codes::time_sync::kBadResponseFrame,
+    codes::core::kBadTimeRequest,
     codes::actuator_mock::kInitFailed,
     codes::feedback_mock::kInitFailed,
     codes::actuator_pwm_dir::kInitFailed,

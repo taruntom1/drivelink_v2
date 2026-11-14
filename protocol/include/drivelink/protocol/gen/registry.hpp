@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0xF34300B1;
+inline constexpr uint32_t kDescriptorHash = 0x55851465;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -208,16 +208,16 @@ inline constexpr size_t kDescriptorMinPayload = 142;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
 inline constexpr uint8_t kCoreCommand = 0x01;
+/// command, host to ESP. Host time ping, answered directly in RX.
+inline constexpr uint8_t kTimeRequest = 0x02;
 /// command, host to ESP. DISARM fast path, handled in the RX callback and never queued.
 inline constexpr uint8_t kDisarm = 0x03;
-/// command, ESP to host. time_sync request, sent by the ESP. Legacy, removed in F8.
-inline constexpr uint8_t kTimeSyncRequest = 0x20;
 /// command, host to ESP. diag query: GetInfo, GetEntries, Clear.
 inline constexpr uint8_t kDiagQuery = 0x23;
 /// response, ESP to host. Answer to a core command.
 inline constexpr uint8_t kCoreResponse = 0x41;
-/// response, host to ESP. time_sync response, sent by the host. Legacy, removed in F8.
-inline constexpr uint8_t kTimeSyncResponse = 0x60;
+/// response, ESP to host. Time reply with monotonic RX and TX-submission timestamps.
+inline constexpr uint8_t kTimeResponse = 0x42;
 /// response, ESP to host. Answer to a diag query.
 inline constexpr uint8_t kDiagQueryResponse = 0x63;
 /// stream, ESP to host. System status stream, also the heartbeat.
@@ -231,11 +231,11 @@ inline constexpr uint8_t kCoreEvent = 0xC1;
 /// Every MSG_TYPE in the registry, by value.
 inline constexpr std::array<uint8_t, 10> kAllMsgTypes = {{
     msg::kCoreCommand,
+    msg::kTimeRequest,
     msg::kDisarm,
-    msg::kTimeSyncRequest,
     msg::kDiagQuery,
     msg::kCoreResponse,
-    msg::kTimeSyncResponse,
+    msg::kTimeResponse,
     msg::kDiagQueryResponse,
     msg::kStatusStream,
     msg::kDiagEvent,
@@ -277,11 +277,11 @@ constexpr bool channelsClear(uint8_t first, size_t count)
 
 static_assert(detail::msgTypesUnique(), "two MSG_TYPEs share a value");
 static_assert(isCommand(msg::kCoreCommand), "core_command is outside its class range");
+static_assert(isCommand(msg::kTimeRequest), "time_request is outside its class range");
 static_assert(isCommand(msg::kDisarm), "disarm is outside its class range");
-static_assert(isCommand(msg::kTimeSyncRequest), "time_sync_request is outside its class range");
 static_assert(isCommand(msg::kDiagQuery), "diag_query is outside its class range");
 static_assert(isResponse(msg::kCoreResponse), "core_response is outside its class range");
-static_assert(isResponse(msg::kTimeSyncResponse), "time_sync_response is outside its class range");
+static_assert(isResponse(msg::kTimeResponse), "time_response is outside its class range");
 static_assert(isResponse(msg::kDiagQueryResponse), "diag_query_response is outside its class range");
 static_assert(isStream(msg::kStatusStream), "status_stream is outside its class range");
 static_assert(isEvent(msg::kDiagEvent), "diag_event is outside its class range");

@@ -32,6 +32,7 @@ sources:
 codes:
   # ── system (app_main) ────────────────────────────────────────────────
   - source: system
+    retired: true
     code: 0x0001
     name: ManagerStartFailed
     severity: error
@@ -42,6 +43,7 @@ codes:
     description: A manager failed to start. It is left out, and the rest of the firmware keeps running.
 
   - source: system
+    retired: true
     code: 0x0002
     name: PeriodicSyncStartFailed
     severity: error
@@ -299,8 +301,16 @@ codes:
     kind: counter
     description: A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.
 
+  - source: core
+    code: 0x0106
+    name: BadTimeRequest
+    severity: warning
+    kind: counter
+    description: A time ping was dropped because its exact length or independent protocol version was invalid.
+
   # ── time_sync ────────────────────────────────────────────────────────
   - source: time_sync
+    retired: true
     code: 0x0001
     name: InitFailed
     severity: error
@@ -311,6 +321,7 @@ codes:
     description: TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.
 
   - source: time_sync
+    retired: true
     code: 0x0002
     name: SyncFailed
     severity: warning
@@ -321,6 +332,7 @@ codes:
     description: A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.
 
   - source: time_sync
+    retired: true
     code: 0x0003
     name: BadResponseFrame
     severity: warning

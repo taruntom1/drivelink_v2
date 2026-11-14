@@ -29,8 +29,8 @@ TEST_CASE("Registry MSG_TYPE constants")
     CHECK(msg::kDiagQuery == 0x23);
     CHECK(msg::kDiagQueryResponse == 0x63);
     CHECK(msg::kDiagEvent == 0xC0);
-    CHECK(msg::kTimeSyncRequest == 0x20);
-    CHECK(msg::kTimeSyncResponse == 0x60);
+    CHECK(msg::kTimeRequest == 0x02);
+    CHECK(msg::kTimeResponse == 0x42);
     CHECK(kSystemTypeId == 0x00);
 }
 

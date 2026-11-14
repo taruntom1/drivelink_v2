@@ -20,6 +20,18 @@ import struct
 import time
 
 CORE_PROTOCOL_VERSION = 7
+TIME_PROTOCOL_VERSION = 1
+
+
+def time_ping_payload(ident: int) -> bytes:
+    return struct.pack('<BH', TIME_PROTOCOL_VERSION, ident)
+
+
+def decode_time_reply(payload: bytes) -> tuple[int, int, int]:
+    if len(payload) != 19 or payload[0] != TIME_PROTOCOL_VERSION:
+        raise ValueError('invalid time reply length/version')
+    _, ident, rx_us, tx_us = struct.unpack('<BHQQ', payload)
+    return ident, rx_us, tx_us
 
 
 def command_group_payload(epoch: int, counter: int, values: tuple[int, ...] = ()) -> bytes:
@@ -295,6 +307,14 @@ def _frames(data: bytes, count: int) -> list[tuple[int, bytes]]:
 
 
 def _self_test() -> None:
+    assert time_ping_payload(0xabcd) == b'\x01\xcd\xab'
+    assert decode_time_reply(struct.pack('<BHQQ', 1, 65535, 123, 456)) == (65535, 123, 456)
+    for bad in (b'', b'\x01'*18, b'\x02'+b'\x00'*18):
+        try:
+            decode_time_reply(bad)
+            raise AssertionError('accepted malformed time reply')
+        except ValueError:
+            pass
     assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("07ffffff0000c03f2a000000")
     assert len(command_group_payload(0, 0)) == 4
     assert len(command_group_payload(0, 0, (0,) * 64)) == 260

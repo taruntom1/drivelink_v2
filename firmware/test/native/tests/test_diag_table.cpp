@@ -46,8 +46,8 @@ TEST_CASE("generated diag code table is consistent")
     CHECK(codes::diag::kRecordDropped.kind == CodeKind::Counter);
     CHECK(codes::diag::kEventTxDropped.kind == CodeKind::Counter);
     CHECK(codes::diag::kQueryDropped.kind == CodeKind::Counter);
-    CHECK(codes::system::kManagerStartFailed.kind == CodeKind::Record);
-    CHECK(codes::system::kManagerStartFailed.severity == Severity::Error);
+    CHECK(codes::core::kBadTimeRequest.kind == CodeKind::Counter);
+    CHECK(codes::core::kBadTimeRequest.severity == Severity::Warning);
 }
 
 TEST_CASE("slot table: counts and state bits")

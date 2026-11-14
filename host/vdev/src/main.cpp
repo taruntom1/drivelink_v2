@@ -1,6 +1,7 @@
 #include "core/command_service.hpp"
 #include "core_os/boot_info.hpp"
 #include "core_os/clock.hpp"
+#include "core_os/diag_sink.hpp"
 #include "core_os/realtime.hpp"
 #include "core_os/native_boot.hpp"
 #include "core_os/native_diag.hpp"
@@ -9,6 +10,7 @@
 #include "diag_table.hpp"
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
+#include "drivelink/protocol/time_codec.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include "mod_mock/modules.hpp"
 #include "mod_motor/modules.hpp"
@@ -225,7 +227,15 @@ struct Server
     }
     void receive(Peer &from, const p::Scanner::Frame &frame)
     {
-        if (frame.msg_type == msg::kDisarm)
+        if (frame.msg_type == msg::kTimeRequest) {
+            const auto rx=static_cast<uint64_t>(core_os::nowUs());uint16_t id=0;
+            if(!p::time_wire::decodeRequest(frame.payload,frame.len,id)) {
+                core_os::countDiag(p::defs::diag::codes::core::kBadTimeRequest,1);return;
+            }
+            const auto n=p::time_wire::response(reply.data(),reply.size(),{id,rx,0});
+            from.send(msg::kTimeResponse,reply.data(),n);
+        }
+        else if (frame.msg_type == msg::kDisarm)
         {
             const auto n = core::fastDisarm(*core, {frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n);
@@ -532,7 +542,7 @@ bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply af
     }
     auto bytes = std::make_shared<Bytes>(p::frameSize(n));
     p::encodeFrame(bytes->data(), bytes->size(), type, data, n);
-    output.push_back({bytes, after, stream, type == msg::kCoreResponse || type == msg::kDiagQueryResponse,
+    output.push_back({bytes, after, stream, type == msg::kCoreResponse || type == msg::kDiagQueryResponse || type == msg::kTimeResponse,
                       std::chrono::steady_clock::now() + std::chrono::seconds(2)});
     armDeadline();
     if (output.size() == 1)
@@ -598,6 +608,10 @@ void Peer::write()
 {
     auto self = shared_from_this();
     const auto item = output.front();
+    if(item.bytes->at(3)==msg::kTimeResponse &&
+       !p::time_wire::stampFrame(item.bytes->data(),item.bytes->size(),static_cast<uint64_t>(core_os::nowUs()))) {
+        close();return;
+    }
     const auto epoch = generation;
     auto handler = [self, item, epoch](auto ec, size_t)
     {

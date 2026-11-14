@@ -97,7 +97,8 @@ public:
     ///         ESP_ERR_INVALID_STATE if not initialized,
     ///         ESP_ERR_INVALID_ARG if msg_type is a stream type or outside every
     ///         range (0x00, 0xFF), len is too large, or payload is null with len > 0
-    esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len);
+    // stamp_time is accepted only for a valid time reply. TX owns the patch.
+    esp_err_t sendCommand(uint8_t msg_type, const uint8_t* payload, size_t len, bool stamp_time = false);
     /// Config-task only: wait until queued command frames reach the wire.
     /// Other producers may continue; a timeout must prevent a planned reboot.
     esp_err_t waitTxIdle(uint32_t timeout_ms);

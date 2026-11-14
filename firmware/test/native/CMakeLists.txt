@@ -72,7 +72,6 @@ set(CORE_SOURCES
 # Legacy firmware sources under test. Add a file here only if it builds
 # without ESP-IDF (beyond the shims).
 set(FIRMWARE_SOURCES
-    ${COMPONENTS_DIR}/time_sync/src/time_sync_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_protocol.cpp
     ${COMPONENTS_DIR}/diag/src/diag_table.cpp
 )
@@ -111,6 +110,7 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_framing.cpp
     ${PROTOCOL_DIR}/test/test_scanner.cpp
     ${PROTOCOL_DIR}/test/test_wire_codec.cpp
+    ${PROTOCOL_DIR}/test/test_time_codec.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
     tests/test_core_commands.cpp
     tests/test_core_groups.cpp
@@ -138,7 +138,6 @@ set(TEST_SOURCES
     tests/fake_imu_bus.cpp
     tests/fake_motor_hw.cpp
     tests/test_velocity_estimator.cpp
-    tests/test_time_sync_protocol.cpp
     tests/test_diag_protocol.cpp
     tests/test_diag_table.cpp
 )
@@ -155,7 +154,6 @@ target_include_directories(native_tests PRIVATE
     ${COMPONENTS_DIR}/mod_mock/include
     ${COMPONENTS_DIR}/mod_motor/include
     ${COMPONENTS_DIR}/pid/include
-    ${COMPONENTS_DIR}/time_sync/priv_include
     ${COMPONENTS_DIR}/diag/include
     ${COMPONENTS_DIR}/diag/priv_include
     tests

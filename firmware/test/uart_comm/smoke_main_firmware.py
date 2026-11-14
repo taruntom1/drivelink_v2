@@ -10,7 +10,7 @@ the uart_comm test app. Flash it, then run from firmware/test/uart_comm/:
 It checks, each with the protocol version the firmware must speak:
   - diag      GetInfo (0x23) -> response on 0x63, diag v3
   - diag      GetEntries(0) -> response on 0x63 (the diag task's largest stack use)
-  - time_sync the ESP's periodic sync request on 0x20, time_sync v2 (every 5 s)
+  - time ping host request 0x02 -> stamped response 0x42, independent v1
 
 Exit code 0 when every check passes. Watch the USB-Serial-JTAG console
 (idf.py -C firmware monitor) for the "Stack high-water" lines, logged every
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import struct
 import time
 
 import serial
@@ -28,8 +29,7 @@ import serial
 from protocol import UartCommProto
 
 DIAG_QUERY, DIAG_RESPONSE, DIAG_VERSION = 0x23, 0x63, 0x03
-TIME_SYNC_REQUEST, TIME_SYNC_VERSION = 0x20, 0x02
-STARTED_TIME_SYNC = 0x02
+TIME_REQUEST, TIME_RESPONSE, TIME_VERSION = 0x02, 0x42, 1
 
 
 
@@ -67,7 +67,6 @@ def main() -> int:
     # Opening the port can reset the board (the first open after a flash does,
     # through the adapter's DTR/RTS lines), and a command sent while it boots is
     # lost. So retry this first query, every 0.7 s for up to 5 s.
-    expected_managers = 0xFF
     try:
         for attempt in range(7):
             proto.send_command(DIAG_QUERY, bytes([DIAG_VERSION, 0x31, 0x01]))
@@ -80,11 +79,9 @@ def main() -> int:
         else:  # pragma: no cover - the loop always breaks or raises
             raise TimeoutError("no diag response")
         ok = len(p) >= 4 + 11 and p[0] == DIAG_VERSION and p[2] == 0x01 and p[3] == 0x00
-        # Diag v3 reports module counts; legacy managers are still expected.
-        expected_managers = STARTED_TIME_SYNC
         results.append(check("diag GetInfo", ok,
                              f"version {p[0]}, result {p[3] if len(p) > 3 else '?'}, "
-                             f"expected_managers 0x{expected_managers:02X}, {len(p)} bytes"))
+                             f"{len(p)} bytes"))
     except TimeoutError as exc:
         results.append(check("diag GetInfo", False, str(exc)))
 
@@ -99,16 +96,20 @@ def main() -> int:
     except TimeoutError as exc:
         results.append(check("diag GetEntries", False, str(exc)))
 
-    # time_sync: the ESP sends a request every 5 s. version, reserved, request_id u16, client time i64.
-    if expected_managers & STARTED_TIME_SYNC:
-        try:
-            p = wait_for(proto, TIME_SYNC_REQUEST, None, 7.0)
-            ok = len(p) == 12 and p[0] == TIME_SYNC_VERSION
-            results.append(check("time_sync request", ok, f"version {p[0]}, {len(p)} bytes"))
-        except TimeoutError as exc:
-            results.append(check("time_sync request", False, str(exc)))
-    else:
-        results.append(check("time_sync request", False, "time_sync is not expected"))
+    # Neither invalid request may generate a time reply. The next reply must
+    # belong to the valid request; then exercise ordinary diag/ping pool reuse.
+    proto.send_command(TIME_REQUEST, b'\x01\x00')
+    proto.send_command(TIME_REQUEST, struct.pack('<BH', 2, 0x7131))
+    proto.send_command(TIME_REQUEST, struct.pack('<BH', TIME_VERSION, 0x7132))
+    try:
+        p = wait_for(proto, TIME_RESPONSE, None, 3.0)
+        ok = len(p) == 19
+        if ok:
+            version, ident, rx, tx = struct.unpack('<BHQQ', p)
+            ok = version == TIME_VERSION and ident == 0x7132 and tx >= rx > 0
+        results.append(check('time ping', ok, f'{len(p)} bytes, RX/TX order and CRC'))
+    except TimeoutError as exc:
+        results.append(check('time ping', False, str(exc)))
 
     ser.close()
     passed = all(results)

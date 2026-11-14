@@ -1,5 +1,6 @@
 #pragma once
 
+#include "time.hpp"
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -57,6 +58,7 @@ class Session
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     Reply request(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
+    TimeSample timePing(); // no automatic retries; timestamps taken by the I/O thread
     Bytes diagRequest(uint8_t op, std::span<const uint8_t> body = {});
     // Queue a command-group payload without waiting for a peer. False means
     // the bounded stream queue is full. Request traffic retains its own limit.
