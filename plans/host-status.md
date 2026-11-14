@@ -46,7 +46,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | no | high, self | in review | |
+| T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | no | high, self | in review | [#68](https://github.com/taruntom1/drivelink_v2/pull/68) |
 | H1a | Typed `libdrivelink`: types, errors, services, device model snapshot; CLI on the typed API (output unchanged); host-windows CI. Depends on T0 | bare board: CLI smokes | high, independent | planned | |
 | H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a | bare board: time, 1 kHz groups, smokes | high, independent | planned | |
 | H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | planned | |
