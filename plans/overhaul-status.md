@@ -4,6 +4,8 @@ The working state of the overhaul: the firmware ([firmware-architecture.md](firm
 
 ## Current
 
+- **Instruction cleanup (2026-11-14):** scoped instructions shortened; existing command walkthroughs moved to `docs/development.md`. CLAUDE sources and AGENTS links retained; no step/runtime policy changed. [PR #65](https://github.com/taruntom1/drivelink_v2/pull/65); existing H1a/HW handoff remains applicable.
+
 - **Branches.** F1–F10 are merged into `main`, `legacy-final` resolves to `7a4d693`, and `origin/host_overhaul` exists (verified 2026-11-14). The HW and H steps run on `host_overhaul`; `main` stays frozen until `host_overhaul` merges, and HW firmware fixes go to `host_overhaul` too.
 - **Next step:** H1a or HW. LP (automatic initial loop placement) is merged in [#63](https://github.com/taruntom1/drivelink_v2/pull/63); H1a needs no hardware, and HW runs as hardware arrives.
 - **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware` for them.

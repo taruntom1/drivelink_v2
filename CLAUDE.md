@@ -1,50 +1,48 @@
-# CLAUDE.md
+# Repository rules
 
-This file is the repo map and holds the rules that cross areas. Each area has its own `CLAUDE.md` with the rules for working in it.
+DriveLink is an ESP32-S3 motion stack with a self-describing device and generic
+host. Read [plans/overhaul-status.md](plans/overhaul-status.md) first for current
+work, handoff and hardware state.
 
-## What this is
+## Read for the task
 
-DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The firmware is a self-describing core: configurable loops of module instances (motors, encoders, the cascade controller, the BNO055 IMU, mocks), groups, arming and safety, sources, capture into PSRAM, per-loop test signals, time protocol v1 and disarmed OTA, over core wire v8. The host discovers everything from the device. The firmware has not yet run on motors or a real IMU.
+Before editing an area, read its scoped rules:
 
-## Repo map
+| Area | Rules / reference |
+|---|---|
+| Firmware | [firmware/CLAUDE.md](firmware/CLAUDE.md); nested rules for components, main and tests |
+| Host | [host/CLAUDE.md](host/CLAUDE.md), [build and usage](host/README.md) |
+| Shared wire library | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
+| Definitions / generator | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
+| New module type | [docs/adding-a-module.md](docs/adding-a-module.md) |
+| Build, validation, bench commands | [docs/development.md](docs/development.md) |
 
-| Path | What | Rules |
-|---|---|---|
-| `firmware/` | The ESP-IDF project: `main/`, `components/`, `test/native` (native unit tests: `protocol/`, the core, pure logic), `test/uart_comm` (hardware-in-the-loop tests) | [firmware/CLAUDE.md](firmware/CLAUDE.md), and [firmware/components/CLAUDE.md](firmware/components/CLAUDE.md) for components |
-| `protocol/` | The wire library shared by firmware and host: framing, CRC, frame scanner, `wire_codec`, and the generated registry, diag codes and descriptor format. Pure C++20 | [protocol/CLAUDE.md](protocol/CLAUDE.md) |
-| `protocol/defs/` | The definitions (YAML): `registry.yaml` (MSG_TYPEs, stream channel ranges), `diag_codes.yaml`, `system.yaml` (the system items, type `0x00`), `loop.yaml` and one file per module type. The source of everything under `protocol/include/drivelink/protocol/gen/` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
-| `docs/protocol/` | The wire spec, the generated registry and diag code tables, and the definitions guide | Updated in the same commit as any wire change |
-| `tools/gen/` | The generator: `python tools/gen/gen.py [--check]` turns `protocol/defs/` into the generated headers and docs. Its tests: `python -m unittest discover -s tools/gen/tests` | [docs/protocol/definitions.md](docs/protocol/definitions.md) |
-| `tools/validate.py` | The list of validation checks, run locally (`quick`, `full`) and by CI (`--only`). Never touches hardware | [firmware/test/CLAUDE.md](firmware/test/CLAUDE.md) ("Validation") |
-| `tools/bench_fw.py` | Guarded bench, normal, XiP and OTA-candidate firmware builds and flashing for the bare board | [firmware/main/CLAUDE.md](firmware/main/CLAUDE.md) |
-| `docs/adding-a-module.md` | The checklist for a new module type | |
-| `plans/` | The architecture plans, `overhaul-status.md`, the GUI design records; `archive/` holds finished step plans | |
-| `.github/workflows/` | CI | |
+## Cross-area constraints
 
-`host/` contains `libdrivelink`, `cli`, `vdev`, `superbuild` and the host tests. Its rules are in [host/CLAUDE.md](host/CLAUDE.md), build and usage in [host/README.md](host/README.md).
+- No wire backward compatibility. Wire changes bump the affected version and
+  update firmware, host and `docs/protocol/` in the same change.
+- Edit `protocol/defs/` or the generator, run `python tools/gen/gen.py`, and
+  commit generated headers/docs. Never hand-edit generated outputs.
+- Before a PR, `python tools/validate.py full` must pass with zero-warning builds.
+  Use `quick` while iterating. Update affected API/Kconfig READMEs in the same PR;
+  new components need a README. Pure-logic changes need native tests.
 
-## Cross-cutting rules
+## Host overhaul in progress
 
-- **Host and firmware change together.** There is no backward compatibility on the wire. Any protocol change updates the firmware, the host code that speaks it, and `docs/protocol/` in one change.
-- **Definition of done** is per area. For the firmware it is the list in `firmware/CLAUDE.md` ("Definition of done"): zero-warning builds, current generated files, passing native tests, docs in the same commit. `python tools/validate.py full` checks the builds and tests locally, and CI runs the same checks through the same script.
-- **Paths.** Paths in `firmware/CLAUDE.md` are relative to the repository root, and firmware commands run from the root with `-C firmware`.
+This temporary policy wins over conflicting area rules until `host_overhaul`
+merges into `main`. Architecture targets and decisions live in `plans/`.
 
-## Host overhaul in progress (temporary, removed when `host_overhaul` merges into `main`)
-
-The firmware overhaul (F1–F10) is merged into `main`, and `main`'s last legacy commit is tagged `legacy-final`. The host is now built to [plans/host-architecture.md](plans/host-architecture.md), and the deferred hardware checks run in the HW step. [plans/firmware-architecture.md](plans/firmware-architecture.md) is the firmware's design record. Where this section conflicts with the rest of this file or an area `CLAUDE.md`, this section wins.
-
-- **Start here.** Read [plans/overhaul-status.md](plans/overhaul-status.md) first: the next step, the handoff note and the decision log. Start a step with `/overhaul-step`.
-- **One session per step.**
-  - Branch from `origin/host_overhaul`, and open one PR into `host_overhaul` (`gh pr create --base host_overhaul`).
-  - Never target `main`. It is frozen until `host_overhaul` merges. Firmware fixes from the HW campaign also go to `host_overhaul`.
-- **Every PR updates the status file:** the step's state, its PR link, any decisions, and the handoff note for the next step.
-- **Plan changes.**
-  - Small internal choices: decide, and log them in the decision log.
-  - Anything that changes the wire protocol, a safety rule or a later step: stop and ask the user. Then update the plan in the same PR.
-- **Docs.** `docs/protocol/` is the wire spec, updated in the same PR as any wire change. Every component has a README (purpose, API, rules); new ones get one when they land.
-- **Removed code.** The legacy managers (`motor_manager`, `imu_bmo_055`, `time_sync`) and their wire handlers are gone and must not be restored; their diag source ids and codes stay retired. `legacy-final` keeps them.
-- **Roles.** The session plans, builds and reviews the step itself (Opus 5.5, high). It spawns an independent review agent (Opus, at the step's review effort) only when the step needs one: wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff. `/overhaul-step` has the details.
-- **Hardware.**
-  - Checks that run on the bare bench board (nothing attached): the session builds, flashes and runs them itself, after the review. It stops and tells the user if a port is missing or the board doesn't respond.
-  - Checks that need motors, an IMU or the robot are deferred: the step writes and dry-runs their script and lists it in "Deferred hardware checks" in the status file. They run in the HW step, or as soon as the hardware arrives.
-  - Checks that need a Pi or a PC: the user runs them from a script the step writes; the step waits in `waiting on hardware`.
+- Start each step with `/overhaul-step`; one session and one PR per step.
+  Branch from `origin/host_overhaul`, target `host_overhaul`, never frozen `main`.
+  HW firmware fixes use the same base. Every PR updates status, decisions and handoff.
+- Log small internal choices in the status decision log. Ask the user before
+  changing the wire protocol, a safety rule or a later step; update the plan too.
+- The session plans, builds and reviews its step. Model/effort and independent
+  review criteria are in the status file's "Models and effort" and the skill.
+- Do not restore retired legacy managers/handlers (`motor_manager`, `imu_bmo_055`,
+  `time_sync`) or reuse their diagnostic IDs; history is at `legacy-final`.
+- After review, run bare-board checks directly; stop/report a missing port or
+  unresponsive board. For motors/IMU/robot, write and dry-run scripts and list
+  deferred checks in the status file. For Pi/PC-only checks, supply the user's
+  script and wait in `waiting on hardware`. Real motor/IMU behavior is unverified
+  until those checks pass; use the status file for current results.
