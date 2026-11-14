@@ -1,9 +1,10 @@
-# DriveLink host tools (F3c)
+# DriveLink host tools
 
 `libdrivelink` provides serial/TCP sessions and the current core families.
 `drivelink-cli` drives the ESP32 or `drivelink-vdev` with identical commands.
-The library has no Qt or ROS dependency. Time synchronization, the cached
-device model and the rest of H1 are still planned.
+The library has no Qt or ROS dependency. F8 supplies time pings and a reusable
+clock estimator; automatic timestamp mapping, the cached device model and
+the rest of H1 remain planned.
 
 ## Build
 

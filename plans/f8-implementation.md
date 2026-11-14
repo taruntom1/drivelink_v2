@@ -168,3 +168,52 @@ F8 results and deferred Pi check in `plans/overhaul-status.md`, with F9 next.
 Commit and push, open one PR into `firmware_overhaul`, include the final full
 validation summary, review and hardware results, then commit/push its link in
 the status row. The user approved this plan before implementation.
+
+## Measured results (2026-11-14)
+
+All seven `tools/validate.py full` checks passed with no omitted checks and
+zero-warning normal/no-log/HIL builds. Independent Codex review at high effort
+found one P1 issue: the removed task left a null slot in the stack-name array.
+The deduced-size array fix was verified by the reviewer and rebuilt before
+flash; no further actionable findings and no rejected findings remain.
+
+22 UART HIL cases passed. Guarded normal firmware was restored, then protocol,
+core, safety and CLI bare-board smoke passed before and after measurement.
+The new protocol smoke confirms malformed drops, exact reply/id/time ordering
+and CRC alongside diagnostic queries. Native/vdev/host tests cover the pure
+math and lifecycle, TCP/PTY pings, malformed-drop counters, and the shared
+traffic/capture workflow.
+
+| CH343, 180 s | Idle | 1 kHz subscription + capture |
+|---|---:|---:|
+| Successful samples | 220 | 219 |
+| Timeouts | 0 | 0 |
+| RTT p95 (us) | 933.00 | 1273.00 |
+| Held-out low-RTT residual p95 (us) | 37.84 | 206.99 |
+| Same-time prediction change p95 (us) | 4.17 | 26.41 |
+| Final slope drift (host us/device us, ppm) | -50.38 | -49.69 |
+
+Traffic run: 0 device overruns and 125 us longest tick. Both runs meet the approved stability gates. USB results do not establish absolute offset accuracy or a sub-100-us jitter bound.
+
+160 s COM4 observation: minimum free stack 1796 bytes; all expected tasks reported and no legacy time task or panic. Stack marks are in the status file. Normal bench commands are refused and original layout/rates/watchdog/groups/capture/testgen state restored.
+
+The Pi GPIO-UART campaign remains deferred to HW, with exact commands, wiring
+and the 100 us held-out residual statistic in the status table. H1 owns
+automatic time-service integration/mapping; H3 owns model distribution. No
+wire/safety deviation beyond the user-approved time-v1 malformed-drop policy
+and host-scope move was needed. UART HIL was additionally run because the
+transport's pool metadata changed.
+
+### Windows serial regression found on the bench
+
+The first traffic run had 208 successful pings and no timeouts but failed the
+low-RTT held-out gate (RTT p95 45.79 ms, range 2.82–60.98 ms). Asio 1.30.2's
+Windows read waited for a 1 ms inter-byte gap or the whole 2048-byte input
+buffer; continuous telemetry could therefore defer scanning a reply. Raw
+before/after samples were retained locally. The host now uses Win32's documented
+first-byte return mode while preserving write settings and DTR/RTS. A focused
+independent high-effort review found no additional issues. The targeted 60 s
+traffic retest passed 100/100 pings, RTT p95 1.237 ms, held-out residual p95
+188.1 us, prediction change p95 49.6 us, zero overruns and 105 us longest tick.
+The full final 180 s runs above use the same original thresholds. No estimator
+filter or pass threshold was loosened.

@@ -13,7 +13,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v5 and sets the device's maximum receive payload; the scanner's hard limit is
+v7 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 
@@ -76,3 +76,26 @@ The cached, lock-free device/time model remains H1 work.
 Arming wrappers use core v5: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
 read-only system params; Client::groups retains convenience capacity fields.
+
+## Time v1 (F8)
+
+`Session::timePing()` returns `TimeSample` with host I/O-thread send/receive,
+device RX/TX, echoed u16 ID and a process-local clock generation. It does not
+retry. Failed IDs retire until reconnect; close and Boot wake pending callers.
+Generation changes across sessions/Boot reset a reused `ClockEstimator`.
+
+Include `<drivelink/time.hpp>` for the pure single-caller estimator. Construct
+once, call `add(sample)`, then `model(monotonicUs())`. Defaults select lowest
+RTT per 5 s bin in a 120 s bounded window; eight samples over 30 s enable drift.
+Models expire after 5 s and expose age/RTT/residual/fit span. `model.map(esp_us)`
+maps to host monotonic microseconds; drift is host-us/device-us, not UTC.
+No periodic thread or application-data mapping is installed. Timestamp
+boundaries, asymmetry limits and exact wire lengths are in
+[time.md](../../docs/protocol/time.md).
+
+Windows serial reads deliberately override Asio 1.30.2's 1 ms inter-byte-gap
+timeout: continuous telemetry could hold a ping until the 2048-byte buffer
+filled. The documented Win32 first-byte mode returns available bytes promptly,
+with a 1000 ms idle timeout. It preserves write timeout values and DTR/RTS.
+Stale-frame expiry and cancellation remain independent. See the linked time
+spec for the Win32 reference and measured regression.

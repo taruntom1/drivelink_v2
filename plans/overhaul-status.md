@@ -5,7 +5,7 @@ The working state of the overhaul described in [firmware-architecture.md](firmwa
 ## Current
 
 - **Branch:** `firmware_overhaul`. `main` is frozen except for critical fixes, which are merged into `firmware_overhaul` at once. `firmware_overhaul` is merged into `main` after F10.
-- **Next step:** F8: time ping with TX stamping and removal of `time_sync`, after the F7b PR is merged.
+- **Next step:** F9: OTA, partition table and rollback, after the F8 PR is merged.
 - **No motors or IMU on the bench.** Checks that need them are deferred: each step writes its script now and lists it in "Deferred hardware checks". No step waits in `waiting on hardware`.
 - **Older notes.** This file was cut down on 2026-11-13. The full handoff notes, decision log and hardware results up to F3c are in git: `git show b734af5:plans/overhaul-status.md`.
 
@@ -18,7 +18,7 @@ Every session reads all of this file, so it holds only what has no other home.
   | Subject | Home |
   |---|---|
   | Wire format, result and detail codes, diag codes | `docs/protocol/` (`core.md`, `diag.md`, `framing.md`, `definitions.md`, generated `registry.md`, `diag-codes.md`) |
-  | Firmware rules, build and test commands | `firmware/CLAUDE.md` and the area files it lists (`main/`, `test/`, `components/`, `uart_comm/`, `legacy-managers.md`), `protocol/CLAUDE.md` |
+  | Firmware rules, build and test commands | `firmware/CLAUDE.md` and the area files it lists (`main/`, `test/`, `components/`, `uart_comm/`), `protocol/CLAUDE.md` |
   | Core API and behaviour | `firmware/components/core/README.md`, `firmware/components/core_os/README.md` |
   | Host rules, build and usage | `host/CLAUDE.md`, `host/README.md`, `host/vdev/README.md` |
   | Design and its reasons | `plans/firmware-architecture.md`, `plans/host-architecture.md` |
@@ -28,27 +28,26 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Hardware results:** one short row per run. Replace the stack marks with the newest.
 
-## Handoff for F8
+## Handoff for F9
 
-F7b is core wire v7: per-loop test generation, same-loop capture-start trigger,
-TestgenDone events and status bit 16. The contract lives in `docs/protocol/core.md`;
-ownership and receipts are in the core README. Its [approved plan/results](f7b-implementation.md)
-records validation, independent review and the XiP comparison.
+F8 is core v7, diag v3 and independent time v1. Its
+[approved plan/results](f8-implementation.md) records validation, review and
+the CH343 measurements. No legacy manager remains.
 
-- **Time ping.** `0x02` / `0x42` are still unregistered. F8 adds the new ping
-  and TX stamp, removes the remaining legacy `time_sync` manager/registry/tests,
-  and grows host time support together. Start from the firmware/host plans.
-- **Timing evidence.** Use device timestamps/counters over the CH343; queued
-  Windows status frames are not a host-latency measurement. Capture can record
-  loop counters and `last_run_us` alongside an input/response.
-- **PSRAM.** Normal firmware keeps XiP off. `bench_fw.py xip` is isolated and
-  `normal` verifies bench and all XiP relocation flags are off before flashing.
-  Shared state stays internal RAM; use `core_os::lockFreeAtomic<T>()`.
-- **Run ownership.** Both CLI run helpers attempt DISARM after an uncertain
-  ARM outcome. The frame-proxy regression covers successful ARM with a lost
-  reply for both workflows; preserve it while changing host timing/session code.
-- **Bench state.** Normal firmware and original layout/settings are restored;
-  see Hardware notes. Motor/IMU/Pi checks remain deferred.
+- **Time.** `0x02` / `0x42` are registered; `0x20` / `0x60` are removed.
+  TX stamps mean UART driver submission, with CRC patched in the existing TX
+  task. Queue/FIFO/USB asymmetry is uncertainty, not a wire-time guarantee.
+  `docs/protocol/time.md` is the contract. SDK pings and the bounded clock
+  estimator are built; H1 owns automatic timestamp mapping, H3 distribution.
+- **OTA persistence.** Keep NVS at `0x9000`, size `0x6000`, as specified in
+  the firmware architecture so existing configuration survives the new table.
+- **Review trap.** Removing a task name must not leave a null entry in a
+  fixed-count array. The stack logger now uses a deduced-size array.
+- **Run ownership.** Preserve both CLI helpers' cleanup DISARM after an
+  uncertain ARM; the frame-proxy lost-reply tests cover them.
+- **Bench state.** Normal F8 firmware (XiP/bench off) and original loops/settings
+  are restored. All observed stacks exceed 1 KB. Motor/IMU/Pi checks remain
+  deferred; F8's shared time script is dry-run on vdev and measured on CH343.
 
 ## Steps
 
@@ -74,12 +73,12 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | F5b | Delete `motor_manager`, `motor_controller`, the legacy motor streams and the HAL/PID APIs only they used; loop-stall test (`motor_smoke.py --stall`) | bare board: loop-stall stop with mocks and real modules; deferred: motors | high | merged | [#53](https://github.com/taruntom1/drivelink_v2/pull/53) |
 | F6 | `imu.bno055`, pure bus/driver and fake-bus tests; persistent calibration through SAVE; delete `imu_bmo_055`; [approved plan](f6-implementation.md) | bare board: missing sensor/ARM gate, mock signals/calibration/SAVE/restore and stacks; deferred: IMU | high | merged | [#55](https://github.com/taruntom1/drivelink_v2/pull/55) |
 | F7a | Capture family, PSRAM (caps alloc only), core events, core v6; [approved plan](f7a-implementation.md) | bare board: capture of mock signals | high | merged | [#56](https://github.com/taruntom1/drivelink_v2/pull/56) |
-| F7b | Per-loop testgen, fresh-command handoff, capture trigger/events, core v7; XiP evaluation; [approved plan/results](f7b-implementation.md) | bare board: step/chirp at 1 kHz, stacks, XiP comparison and restoration; deferred: motor | high | in review | [#57](https://github.com/taruntom1/drivelink_v2/pull/57) |
-| F8 | Time ping with TX stamping; delete `time_sync` | bare board: stable estimate over the CH343; deferred: Pi GPIO-UART jitter | high | planned | |
+| F7b | Per-loop testgen, fresh-command handoff, capture trigger/events, core v7; XiP evaluation; [approved plan/results](f7b-implementation.md) | bare board: step/chirp at 1 kHz, stacks, XiP comparison and restoration; deferred: motor | high | merged | [#57](https://github.com/taruntom1/drivelink_v2/pull/57) |
+| F8 | Time v1, TX stamping, host estimator/API/CLI and removal of `time_sync`; [approved plan/results](f8-implementation.md) | bare board: HIL, stable CH343 idle/traffic estimates and stacks; deferred: Pi GPIO-UART jitter | high | in review | |
 | F9 | OTA: partition table, OTA family, rollback | bare board: OTA and rollback | high | planned | |
 | F10 | Cleanup: leftover Kconfig and legacy registry entries, rewrite `firmware/CLAUDE.md` for the new architecture, remove the temporary overhaul section from the root `CLAUDE.md`, tag `main`'s last legacy commit `legacy-final`, merge `firmware_overhaul` into `main` marked as not yet run on motors or an IMU | bare board: full smoke test | high | planned | |
 | HW | Hardware campaign: run every open row of "Deferred hardware checks"; fixes go to `main` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
-| H1 | Complete `libdrivelink`: time model, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | high | planned | |
+| H1 | Complete `libdrivelink`: periodic time integration/automatic timestamp mapping over F8's estimator, device model, services, plant identification math; host-windows CI. May start in a second session after F4b is merged | no (vdev) | high | planned | |
 | H2 | GUI in local mode (Qt/QML): connect, device, layout, tune and monitor screens | vdev; deferred: bench tuning | high | planned | |
 | H3 | Agent: arbitration, lease, clock model distribution; GUI remote mode | yes: Pi + PC | high | planned | |
 | H4 | `drivelink_hardware`, `drivelink_bringup`, diagnostics node, ROS CI | deferred: robot | high | planned | |
@@ -92,10 +91,8 @@ Each note is deleted by the step that uses it.
 
 - **F10**
   - Before the merge, tag `main`'s last legacy commit `legacy-final`. Say in `README`/`firmware/CLAUDE.md` that the new firmware has not run on motors or an IMU until HW closes the deferred checks.
-- **F8**
-  - The time ping (`0x02` / `0x42`) is not in the registry yet.
 - **H1**
-  - The F3c host slice has no module-specific code and no cached device or time model.
+  - F8 supplies the reusable clock estimator, ping API and CLI measurement. H1 adds periodic ownership/automatic timestamp mapping and the cached device model; H3 distributes the agent clock model. The host still has no module-specific code.
 
 ## Deferred hardware checks
 
@@ -112,6 +109,7 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 | F5a-1 / F5a-2 / F5b | `python host/test/motor_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --confirm-first-run --pwm-pin P --dir-pin D --enc-a A --enc-b B --cpr C [--gear G] [--duty-cap 0.2] [gains/targets/tolerances]`, normal firmware; then the same with `--stall` on a `CONFIG_CORE_BENCH_CRASH=y` build (flash the normal firmware afterwards). Both passed on the bare board with `--no-motor` (`--pool-check` on the normal build) | Motor driver, motor and encoder | First-run procedure; encoder polarity in open loop before any closed loop; velocity and position tracking; watchdog force; longest tick; with `--stall`, a 2 s control-loop stall in velocity mode | Polarity positive; tracking within the given tolerances; after the watchdog trip `forced` is set, applied duty 0 and the encoder stops (at most 2 counts in 0.5 s); zero overruns in the normal run (a stall run counts its stall as overruns); stall: Fault/LoopStalled during the stall, the encoder moves at most 25% of its free run at the pre-stall speed, `forced` and zero duty after it |
 | F6 | `python host/test/imu_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --sda 8 --scl 9 --address 0x28 --calibration-wait 300` (normal firmware; add `--stack-wait 45` for stack observation). Mock workflow and real `--missing-sensor` both passed on the bare board | BNO055, suitable I2C wiring/pull-ups | Signal groups and stationary plausibility; operator reaches levels 3/3/3/3; exact profile apply and boot restore in CONFIG; NDOF recovery; layout/settings restoration | Valid fresh samples with plausible quaternion/gravity/temperature; 3/3/3/3 before profile capture; exact CONFIG profile readback and all staged params survive SAVE/reboot; modes/cleanup pass; all task stacks >1 KB. Physical orientation/calibration quality must also be checked on the sensor |
 | F7b | `python host/test/testgen_smoke.py --cli <cli> --endpoint serial://COM3 --modules real --confirm-first-run --pwm-pin P --dir-pin D --enc-a A --enc-b B --cpr C [--gear G --duty-cap 0.2 --probe-duty 0.1 --min-response R] --loop-rate 1000` (normal firmware). Same workflow passed with mocks on vdev and bare board | Motor driver, motor and encoder | First-run procedure; positive step before chirp, generated input/response at 1 kHz, STOP/hold/fresh handoff and watchdog cancellation | Positive response above the supplied minimum, bounded step/chirp input, no irregular capture or overruns, fresh command takes over after STOP; original layout/settings restored |
+| F8 | `python host/test/time_smoke.py --cli ./drivelink-cli --endpoint serial:///dev/serial0 --duration 180 --jitter-us 100 --report time-pi-idle.json`, then repeat with `--traffic --report time-pi-traffic.json`. Shared workflow passed on TCP/PTY and bare-board CH343 | Pi GPIO UART at 921600, serial console disabled; 3.3 V TX/RX crossed to ESP GPIO44/43 with common GND; disconnect the CH343 TX drive before connecting Pi TX | Idle/traffic clock stability from production I/O timestamps; exact statistic is p95 held-out low-RTT midpoint residual, not absolute offset accuracy | At least 95% successful pings, mature drift fit, residual <=100 us, prediction change <=2 ms in both runs; restore original settings. Pi run is user-operated in HW |
 
 ## Hardware notes
 
@@ -125,12 +123,13 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
   - `firmware/test/uart_comm/smoke_main_firmware.py`: the legacy managers. It creates no motor.
   - `firmware/test/uart_comm/smoke_core_firmware.py`: the core with mock instances, which it removes again. `--safe-mode` needs a `CONFIG_CORE_BENCH_CRASH=y` build; flash the normal firmware again afterwards.
   - `host/test/hardware_smoke.py`: the same through the CLI. It refuses to run with pending edits, and restores the layout and rates it found.
-- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F7b/core v7 firmware (XiP off) with PSRAM is flashed (capture capacity 4 MiB); bench crash/stall are disabled and panic-reset Task WDT is enabled.
+- **Saved state on the board now:** the factory control and sensor loop instances (type 0x05, ids 0 and 1), no modules, rates 1000 / 100 / 10 Hz (control, sensor, status), watchdog 200 ms. Normal F8/core v7 + time v1 firmware (XiP off) with PSRAM is flashed (capture capacity 4 MiB); bench crash/stall are disabled and panic-reset Task WDT is enabled.
 - **Bench build:** from the repo root, `python tools/bench_fw.py bench` builds `CONFIG_CORE_BENCH_CRASH=y` in isolated, git-ignored `firmware/build_bench/` and flashes COM3 without touching `firmware/sdkconfig`. Restore with `python tools/bench_fw.py normal`, which reconfigures/builds and checks the generated header has bench and XiP relocation disabled before flashing. `xip` uses isolated `firmware/build_xip/` and the committed evaluation fragment; always restore normal afterwards. IDF export and logs are automatic; see `firmware/main/CLAUDE.md` ("Bench-only options"). All three subcommands support `--dry-run`; none runs in validation. Verify bench commands are refused after restoration.
 - **Serial status backlog.** On Windows over the CH343, each new CLI process reads queued status frames, not the newest one, so a check that polls `status` sees device events late. Judge timing from device data (timestamps, overrun counts), as `motor_smoke.py --stall` does.
 - **Bench pins for real modules:** actuator PWM 4 / DIR 5, encoder 6 / 7 (nothing attached; pull-ups keep the count at 0). `motor_smoke.py`'s pool check uses 1, 2, 10–18, 21, 39–42 and 47. Avoid strapping pins 0, 3, 45, 46, the example IMU's I2C 8/9, and 38/48 (RGB LED on some boards).
 - **Stack rule:** every task keeps more than 1 KB free. Check the marks after adding a task or a large buffer. `app_main`'s locals are large, so look at `main` after adding anything it starts.
-- **Latest stack marks** (F7b normal, 45 s armed log chirp with 6-ref capture at 1 kHz on controller/motor mocks; stacks 4096 unless given): main 3664 (5632), uart_rx 2788, uart_tx 3088, time_sync_task 2012, diag 1644, esp_timer 3264, core_cfg 3740 (6144), core_loop_0 3072, core_loop_1 3192. COM4 closed before cleanup reboot.
+- **Latest stack marks** (F8 normal, 160 s observation during the 1 kHz subscription/capture time run; bytes free): main 3680, uart_rx 2916, uart_tx 3056, diag 1796, esp_timer 3184, core_cfg 3668, core_loop_0 3084, core_loop_1 3252. Main stack 5632, core_cfg 6144, others 4096. No time task. COM4 closed before cleanup reboot.
+
 - **Never run on hardware so far:** a real BNO055, motors, a board host other than Windows. F4b armed only mock actuators on the bare board. None of these are expected before HW; see "Deferred hardware checks".
 
 ## Other traps
@@ -148,7 +147,7 @@ There are no motors or IMU on the bench. A check that needs them doesn't block i
 - **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change its review effort in the same PR and log the reason.
 - **Exceptions so far.** F3b and F3c used Codex, approved per step. F3d, F4a, F4b and F4c are explicitly approved for Codex planning/build and an independent Codex review at high effort.
-- **F6** and **F7b** are explicitly approved for Codex planning/build and independent Codex review at high effort.
+- **F6**, **F7b** and **F8** are explicitly approved for Codex planning/build and independent Codex review at high effort.
 - **F5b** and **F7a** used the default policy: planned and built on Opus 5.5
   at high effort, with an independent Opus review agent at high effort.
 
@@ -158,6 +157,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
+| 2026-11-14 | F8 | Codex plans/builds with independent Codex review at high effort. Bring reusable clock estimator/API/CLI into F8; H1 retains automatic timestamp mapping, H3 distribution. Independent time v1 drops/counts malformed or unsupported-version pings without error fields; core stays v7 | Explicit user choices and approved plan; exact wire, model limits and timestamp uncertainty live in the time spec | yes |
 | 2026-11-14 | F7b | One generator per running loop; STOP/completion holds the last value until a post-termination command, discarding earlier target mailboxes. Codex plans/builds with independent Codex review at high effort; XiP stays off by default after isolated measurement | User decisions before plan approval; exact wire/ownership and measured tradeoffs are in the approved plan, spec and core README | yes |
 | 2026-11-13 | F6 | Test harnesses retry group-only Busy/StagingBusy rejections (in addition to Withdrawn), bounded to ten attempts; production SDK/CLI stays unchanged | CI's existing sub-enable scenario raced a loop's atomic slot claim. The rejection occurs before mutation; unit tests and independent review confirm timeouts/actions/expected refusals are not broadened | n/a |
 | 2026-11-13 | F6 | Codex plans/builds and independent Codex review at high effort. Calibration is staged as typed persistent params and committed by explicit SAVE/restored at boot; runtime health/read faults invalidate data and warn, with consumer-selected response; preserve all modes/signals | Explicit user decisions before plan approval; fixed bounded paused-action updates retain existing shadows/A/B formats | yes |
@@ -210,3 +210,4 @@ One row per run. The stack marks and what was never run are in "Hardware notes".
 | 2026-11-13 | F7a | Normal firmware (PSRAM) via `bench_fw.py normal`; `capture_smoke.py --expect-psram` at 1 kHz: capacity 4 MiB, threshold step response (trigger at 250, peak 5.0), manual TRIGGER at divider 10 with CaptureDone event, ABORT/WrongState, longest tick 51–53 us (1 ref) / 68–73 us (16 refs), never irregular; COM4 stack capture during an armed capture (minimum 1792); legacy, core, safety and CLI smoke. Original loops/rates/watchdog restored | Pass |
 | 2026-11-13 | F6 | Normal firmware via `bench_fw.py normal`; `imu_smoke.py` mock signals/calibration/rejection/SAVE/reboot/modes and real `--missing-sensor` on 8/9 (failed instance, InitFailed, ARM StartFailed); COM4 stack captures during stable holds (minimum 1580); legacy time_sync/diag, core, safety and CLI smoke. Final original loops 1000/100 Hz, status 10 Hz, watchdog 200 ms, idle groups; bench stall refused | Pass; real sensor/calibration quality deferred |
 | 2026-11-14 | F7b | Normal and isolated XiP firmware via guarded helper; capture 1/16 refs and generated step/chirp at 1 kHz on controller/motor mocks, disarmed SAVE measurement; normal restored, 45 s log-chirp/capture stack observation (minimum 1644 B). Final legacy/core/safety/CLI and 1 kHz mock-cascade smoke; original rates/watchdog/status/layout and idle groups/capture/testgen restored, normal bench op refused. [Measured results](f7b-implementation.md#measured-results-2026-11-14) | Pass; real motor deferred |
+| 2026-11-14 | F8 | 22 UART HIL cases; guarded normal firmware, protocol/core/safety/CLI smokes before/after; 180 s CH343 idle and 1 kHz subscription/capture runs: held-out residual p95 37.8/207.0 us, prediction-change p95 4.2/26.4 us; stacks all >1 KB, legacy task absent, original layout/settings/volatile state restored and bench op refused. [Results](f8-implementation.md#measured-results-2026-11-14) | Pass; Pi jitter deferred |

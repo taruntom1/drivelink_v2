@@ -132,3 +132,7 @@ Per-loop requests use Ready/Applying/Applied staging; terminal snapshots are
 immutable behind a release/acquire pending flag, published before live Done
 so restart cannot overwrite a completion. Only 32-bit-or-smaller atomics are
 used, in internal RAM. See the core README for ownership and snapshot rules.
+
+F8 time pings bypass the config queue and never block/retry in RX. A queued
+time reply owns its bytes and stamp flag; only TX patches it. Device time is
+monotonic since boot, never host-set. See `docs/protocol/time.md`.

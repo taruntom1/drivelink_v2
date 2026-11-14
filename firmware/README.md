@@ -28,21 +28,17 @@ In short, it is the real-time robot control runtime that talks to an upstream co
 - Header-only PID kernel (`pid`).
 - The core (`core`): module instances in configurable loops, params, NVS, command and subscription groups, arming and the safety monitor.
 - Motor module types (`mod_motor`): `actuator.pwm_dir`, `feedback.quadrature` and the cascade controller `controller.cascade_pid` (open loop, velocity, position).
-- BNO055 IMU manager (`imu_bmo_055`) with:
-	- Stream enable/disable and period control.
-	- Selectable stream field masks (Euler, quaternion, accel, gyro, mag, temperature, calibration state).
-	- Calibration read/write/apply support.
-- Time synchronization service (`time_sync`) with optional round-trip compensation and periodic sync.
+- BNO055 module (`mod_imu_bno055`) with signals, modes and persistent calibration through core params/actions.
+- Host-initiated time protocol v1 with monotonic RX/TX stamps; the host fits offset/drift. See [time.md](../docs/protocol/time.md).
 
 ## Runtime Architecture
 
 The firmware entry point (`firmware/main/main.cpp`) brings up the stack in this order:
 
-1. `uart_comm::UartComm`
-2. `time_sync::TimeSync`
-3. `imu_bmo_055::ImuBno055Manager`
-4. the core and its `CoreLink`
-5. the diag reporter
+1. diagnostic state
+2. `uart_comm::UartComm`
+3. the core and its `CoreLink` (all module types and time pings)
+4. the diag reporter
 
 A part that fails to start is reported through diag and left out; the rest keep running. `firmware/main/CLAUDE.md` has the details.
 
@@ -61,10 +57,9 @@ A part that fails to start is reported through diag and left out; the rest keep 
 	- The core and its OS adapters (see their READMEs).
 - `firmware/components/mod_motor`, `mod_mock`:
 	- Motor module types and the mocks (see their READMEs).
-- `firmware/components/imu_bmo_055`:
-	- BNO055 device management and telemetry/control protocol integration.
-- `firmware/components/time_sync`:
-	- Request/response time sync protocol and periodic synchronization task.
+- `firmware/components/mod_imu_bno055`:
+	- Instance-owned BNO055 driver, module signals and persistent calibration.
+- Time ping codecs live in `protocol/`; CoreLink and the existing UART TX task supply device timestamps. The legacy `time_sync` component is removed.
 
 ## Protocol-Oriented Control Model
 

@@ -4,7 +4,7 @@ This file is the repo map and holds the rules that cross areas. Each area has it
 
 ## What this is
 
-DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The core has configurable loops, groups, safety, sources, motor modules and the F6 `imu.bno055` module with persistent calibration, F7a capture into PSRAM and F7b per-loop test signal generation, over core wire v7. Only the legacy `time_sync` manager remains, until F8. The host follows [plans/host-architecture.md](plans/host-architecture.md).
+DriveLink v2 is a robot motion stack: ESP32-S3 firmware (ESP-IDF 5.5.2, C++) and generic host software over binary UART. The core has configurable loops, groups, safety, sources, motor modules and the F6 `imu.bno055` module with persistent calibration, F7a capture into PSRAM and F7b per-loop test signal generation, over core wire v7. F8 adds host-initiated time protocol v1 with TX stamping; no legacy manager remains. The host follows [plans/host-architecture.md](plans/host-architecture.md).
 
 ## Repo map
 
@@ -44,7 +44,7 @@ The firmware is being rebuilt to [plans/firmware-architecture.md](plans/firmware
   - New components get a short README (purpose, API, rules) when they land.
   - There are no `review/` statuses or `TODO.md` to update.
 - **Legacy code.**
-  - `time_sync` keeps working until F8 ports it (`motor_manager` was removed in F5b, `imu_bmo_055` in F6).
+  - All legacy managers are removed: `motor_manager` in F5b, `imu_bmo_055` in F6 and `time_sync` in F8. Their former wire handlers must not be restored.
   - Don't improve code that a later phase deletes. Fix it only if it blocks the current step.
   - Their wire format is defined by their code and native tests. The deleted READMEs are in git history (`git show 7a4d693:components/<name>/README.md`).
 - **Roles.** The session plans, builds and reviews the step itself (Opus 5.5, high). It spawns an independent review agent (Opus, at the step's review effort) only when the step needs one: wire, safety, persistence or concurrency changes it can't fully cover itself, or a large diff. `/overhaul-step` has the details.

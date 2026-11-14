@@ -16,7 +16,7 @@ A failed PTY drain cancels/drops queued replies and effects, retaining the maste
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v5, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v7, time v1, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock
@@ -81,3 +81,8 @@ Host integration runs step/chirp and handoff tests at 50 Hz; deterministic
 native tests cover exact timing and concurrent loops. Its TCP endpoint also
 supports the test-only lost-ARM-response proxy, which verifies cleanup DISARM
 in both `testgen-run` and `cmd-run`.
+
+F8 time requests use the shared exact codecs, take RX time at dispatch, and
+patch TX time/CRC only when their queued write begins. They have the same
+reliable-response deadline as core/diag replies, including on PTY. Malformed
+requests are dropped and counted. See `docs/protocol/time.md`.

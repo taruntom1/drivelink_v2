@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v5](../../../docs/protocol/core.md).
+[core v7](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -343,3 +343,13 @@ No steady-state allocation, OS wait, spin, logging or watchdog feed occurs in
 generation. Disarm retains the monitor's independent emergency force. XiP is
 an isolated evaluation profile, off in normal firmware; all shared state stays
 internal even when code/rodata are mapped into PSRAM.
+
+## Time (F8)
+
+CoreLink answers time protocol v1 directly on the UART RX task, including in
+safe mode. A valid ping queues an exact reply with RX time and requests a
+TX-task timestamp/CRC patch. Malformed/version-mismatched requests increment
+`core.BadTimeRequest`; an exhausted command pool increments `ResponseDropped`.
+Neither path blocks, feeds the watchdog, allocates or starts a task. Callback
+registration is reset before captured state is destroyed. The pure codecs and
+wire boundaries are in [time.md](../../../docs/protocol/time.md).

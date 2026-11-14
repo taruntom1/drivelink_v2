@@ -65,3 +65,8 @@ CMake package for colcon. `host/test/install_smoke.py` checks the protocol and
 host exports together using an external consumer.
 
 `protocol/test/` holds the doctest cases for every hand-written header and for the generated registry and descriptor tables (`test_defs.cpp`; the type headers it uses are generated from the generator's test fixtures at build time). They are compiled into the firmware's native test build (`firmware/test/native`, using its vendored doctest) until `protocol/` gets its own test target.
+
+Time protocol v1 is the pure `time_codec.hpp`: exact request/reply codecs and
+`time_wire::stampFrame` for a validated encoded reply's TX timestamp and CRC.
+It takes the timestamp from its caller and never reads a clock or allocates.
+The contract and transport boundaries are in [time.md](../docs/protocol/time.md).

@@ -8,7 +8,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 - The `protocol/` library: CRC, framing, scanner, wire codec and the generated definitions. Its tests live in `protocol/test/` and are compiled into this build.
 - `core_os`'s native backend, with the in-memory KV store and its fault injection (power loss, failed and torn writes).
 - The pure `core`: registry, bind API, values, loops, param batches, the pending layout and its validation, the wiring order, the NVS blobs and A/B persistence, safe mode, the boot, and a threaded end-to-end run.
-- The time_sync and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator; the pure BNO055 driver/state over its fake bus.
+- The time-v1 and diag protocol codecs, diag's slot table, the PID kernel and the velocity estimator; the pure BNO055 driver/state over its fake bus.
 
 **How it is built:**
 - A plain CMake project (target `native_tests`) with a vendored doctest (`firmware/test/native/third_party/doctest`).
@@ -39,7 +39,7 @@ How the firmware tests are built and what they cover. The commands are in [firmw
 
 Standalone scripts in `firmware/test/uart_comm/`, for the **main** firmware, not the test app. Update them with any change to what they check.
 
-- `smoke_main_firmware.py --port COMx` checks diag and time_sync with their current protocol versions. The legacy IMU protocol was removed in F6.
+- `smoke_main_firmware.py --port COMx` checks diag v3 and time v1 (including malformed-ping drops and TX CRC). The legacy IMU protocol was removed in F6.
 - `smoke_core_firmware.py` exercises the core with mock instances and removes them again. `--safe-mode` needs a build with `CONFIG_CORE_BENCH_CRASH=y`; flash the normal firmware again afterwards.
 
 The ports and the state of the bench board are in `plans/overhaul-status.md` ("Hardware notes").
@@ -184,3 +184,11 @@ cancellation and disarmed SAVE timing. `capture_smoke.py` supplies the matched
 `bench_fw.py normal` / `bench_fw.py xip`, then restore normal and verify the
 bench op is refused. Close COM4 before cleanup reboots. The real-motor mode
 and pass criteria are in Deferred hardware checks; no motor has run yet.
+
+F8 adds exact time codecs/TX patch tests in `protocol/test/test_time_codec.cpp`
+and host estimator/lifecycle tests. The existing host integration checks TCP
+and Linux PTY pings, malformed-drop counters, and a short traffic/capture dry
+run of `host/test/time_smoke.py`. Run that script for 180 s on the CH343 both
+idle and with `--traffic`; raw I/O timestamps, held-out low-RTT residuals and
+prediction changes are the evidence. The Pi `--jitter-us 100` campaign remains
+deferred in the status file. These suites join the existing validator checks.

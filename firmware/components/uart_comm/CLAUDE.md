@@ -36,3 +36,10 @@ Both paths use only buffers allocated in the constructor or in `openStream()`.
 ## Tests
 
 The hardware-in-the-loop tests are in `firmware/test/uart_comm/`; see [firmware/test/CLAUDE.md](../../test/CLAUDE.md).
+
+F8 adds `sendCommand(..., stamp_time=true)`, accepted only for exact time-v1
+responses. Each pool entry owns its stamp metadata, set before publishing its
+ready index and cleared before recycling. The TX task patches the timestamp
+and CRC immediately before driver submission. Do not add deferred callbacks,
+hold a caller's pointer, drain UART for a ping, or patch ordinary frames.
+Driver/FIFO backlog remains measurement uncertainty (`docs/protocol/time.md`).
