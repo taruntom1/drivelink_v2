@@ -24,9 +24,10 @@ logs its internal choices.
 | Step | Content | Depends on | Hardware check | Review |
 |---|---|---|---|---|
 | T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | — | no | self |
-| H1a | Typed library: types, device model snapshot, typed services and errors, CLI on the typed API, host-windows CI | T0 | bare board: CLI smokes | independent (large diff) |
-| H1b | Async path, events into the model, group buffers, command keepalives, periodic time and timestamp mapping | H1a | bare board: time, 1 kHz groups, smokes | independent |
-| H1c | Device identity, core v9 (firmware, host, vdev, docs) | H1a; may run beside H1b | bare board: identity, name persistence, smokes | independent |
+| H1a-1 | Typed library: types, services and errors, CLI on the typed API | T0 | bare board: CLI smokes | independent (large diff) |
+| H1a-2 | Device model snapshot and host-windows CI | H1a-1 | bare board: CLI smokes | independent |
+| H1b | Async path, events into the model, group buffers, command keepalives, periodic time and timestamp mapping | H1a-2 | bare board: time, 1 kHz groups, smokes | independent |
+| H1c | Device identity, core v9 (firmware, host, vdev, docs) | H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | independent |
 | H2a | GUI foundation: app, Theme from Figma tokens (G8 folded in), style, shell, status bar, DISARM/Esc, Qt adapters, test and screenshot tooling, vdev scenario hooks, `setup_linux.sh` | H1b, H1c | vdev | independent |
 | H2b | Connect and Device screens | H2a | bare board: GUI scenarios | independent |
 | H2c | Layout screen | H2b | vdev | self |
@@ -72,32 +73,47 @@ Runs before the first library step.
 - The firmware native tests build with MSYS2 UCRT64 GCC 16.2 instead of Strawberry; `tools/validate.py` names the tools explicitly.
 - The native-tests CI job runs in an `ubuntu:26.04` container.
 
-## H1a Typed library
+## H1a-1 Typed services and CLI
 
-**Depends on** T0. **Architecture:** "`libdrivelink`" (Errors, Device model, Services), "`drivelink-cli`", "CI".
+**Depends on** T0. **Architecture:** "`libdrivelink`" (Errors, Services), "`drivelink-cli`".
 
 Scope:
 - Typed public API in namespace `drivelink`: values (descriptor-typed scalars and enums), descriptors (types with their realtime requirement, items with kind, type, unit, range, enum names and flags, diag codes), `GET_INFO`, instances (configured and pending), groups, capture, testgen, OTA status, diag entries and events, status frames.
 - Errors: `drivelink::Error` kinds kept; `DeviceError` with result, detail, family/op and `outcome_unknown`. Sync calls throw.
 - Typed services for every family `Client` covers today, synchronous.
-- The device model as a snapshot: the connect sequence (info, version and safe-mode check, descriptors, configured and pending instances, every param including `limits.*`) and an explicit reload. Event-driven updates come in H1b.
 - nlohmann JSON leaves the public headers. The CLI owns all JSON formatting; its readable and `--json` output and exit codes do not change. Capture the current outputs against vdev before the refactor and keep them as golden tests.
-- The host-windows CI job: a Windows runner with Qt's MinGW 13.1 (and Qt 6.12.0, needed from H2a) through aqtinstall, pinned and cached, running `validate.py --only host-win`. It enforces the GCC 13.1 C++23 floor.
-- Docs: `host/libdrivelink/README.md`, `host/README.md`, `host/CLAUDE.md` (the "until H1a" sentence), `docs/development.md` (the Windows job).
+- Docs: `host/libdrivelink/README.md`, `host/README.md`, `host/CLAUDE.md` (typed API/error rules), `docs/development.md` (host verification).
 
-Not in scope: the async path, events, group buffers, time mapping (H1b); identity (H1c).
+Not in scope: the model snapshot and Windows CI (H1a-2); the async path, events, group buffers, time mapping (H1b); identity (H1c).
 
-Tests: unit tests for parsing into the typed structs, error mapping and model building against vdev; CLI golden output; the existing integration and installed-package smoke on the typed API.
+Tests: unit tests for parsing into the typed structs and error mapping; CLI golden output; the existing integration and installed-package smoke on the typed API.
 
 Hardware check (bare board): the CLI smokes that cover the moved services: `hardware_smoke.py`, motor, IMU, capture and testgen with mocks, loop affinity, and `ota_smoke.py` with an `ota-image` candidate. Restore the board to the "Board state" in [host-status.md](host-status.md).
 
 Review: independent, because every service is rewritten.
 
-Natural cut if large: H1a-1 types, errors, services and the CLI; H1a-2 the device model and host-windows CI.
+User-approved split (2026-11-15): this step and H1a-2 replace H1a. H1b and
+H1c wait for both parts. [Approved plan and results](h1a-1-implementation.md).
+
+## H1a-2 Device snapshot and Windows CI
+
+**Depends on** H1a-1. **Architecture:** "Device model", "CI".
+
+Scope:
+- The device model as a snapshot: the connect sequence (info, version and safe-mode check, descriptors, configured and pending instances, every param including `limits.*`) and an explicit reload. Event-driven updates come in H1b.
+- The host-windows CI job: a Windows runner with Qt's MinGW 13.1 (and Qt 6.12.0, needed from H2a) through aqtinstall, pinned and cached, running `validate.py --only host-win`. It enforces the GCC 13.1 C++23 floor.
+- Build on H1a-1's typed services and descriptors; JSON stays in CLI.
+- Update the model's API README, host/development docs and status/handoff.
+
+Tests: snapshot construction and explicit reload against vdev, including safe
+mode, pending/configured layouts, sparse IDs, discovered enums and every param
+including limits; installed consumers and the Windows CI check.
+
+Hardware check: bare-board CLI smokes. Review: independent.
 
 ## H1b Async path, events, group buffers and time
 
-**Depends on** H1a. **Architecture:** "Session", "Time", "Device model", "Threading".
+**Depends on** H1a-2. **Architecture:** "Session", "Time", "Device model", "Threading".
 
 Scope:
 - The asynchronous request path with the contract in the architecture: `Completion<T>`, a dispatcher per session, exactly-once completion through the dispatcher (never inline, never on the I/O thread), reply-order delivery, cancel without undo, `outcome_unknown` for sent mutations, close fails everything pending. The sync facade wraps it.
@@ -116,7 +132,7 @@ Review: independent (concurrency, time).
 
 ## H1c Device identity (core v9)
 
-**Depends on** H1a; may run beside H1b (they share `libdrivelink`, so the second to merge rebases). **Proposal:** [todo-device-name.md](todo-device-name.md). **Architecture:** "Device identity".
+**Depends on** H1a-2; may run beside H1b (they share `libdrivelink`, so the second to merge rebases). **Proposal:** [todo-device-name.md](todo-device-name.md). **Architecture:** "Device identity".
 
 Scope:
 - `GET_INFO` gains the device id (the factory MAC, 6 bytes) and the name (length-prefixed UTF-8, up to 16 bytes, empty by default). Recheck the field layout against `docs/protocol/core.md`.

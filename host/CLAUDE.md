@@ -1,8 +1,9 @@
 # Host rules
 
 Read the root rules, [host architecture](../plans/host-architecture.md) for the
-target, and [README.md](README.md) for builds/usage. Until H1a, JSON remains the
-public service result; H1a moves it into CLI and preserves CLI output.
+target, and [README.md](README.md) for builds/usage. Public service results,
+descriptors, values and events are typed C++. JSON formatting/dependencies live
+in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
 
 - `libdrivelink` is C++23 without Qt/ROS/firmware dependencies. Public namespace
   is `drivelink`; protocol code is `drivelink::protocol`. Asio is private.
@@ -18,7 +19,10 @@ public service result; H1a moves it into CLI and preserves CLI output.
   expose loss counters.
 - Correlate type, sequence, family and op. Retry only known-idempotent reads;
   a mutation timeout has an uncertain outcome. Retire timed-out IDs until
-  reconnect; fail explicitly on exhaustion.
+  reconnect; fail explicitly on exhaustion. Preserve request family/op and
+  outcome_unknown through service parsing and OTA cleanup; malformed mutation
+  replies are uncertain, local preflight errors are not. Read classification
+  and automatic retry eligibility are separate.
 - Time ping IDs, boot/session clock generations and timeout retirement stay
   separate from core sequence IDs. Stamp on I/O; ClockEstimator stays
   single-caller, bounded and monotonic. See [time.md](../docs/protocol/time.md).

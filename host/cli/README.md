@@ -27,7 +27,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v7 before any requested mutation.
+vdev. Every connection checks core v8 before any requested mutation.
 
 F4c source parameters have `is_source: true` in item JSON (flag 0x80).
 Configure them through `set`, using the numeric packed reference
@@ -44,6 +44,16 @@ Watch commands produce one JSON envelope per line (NDJSON). Exit codes: 0
 success, 1 internal failure, 2 usage/value error, 3 connection, 4 timeout,
 5 device rejection, 6 malformed/incompatible protocol. Help does not open a port.
 Writes never retry; a write timeout has an unknown outcome.
+
+The CLI consumes typed library results and owns JSON formatting in
+`src/format.cpp`. CTest's `host-cli-golden` compares 60 readable/JSON outputs
+against vdev; `host-cli-replay` compares 12 deterministic event, action,
+subscription, capture and CSV outputs. Fixtures were captured from the original
+2793125 CLI before migration, with only documented dynamic fields normalized.
+Linux replay also interrupts an in-flight testgen START and requires DISARM
+plus the original null-status output when no STATUS has been read. Run these
+through the normal host validation checks; do not re-record fixtures to make
+a changed implementation pass.
 
 Loops are built-in type 5. For example, `add 5 fusion` allocates its loop id;
 `set 5:2:1=250` changes its rate, and `set 5:2:2=true` stages its real-time flag.

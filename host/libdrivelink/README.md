@@ -1,7 +1,8 @@
 # libdrivelink
 
-First host slice: C++23 (GCC 13.1 minimum), standalone Asio serial/TCP, framed sessions and core
-system/layout/describe/param/action services, status and diagnostic v3 decoding.
+C++23 (GCC 13.1 minimum), standalone Asio serial/TCP and synchronous typed
+services for every current core family, status and diagnostic v3 decoding.
+Public headers contain no Qt, ROS, Asio or JSON types.
 It uses device-supplied descriptors; it contains no module-specific code.
 
 ```cpp
@@ -13,7 +14,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v7 and sets the device's maximum receive payload; the scanner's hard limit is
+v8 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 
@@ -37,26 +38,53 @@ mutations never retry. After a write timeout query the device before deciding
 whether to repeat it. Successful request IDs wrap normally.
 
 Streams/events are copied into a bounded queue. `nextEvent` drains it; overflow
-drops oldest and increments `droppedEvents()`. `Client::event` validates/decode
-status and all four diag event kinds. The client does not reconnect or replay
+drops oldest and increments `droppedEvents()`. `Client::event` validates and decodes
+status, core events and all four diag event kinds into an `Event` variant. The client does not reconnect or replay
 configuration automatically. Reconnect after a reboot and call `info()` again.
 
-`Client` requires one caller. Its service results are nlohmann JSON values;
-`Reply::result`/`detail` retain device failures. `Error` distinguishes usage,
-connection, timeout, rejected operation and malformed/incompatible protocol.
-`parseValue`/`valueJson` convert scalar slots using wire descriptor types.
-Integers never narrow silently; floats reject non-finite values. Range clamping
-is left to the firmware, and SET returns the actual applied bits and a
-PendingReboot outcome where appropriate. `Client::get/set` accept atomic batches
-of at most 64 refs; the caller controls their domains.
+`Client` requires one caller. Results are named C++ structs in
+[`types.hpp`](include/drivelink/types.hpp): descriptors, instances, device info,
+param/action results, group configuration, capture, testgen, OTA and diagnostics.
+`Event` distinguishes status, capture/testgen completion, diagnostic record,
+counter, cleared and Boot events; unknown message types retain a raw `Frame`.
+The model snapshot and reload API land in H1a-2; event-driven updates in H1b.
+
+`parseValue(descriptor, text, enums)` parses into an exact 32-bit wire slot.
+`decodeValue(ValueType, bits)` returns a `Value` variant (bool, u8/u16/u32,
+i32, f32 or a distinct `EnumValue`); `valueBits(value)` performs the reverse
+conversion. Enum entries are discovered from the device. Conversion rejects
+narrowing, invalid booleans and non-finite floats. Range clamping remains on
+the firmware. Param/action/capture wire results preserve raw slot bits; apply
+the corresponding discovered descriptor when interpreting them. GET/SET accept
+atomic batches of at most 64 refs. SET returns actual applied bits and the
+pending-reboot result. `CaptureData` holds a typed `status` and sample rows;
+`CaptureStatus::trigger_index` is optional. OTA digests are 32-byte arrays.
+
+```cpp
+const drivelink::Ref ref{0, 0, 4}; // core/system watchdog parameter
+auto descriptor = client.item(ref);
+auto result = client.get({&ref, 1});
+drivelink::Value value = drivelink::decodeValue(descriptor.value_type, result.values.at(0));
+```
+
+Sync calls throw `Error` (usage, connection, timeout, rejection or protocol).
+`DeviceError` represents a device refusal, retaining result/detail and request
+family/op. Request context and `outcome_unknown` live in the base `Error`, so
+copying into a future `std::expected<T, Error>` preserves them. Diagnostic
+queries use family zero. A submitted mutation that times out, disconnects or
+gets a malformed response is uncertain; query the device before deciding to
+repeat it. Queued writes may still reach the peer. Local preflight failures
+remain certain. Read classification is separate from retry eligibility:
+testgen STATUS remains non-retried, but never implies a mutation. OTA cleanup
+preserves error metadata and failed reconciliation retains uncertainty.
 
 The package installs headers, a static library and `drivelinkConfig.cmake`.
 Consumers use `find_package(drivelink REQUIRED)` and link
-`drivelink::drivelink`. It finds `drivelink_protocol`, Threads and nlohmann_json
-3.11.3 EXACT: JSON is part of the public ABI, so another patch/minor version
-cannot be substituted without rebuilding the library and its consumers.
-Asio headers stay private. `package.xml` lets colcon discover the CMake package;
-the superbuild is ignored by colcon. No project license grant has been added.
+`drivelink::drivelink`. Only `drivelink_protocol` and Threads are package
+dependencies; Asio stays private. JSON formatting and its pinned dependency
+belong to the CLI. Installed-consumer tests explicitly disable JSON package
+discovery. `package.xml` lets colcon discover the CMake package; the superbuild
+is ignored by colcon. The root proprietary LICENSE applies.
 
 Group services are `groups`, `subConfigure`, `cmdConfigure`, `subEnable` and
 `groupClear`. Mutations return epoch/channel; LIST includes all slots and refs.
@@ -64,16 +92,16 @@ Group services are `groups`, `subConfigure`, `cmdConfigure`, `subEnable` and
 keepalive. It never waits for a peer and has no stream acknowledgement. The
 bounded queue can refuse a send. Retain the session until writes drain; the
 short-lived CLI uses an ordered read before closing. Device command validation
-and the arming gate still apply. F4a sends no automatic keepalives or ARM.
+and the arming gate still apply. Automatic keepalives remain H1b work; the caller owns arming.
 
 `commandPayload` is a pure encoder. `decodeSubscription(frame, group,
 descriptors)` checks exact lengths and converts values in configured order;
-it returns null for a stale epoch/channel. Resolve descriptors from the device.
+it returns `std::nullopt` for a stale epoch/channel. Resolve descriptors from the device.
 Reconfigure/reload group metadata explicitly after a mutation. The bounded
 Session event queue carries subscriptions as well as status and diagnostics.
-The cached, lock-free device/time model remains H1 work.
+The snapshot is H1a-2; lock-free buffers, async calls and time mapping are H1b.
 
-Arming wrappers use core v5: arm(), disarm() and acknowledgeFault(). Session
+Arming wrappers use core v8: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
 read-only system params; Client::groups retains convenience capacity fields.
 

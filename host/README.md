@@ -2,9 +2,11 @@
 
 `libdrivelink` provides serial/TCP sessions and the current core families.
 `drivelink-cli` drives the ESP32 or `drivelink-vdev` with identical commands.
-The library has no Qt or ROS dependency. F8 supplies time pings and a reusable
-clock estimator; automatic timestamp mapping, the cached device model and
-the rest of H1 remain planned.
+The library has no Qt or ROS dependency. All service results and events are
+typed C++; JSON formatting belongs to the CLI, whose output stays unchanged.
+The device snapshot and Windows CI land in H1a-2. F8 supplies time pings and a
+reusable clock estimator; async calls, buffers and timestamp mapping are H1b.
+See [the library API](libdrivelink/README.md).
 
 ## Build
 

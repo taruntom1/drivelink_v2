@@ -1,6 +1,6 @@
 # H1a-1: typed services and CLI
 
-Status: approved by the user on 2026-11-15; implementation in progress. Base: `origin/host_overhaul`
+Status: approved by the user on 2026-11-15; implemented; in review. Base: `origin/host_overhaul`
 (`2793125`); branch: `codex/overhaul-H1a-1`; PR target: `host_overhaul`.
 
 ## Approved scope decisions
@@ -104,3 +104,27 @@ host_overhaul. Put the PR link in the H1a-1 row and hand off H1a-2. If the diff
 exceeds the review-size limit despite this split, bring a further split to the
 user before expanding scope. Wire, safety or later-step changes also require
 the user's decision before implementation.
+
+## Results (2026-11-15)
+
+- Full validation passed all seven checks on 32be684 after fixes; final PR
+  revisions rerun the gate and reuse checks whose code inputs are unchanged.
+- 36 Windows host unit cases / 1799 assertions passed; host-linux also passed.
+  The CLI retains 60 vdev goldens and 12 deterministic replay goldens captured
+  from 2793125. Linux additionally checks SIGINT during START, absent status
+  and DISARM. Both installed typed consumers pass with JSON discovery disabled.
+- Independent Codex review at high effort found two issues, both fixed and
+  re-reviewed: preserve null testgen status if interrupted before polling;
+  preserve context/uncertainty on malformed service replies, including
+  pipelined OTA WRITE. No rejected findings or remaining actionable findings.
+  Self-review also separated read classification from retry eligibility and
+  preserved uncertainty when OTA reconciliation fails. Retry/command/OTA
+  confirmation behavior is unchanged.
+- All seven planned bare-board smoke scripts passed after COM3 was reconnected.
+  Exact original LP ELF b8ad3d153466c34d400e15757674e9cd937575b055f1307a658962d514449b94
+  is restored and confirmed in ota_0, with original layout/params, disarmed state
+  and idle groups. Normal firmware refuses bench commands. Results are in
+  [hardware-log.md](hardware-log.md); local evidence is in `build/h1a-bench/`.
+- No wire, firmware, safety or later-feature behavior change. Approved workflow
+  deviations are the Codex model exception and H1a split; H1a-2 is next after
+  this PR merges. No new deferred hardware check is needed.
