@@ -320,9 +320,14 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 const auto prediction=before.drift_valid?before.map(s.esp_rx_us):0.0;
                 const bool accepted=estimator.add(s);
                 const auto m=estimator.model(s.host_rx_us);
+                auto mapped=mapTime(session.clockModel(),s.esp_rx_us,s.boot_generation);
+                if(session.generation()!=s.boot_generation) {mapped.valid=false;}
                 samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
                     {"esp_tx_us",s.esp_tx_us},{"host_rx_us",s.host_rx_us},{"boot_generation",s.boot_generation},
                     {"accepted",accepted},{"rtt_us",valid?Json(rtt):Json(nullptr)},
+                    {"mapping_valid",mapped.valid},{"mapping_generation",mapped.generation},
+                    {"mapped_host_us",mapped.valid?Json(mapped.host_us):Json(nullptr)},
+                    {"mapped_uncertainty_us",mapped.valid?Json(mapped.uncertainty_us):Json(nullptr)},
                     {"prior_prediction_us",before.drift_valid?Json(prediction):Json(nullptr)}, {"prior_slope",before.slope},
                     {"model",{{"offset_valid",m.offset_valid},{"drift_valid",m.drift_valid},
                         {"device_reference_us",m.device_reference_us},{"host_reference_us",m.host_reference_us},
