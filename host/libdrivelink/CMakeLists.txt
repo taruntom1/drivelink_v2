@@ -11,7 +11,7 @@ add_library(drivelink STATIC src/session.cpp src/client.cpp src/values.cpp src/g
 add_library(drivelink::drivelink ALIAS drivelink)
 target_compile_features(drivelink PUBLIC cxx_std_23)
 target_include_directories(drivelink PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-target_link_libraries(drivelink PUBLIC drivelink::protocol nlohmann_json::nlohmann_json PRIVATE $<BUILD_INTERFACE:drivelink_asio> Threads::Threads)
+target_link_libraries(drivelink PUBLIC drivelink::protocol PRIVATE $<BUILD_INTERFACE:drivelink_asio> Threads::Threads)
 if(WIN32)
   target_link_libraries(drivelink PRIVATE ws2_32 mswsock)
 endif()

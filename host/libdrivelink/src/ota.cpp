@@ -13,18 +13,18 @@ constexpr uint8_t kFamily=static_cast<uint8_t>(p::defs::Family::Ota);
 uint8_t op(p::defs::OtaOp value) { return static_cast<uint8_t>(value); }
 [[noreturn]] void malformed() { throw Error(ErrorKind::Protocol,"malformed OTA response"); }
 void empty(const Reply &reply) { if (!reply.body.empty()) { malformed(); } }
-void checkReply(const Reply &reply) {
+void checkReply(const Reply &reply,uint8_t operation) {
     if (reply.result) {
         if (reply.detail==static_cast<uint8_t>(p::defs::Detail::OtaOffset)) {
             Reader r(reply.body.data(),reply.body.size());const auto offset=r.readU32Le();if (!r.done()) { malformed(); }
-            throw Error(ErrorKind::Rejected,"OTA offset/data rejected; expected offset "+std::to_string(offset),reply.result,reply.detail);
+            throw DeviceError("OTA offset/data rejected; expected offset "+std::to_string(offset),reply.result,reply.detail,kFamily,operation);
         }
-        empty(reply);throw Error(ErrorKind::Rejected,"OTA operation refused",reply.result,reply.detail);
+        empty(reply);throw DeviceError("OTA operation refused",reply.result,reply.detail,kFamily,operation);
     }
     if (reply.detail) { malformed(); }
 }
-uint32_t next(const Reply &reply) {
-    checkReply(reply);Reader r(reply.body.data(),reply.body.size());const auto n=r.readU32Le();
+uint32_t next(const Reply &reply,uint8_t operation) {
+    checkReply(reply,operation);Reader r(reply.body.data(),reply.body.size());const auto n=r.readU32Le();
     if (!r.done()) { malformed(); }return n;
 }
 Bytes writeBody(uint32_t offset,std::span<const uint8_t> bytes) {
@@ -43,8 +43,9 @@ Bytes readOtaImage(const std::string &path) {
     if (!p::otaImageIdentity(bytes,identity)) { throw Error(ErrorKind::Usage,"expected a complete unsigned ESP32-S3 application .bin"); }
     return bytes;
 }
-Json Client::otaStatus() {
-    const auto reply=m_session.request(kFamily,op(p::defs::OtaOp::Status));checkReply(reply);
+OtaStatus Client::otaStatus() try
+{
+    const auto reply=m_session.request(kFamily,op(p::defs::OtaOp::Status));checkReply(reply,6);
     Reader r(reply.body.data(),reply.body.size());
     const auto state=r.readU8(),running=r.readU8(),selected=r.readU8(),pending=r.readU8();
     const auto size=r.readU32Le(),offset=r.readU32Le(),capacity=r.readU32Le();
@@ -55,47 +56,54 @@ Json Client::otaStatus() {
         chunk+10U>m_max_payload ||
         !window || window>p::kOtaWindow || stage>8 || (state==3 && (!stage || !error)) ||
         (state!=3 && (stage || error))) { malformed(); }
-    return {{"state",state},{"running_slot",running},{"boot_slot",selected},{"pending_confirm",bool(pending)},
-            {"size",size},{"offset",offset},{"capacity",capacity},{"chunk_bytes",chunk},{"window",window},
-            {"backend_error",static_cast<int32_t>(error)},{"stage",stage},{"sha256",hex(digest)},{"elf_sha256",hex(elf)}};
-}
-uint32_t Client::otaBegin(uint32_t size,const p::Sha256Digest &digest) {
+    return {state,running,selected,bool(pending),size,offset,capacity,chunk,window,
+            static_cast<int32_t>(error),stage,digest,elf};
+} catch(Error &e) { contextualize(e,9,6,false);throw; }
+uint32_t Client::otaBegin(uint32_t size,const p::Sha256Digest &digest) try
+{
     Bytes body(36);Writer w(body.data(),body.size());w.appendU32Le(size);for (auto b:digest) { w.appendU8(b); }
-    const auto offset=next(m_session.request(kFamily,op(p::defs::OtaOp::Begin),body));
+    const auto offset=next(m_session.request(kFamily,op(p::defs::OtaOp::Begin),body),1);
     if (offset>size) { malformed(); }return offset;
-}
-uint32_t Client::otaWrite(uint32_t offset,std::span<const uint8_t> bytes) {
-    const auto n=next(m_session.request(kFamily,op(p::defs::OtaOp::Write),writeBody(offset,bytes)));
+} catch(Error &e) { contextualize(e,9,1,true);throw; }
+uint32_t Client::otaWrite(uint32_t offset,std::span<const uint8_t> bytes) try
+{
+    const auto n=next(m_session.request(kFamily,op(p::defs::OtaOp::Write),writeBody(offset,bytes)),2);
     if (offset>UINT32_MAX-bytes.size() || n<offset+bytes.size()) { malformed(); }return n;
-}
-Json Client::otaFinish() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Finish));checkReply(r);empty(r);return {{"finished",true}}; }
-Json Client::otaAbort() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Abort));checkReply(r);empty(r);return {{"aborted",true}}; }
-Json Client::otaConfirm() { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Confirm));checkReply(r);empty(r);return {{"confirmed",true}}; }
-Json Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::function<bool(uint32_t,uint32_t)> &progress) {
+} catch(Error &e) { contextualize(e,9,2,true);throw; }
+OperationResult Client::otaFinish() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Finish));checkReply(r,3);empty(r);return {}; } catch(Error &e) { contextualize(e,9,3,true);throw; }
+OperationResult Client::otaAbort() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Abort));checkReply(r,4);empty(r);return {}; } catch(Error &e) { contextualize(e,9,4,true);throw; }
+OperationResult Client::otaConfirm() try
+{ const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Confirm));checkReply(r,5);empty(r);return {}; } catch(Error &e) { contextualize(e,9,5,true);throw; }
+OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::function<bool(uint32_t,uint32_t)> &progress) {
     p::Sha256Digest identity;
     if (!window || window>p::kOtaWindow || !p::otaImageIdentity(image,identity)) { throw Error(ErrorKind::Usage,"invalid OTA image/window"); }
     const auto digest=p::sha256(image);const auto size=static_cast<uint32_t>(image.size());
     auto status=otaStatus();
-    if (status["pending_confirm"]==true || (status["state"]!=0 && status["state"]!=1)) {
+    if (status.pending_confirm==true || (status.state!=0 && status.state!=1)) {
         throw Error(ErrorKind::Rejected,"OTA is not ready; inspect ota-status and confirm or abort explicitly");
     }
-    if (status["capacity"].get<uint32_t>()<size) { throw Error(ErrorKind::Usage,"image exceeds device OTA capacity"); }
-    window=std::min(window,status["window"].get<uint8_t>());
-    const auto chunk_bytes=status["chunk_bytes"].get<uint16_t>();
+    if (status.capacity<size) { throw Error(ErrorKind::Usage,"image exceeds device OTA capacity"); }
+    window=std::min(window,status.window);
+    const auto chunk_bytes=status.chunk_bytes;
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(5);
-    bool attempted=false;
-    auto verify=[&](const Json &s,uint32_t lower,uint32_t upper) {
-        const auto offset=s["offset"].get<uint32_t>();
-        if ((s["state"]!=1 && s["state"]!=2) || s["size"]!=size || s["sha256"]!=hex(digest) || offset<lower || offset>upper) {
+    bool attempted=false, unresolved=false;
+    auto verify=[&](const OtaStatus &s,uint32_t lower,uint32_t upper) {
+        const auto offset=s.offset;
+        if ((s.state!=1 && s.state!=2) || s.size!=size || s.sha256!=digest || offset<lower || offset>upper) {
             throw Error(ErrorKind::Protocol,"OTA state changed during upload; outcome uncertain");
         }
         return offset;
     };
     try {
-        if (status["state"]==1) { (void)verify(status,0,size); }
+        if (status.state==1) { (void)verify(status,0,size); }
         attempted=true;uint32_t offset=0;
         try { offset=otaBegin(size,digest); }
-        catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; }status=otaStatus();offset=verify(status,0,size); }
+        catch (const Error &e) {
+            if (e.kind!=ErrorKind::Timeout) { throw; }
+            unresolved=e.outcome_unknown;status=otaStatus();offset=verify(status,0,size);unresolved=false;
+        }
         unsigned retries=0;
         while (offset<size) {
             if (std::chrono::steady_clock::now()>deadline) { throw Error(ErrorKind::Timeout,"OTA upload deadline exceeded"); }
@@ -116,11 +124,16 @@ Json Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::
                         Reader r(reply.body.data(),reply.body.size());const auto expected=r.readU32Le();
                         if (!r.done() || expected<offset || expected>end) { malformed(); }reconcile=true;continue;
                     }
-                    const auto n=next(reply);const auto chunk_end=std::min<uint32_t>(end,offset+static_cast<uint32_t>((i+1)*chunk_bytes));
+                    const auto n=next(reply,2);const auto chunk_end=std::min<uint32_t>(end,offset+static_cast<uint32_t>((i+1)*chunk_bytes));
                     if (n<chunk_end || n>end) { malformed(); }
                 }
-            } catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; }reconcile=true; }
+            } catch (Error &e) {
+                contextualize(e,kFamily,2,true);
+                if (e.kind!=ErrorKind::Timeout) { throw; }
+                unresolved=e.outcome_unknown;reconcile=true;
+            }
             const auto current=reconcile ? verify(otaStatus(),offset,end) : end;
+            unresolved=false;
             if (current==offset && ++retries>5) { throw Error(ErrorKind::Timeout,"OTA upload made no progress"); }
             if (current!=offset) { retries=0; }offset=current;
             if (reconcile) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
@@ -129,17 +142,23 @@ Json Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::
         try { (void)otaFinish(); }
         catch (const Error &e) {
             if (e.kind!=ErrorKind::Timeout) { throw; }
-            status=otaStatus();(void)verify(status,size,size);if (status["state"]!=2) { throw; }
+            unresolved=e.outcome_unknown;
+            status=otaStatus();(void)verify(status,size,size);if (status.state!=2) { throw; }
+            unresolved=false;
         }
         status=otaStatus();(void)verify(status,size,size);
-        if (status["state"]!=2) { malformed(); }return status;
+        if (status.state!=2) { malformed(); }return status;
     } catch (const Error &e) {
         std::string message=e.what();
         if (attempted) {
             try { (void)otaAbort();message+="; update aborted"; }
             catch (...) { message+="; cleanup uncertain: reconnect and inspect ota-status; use ota-abort before reboot"; }
         }
-        throw Error(e.kind,message,e.result,e.detail);
+        // Preserve all context (including DeviceError dynamic type) while adding cleanup evidence.
+        if(const auto *device=dynamic_cast<const DeviceError *>(&e)) {
+            auto error=*device;error.outcome_unknown|=unresolved;error.setMessage(message);throw error;
+        }
+        auto error=e;error.outcome_unknown|=unresolved;error.setMessage(message);throw error;
     }
 }
 }

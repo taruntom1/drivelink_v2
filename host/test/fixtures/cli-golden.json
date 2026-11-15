@@ -1,0 +1,2060 @@
+[
+  {
+    "command": [
+      "info"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "build_id: <identity>\ncapture_capacity: 4194304\ndescriptor_hash: 3751748005\nfirmware_version: <identity>\nflags: 0\nloops:\n  [0]\n    flags: 1\n    id: 0\n    name: control\n    rate_hz: 1000\n    realtime: true\n  [1]\n    flags: 0\n    id: 1\n    name: sensor\n    rate_hz: 100\n    realtime: false\nmax_payload: 1024\nprotocol_version: 8\nrunning_instances: 2\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "types"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  loop_mask: 0\n  name: system\n  type: 0\n[1]\n  loop_mask: 0\n  name: loop\n  type: 5\n[2]\n  loop_mask: 1\n  name: controller.cascade_pid\n  type: 32\n[3]\n  loop_mask: 1\n  name: actuator.pwm_dir\n  type: 33\n[4]\n  loop_mask: 1\n  name: feedback.quadrature\n  type: 34\n[5]\n  loop_mask: 2\n  name: imu.bno055\n  type: 48\n[6]\n  loop_mask: 1\n  name: actuator.mock\n  type: 112\n[7]\n  loop_mask: 1\n  name: feedback.mock\n  type: 113\n[8]\n  loop_mask: 2\n  name: imu.mock\n  type: 114\n[9]\n  loop_mask: 3\n  name: fusion.mock\n  type: 115\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "0"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 10\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 3\n  is_source: false\n  kind: 0\n  max_bits: 100\n  min_bits: 1\n  name: status.rate_hz\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: Hz\n  value_type: 2\n[1]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 200\n  description: \n  flags: 10\n  has_max: true\n  has_min: true\n  id: 4\n  is_source: false\n  kind: 0\n  max_bits: 1000\n  min_bits: 20\n  name: watchdog_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[2]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 16\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.loops\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[3]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 17\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.instances\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[4]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 18\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.sub_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[5]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 19\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.cmd_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[6]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 20\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.group_entries\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[7]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 21\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.link_values\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[8]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 4\n  has_max: false\n  has_min: false\n  id: 22\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: limits.capture_refs\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "5"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 100\n  description: \n  flags: 10\n  has_max: true\n  has_min: true\n  id: 1\n  is_source: false\n  kind: 0\n  max_bits: 2000\n  min_bits: 1\n  name: rate_hz\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: Hz\n  value_type: 2\n[1]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 3\n  has_max: false\n  has_min: false\n  id: 2\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: realtime\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 0\n[2]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 2\n  description: Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task.\n  flags: 3\n  has_max: false\n  has_min: false\n  id: 3\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: core\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 6\n[3]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 10\n  description: \n  flags: 3\n  has_max: true\n  has_min: true\n  id: 4\n  is_source: false\n  kind: 0\n  max_bits: 20\n  min_bits: 1\n  name: priority\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 1\n[4]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 4096\n  description: \n  flags: 3\n  has_max: true\n  has_min: true\n  id: 5\n  is_source: false\n  kind: 0\n  max_bits: 16384\n  min_bits: 3072\n  name: stack_bytes\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: bytes\n  value_type: 2\n[5]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 256\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: ticks\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 3\n[6]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 257\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: overruns\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 3\n[7]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 258\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: last_run_us\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: us\n  value_type: 3\n[8]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 259\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: max_run_us\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: us\n  value_type: 3\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "112"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1036831949\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 1\n  is_source: false\n  kind: 0\n  max_bits: 1092616192\n  min_bits: 981668463\n  name: tau_s\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: s\n  value_type: 5\n[1]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1092616192\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 2\n  is_source: false\n  kind: 0\n  max_bits: 1148846080\n  min_bits: 0\n  name: gain\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 5\n[2]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1017370378\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 3\n  is_source: false\n  kind: 0\n  max_bits: 1065353216\n  min_bits: 0\n  name: deadband\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 5\n[3]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1065353216\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 4\n  is_source: false\n  kind: 0\n  max_bits: 1065353216\n  min_bits: 0\n  name: duty_limit\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 5\n[4]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1\n  description: \n  flags: 2\n  has_max: false\n  has_min: false\n  id: 5\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: one_tick_delay\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 0\n[5]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 258\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: applied_duty\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 5\n[6]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 256\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: velocity\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: rad/s\n  value_type: 5\n[7]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 257\n  is_source: false\n  kind: 1\n  max_bits: 0\n  min_bits: 0\n  name: position\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: rad\n  value_type: 5\n[8]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 16\n  has_max: true\n  has_min: true\n  id: 512\n  is_source: false\n  kind: 2\n  max_bits: 1065353216\n  min_bits: 3212836864\n  name: duty\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 5\n[9]\n  args:\n    [0]\n      name: duty\n      unit: \n      value_type: 5\n  blob_direction: 0\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 768\n  is_source: false\n  kind: 3\n  max_bits: 0\n  min_bits: 0\n  name: drive\n  ref: \n  results:\n    [0]\n      name: velocity\n      unit: \n      value_type: 5\n    [1]\n      name: position\n      unit: \n      value_type: 5\n  runs_in: 1\n  unit: \n  value_type: 255\n[10]\n  args:\n    (empty)\n  blob_direction: 3\n  default_bits: 0\n  description: \n  flags: 0\n  has_max: false\n  has_min: false\n  id: 769\n  is_source: false\n  kind: 3\n  max_bits: 0\n  min_bits: 0\n  name: reset\n  ref: \n  results:\n    (empty)\n  runs_in: 2\n  unit: \n  value_type: 255\n[11]\n  args:\n    [0]\n      name: disarms\n      unit: \n      value_type: 0\n    [1]\n      name: active\n      unit: \n      value_type: 0\n  blob_direction: 0\n  default_bits: 0\n  description: Raise or clear a mock arm blocker (false) or disarming fault (true).\n  flags: 0\n  has_max: false\n  has_min: false\n  id: 770\n  is_source: false\n  kind: 3\n  max_bits: 0\n  min_bits: 0\n  name: diagnostic\n  ref: \n  results:\n    (empty)\n  runs_in: 1\n  unit: \n  value_type: 255\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "enums",
+      "5",
+      "4"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "(empty)\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "codes"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  code: 1\n  flags: 0\n  kind: 1\n  name: CrcError\n  severity: 2\n  source: 2\n[1]\n  code: 2\n  flags: 0\n  kind: 1\n  name: PartialFrame\n  severity: 2\n  source: 2\n[2]\n  code: 3\n  flags: 0\n  kind: 1\n  name: FrameOrParityError\n  severity: 2\n  source: 2\n[3]\n  code: 4\n  flags: 0\n  kind: 1\n  name: RxOverflow\n  severity: 2\n  source: 2\n[4]\n  code: 5\n  flags: 0\n  kind: 1\n  name: LengthError\n  severity: 2\n  source: 2\n[5]\n  code: 6\n  flags: 0\n  kind: 1\n  name: DiscardedBytes\n  severity: 2\n  source: 2\n[6]\n  code: 7\n  flags: 0\n  kind: 1\n  name: HeaderCrcError\n  severity: 2\n  source: 2\n[7]\n  code: 1\n  flags: 0\n  kind: 1\n  name: RecordDropped\n  severity: 2\n  source: 3\n[8]\n  code: 2\n  flags: 0\n  kind: 1\n  name: EventTxDropped\n  severity: 2\n  source: 3\n[9]\n  code: 3\n  flags: 0\n  kind: 1\n  name: QueryDropped\n  severity: 2\n  source: 3\n[10]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 4\n[11]\n  code: 2\n  flags: 0\n  kind: 0\n  name: InstanceStartFailed\n  severity: 1\n  source: 4\n[12]\n  code: 3\n  flags: 0\n  kind: 0\n  name: TimerRestartFailed\n  severity: 1\n  source: 4\n[13]\n  code: 4\n  flags: 0\n  kind: 0\n  name: SafeModeEntered\n  severity: 1\n  source: 4\n[14]\n  code: 5\n  flags: 0\n  kind: 0\n  name: LayoutInvalid\n  severity: 1\n  source: 4\n[15]\n  code: 6\n  flags: 0\n  kind: 0\n  name: DependencyMissing\n  severity: 1\n  source: 4\n[16]\n  code: 7\n  flags: 0\n  kind: 0\n  name: ConfigLoadFailed\n  severity: 1\n  source: 4\n[17]\n  code: 8\n  flags: 0\n  kind: 0\n  name: NvsWriteFailed\n  severity: 1\n  source: 4\n[18]\n  code: 9\n  flags: 0\n  kind: 0\n  name: NvsInitFailed\n  severity: 1\n  source: 4\n[19]\n  code: 262\n  flags: 0\n  kind: 1\n  name: BadTimeRequest\n  severity: 2\n  source: 4\n[20]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 112\n[21]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 113\n[22]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 33\n[23]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 34\n[24]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 114\n[25]\n  code: 256\n  flags: 0\n  kind: 1\n  name: CommandDropped\n  severity: 2\n  source: 4\n[26]\n  code: 257\n  flags: 0\n  kind: 1\n  name: ResponseDropped\n  severity: 2\n  source: 4\n[27]\n  code: 8\n  flags: 0\n  kind: 1\n  name: StreamSkipped\n  severity: 2\n  source: 2\n[28]\n  code: 258\n  flags: 0\n  kind: 1\n  name: LoopOverBudget\n  severity: 2\n  source: 4\n[29]\n  code: 259\n  flags: 0\n  kind: 1\n  name: CommandFrameRejected\n  severity: 2\n  source: 4\n[30]\n  code: 260\n  flags: 5\n  kind: 2\n  name: LoopStalled\n  severity: 1\n  source: 4\n[31]\n  code: 261\n  flags: 5\n  kind: 2\n  name: WatchdogTimeout\n  severity: 2\n  source: 4\n[32]\n  code: 2\n  flags: 5\n  kind: 2\n  name: FaultInjected\n  severity: 1\n  source: 112\n[33]\n  code: 3\n  flags: 3\n  kind: 2\n  name: ArmBlocked\n  severity: 2\n  source: 112\n[34]\n  code: 2\n  flags: 5\n  kind: 2\n  name: DriverFault\n  severity: 1\n  source: 33\n[35]\n  code: 2\n  flags: 5\n  kind: 2\n  name: ReadFailed\n  severity: 1\n  source: 34\n[36]\n  code: 263\n  flags: 0\n  kind: 0\n  name: OtaFailed\n  severity: 1\n  source: 4\n[37]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 48\n[38]\n  code: 2\n  flags: 1\n  kind: 2\n  name: ReadFailed\n  severity: 2\n  source: 48\n[39]\n  code: 3\n  flags: 0\n  kind: 0\n  name: ActionFailed\n  severity: 1\n  source: 48\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  instance: 0\n  label: control\n  loop: 255\n  state: 0\n  type: 5\n[1]\n  instance: 1\n  label: sensor\n  loop: 255\n  state: 0\n  type: 5\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances",
+      "pending"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  instance: 0\n  label: control\n  loop: 255\n  state: 0\n  type: 5\n[1]\n  instance: 1\n  label: sensor\n  loop: 255\n  state: 0\n  type: 5\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "groups"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "command_capacity: 8\nentry_capacity: 64\ngroups:\n  [0]\n    channel: 129\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 0\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [1]\n    channel: 130\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 1\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [2]\n    channel: 131\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 2\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [3]\n    channel: 132\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 3\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [4]\n    channel: 133\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 4\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [5]\n    channel: 134\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 5\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [6]\n    channel: 135\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 6\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [7]\n    channel: 136\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 7\n    kind: subscription\n    loop: 255\n    refs:\n      (empty)\n  [8]\n    channel: 160\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 0\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [9]\n    channel: 161\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 1\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [10]\n    channel: 162\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 2\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [11]\n    channel: 163\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 3\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [12]\n    channel: 164\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 4\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [13]\n    channel: 165\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 5\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [14]\n    channel: 166\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 6\n    kind: command\n    loop: 255\n    refs:\n      (empty)\n  [15]\n    channel: 167\n    configured: false\n    divider: 1\n    enabled: false\n    epoch: 0\n    id: 7\n    kind: command\n    loop: 255\n    refs:\n      (empty)\nsubscription_capacity: 8\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:4"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "pending_reboot: false\nresult: 0\ntyped_values:\n  [0]\n    200\nvalues:\n  [0]\n    200\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "capture-status"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "configured: false\ndivider: 1\nirregular: false\nloop: 255\nperiod_us: 0\npre_trigger: 0\nrecorded: 0\nrefs:\n  (empty)\nsample_period_us: 0\nsamples: 0\nstate: idle\nstate_code: 0\ntrigger:\n  edge: rising\n  kind: manual\n  kind_code: 0\n  ref:\n    instance: 0\n    item: 0\n    type: 0\n  value: 0\ntrigger_index: null\ntrigger_timestamp_us: 0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "testgen-status",
+      "0"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "amplitude: 0.0\nduration_ms: 1000\nelapsed_ms: 0\nfrequency_end: 0.0\nfrequency_start: 0.0\nloop: 0\noffset: 0.0\nreason: none\nrepeat: 1\nrepetitions: 0\nrun: 0\nstate: idle\ntarget:\n  instance: 0\n  item: 0\n  type: 0\nvalue: 0.0\nwaveform: step\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "ota-status"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "backend_error: 0\nboot_slot: 0\ncapacity: 4194304\nchunk_bytes: 512\nelf_sha256: <identity>\noffset: 0\npending_confirm: false\nrunning_slot: 0\nsha256: 0000000000000000000000000000000000000000000000000000000000000000\nsize: 0\nstage: 0\nstate: 0\nwindow: 4\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-info"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "events_tx_dropped: 0\nfirmware_version: <identity>\nflags: 0\ninstances_failed: 0\ninstances_ok: 2\nrecords_dropped: 0\nreset_reason: 0\nsafe_mode: 0\nuptime_us: 0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-entries"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "(empty)\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-clear"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "ok: true\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "add",
+      "112",
+      "golden"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "instance: 0\npending_reboot: true\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances",
+      "pending"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "[0]\n  instance: 0\n  label: control\n  loop: 255\n  state: 255\n  type: 5\n[1]\n  instance: 1\n  label: sensor\n  loop: 255\n  state: 255\n  type: 5\n[2]\n  instance: 0\n  label: golden\n  loop: 0\n  state: 255\n  type: 112\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "label",
+      "112",
+      "0",
+      "renamed"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "pending_reboot: true\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "remove",
+      "112",
+      "0"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "pending_reboot: true\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "discard"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "ok: true\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "revert"
+    ],
+    "json": false,
+    "code": 5,
+    "stdout": "",
+    "stderr": "error: device rejected request (result=2, detail=33)\n"
+  },
+  {
+    "command": [
+      "disarm"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "ok: true\nresult: 0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "set",
+      "0:0:4=200"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "pending_reboot: false\nresult: 0\ntyped_values:\n  [0]\n    200\nvalues:\n  [0]\n    200\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:4"
+    ],
+    "json": false,
+    "code": 0,
+    "stdout": "pending_reboot: false\nresult: 0\ntyped_values:\n  [0]\n    200\nvalues:\n  [0]\n    200\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:65535"
+    ],
+    "json": false,
+    "code": 2,
+    "stdout": "",
+    "stderr": "error: item not found in device descriptors\n"
+  },
+  {
+    "command": [
+      "set",
+      "0:0:4=oops"
+    ],
+    "json": false,
+    "code": 2,
+    "stdout": "",
+    "stderr": "error: invalid value: oops\n"
+  },
+  {
+    "command": [
+      "arm"
+    ],
+    "json": false,
+    "code": 5,
+    "stdout": "",
+    "stderr": "error: device rejected request (result=1, detail=41)\n"
+  },
+  {
+    "command": [
+      "unknown-command"
+    ],
+    "json": false,
+    "code": 2,
+    "stdout": "",
+    "stderr": "error: unknown command: unknown-command\n"
+  },
+  {
+    "command": [
+      "info"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "build_id": "<identity>",
+        "capture_capacity": 4194304,
+        "descriptor_hash": 3751748005,
+        "firmware_version": "<identity>",
+        "flags": 0,
+        "loops": [
+          {
+            "flags": 1,
+            "id": 0,
+            "name": "control",
+            "rate_hz": 1000,
+            "realtime": true
+          },
+          {
+            "flags": 0,
+            "id": 1,
+            "name": "sensor",
+            "rate_hz": 100,
+            "realtime": false
+          }
+        ],
+        "max_payload": 1024,
+        "protocol_version": 8,
+        "running_instances": 2
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "types"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "loop_mask": 0,
+          "name": "system",
+          "type": 0
+        },
+        {
+          "loop_mask": 0,
+          "name": "loop",
+          "type": 5
+        },
+        {
+          "loop_mask": 1,
+          "name": "controller.cascade_pid",
+          "type": 32
+        },
+        {
+          "loop_mask": 1,
+          "name": "actuator.pwm_dir",
+          "type": 33
+        },
+        {
+          "loop_mask": 1,
+          "name": "feedback.quadrature",
+          "type": 34
+        },
+        {
+          "loop_mask": 2,
+          "name": "imu.bno055",
+          "type": 48
+        },
+        {
+          "loop_mask": 1,
+          "name": "actuator.mock",
+          "type": 112
+        },
+        {
+          "loop_mask": 1,
+          "name": "feedback.mock",
+          "type": 113
+        },
+        {
+          "loop_mask": 2,
+          "name": "imu.mock",
+          "type": 114
+        },
+        {
+          "loop_mask": 3,
+          "name": "fusion.mock",
+          "type": 115
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "0"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 10,
+          "description": "",
+          "flags": 2,
+          "has_max": true,
+          "has_min": true,
+          "id": 3,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 100,
+          "min_bits": 1,
+          "name": "status.rate_hz",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "Hz",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 200,
+          "description": "",
+          "flags": 10,
+          "has_max": true,
+          "has_min": true,
+          "id": 4,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 1000,
+          "min_bits": 20,
+          "name": "watchdog_ms",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "ms",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 16,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.loops",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 17,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.instances",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 18,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.sub_groups",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 19,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.cmd_groups",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 20,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.group_entries",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 21,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.link_values",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 4,
+          "has_max": false,
+          "has_min": false,
+          "id": 22,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "limits.capture_refs",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 2
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "5"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 100,
+          "description": "",
+          "flags": 10,
+          "has_max": true,
+          "has_min": true,
+          "id": 1,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 2000,
+          "min_bits": 1,
+          "name": "rate_hz",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "Hz",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 3,
+          "has_max": false,
+          "has_min": false,
+          "id": 2,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "realtime",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 0
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 2,
+          "description": "Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task.",
+          "flags": 3,
+          "has_max": false,
+          "has_min": false,
+          "id": 3,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "core",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 6
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 10,
+          "description": "",
+          "flags": 3,
+          "has_max": true,
+          "has_min": true,
+          "id": 4,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 20,
+          "min_bits": 1,
+          "name": "priority",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 1
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 4096,
+          "description": "",
+          "flags": 3,
+          "has_max": true,
+          "has_min": true,
+          "id": 5,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 16384,
+          "min_bits": 3072,
+          "name": "stack_bytes",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "bytes",
+          "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 256,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "ticks",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 3
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 257,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "overruns",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 3
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 258,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "last_run_us",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "us",
+          "value_type": 3
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 259,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "max_run_us",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "us",
+          "value_type": 3
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "items",
+      "112"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 1036831949,
+          "description": "",
+          "flags": 2,
+          "has_max": true,
+          "has_min": true,
+          "id": 1,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 1092616192,
+          "min_bits": 981668463,
+          "name": "tau_s",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "s",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 1092616192,
+          "description": "",
+          "flags": 2,
+          "has_max": true,
+          "has_min": true,
+          "id": 2,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 1148846080,
+          "min_bits": 0,
+          "name": "gain",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 1017370378,
+          "description": "",
+          "flags": 2,
+          "has_max": true,
+          "has_min": true,
+          "id": 3,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 1065353216,
+          "min_bits": 0,
+          "name": "deadband",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 1065353216,
+          "description": "",
+          "flags": 2,
+          "has_max": true,
+          "has_min": true,
+          "id": 4,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 1065353216,
+          "min_bits": 0,
+          "name": "duty_limit",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 1,
+          "description": "",
+          "flags": 2,
+          "has_max": false,
+          "has_min": false,
+          "id": 5,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "one_tick_delay",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 0
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 258,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "applied_duty",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 256,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "velocity",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "rad/s",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 257,
+          "is_source": false,
+          "kind": 1,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "position",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "rad",
+          "value_type": 5
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 16,
+          "has_max": true,
+          "has_min": true,
+          "id": 512,
+          "is_source": false,
+          "kind": 2,
+          "max_bits": 1065353216,
+          "min_bits": 3212836864,
+          "name": "duty",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 5
+        },
+        {
+          "args": [
+            {
+              "name": "duty",
+              "unit": "",
+              "value_type": 5
+            }
+          ],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 768,
+          "is_source": false,
+          "kind": 3,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "drive",
+          "ref": "",
+          "results": [
+            {
+              "name": "velocity",
+              "unit": "",
+              "value_type": 5
+            },
+            {
+              "name": "position",
+              "unit": "",
+              "value_type": 5
+            }
+          ],
+          "runs_in": 1,
+          "unit": "",
+          "value_type": 255
+        },
+        {
+          "args": [],
+          "blob_direction": 3,
+          "default_bits": 0,
+          "description": "",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 769,
+          "is_source": false,
+          "kind": 3,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "reset",
+          "ref": "",
+          "results": [],
+          "runs_in": 2,
+          "unit": "",
+          "value_type": 255
+        },
+        {
+          "args": [
+            {
+              "name": "disarms",
+              "unit": "",
+              "value_type": 0
+            },
+            {
+              "name": "active",
+              "unit": "",
+              "value_type": 0
+            }
+          ],
+          "blob_direction": 0,
+          "default_bits": 0,
+          "description": "Raise or clear a mock arm blocker (false) or disarming fault (true).",
+          "flags": 0,
+          "has_max": false,
+          "has_min": false,
+          "id": 770,
+          "is_source": false,
+          "kind": 3,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "diagnostic",
+          "ref": "",
+          "results": [],
+          "runs_in": 1,
+          "unit": "",
+          "value_type": 255
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "enums",
+      "5",
+      "4"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "codes"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 1,
+          "name": "CrcError",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 2,
+          "flags": 0,
+          "kind": 1,
+          "name": "PartialFrame",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 3,
+          "flags": 0,
+          "kind": 1,
+          "name": "FrameOrParityError",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 4,
+          "flags": 0,
+          "kind": 1,
+          "name": "RxOverflow",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 5,
+          "flags": 0,
+          "kind": 1,
+          "name": "LengthError",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 6,
+          "flags": 0,
+          "kind": 1,
+          "name": "DiscardedBytes",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 7,
+          "flags": 0,
+          "kind": 1,
+          "name": "HeaderCrcError",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 1,
+          "name": "RecordDropped",
+          "severity": 2,
+          "source": 3
+        },
+        {
+          "code": 2,
+          "flags": 0,
+          "kind": 1,
+          "name": "EventTxDropped",
+          "severity": 2,
+          "source": 3
+        },
+        {
+          "code": 3,
+          "flags": 0,
+          "kind": 1,
+          "name": "QueryDropped",
+          "severity": 2,
+          "source": 3
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 2,
+          "flags": 0,
+          "kind": 0,
+          "name": "InstanceStartFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 3,
+          "flags": 0,
+          "kind": 0,
+          "name": "TimerRestartFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 4,
+          "flags": 0,
+          "kind": 0,
+          "name": "SafeModeEntered",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 5,
+          "flags": 0,
+          "kind": 0,
+          "name": "LayoutInvalid",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 6,
+          "flags": 0,
+          "kind": 0,
+          "name": "DependencyMissing",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 7,
+          "flags": 0,
+          "kind": 0,
+          "name": "ConfigLoadFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 8,
+          "flags": 0,
+          "kind": 0,
+          "name": "NvsWriteFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 9,
+          "flags": 0,
+          "kind": 0,
+          "name": "NvsInitFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 262,
+          "flags": 0,
+          "kind": 1,
+          "name": "BadTimeRequest",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 112
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 113
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 33
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 34
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 114
+        },
+        {
+          "code": 256,
+          "flags": 0,
+          "kind": 1,
+          "name": "CommandDropped",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 257,
+          "flags": 0,
+          "kind": 1,
+          "name": "ResponseDropped",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 8,
+          "flags": 0,
+          "kind": 1,
+          "name": "StreamSkipped",
+          "severity": 2,
+          "source": 2
+        },
+        {
+          "code": 258,
+          "flags": 0,
+          "kind": 1,
+          "name": "LoopOverBudget",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 259,
+          "flags": 0,
+          "kind": 1,
+          "name": "CommandFrameRejected",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 260,
+          "flags": 5,
+          "kind": 2,
+          "name": "LoopStalled",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 261,
+          "flags": 5,
+          "kind": 2,
+          "name": "WatchdogTimeout",
+          "severity": 2,
+          "source": 4
+        },
+        {
+          "code": 2,
+          "flags": 5,
+          "kind": 2,
+          "name": "FaultInjected",
+          "severity": 1,
+          "source": 112
+        },
+        {
+          "code": 3,
+          "flags": 3,
+          "kind": 2,
+          "name": "ArmBlocked",
+          "severity": 2,
+          "source": 112
+        },
+        {
+          "code": 2,
+          "flags": 5,
+          "kind": 2,
+          "name": "DriverFault",
+          "severity": 1,
+          "source": 33
+        },
+        {
+          "code": 2,
+          "flags": 5,
+          "kind": 2,
+          "name": "ReadFailed",
+          "severity": 1,
+          "source": 34
+        },
+        {
+          "code": 263,
+          "flags": 0,
+          "kind": 0,
+          "name": "OtaFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 1,
+          "flags": 0,
+          "kind": 0,
+          "name": "InitFailed",
+          "severity": 1,
+          "source": 48
+        },
+        {
+          "code": 2,
+          "flags": 1,
+          "kind": 2,
+          "name": "ReadFailed",
+          "severity": 2,
+          "source": 48
+        },
+        {
+          "code": 3,
+          "flags": 0,
+          "kind": 0,
+          "name": "ActionFailed",
+          "severity": 1,
+          "source": 48
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "instance": 0,
+          "label": "control",
+          "loop": 255,
+          "state": 0,
+          "type": 5
+        },
+        {
+          "instance": 1,
+          "label": "sensor",
+          "loop": 255,
+          "state": 0,
+          "type": 5
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances",
+      "pending"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "instance": 0,
+          "label": "control",
+          "loop": 255,
+          "state": 0,
+          "type": 5
+        },
+        {
+          "instance": 1,
+          "label": "sensor",
+          "loop": 255,
+          "state": 0,
+          "type": 5
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "groups"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "command_capacity": 8,
+        "entry_capacity": 64,
+        "groups": [
+          {
+            "channel": 129,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 0,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 130,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 1,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 131,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 2,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 132,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 3,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 133,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 4,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 134,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 5,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 135,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 6,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 136,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 7,
+            "kind": "subscription",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 160,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 0,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 161,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 1,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 162,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 2,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 163,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 3,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 164,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 4,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 165,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 5,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 166,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 6,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          },
+          {
+            "channel": 167,
+            "configured": false,
+            "divider": 1,
+            "enabled": false,
+            "epoch": 0,
+            "id": 7,
+            "kind": "command",
+            "loop": 255,
+            "refs": []
+          }
+        ],
+        "subscription_capacity": 8
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:4"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "pending_reboot": false,
+        "result": 0,
+        "typed_values": [
+          200
+        ],
+        "values": [
+          200
+        ]
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "capture-status"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "configured": false,
+        "divider": 1,
+        "irregular": false,
+        "loop": 255,
+        "period_us": 0,
+        "pre_trigger": 0,
+        "recorded": 0,
+        "refs": [],
+        "sample_period_us": 0,
+        "samples": 0,
+        "state": "idle",
+        "state_code": 0,
+        "trigger": {
+          "edge": "rising",
+          "kind": "manual",
+          "kind_code": 0,
+          "ref": {
+            "instance": 0,
+            "item": 0,
+            "type": 0
+          },
+          "value": 0
+        },
+        "trigger_index": null,
+        "trigger_timestamp_us": 0
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "testgen-status",
+      "0"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "amplitude": 0.0,
+        "duration_ms": 1000,
+        "elapsed_ms": 0,
+        "frequency_end": 0.0,
+        "frequency_start": 0.0,
+        "loop": 0,
+        "offset": 0.0,
+        "reason": "none",
+        "repeat": 1,
+        "repetitions": 0,
+        "run": 0,
+        "state": "idle",
+        "target": {
+          "instance": 0,
+          "item": 0,
+          "type": 0
+        },
+        "value": 0.0,
+        "waveform": "step"
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "ota-status"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "backend_error": 0,
+        "boot_slot": 0,
+        "capacity": 4194304,
+        "chunk_bytes": 512,
+        "elf_sha256": "<identity>",
+        "offset": 0,
+        "pending_confirm": false,
+        "running_slot": 0,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 0,
+        "stage": 0,
+        "state": 0,
+        "window": 4
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-info"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "events_tx_dropped": 0,
+        "firmware_version": "<identity>",
+        "flags": 0,
+        "instances_failed": 0,
+        "instances_ok": 2,
+        "records_dropped": 0,
+        "reset_reason": 0,
+        "safe_mode": 0,
+        "uptime_us": 0
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-entries"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "diag-clear"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "ok": true
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "add",
+      "112",
+      "golden"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "instance": 0,
+        "pending_reboot": true
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "instances",
+      "pending"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": [
+        {
+          "instance": 0,
+          "label": "control",
+          "loop": 255,
+          "state": 255,
+          "type": 5
+        },
+        {
+          "instance": 1,
+          "label": "sensor",
+          "loop": 255,
+          "state": 255,
+          "type": 5
+        },
+        {
+          "instance": 0,
+          "label": "golden",
+          "loop": 0,
+          "state": 255,
+          "type": 112
+        }
+      ],
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "label",
+      "112",
+      "0",
+      "renamed"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "pending_reboot": true
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "remove",
+      "112",
+      "0"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "pending_reboot": true
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "discard"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "ok": true
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "revert"
+    ],
+    "json": true,
+    "code": 5,
+    "stdout": {
+      "detail": 33,
+      "error": "device rejected request (result=2, detail=33)",
+      "exit_code": 5,
+      "ok": false,
+      "result": 2
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "disarm"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "ok": true,
+        "result": 0
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "set",
+      "0:0:4=200"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "pending_reboot": false,
+        "result": 0,
+        "typed_values": [
+          200
+        ],
+        "values": [
+          200
+        ]
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:4"
+    ],
+    "json": true,
+    "code": 0,
+    "stdout": {
+      "data": {
+        "pending_reboot": false,
+        "result": 0,
+        "typed_values": [
+          200
+        ],
+        "values": [
+          200
+        ]
+      },
+      "ok": true
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "get",
+      "0:0:65535"
+    ],
+    "json": true,
+    "code": 2,
+    "stdout": {
+      "detail": 0,
+      "error": "item not found in device descriptors",
+      "exit_code": 2,
+      "ok": false,
+      "result": 0
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "set",
+      "0:0:4=oops"
+    ],
+    "json": true,
+    "code": 2,
+    "stdout": {
+      "detail": 0,
+      "error": "invalid value: oops",
+      "exit_code": 2,
+      "ok": false,
+      "result": 0
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "arm"
+    ],
+    "json": true,
+    "code": 5,
+    "stdout": {
+      "detail": 41,
+      "error": "device rejected request (result=1, detail=41)",
+      "exit_code": 5,
+      "ok": false,
+      "result": 1
+    },
+    "stderr": ""
+  },
+  {
+    "command": [
+      "unknown-command"
+    ],
+    "json": true,
+    "code": 2,
+    "stdout": {
+      "detail": 0,
+      "error": "unknown command: unknown-command",
+      "exit_code": 2,
+      "ok": false,
+      "result": 0
+    },
+    "stderr": ""
+  }
+]

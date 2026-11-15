@@ -3,10 +3,10 @@
 Status: architecture target, re-planned 2026-11-14 after the firmware overhaul
 (F1–F10, LP) against the firmware as built. The first host slice exists:
 `libdrivelink` (transport, session, the core families, the F8 clock estimator
-and the F9 OTA service, all returning JSON), `drivelink-cli`, `drivelink-vdev`
-and the superbuild. Still to build: the typed API and device model, the
-asynchronous path and timestamp mapping, device identity, the GUI, the agent
-and ROS.
+and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
+H1a-1 adds typed services/errors and moves JSON formatting into the CLI.
+Still to build: the device snapshot (H1a-2), the asynchronous path and timestamp
+mapping, device identity, the GUI, the agent and ROS.
 
 This file is the design record. The steps that build it (T0, H1a–H6, HW), with
 a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
@@ -106,12 +106,13 @@ then the agent and the GUI's remote mode, then ROS.
 
 ### `libdrivelink` (host core)
 
-**What exists (F3c–F9, LP).** `Session` is a thread-safe synchronous facade over
+**What exists (F3c–F9, LP, H1a-1).** `Session` is a thread-safe synchronous facade over
 one Asio I/O thread: it allocates `seq`, correlates responses, retries only
 idempotent reads, retires timed-out ids until reconnect, queues command-group
 frames without blocking, and hands every other frame to a bounded event queue
 that drops oldest. `Client` wraps the families (info, describe, layout,
-system, param, action, diag, group, capture, testgen, OTA) and returns JSON.
+system, param, action, diag, group, capture, testgen, OTA) with typed results.
+The CLI owns JSON formatting and preserves its original output.
 `ClockEstimator` fits offset and drift from pings with I/O-thread timestamps.
 The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
 
@@ -135,7 +136,7 @@ The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
   - Keeps the pings with the smallest round trip and fits ESP time to host time (offset and drift) over a sliding window, restarting on a Boot event.
   - Gives every timestamped item (group frames, status, capture, events) both the ESP µs and the mapped host time, with the estimator's uncertainty.
   - Over the agent, a client takes the agent's clock model instead of pinging (H3a).
-- **Device model** (typed; the snapshot in H1a, event-driven updates in H1b).
+- **Device model** (typed; the snapshot in H1a-2, event-driven updates in H1b).
   - At connect, or after a Boot event, it:
     1. reads `GET_INFO`: versions, build id, descriptor hash, `max_payload`, capture capacity, flags (pending reboot, layout invalid, config from NVS, safe mode), the running loops and, from H1c, the device id and name
     2. checks the core protocol version, and the `safe_mode` flag

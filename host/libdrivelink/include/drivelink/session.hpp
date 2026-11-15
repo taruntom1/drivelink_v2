@@ -1,6 +1,7 @@
 #pragma once
 
 #include "time.hpp"
+#include "error.hpp"
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -12,24 +13,6 @@
 namespace drivelink
 {
 using Bytes = std::vector<uint8_t>;
-enum class ErrorKind
-{
-    Connection,
-    Timeout,
-    Protocol,
-    Rejected,
-    Usage
-};
-class Error : public std::runtime_error
-{
-  public:
-    Error(ErrorKind kind, const std::string &message, uint8_t result = 0, uint8_t detail = 0)
-        : std::runtime_error(message), kind(kind), result(result), detail(detail)
-    {
-    }
-    ErrorKind kind;
-    uint8_t result, detail;
-};
 struct Frame
 {
     uint8_t type;

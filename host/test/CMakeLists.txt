@@ -6,3 +6,8 @@ add_test(NAME host-unit COMMAND host_tests)
 set_tests_properties(host-unit PROPERTIES TIMEOUT 30)
 add_test(NAME host-integration COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration.py --cli $<TARGET_FILE:drivelink-cli> --vdev $<TARGET_FILE:drivelink-vdev>)
 set_tests_properties(host-integration PROPERTIES TIMEOUT 180)
+
+add_test(NAME host-cli-golden COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli_golden.py --cli $<TARGET_FILE:drivelink-cli> --vdev $<TARGET_FILE:drivelink-vdev>)
+set_tests_properties(host-cli-golden PROPERTIES TIMEOUT 90)
+add_test(NAME host-cli-replay COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli_replay.py --cli $<TARGET_FILE:drivelink-cli>)
+set_tests_properties(host-cli-replay PROPERTIES TIMEOUT 90)

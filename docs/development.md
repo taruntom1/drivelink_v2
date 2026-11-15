@@ -153,8 +153,8 @@ One script holds the list of checks and their commands. CI calls it with `--only
 Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
 - `gen` and `native` in an `ubuntu:26.04` container with build-essential, CMake, Ninja and PyYAML.
-- `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path.
-- There is no Windows job yet (H1a adds one). `host-win` runs only locally.
+- `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed headers with JSON package discovery disabled.
+- There is no Windows job yet (H1a-2 adds one). `host-win` runs only locally.
 
 ## Guarded bench builds
 

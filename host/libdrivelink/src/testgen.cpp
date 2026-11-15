@@ -9,8 +9,6 @@ using protocol::wire::Writer;
 namespace defs = protocol::defs;
 constexpr uint8_t kFamily = static_cast<uint8_t>(defs::Family::Testgen);
 constexpr const char *kWaveforms[]{"step", "square", "ramp", "sine", "chirp_linear", "chirp_log"};
-constexpr const char *kStates[]{"idle", "running", "done"};
-constexpr const char *kReasons[]{"none", "completed", "stopped", "disarmed"};
 [[noreturn]] void malformed() { throw Error(ErrorKind::Protocol, "malformed testgen response"); }
 void exact(const Reader &r) { if (!r.done()) { malformed(); } }
 uint8_t op(defs::TestgenOp o) { return static_cast<uint8_t>(o); }
@@ -20,7 +18,8 @@ uint8_t parseTestgenWaveform(const std::string &text)
     for (uint8_t i=0; i<6; ++i) { if (text == kWaveforms[i]) { return i; } }
     throw Error(ErrorKind::Usage, "unknown testgen waveform: " + text);
 }
-Json Client::testgenStart(const TestgenConfig &c)
+TestgenStarted Client::testgenStart(const TestgenConfig &c)
+try
 {
     if (c.loop == 255 || c.waveform > 5 || !c.duration_ms || !std::isfinite(c.offset) || !std::isfinite(c.amplitude) ||
         !std::isfinite(c.frequency_start) || !std::isfinite(c.frequency_end)) {
@@ -33,15 +32,17 @@ Json Client::testgenStart(const TestgenConfig &c)
     w.appendU32Le(c.duration_ms); w.appendU32Le(c.repeat);
     const auto reply = accepted(kFamily, op(defs::TestgenOp::Start), body);
     Reader r(reply.body.data(), reply.body.size()); const auto run = r.readU32Le(); exact(r);
-    return {{"loop", c.loop}, {"run", run}};
-}
-Json Client::testgenStop(uint8_t loop)
+    return {c.loop,run};
+} catch(Error &e) { contextualize(e,7,1,true);throw; }
+OperationResult Client::testgenStop(uint8_t loop)
+try
 {
     if (loop == 255) { throw Error(ErrorKind::Usage, "invalid loop"); }
     if (!accepted(kFamily, op(defs::TestgenOp::Stop), Bytes{loop}).body.empty()) { malformed(); }
-    return {{"ok", true}};
-}
-Json Client::testgenStatus(uint8_t loop)
+    return {};
+} catch(Error &e) { contextualize(e,7,2,true);throw; }
+TestgenStatus Client::testgenStatus(uint8_t loop)
+try
 {
     if (loop == 255) { throw Error(ErrorKind::Usage, "invalid loop"); }
     const auto reply = accepted(kFamily, op(defs::TestgenOp::Status), Bytes{loop});
@@ -49,19 +50,18 @@ Json Client::testgenStatus(uint8_t loop)
     const auto received_loop = r.readU8(), state = r.readU8(), reason = r.readU8();
     if (received_loop != loop || state > 2 || reason > 3 ||
         ((state == 2) != (reason != 0))) { malformed(); }
-    Json j{{"loop", loop}, {"state", kStates[state]}, {"reason", kReasons[reason]}};
-    j["run"] = r.readU32Le(); j["elapsed_ms"] = r.readU32Le(); j["repetitions"] = r.readU32Le();
+    TestgenStatus j;j.loop=loop;j.state=static_cast<TestgenState>(state);j.reason=static_cast<TestgenReason>(reason);
+    j.run = r.readU32Le(); j.elapsed_ms = r.readU32Le(); j.repetitions = r.readU32Le();
     const float value = defs::f32FromBits(r.readU32Le());
-    j["value"] = value;
-    j["target"] = {{"type", r.readU8()}, {"instance", r.readU8()}, {"item", r.readU16Le()}};
+    j.value = value;
+    j.target={r.readU8(),r.readU8(),r.readU16Le()};
     const auto waveform = r.readU8(); if (waveform > 5) { malformed(); }
-    j["waveform"] = kWaveforms[waveform];
-    for (const auto *key : {"offset", "amplitude", "frequency_start", "frequency_end"}) {
-        const float x = defs::f32FromBits(r.readU32Le()); if (!std::isfinite(x)) { malformed(); }
-        j[key] = x;
+    j.waveform=waveform;
+    for (float *field : {&j.offset,&j.amplitude,&j.frequency_start,&j.frequency_end}) {
+        const float x=defs::f32FromBits(r.readU32Le());if(!std::isfinite(x)) { malformed(); }*field=x;
     }
-    j["duration_ms"] = r.readU32Le(); j["repeat"] = r.readU32Le();
+    j.duration_ms = r.readU32Le(); j.repeat = r.readU32Le();
     exact(r); if (!std::isfinite(value)) { malformed(); }
     return j;
-}
+} catch(Error &e) { contextualize(e,7,3,false);throw; }
 }

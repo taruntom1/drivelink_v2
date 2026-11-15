@@ -16,7 +16,12 @@ namespace drivelink
 {
 namespace p = protocol;
 namespace msg = protocol::defs::msg;
-namespace { std::atomic<uint64_t> next_clock_generation{1}; }
+namespace {
+std::atomic<uint64_t> next_clock_generation{1};
+Error uncertain(ErrorKind kind,const std::string &message,bool mutation) {
+    Error e(kind,message);e.outcome_unknown=mutation;return e;
+}
+}
 struct Session::Impl
 {
     SessionOptions options;
@@ -368,6 +373,10 @@ struct Session::Impl
     Bytes exchange(uint8_t kind, uint8_t family, uint8_t op, std::span<const uint8_t> body, bool read_only)
     {
         std::lock_guard calls(call_mutex);
+        // Retry eligibility is deliberately unchanged. Testgen STATUS is a
+        // read even though the existing policy does not retry it automatically.
+        const bool mutation = !read_only && !(family == static_cast<uint8_t>(p::defs::Family::Testgen) &&
+                                             op == static_cast<uint8_t>(p::defs::TestgenOp::Status));
         for (unsigned attempt = 0;; ++attempt)
         {
             std::unique_lock lock(mutex);
@@ -433,8 +442,8 @@ struct Session::Impl
             if (protocol_error)
             {
                 retired[seq] = true;
-                throw Error(ErrorKind::Protocol,
-                            "incompatible protocol version or truncated response header");
+                throw uncertain(ErrorKind::Protocol,
+                            "incompatible protocol version or truncated response header",mutation);
             }
             if (ready)
             {
@@ -443,11 +452,11 @@ struct Session::Impl
             retired[seq] = true;
             if (closed)
             {
-                throw Error(ErrorKind::Connection, failure);
+                throw uncertain(ErrorKind::Connection, failure,mutation);
             }
             if (!read_only || attempt >= options.read_retries)
             {
-                throw Error(ErrorKind::Timeout, "request timed out; outcome may be unknown for writes");
+                throw uncertain(ErrorKind::Timeout, "request timed out; outcome may be unknown for writes",mutation);
             }
         }
     }
@@ -482,11 +491,14 @@ Reply Session::request(uint8_t family, uint8_t op, std::span<const uint8_t> body
     const bool read_only = (family == 1 && op == 1) || family == 3 || (family == 2 && op == 1) ||
                            (family == 4 && (op == 1 || op == 3)) || (family == 5 && op == 6) ||
                            (family == 6 && (op == 4 || op == 5)) || (family==9 && op==6);
-    auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
-    return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
+    try {
+        auto data = m_impl->exchange(family == 1 && op == 3 ? msg::kDisarm : msg::kCoreCommand, family, op, body, read_only);
+        return {data[4], data[5], Bytes(data.begin() + 6, data.end())};
+    } catch(Error &e) { e.family=family;e.op=op;e.has_request_context=true;throw; }
 }
 std::vector<Reply> Session::otaWriteBatch(std::span<const Bytes> bodies)
 {
+    try {
     auto &d=*m_impl;
     if (bodies.empty() || bodies.size()>d.ota_pending.size()) { throw Error(ErrorKind::Usage,"OTA window must be 1..4"); }
     std::lock_guard calls(d.call_mutex);
@@ -532,10 +544,11 @@ std::vector<Reply> Session::otaWriteBatch(std::span<const Bytes> bodies)
         }
     }
     d.ota_count=0;
-    if (d.ota_error) { throw Error(ErrorKind::Protocol,"invalid OTA response or device reboot during upload"); }
-    if (d.closed && !complete) { throw Error(ErrorKind::Connection,d.failure); }
-    if (!complete) { throw Error(ErrorKind::Timeout,"OTA batch timed out; outcome uncertain; query ota-status"); }
+    if (d.ota_error) { throw uncertain(ErrorKind::Protocol,"invalid OTA response or device reboot during upload",true); }
+    if (d.closed && !complete) { throw uncertain(ErrorKind::Connection,d.failure,true); }
+    if (!complete) { throw uncertain(ErrorKind::Timeout,"OTA batch timed out; outcome uncertain; query ota-status",true); }
     return replies;
+    } catch(Error &e) { e.family=9;e.op=2;e.has_request_context=true;throw; }
 }
 TimeSample Session::timePing()
 {
@@ -598,12 +611,11 @@ bool Session::sendCommandGroup(uint8_t group, std::span<const uint8_t> payload)
 }
 Bytes Session::diagRequest(uint8_t op, std::span<const uint8_t> body)
 {
-    auto data = m_impl->exchange(msg::kDiagQuery, 0, op, body, op == 1 || op == 2);
-    if (data[3])
-    {
-        throw Error(ErrorKind::Rejected, "diagnostic query rejected", data[3]);
-    }
-    return Bytes(data.begin() + 4, data.end());
+    try {
+        auto data=m_impl->exchange(msg::kDiagQuery,0,op,body,op==1 || op==2);
+        if(data[3]) { throw DeviceError("diagnostic query rejected",data[3],0,0,op); }
+        return Bytes(data.begin()+4,data.end());
+    } catch(Error &e) { e.family=0;e.op=op;e.has_request_context=true;throw; }
 }
 bool Session::nextEvent(Frame &frame, std::chrono::milliseconds timeout)
 {

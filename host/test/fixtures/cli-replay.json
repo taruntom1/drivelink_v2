@@ -1,0 +1,366 @@
+[
+  {
+    "command": [
+      "events",
+      "8"
+    ],
+    "json": false,
+    "stdout": "active_errors: 2\narm_state: 1\ncounter: 65535\ncpu_load:\n  [0]\n    11\n  [1]\n    22\nepoch: 7\nflags: 3\nlast_disarm_reason: 4\nmsg_type: 128\noverruns:\n  [0]\n    loop_id: 3\n    overruns: 5\n  [1]\n    loop_id: 19\n    overruns: 9\ntimestamp_us: 123456\nevent: 1\nirregular: true\nmsg_type: 193\nname: capture_done\nrecorded: 2\ntrigger_index: 1\nevent: 2\nloop: 3\nmsg_type: 193\nname: testgen_done\nreason: stopped\nrun: 99\narg0: 99\narg1: 101\ncode: 42\nerror: -1\nflags: 0\ninstance: 7\nkind: 1\nmsg_type: 192\nsequence: 65535\nseverity: 2\nsource: 112\ntimestamp_us: 123\nentries:\n  [0]\n    code: 42\n    delta: 3\n    instance: 7\n    source: 112\n    total: 9\nflags: 0\nkind: 2\nmsg_type: 192\nsequence: 2\ntimestamp_us: 124\ncode: 42\nflags: 0\ninstance: 7\nkind: 3\nmsg_type: 192\nsequence: 3\nsource: 112\ntimestamp_us: 125\nflags: 0\ninstances_failed: 0\ninstances_ok: 2\nkind: 4\nmsg_type: 192\nreset_reason: 1\nsafe_mode: 1\nsequence: 4\ntimestamp_us: 126\nmsg_type: 224\npayload_hex: 01ab\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "status"
+    ],
+    "json": false,
+    "stdout": "active_errors: 2\narm_state: 1\ncounter: 65535\ncpu_load:\n  [0]\n    11\n  [1]\n    22\nepoch: 7\nflags: 3\nlast_disarm_reason: 4\nmsg_type: 128\noverruns:\n  [0]\n    loop_id: 3\n    overruns: 5\n  [1]\n    loop_id: 19\n    overruns: 9\ntimestamp_us: 123456\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "capture-read"
+    ],
+    "json": false,
+    "stdout": "configured: true\ndata:\n  [0]\n    [0]\n      1069547520\n  [1]\n    [0]\n      3221225472\ndivider: 1\nirregular: false\nloop: 0\nperiod_us: 1000\npre_trigger: 1\nrecorded: 2\nrefs:\n  [0]\n    instance: 0\n    item: 1\n    type: 112\nrows:\n  [0]\n    index: 0\n    time_us: -1000\n    typed_values:\n      [0]\n        1.5\n  [1]\n    index: 1\n    time_us: 0\n    typed_values:\n      [0]\n        -2.0\nsample_period_us: 1000\nsamples: 2\nstate: done\nstate_code: 3\ntrigger:\n  edge: rising\n  kind: manual\n  kind_code: 0\n  ref:\n    instance: 0\n    item: 0\n    type: 0\n  value: 0\ntrigger_index: 1\ntrigger_timestamp_us: 42\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "action",
+      "112:0:1",
+      "7",
+      "--blob",
+      "12"
+    ],
+    "json": false,
+    "stdout": "blob_hex: abcd\ntyped_values:\n  [0]\n    -1\nvalues:\n  [0]\n    4294967295\n  [1]\n    0\n  [2]\n    0\n  [3]\n    0\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "sub-stream",
+      "0"
+    ],
+    "json": false,
+    "stdout": "counter: 65535\nepoch: 4\ngroup: 0\ntimestamp_us: 77\ntyped_values:\n  [0]\n    1.5\nvalues:\n  [0]\n    1069547520\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "events",
+      "8"
+    ],
+    "json": true,
+    "stdout": [
+      {
+        "data": {
+          "active_errors": 2,
+          "arm_state": 1,
+          "counter": 65535,
+          "cpu_load": [
+            11,
+            22
+          ],
+          "epoch": 7,
+          "flags": 3,
+          "last_disarm_reason": 4,
+          "msg_type": 128,
+          "overruns": [
+            {
+              "loop_id": 3,
+              "overruns": 5
+            },
+            {
+              "loop_id": 19,
+              "overruns": 9
+            }
+          ],
+          "timestamp_us": 123456
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "event": 1,
+          "irregular": true,
+          "msg_type": 193,
+          "name": "capture_done",
+          "recorded": 2,
+          "trigger_index": 1
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "event": 2,
+          "loop": 3,
+          "msg_type": 193,
+          "name": "testgen_done",
+          "reason": "stopped",
+          "run": 99
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "arg0": 99,
+          "arg1": 101,
+          "code": 42,
+          "error": -1,
+          "flags": 0,
+          "instance": 7,
+          "kind": 1,
+          "msg_type": 192,
+          "sequence": 65535,
+          "severity": 2,
+          "source": 112,
+          "timestamp_us": 123
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "entries": [
+            {
+              "code": 42,
+              "delta": 3,
+              "instance": 7,
+              "source": 112,
+              "total": 9
+            }
+          ],
+          "flags": 0,
+          "kind": 2,
+          "msg_type": 192,
+          "sequence": 2,
+          "timestamp_us": 124
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "code": 42,
+          "flags": 0,
+          "instance": 7,
+          "kind": 3,
+          "msg_type": 192,
+          "sequence": 3,
+          "source": 112,
+          "timestamp_us": 125
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "flags": 0,
+          "instances_failed": 0,
+          "instances_ok": 2,
+          "kind": 4,
+          "msg_type": 192,
+          "reset_reason": 1,
+          "safe_mode": 1,
+          "sequence": 4,
+          "timestamp_us": 126
+        },
+        "ok": true
+      },
+      {
+        "data": {
+          "msg_type": 224,
+          "payload_hex": "01ab"
+        },
+        "ok": true
+      }
+    ],
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "status"
+    ],
+    "json": true,
+    "stdout": [
+      {
+        "data": {
+          "active_errors": 2,
+          "arm_state": 1,
+          "counter": 65535,
+          "cpu_load": [
+            11,
+            22
+          ],
+          "epoch": 7,
+          "flags": 3,
+          "last_disarm_reason": 4,
+          "msg_type": 128,
+          "overruns": [
+            {
+              "loop_id": 3,
+              "overruns": 5
+            },
+            {
+              "loop_id": 19,
+              "overruns": 9
+            }
+          ],
+          "timestamp_us": 123456
+        },
+        "ok": true
+      }
+    ],
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "capture-read"
+    ],
+    "json": true,
+    "stdout": [
+      {
+        "data": {
+          "configured": true,
+          "data": [
+            [
+              1069547520
+            ],
+            [
+              3221225472
+            ]
+          ],
+          "divider": 1,
+          "irregular": false,
+          "loop": 0,
+          "period_us": 1000,
+          "pre_trigger": 1,
+          "recorded": 2,
+          "refs": [
+            {
+              "instance": 0,
+              "item": 1,
+              "type": 112
+            }
+          ],
+          "rows": [
+            {
+              "index": 0,
+              "time_us": -1000,
+              "typed_values": [
+                1.5
+              ]
+            },
+            {
+              "index": 1,
+              "time_us": 0,
+              "typed_values": [
+                -2.0
+              ]
+            }
+          ],
+          "sample_period_us": 1000,
+          "samples": 2,
+          "state": "done",
+          "state_code": 3,
+          "trigger": {
+            "edge": "rising",
+            "kind": "manual",
+            "kind_code": 0,
+            "ref": {
+              "instance": 0,
+              "item": 0,
+              "type": 0
+            },
+            "value": 0
+          },
+          "trigger_index": 1,
+          "trigger_timestamp_us": 42
+        },
+        "ok": true
+      }
+    ],
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "action",
+      "112:0:1",
+      "7",
+      "--blob",
+      "12"
+    ],
+    "json": true,
+    "stdout": [
+      {
+        "data": {
+          "blob_hex": "abcd",
+          "typed_values": [
+            -1
+          ],
+          "values": [
+            4294967295,
+            0,
+            0,
+            0
+          ]
+        },
+        "ok": true
+      }
+    ],
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "sub-stream",
+      "0"
+    ],
+    "json": true,
+    "stdout": [
+      {
+        "data": {
+          "counter": 65535,
+          "epoch": 4,
+          "group": 0,
+          "timestamp_us": 77,
+          "typed_values": [
+            1.5
+          ],
+          "values": [
+            1069547520
+          ]
+        },
+        "ok": true
+      }
+    ],
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "capture-read",
+      "--csv"
+    ],
+    "json": false,
+    "stdout": "index,time_us,112:0:1\n0,-1000,1.5\n1,0,-2.0\n",
+    "stderr": "",
+    "code": 0
+  },
+  {
+    "command": [
+      "sub-csv",
+      "0",
+      "1"
+    ],
+    "json": false,
+    "stdout": "timestamp_us,counter,112:0:1\n77,65535,1.5\n",
+    "stderr": "",
+    "code": 0
+  }
+]

@@ -11,6 +11,8 @@
 #include <bit>
 #include <filesystem>
 #include <future>
+#include <expected>
+#include <limits>
 #include <thread>
 
 using namespace drivelink;
@@ -79,6 +81,98 @@ struct FakeDevice
 } // namespace
 
 using namespace drivelink;
+TEST_CASE("device refusal metadata survives value-based error propagation") {
+    FakeDevice device([](Socket &socket) {
+        const auto request=readFrame(socket);
+        sendFrame(socket,0x41,{protocol::core_wire::kVersion,request[1],request[2],request[3],6,8});
+    });
+    Session session(device.endpoint());Client client(session);
+    try { client.system(5);FAIL("accepted refusal"); }
+    catch(const DeviceError &e) {
+        CHECK(e.kind==ErrorKind::Rejected);CHECK(e.result==6);CHECK(e.detail==8);
+        CHECK(e.has_request_context);CHECK(e.family==1);CHECK(e.op==5);CHECK_FALSE(e.outcome_unknown);
+        std::expected<void,Error> completion(std::unexpect,e);
+        CHECK(completion.error().result==6);CHECK(completion.error().detail==8);
+        CHECK(completion.error().family==1);CHECK(completion.error().op==5);
+    }
+}
+TEST_CASE("submitted mutation failures report uncertainty while reads and preflight do not") {
+    struct Request { uint8_t family,op;bool mutation; };
+    for(const auto request:{Request{1,1,false},Request{1,5,true},Request{7,3,false}}) {
+        FakeDevice device([](Socket &socket) { readFrame(socket);std::this_thread::sleep_for(std::chrono::milliseconds(90)); });
+        SessionOptions options;options.timeout=std::chrono::milliseconds(40);options.read_retries=0;
+        Session session(device.endpoint(),options);
+        try { session.request(request.family,request.op);FAIL("missing timeout"); }
+        catch(const Error &e) {
+            CHECK(e.kind==ErrorKind::Timeout);CHECK(e.has_request_context);CHECK(e.family==request.family);
+            CHECK(e.op==request.op);CHECK(e.outcome_unknown==request.mutation);
+        }
+    }
+    SUBCASE("oversized request is local") {
+        std::promise<size_t> received;
+        FakeDevice device([&](Socket &socket) {
+            std::array<uint8_t,1> byte{};asio::error_code error;
+            received.set_value(socket.read_some(asio::buffer(byte),error));
+        });
+        Session session(device.endpoint());session.setMaxPayload(16);
+        try { session.request(1,5,Bytes(17));FAIL("accepted oversized mutation"); }
+        catch(const Error &e) { CHECK(e.kind==ErrorKind::Usage);CHECK_FALSE(e.outcome_unknown);CHECK(e.op==5); }
+        session.close();CHECK(received.get_future().get()==0);
+    }
+    SUBCASE("peer closes after mutation") {
+        FakeDevice device([](Socket &socket) { readFrame(socket); });
+        Session session(device.endpoint());
+        try { session.request(1,5);FAIL("missing disconnect"); }
+        catch(const Error &e) { CHECK(e.kind==ErrorKind::Connection);CHECK(e.outcome_unknown);CHECK(e.op==5); }
+    }
+    SUBCASE("closed session never submits") {
+        FakeDevice device([](Socket &socket) { std::array<uint8_t,1> b{};asio::error_code ec;socket.read_some(asio::buffer(b),ec); });
+        Session session(device.endpoint());session.close();
+        try { session.request(1,5);FAIL("accepted closed session"); }
+        catch(const Error &e) { CHECK(e.kind==ErrorKind::Connection);CHECK_FALSE(e.outcome_unknown); }
+    }
+}
+TEST_CASE("scalar variants preserve distinct types and exact bits") {
+    for(auto pair:{std::pair{ValueType::Bool,1U}, {ValueType::U8,255U}, {ValueType::U16,65535U},
+                  {ValueType::U32,UINT32_MAX}, {ValueType::I32,0x80000000U},
+                  {ValueType::F32,std::bit_cast<uint32_t>(-0.0F)}, {ValueType::Enum,255U}}) {
+        CHECK(valueBits(decodeValue(pair.first,pair.second))==pair.second);
+    }
+    CHECK(std::holds_alternative<EnumValue>(decodeValue(ValueType::Enum,1)));
+    CHECK(std::holds_alternative<uint8_t>(decodeValue(ValueType::U8,1)));
+    for(auto pair:{std::pair{ValueType::Bool,2U},{ValueType::U8,256U},{ValueType::U16,65536U},
+                  {ValueType::Enum,256U},{ValueType::None,0U},{ValueType::F32,0x7f800000U}}) {
+        CHECK_THROWS_AS(decodeValue(pair.first,pair.second),Error);
+    }
+    CHECK_THROWS_AS(valueBits(Value(std::numeric_limits<float>::infinity())),Error);
+}
+TEST_CASE("malformed successful service replies keep request context and mutation uncertainty") {
+    struct Case { uint8_t family,op;bool mutation; };
+    const std::array cases{Case{1,1,false},Case{4,2,true},Case{8,1,true},Case{5,2,true},
+                           Case{7,1,true},Case{7,3,false},Case{9,1,true}};
+    for(const auto &test:cases) {
+        FakeDevice device([&](Socket &socket) {
+            const auto req=readFrame(socket);
+            answer(socket,req,Bytes{test.family==1?protocol::core_wire::kVersion:uint8_t{1}});
+        });
+        Session session(device.endpoint());Client client(session);
+        try {
+            const std::array<Ref,1> refs{{{0,0,4}}};const std::array<uint32_t,1> values{200};
+            switch(test.family) {
+            case 1: client.info();break;
+            case 4: client.set(refs,values);break;
+            case 5: client.subEnable(0,true);break;
+            case 7: if(test.op==1) { client.testgenStart({}); }else { client.testgenStatus(0); }break;
+            case 8: client.action({0,0,1});break;
+            case 9: client.otaBegin(512,{});break;
+            }
+            FAIL("accepted malformed service result");
+        } catch(const Error &e) {
+            CHECK(e.kind==ErrorKind::Protocol);CHECK(e.has_request_context);
+            CHECK(e.family==test.family);CHECK(e.op==test.op);CHECK(e.outcome_unknown==test.mutation);
+        }
+    }
+}
 TEST_CASE("time pings correlate u16 IDs, reject stale replies and timestamp on I/O") {
     FakeDevice device([](Socket &socket) {
         namespace tw=protocol::time_wire;
@@ -138,29 +232,29 @@ TEST_CASE("Boot rejects a ping spanning reset and changes the next sample genera
 }
 TEST_CASE("typed values reject malformed inputs instead of narrowing")
 {
-    Json d = {{"value_type", 1}};
+    auto d=ValueType::U8;
     CHECK(parseValue(d, "255") == 255);
     for (auto s : {"256", "-1", "1junk", "", "0x"})
     {
         CHECK_THROWS_AS(parseValue(d, s), Error);
     }
-    d["value_type"] = 5;
+    d=ValueType::F32;
     CHECK(parseValue(d, "0.5") == std::bit_cast<uint32_t>(0.5f));
     for (auto s : {"NaN", "inf", "1e100", "2x"})
     {
         CHECK_THROWS_AS(parseValue(d, s), Error);
     }
-    d["value_type"] = 0;
+    d=ValueType::Bool;
     CHECK(parseValue(d, "true") == 1);
     CHECK_THROWS_AS(parseValue(d, "2"), Error);
-    d["value_type"] = 4;
-    CHECK(valueJson(4, parseValue(d, "-2147483648")) == -2147483648LL);
+    d=ValueType::I32;
+    CHECK(std::get<int32_t>(decodeValue(ValueType::I32, parseValue(d, "-2147483648"))) == -2147483648LL);
     CHECK_THROWS_AS(parseValue(d, "2147483648"), Error);
-    d["value_type"] = 6;
-    Json enums = Json::array({{{"name", "on"}, {"value", 1}}});
+    d=ValueType::Enum;
+    const std::array<EnumEntry,1> enums{{{1,"on"}}};
     CHECK(parseValue(d, "on", enums) == 1);
     CHECK_THROWS_AS(parseValue(d, "0", enums), Error);
-    CHECK_THROWS_AS(valueJson(5, 0x7fc00000), Error);
+    CHECK_THROWS_AS(decodeValue(ValueType::F32, 0x7fc00000), Error);
 }
 TEST_CASE("refs and blobs have explicit bounds")
 {
@@ -363,25 +457,25 @@ TEST_CASE("diagnostic event decoding preserves instance identity and exact lengt
     diag::protocol::RecordEvent report{123456789, 2, 112, 7, 42, -1, 99, 101};
     auto n = diag::protocol::encodeRecordEvent(65535, 0, report, buffer.data(), buffer.size());
     Frame frame{192, Bytes(buffer.begin(), buffer.begin() + n)};
-    auto decoded = client.event(frame);
-    CHECK(decoded["instance"] == 7);
-    CHECK(decoded["code"] == 42);
-    CHECK(decoded["error"] == -1);
-    CHECK(decoded["timestamp_us"] == 123456789);
-    CHECK(decoded["sequence"] == 65535);
+    auto decoded = std::get<DiagRecord>(client.event(frame));
+    CHECK(decoded.instance == 7);
+    CHECK(decoded.code == 42);
+    CHECK(decoded.error == -1);
+    CHECK(decoded.timestamp_us == 123456789);
+    CHECK(decoded.sequence == 65535);
     frame.payload.push_back(0);
     CHECK_THROWS_AS(client.event(frame), Error);
     diag::protocol::CounterEntry entry{112, 42, 3, 9, 7};
     n = diag::protocol::encodeCounterDeltaEvent(1, 0, 123, &entry, 1, buffer.data(), buffer.size());
-    decoded = client.event({192, Bytes(buffer.begin(), buffer.begin() + n)});
-    CHECK(decoded["entries"][0]["instance"] == 7);
-    CHECK(decoded["entries"][0]["delta"] == 3);
+    const auto counters=std::get<DiagCounters>(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)}));
+    CHECK(counters.entries[0].instance == 7);
+    CHECK(counters.entries[0].delta == 3);
     diag::protocol::BootEvent boot{1, 0, 3, 1, 1};
     n = diag::protocol::encodeBootEvent(2, 0, boot, buffer.data(), buffer.size());
-    CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["safe_mode"] == 1);
+    CHECK(std::get<BootEvent>(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})).safe_mode == 1);
     diag::protocol::ClearedEvent clear{22, 112, 7, 42};
     n = diag::protocol::encodeClearedEvent(3, 0, clear, buffer.data(), buffer.size());
-    CHECK(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})["instance"] == 7);
+    CHECK(std::get<DiagCleared>(client.event({192, Bytes(buffer.begin(), buffer.begin() + n)})).instance == 7);
 }
 
 TEST_CASE("status v5 carries sparse loop ids and rejects duplicate ids and bad counts")
@@ -393,10 +487,10 @@ TEST_CASE("status v5 carries sparse loop ids and rejects duplicate ids and bad c
     Session session(device.endpoint()); Client client(session);
     Bytes payload(18,0); payload[0]=protocol::core_wire::kVersion; payload[17]=2;
     payload.insert(payload.end(), {3,1,0,0,0, 19,9,0,0,0, 0});
-    auto status=client.event({128,payload});
-    CHECK(status["overruns"][0]["loop_id"]==3);
-    CHECK(status["overruns"][1]["loop_id"]==19);
-    CHECK(status["overruns"][1]["overruns"]==9);
+    auto status=std::get<StatusFrame>(client.event({128,payload}));
+    CHECK(status.overruns[0].loop_id==3);
+    CHECK(status.overruns[1].loop_id==19);
+    CHECK(status.overruns[1].overruns==9);
     payload[23]=3;CHECK_THROWS_AS(client.event({128,payload}),Error);
     payload[23]=19;payload[17]=9;CHECK_THROWS_AS(client.event({128,payload}),Error);
     payload[17]=2;payload.push_back(0);CHECK_THROWS_AS(client.event({128,payload}),Error);
@@ -418,8 +512,8 @@ TEST_CASE("GET_INFO v5 validates sparse ids, loop flags and duplicate loop ident
         answer(socket,readFrame(socket),body(false,true));
     });
     Session session(device.endpoint());Client client(session);
-    const auto info=client.info();CHECK(info["loops"][0]["realtime"]==true);
-    CHECK(info["loops"][1]["id"]==19);CHECK(info["loops"][1]["realtime"]==false);
+    const auto info=client.info();CHECK(info.loops[0].realtime()==true);
+    CHECK(info.loops[1].id==19);CHECK(info.loops[1].realtime()==false);
     CHECK_THROWS_AS(client.info(),Error);CHECK_THROWS_AS(client.info(),Error);
 }
 
@@ -430,15 +524,14 @@ TEST_CASE("command payloads and subscription decoding preserve types and reject 
     CHECK(payload==Bytes{protocol::core_wire::kVersion,255,255,255,0,0,192,63,42,0,0,0});
     CHECK(commandPayload(1,0,{}).size()==4);
     std::array<uint32_t,65> too_many{};CHECK_THROWS_AS(commandPayload(1,0,too_many),Error);
-    Json group={{"channel",129},{"id",0},{"epoch",255},{"kind","subscription"},{"configured",true},
-        {"refs",Json::array({Json::object(),Json::object()})}};
-    Json descriptors=Json::array({{{"value_type",5}},{{"value_type",3}}});
+    Group group;group.channel=129;group.epoch=255;group.configured=true;group.refs.resize(2);
+    std::array<ItemDescriptor,2> descriptors{};descriptors[0].value_type=ValueType::F32;descriptors[1].value_type=ValueType::U32;
     Frame frame{129,Bytes{protocol::core_wire::kVersion,255,255,255,1,0,0,0,0,0,0,0,0,0,192,63,42,0,0,0}};
     const auto decoded=decodeSubscription(frame,group,descriptors);
-    CHECK(decoded["counter"]==65535);CHECK(decoded["timestamp_us"]==1);
-    CHECK(decoded["typed_values"]==Json::array({1.5,42}));
-    frame.payload[1]=254;CHECK(decodeSubscription(frame,group,descriptors).is_null());
-    frame.payload[1]=255;frame.type=130;CHECK(decodeSubscription(frame,group,descriptors).is_null());frame.type=129;
+    REQUIRE(decoded);CHECK(decoded->counter==65535);CHECK(decoded->timestamp_us==1);
+    REQUIRE(decoded);CHECK(std::get<float>(decoded->typed_values[0])==1.5F);CHECK(std::get<uint32_t>(decoded->typed_values[1])==42);
+    frame.payload[1]=254;CHECK(!decodeSubscription(frame,group,descriptors));
+    frame.payload[1]=255;frame.type=130;CHECK(!decodeSubscription(frame,group,descriptors));frame.type=129;
     for(size_t n=0;n<20;++n) {
         Frame truncated{129,Bytes(frame.payload.begin(),frame.payload.begin()+n)};
         CHECK_THROWS_AS(decodeSubscription(truncated,group,descriptors),Error);
@@ -464,9 +557,9 @@ TEST_CASE("host groups validate pages and mutations and send stream frames on th
         answer(socket,readFrame(socket),{2,0,0,0,0});
     });
     Session session(device.endpoint());Client client(session);
-    const auto listing=client.groups();CHECK(listing["groups"].size()==2);
-    CHECK(listing["groups"][0]["loop"]==19);CHECK(listing["groups"][0]["refs"][0]["item"]==256);
-    CHECK(client.subEnable(0,true)["epoch"]==8);
+    const auto listing=client.groups();CHECK(listing.groups.size()==2);
+    CHECK(listing.groups[0].loop==19);CHECK(listing.groups[0].refs[0].item==256);
+    CHECK(client.subEnable(0,true).epoch==8);
     CHECK_THROWS_AS(client.subEnable(0,false),Error);
     const std::array<uint32_t,1> values{42};REQUIRE(client.command(0,8,99,values));
     client.system(5);
@@ -511,19 +604,20 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
     });
     Session session(device.endpoint());Client client(session);
     const auto s=client.captureStatus();
-    CHECK(s["state"]=="done");CHECK(s["irregular"]==true);CHECK(s["divider"]==2);
-    CHECK(s["trigger"]["kind"]=="threshold");CHECK(s["trigger"]["edge"]=="falling");
-    CHECK(s["trigger_index"]==1);CHECK(s["sample_period_us"]==2000);CHECK(s["refs"].size()==2);
-    CHECK(client.info()["max_payload"]==28);
+    CHECK(s.state==CaptureState::Done);CHECK(s.irregular==true);CHECK(s.divider==2);
+    CHECK(s.trigger.kind==3);CHECK(s.trigger.edge==1);
+    CHECK(s.trigger_index==1);CHECK(s.sample_period_us==2000);CHECK(s.refs.size()==2);
+    CHECK(client.info().max_payload==28);
     const auto all=client.captureData(); // pages 0..1, then 2
-    CHECK(all["irregular"]==false);
-    CHECK(all["data"]==Json::array({Json::array({0,100}),Json::array({1,101}),Json::array({2,102})}));
-    CHECK(client.captureStatus()["refs"].size()==1);
+    CHECK(all.status.irregular==false);
+    CHECK(all.data==std::vector<std::vector<uint32_t>>{{0,100},{1,101},{2,102}});
+    CHECK(client.captureStatus().refs.size()==1);
     CHECK_THROWS_AS(client.captureRead(0,1,1),Error);
+    CHECK_THROWS_AS(client.captureRead(0,1,65),Error);
     CHECK_THROWS_AS(client.captureStatus(),Error);
     Bytes event{protocol::core_wire::kVersion,1,3,0,0,0,1,0,0,0,2};
-    const auto done=client.event({protocol::defs::msg::kCoreEvent,event});
-    CHECK(done["name"]=="capture_done");CHECK(done["recorded"]==3);CHECK(done["irregular"]==true);
+    const auto done=std::get<CaptureDone>(client.event({protocol::defs::msg::kCoreEvent,event}));
+    CHECK(done.recorded==3);CHECK(done.irregular==true);
     event[1]=2;CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     event[1]=1;event.push_back(0);CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     CaptureTrigger bad;bad.kind=4;const std::array<Ref,1> refs{{{32,0,256}}};
@@ -557,14 +651,14 @@ TEST_CASE("testgen SDK encodes requests and rejects malformed status and events"
     Session session(device.endpoint()); Client client(session);
     TestgenConfig c; c.loop=3; c.target={32,0,514}; c.waveform=4;
     c.amplitude=.1F; c.frequency_start=.5F; c.frequency_end=3; c.duration_ms=2000;
-    CHECK(client.testgenStart(c)["run"]==42);
-    const auto s=client.testgenStatus(3); CHECK(s["state"]=="done"); CHECK(s["reason"]=="completed");
-    CHECK(s["waveform"]=="chirp_linear"); CHECK(s["target"]["item"]==514);
-    CHECK(client.testgenStop(3)["ok"]==true);
+    CHECK(client.testgenStart(c).run==42);
+    const auto s=client.testgenStatus(3); CHECK(s.state==TestgenState::Done); CHECK(s.reason==TestgenReason::Completed);
+    CHECK(s.waveform==4); CHECK(s.target.item==514);
+    CHECK(client.testgenStop(3).ok==true);
     CHECK_THROWS_AS(client.testgenStatus(3),Error); CHECK_THROWS_AS(client.testgenStatus(3),Error);
     CHECK_THROWS_AS(client.testgenStart(c),Error);
     Bytes event{protocol::core_wire::kVersion,2,3,42,0,0,0,2};
-    CHECK(client.event({protocol::defs::msg::kCoreEvent,event})["reason"]=="stopped");
+    CHECK(std::get<TestgenDone>(client.event({protocol::defs::msg::kCoreEvent,event})).reason==TestgenReason::Stopped);
     event[7]=0; CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     event[7]=3; event.push_back(0); CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     CHECK(parseTestgenWaveform("chirp_log")==5); CHECK_THROWS_AS(parseTestgenWaveform("invalid"),Error);
