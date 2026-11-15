@@ -15,6 +15,8 @@ class CommandGroup
     bool write(std::span<const double> values) noexcept;
     bool writeBits(std::span<const uint32_t> values) noexcept;
     void hold(std::span<const uint32_t> values);
+    // Call before sending a mode-change request. Invalidates queued values,
+    // including pending TX frames; an already-sent frame cannot be recalled.
     void discardQueued() noexcept;
     void stop() noexcept;
     bool active() const noexcept;

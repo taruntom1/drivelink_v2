@@ -46,9 +46,10 @@ struct DeviceSnapshot
     bool safeMode() const { return (info.flags & 8) != 0; }
 };
 
-// Single-caller, like Client. Construction loads the model. Keep Client and
-// its Session alive; never call from the I/O thread. Reads span multiple device
-// requests, not one atomic device transaction. Does not consume event frames.
+// Thread-safe immutable snapshots and dispatched notifications. Keep the
+// Session alive; the constructor does not retain Client. Loads span several
+// device reads, not an atomic device transaction. The legacy event queue is
+// independent. Construction/reload are synchronous; never call them on I/O.
 class DeviceModel
 {
   public:
@@ -62,9 +63,9 @@ class DeviceModel
     using Handler=std::function<void(Change)>;
     void onChange(Handler handler);
     RequestHandle reloadAsync(Completion<OperationResult> completion={});
-    // Only a fully loaded replacement is published. Errors preserve the old
-    // snapshot. Successful reload invalidates references into the old contents;
-    // callers may retain an independent value copy. No automatic refresh.
+    // Explicit reload preserves complete metadata on error. Retained shared
+    // snapshots stay valid. Boot marks ready=false until its automatic reload
+    // succeeds; runtime events may keep updating while a reload is in progress.
     void reload();
 
   private:

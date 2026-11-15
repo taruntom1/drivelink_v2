@@ -790,7 +790,6 @@ void Session::unobserve(uint64_t id) {
     {std::lock_guard lock(box->mutex);auto it=box->observers.find(id);if(it==box->observers.end()) {return;}observer=it->second;box->observers.erase(it);}
     std::lock_guard lock(observer->mutex);observer->active=false;
 }
-void Session::dispatch(Task task) {m_impl->dispatch(std::move(task));}
 void Session::dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task) {m_impl->deliver(std::move(task),state);}
 void Session::enqueueService(const std::shared_ptr<detail::Cancellation> &state,Task task) {
     auto &d=*m_impl;

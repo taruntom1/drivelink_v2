@@ -41,9 +41,9 @@ struct SessionOptions
     Dispatcher dispatcher{};
     bool periodic_time = true;
 };
-// Thread-safe synchronous facade over one Asio I/O thread. Calls serialize;
-// timed-out sequence IDs are retired until reconnect to reject stale replies.
-// Endpoint: tcp://numeric-ip:port or serial://device. No callbacks on callers.
+// One Asio I/O thread; sync waiters serialize except emergency DISARM.
+// Timed-out IDs retire until reconnect. Callbacks only use the dispatcher.
+// Endpoint: tcp://numeric-ip:port or serial://device.
 class Session
 {
   public:
@@ -110,7 +110,6 @@ class Session
     std::unique_ptr<Impl> m_impl;
     void enqueueService(const std::shared_ptr<detail::Cancellation> &state, Task task);
     std::shared_ptr<void> callbackSlot(bool disarm=false);
-    void dispatch(Task task);
     void dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task);
 };
 } // namespace drivelink
