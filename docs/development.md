@@ -166,6 +166,29 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   CMake and Ninja are Qt tool variants. Bump the cache key when changing the kit
   or installation recipe; no fallback cache may supply a different kit.
 
+## Host concurrency and time checks
+
+The host checks include `host-concurrency` and a separate real-vdev `host-async`
+consumer alongside unit, model, golden/replay, integration and install tests.
+`host/test/async_probe` takes one endpoint; on a bare loops-only serial device
+it also checks Boot invalidation/reload, restoring the original idle groups.
+See host/README.md for its preconditions and native scheduling distinction.
+
+For a focused Linux GNU ThreadSanitizer run, use a separate build directory:
+
+```sh
+cmake -S host/superbuild -B ~/.cache/drivelink/tsan -G Ninja -DDRIVELINK_TSAN=ON
+cmake --build ~/.cache/drivelink/tsan --target host_concurrency_tests host_tests --parallel
+TSAN_OPTIONS=halt_on_error=1 ~/.cache/drivelink/tsan/test/host_concurrency_tests
+TSAN_OPTIONS=halt_on_error=1 ~/.cache/drivelink/tsan/test/host_tests --test-case='*model*,*snapshot*'
+```
+
+This instruments the host library and selected concurrency/model cases; it is
+not a firmware sanitizer campaign. Normal host checks retain their regular
+toolchains. Run builds/tests one at a time, including this optional run.
+`time_smoke.py` checks the production mapped-time fields as well as the existing
+held-out residual/drift gates; run idle and `--traffic` for the CH343.
+
 ## Guarded bench builds
 
 Use `python tools/bench_fw.py <mode>` rather than editing the normal sdkconfig.

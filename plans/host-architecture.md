@@ -6,8 +6,8 @@ Status: architecture target, re-planned 2026-11-14 after the firmware overhaul
 and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
 H1a-1 adds typed services/errors and moves JSON formatting into the CLI;
 H1a-2 adds the discovered device snapshot/reload API and Windows host CI.
-Still to build: the asynchronous path and timestamp
-mapping, device identity, the GUI, the agent and ROS.
+H1b adds the asynchronous runtime, live model, group buffers, managed commands
+and timestamp mapping. Still to build: device identity, the GUI, agent and ROS.
 
 This file is the design record. The steps that build it (T0, H1a–H6, HW), with
 a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
@@ -107,18 +107,15 @@ then the agent and the GUI's remote mode, then ROS.
 
 ### `libdrivelink` (host core)
 
-**What exists (F3c–F9, LP, H1a-1/2).** `Session` is a thread-safe synchronous facade over
-one Asio I/O thread: it allocates `seq`, correlates responses, retries only
-idempotent reads, retires timed-out ids until reconnect, queues command-group
-frames without blocking, and hands every other frame to a bounded event queue
-that drops oldest. `Client` wraps the families (info, describe, layout,
-system, param, action, diag, group, capture, testgen, OTA) with typed results.
-The CLI owns JSON formatting and preserves its original output.
-`DeviceModel` loads a typed read-only snapshot and explicitly reloads it with
-all-or-nothing publication; safe mode and configured/pending layouts are readable.
-Its API/lifetime and multi-request consistency rules are in the library README.
-`ClockEstimator` fits offset and drift from pings with I/O-thread timestamps.
-The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
+**What exists (F3c–F9, LP, H1a-1/2, H1b).** Session has a bounded async
+request engine, typed services through a serial executor, synchronous wrappers,
+exactly-once dispatched completions and emergency DISARM admission/TX priority.
+DeviceModel publishes immutable discovered snapshots, follows events and reloads
+after Boot. Subscription seqlocks/rings are pulled; managed command queues own
+prefix-only keepalives. I/O owns the periodic clock fit and timestamp mappings.
+The CLI keeps its output/codes, adding production mapped fields only to time
+JSON. Details, lifetimes, loss counters and bounds are in the library README.
+The rules are in [host/CLAUDE.md](../host/CLAUDE.md). Identity remains H1c.
 
 **Target (H1a, H1b, H1c):**
 

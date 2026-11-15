@@ -80,8 +80,9 @@ less than half watchdog_ms. With no values it sends prefix-only keepalives.
 `keepalive GROUP PERIOD_MS COUNT` sends those frames without arming or taking
 ownership of an existing arm session. Both workflows stop on connection errors;
 command streams have no acknowledgement, so status/diag supervision is separate.
-NaN remains rejected; automatic hold conversion needs semantic device modeling
-in the later host work.
+CLI values remain finite and explicit. The library's managed command API can
+map NaN through consumer-supplied finite holds; these CLI commands keep their
+existing manual command/keepalive behavior.
 
 `sub-csv GROUP COUNT` writes timestamp_us, counter and descriptor-typed values
 to stdout as CSV. Redirect to a file; omit --json. `sub-stream` retains NDJSON.
@@ -130,7 +131,11 @@ retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.
 to 180 s (1–3600), using a 100 ms warmup cadence for five seconds and 1 s
 thereafter. Both support readable/JSON output. The measurement command reports
 raw samples, bounded-estimator snapshots, held-out predictions, timeouts and
-dropped event counts. Interrupt stops sampling; no firmware clock is set.
+dropped event counts. JSON samples additionally expose `mapping_valid`,
+`mapping_generation`, `mapped_host_us` and `mapped_uncertainty_us` from the
+production Session fit; readable output is unchanged. Invalid mappings use null
+host/uncertainty fields. Interrupt stops sampling; no firmware clock is set.
+CLI sessions disable background periodic pings and retain this explicit cadence.
 Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
 and repeat with `--traffic` for the bare-board stability check. See the
 [time contract](../../docs/protocol/time.md) for the accuracy limits.

@@ -74,3 +74,46 @@ kept H1b in one PR after the proposed two-part split.
   threshold. The vdev probe measures 1 kHz data while disarmed, then tests
   keepalives at 50 Hz and restores 1 kHz. The bare-board probe tests both at
   1 kHz. No safety threshold or production firmware changes.
+
+## Results (2026-11-15)
+
+- Implemented the approved scope with no firmware/wire change. CLI readable,
+  CSV/NDJSON and exit behavior is preserved; time JSON adds production mapped
+  host/uncertainty/generation/validity fields. The time smoke verifies them.
+- Full validation passed all seven checks on the final implementation, including
+  both host toolchains, real-vdev scenarios, CLI golden/replay, installed packages
+  and three zero-warning firmware builds. Final documentation commits refresh
+  the gate with unchanged checks reused.
+- Self-review plus one independent Codex review at high effort. Three valid
+  findings were fixed: transport-failure submission liveness, reserved DISARM TX
+  capacity, and late Boot reload restoring a lost link. The same reviewer cleared
+  the fixes with no remaining actionable findings. No rejected findings.
+- GCC 15.2 Linux ThreadSanitizer: 19 concurrency cases and all five model/snapshot
+  cases passed without reports. Deterministic scheduling fixtures exercise TX
+  saturation and disconnect-before-reload delivery. Temporarily restoring the old
+  TX admission/model publication lines made their regressions fail as intended.
+- COM3 matched the recorded normal LP image and clean factory state. The new
+  consumer passed 1 kHz data/mapping, automatic keepalives, watchdog, fast DISARM,
+  Boot invalidation and complete model reload. Idle/traffic 180 s time runs and
+  CLI, motor/IMU mocks, capture/PSRAM, testgen, placement and OTA smokes passed.
+  OTA used the guarded distinct candidate and verified saved LP application.
+  Exact original ELF b8ad3d153466c34d400e15757674e9cd937575b055f1307a658962d514449b94
+  is confirmed in ota_0; factory layout, rates 1000/100/10, watchdog 200 ms,
+  disarmed state, idle groups/capture and normal bench refusal were restored.
+  The HIL app was built only. No new deferred hardware check; Pi time remains open.
+- The OTA proxy harness now recognizes its partner thread's intentional socket
+  shutdown through a per-connection event. CLI success/identity/confirmation
+  assertions remain unchanged.
+
+The first physical OTA attempt exposed Boot interrupting an in-flight REBOOT or
+readiness request. The candidate remained unconfirmed. One explicit reboot
+rolled back to the exact confirmed LP baseline before debugging. The corrective
+host-only `boot_changed` marker lets the CLI resume readiness reads; malformed
+protocol errors stay fatal, identity/slot checks stay mandatory, and REBOOT is
+never repeated. The proxy regression injects that interruption and asserts one
+REBOOT; uncommitted reboot and identity-mismatch cases still refuse confirmation.
+The independent reviewer cleared this correction. Full validation and the
+physical OTA/async probes were repeated successfully afterward; unchanged clock
+and module results above were retained. The vdev probe also applies the existing
+ten-attempt test-only group Busy/StagingBusy/Withdrawn policy, excluding uncertain
+outcomes, timeouts and other families; production retry behavior is unchanged.

@@ -12,11 +12,26 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   table. Generated constants are for core/system IDs only. Share framing,
   Scanner and Reader/Writer; keep descriptor/scalar parsing pure/tested.
   Validate complete lengths/pages/counts and payload limits; mismatches are explicit.
-- One Asio I/O thread owns session sockets/serial/TX. Synchronous callers
-  serialize; never call the sync facade on that I/O thread. `Client` is
-  single-caller; Session is thread-safe. Close/errors wake waiting callers;
-  close must not depend on peer progress. Bound event queues, drop oldest and
-  expose loss counters.
+- One Asio I/O thread owns sockets/serial/TX and periodic time. Sync callers
+  serialize except emergency DISARM; never call sync on I/O. `Client` sync is
+  single-caller; typed async callables own their inputs and run on the serial
+  service executor with a temporary Client. Callbacks are dispatched FIFO,
+  exactly once and in reply order, never inline/on I/O. Bound admission through
+  callback consumption; never drop an accepted completion. DISARM reserves TX
+  space as well as admission and bypasses ordinary service/TX queues.
+- Transport failure completes pending work but retains the I/O work guard until
+  explicit close. Serialize close with submission; a checked-but-not-yet-posted
+  request must never land on a stopped context. Close must not depend on peer or
+  application dispatcher progress. Bound event queues and expose drop counters.
+- DeviceModel retains Session, not a temporary service Client. Publish immutable
+  shared snapshots, tag generations, invalidate readiness on Boot and reload
+  complete metadata. Reload publication preserves current link/runtime/loss
+  state; a delayed result cannot resurrect a disconnected model. Group data is
+  pulled, not dispatched. Seqlock payload words must be atomic C++ objects.
+- Managed commands use a bounded producer queue and prefix-only I/O keepalives.
+  Consumers supply finite holds; no module-specific semantics. Flush both queued
+  values and pending TX generations before mode changes. Boot, clear and close
+  invalidate traffic; never replay values or arm automatically.
 - Correlate type, sequence, family and op. Retry only known-idempotent reads;
   a mutation timeout has an uncertain outcome. Retire timed-out IDs until
   reconnect; fail explicitly on exhaustion. Preserve request family/op and
