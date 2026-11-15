@@ -157,6 +157,9 @@ def plan_gen(jobs):
         Step('generator tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/gen/tests']),
         Step('validate.py tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/tests']),
         Step('Python frame reference', [python(), 'firmware/test/uart_comm/protocol.py']),
+        Step('GUI Theme is current', [python(), 'host/gui/theme/gen_theme.py', '--check']),
+        Step('GUI Theme generator tests', [python(), '-m', 'unittest', 'discover',
+                                           '-s', 'host/gui/theme', '-p', 'test_*.py']),
     ]
 
 
@@ -227,10 +230,18 @@ def worktree_key():
     return f'{ROOT.name}-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]}'
 
 
+LINUX_PACKAGES_HINT = ('Linux host packages missing (compilers, CMake, Ninja, Qt 6.10); '
+                       'run: sudo sh tools/setup_linux.sh host')
+
+
 def plan_host_linux(jobs):
     if not WINDOWS:
         need('cmake', 'ninja', 'g++')
-        return plan_host('linux', 'linux-no-gui', jobs)
+        probe = subprocess.run(['sh', str(ROOT / 'tools/setup_linux.sh'), '--check', 'host'],
+                               capture_output=True, text=True, errors='replace')
+        if probe.returncode != 0:
+            raise Unavailable(LINUX_PACKAGES_HINT)
+        return plan_host('linux', 'linux', jobs)
     # From Windows the Linux build runs in WSL. Its build directory is on the
     # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
     # RAM and loses whenever the idle VM stops.
@@ -238,20 +249,19 @@ def plan_host_linux(jobs):
     wsl = ['wsl.exe', *(['-d', distro] if distro else [])]
     env = dict(os.environ, WSL_UTF8='1')
     need('wsl.exe')
-    probe = subprocess.run([*wsl, '--exec', 'sh', '-c',
-                            'command -v cmake ninja g++ python3 >/dev/null && printf %s $HOME'],
+    probe = subprocess.run([*wsl, '--cd', str(ROOT), '--exec', 'sh', '-c',
+                            'sh tools/setup_linux.sh --check host >/dev/null && printf %s $HOME'],
                            env=env, capture_output=True, text=True, errors='replace')
     home = probe.stdout.strip()
     if probe.returncode != 0 or not home.startswith('/'):
-        raise Unavailable('WSL needs cmake, ninja, g++ and python3 '
-                          '(apt install build-essential cmake ninja-build python3)')
+        raise Unavailable(f'WSL: {LINUX_PACKAGES_HINT}')
     build = f'{home}/.cache/drivelink/{worktree_key()}/host-linux'
 
     def inside(title, cwd, *command):
         return Step(title, [*wsl, '--cd', str(cwd), '--exec', *command], env=env)
     superbuild = ROOT / 'host/superbuild'
     return [
-        inside('configure', superbuild, 'cmake', '--preset', 'linux-no-gui', '-B', build),
+        inside('configure', superbuild, 'cmake', '--preset', 'linux', '-B', build),
         inside('build', superbuild, 'cmake', '--build', build, '--parallel', jobs),
         inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure',
                '-E', '^host-integration$'),
@@ -265,7 +275,7 @@ NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
 CHECKS = [
-    Check('gen', 'generated files, generator tests, Python frame reference', plan_gen, reads_docs=True),
+    Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
     Check('native', 'native unit tests (firmware/test/native)', plan_native),
     Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),

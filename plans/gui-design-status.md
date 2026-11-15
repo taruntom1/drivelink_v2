@@ -1,6 +1,6 @@
 # GUI design status
 
-**The design phase is complete** (G0–G7b accepted; G8 folded into host step H2a on 2026-11-14). This file is now the Figma reference for the GUI steps H2a–H3b: the node ids, the rules to keep and the Figma traps. The plan, the decisions and the open issues are in [gui-design.md](gui-design.md); the build is tracked in [host-status.md](host-status.md).
+**The design phase is complete** (G0–G7b accepted; G8 folded into host step H2a on 2026-11-14 and done in H2a-1 on 2026-11-15). This file is now the Figma reference for the GUI steps H2a–H3b: the node ids, the rules to keep and the Figma traps. The plan, the decisions and the open issues are in [gui-design.md](gui-design.md); the build is tracked in [host-status.md](host-status.md).
 
 Last updated: 2026-11-14 (host re-plan). The last design PR was [#62](https://github.com/taruntom1/drivelink_v2/pull/62).
 
@@ -17,15 +17,16 @@ Last updated: 2026-11-14 (host re-plan). The last design PR was [#62](https://gi
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | done | Accepted 2026-11-14, including CalibrationLevel/OrientationPreview, 11 screens and 2 retained 1080p Light checks; calibration contract alignment remains in handoff notes |
 | G7b Loops and sources rework | done | Parts A–G and G2 extensions accepted 2026-11-14: 17 Layout frames, shared updates, two G4 deletions, Cover/flow records and checks |
-| G8 Prototype and handoff | moved to H2a | Decided 2026-11-14: no clickable prototype; H2a exports the tokens and assigns the open handoff issues to the screen steps ([host-steps.md](host-steps.md)) |
+| G8 Prototype and handoff | done (H2a-1) | No clickable prototype. Tokens exported read-only to `host/gui/theme/tokens.json` (re-export: `host/gui/theme/export_tokens.js`, [host/gui/README.md](../host/gui/README.md)); open issues assigned in gui-design.md, "Open issues by host step" |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
 ## Next step
 
-1. **G8 is folded into host step H2a** (user decision 2026-11-14). No further Figma phase is planned. H2a exports the tokens to `host/gui/theme/tokens.json` and the `Theme` singleton, and assigns the open handoff issues: the faults badge to H2b, the G5 1080p issues to H2d (Monitor) and H2e (Tune), calibration alignment with F6 and the calibration file format to H2f. Remote calibration actions need the lease (decided 2026-11-14).
-2. **Not yet in Figma:** LP made `loop.core` a discovered enum (Core 0, Core 1, Any core) with Any core as the Add loop default; factory control/sensor stay 1/0. H2c builds it into Add loop, loop detail and the Device table; applying it to the frames is optional (H2a). The agent's device list (H3b) has no frame either.
-3. A Figma edit from now on is made by the H step that needs it, on that step's branch, following the `/gui-design-step` rules for the file.
+1. **G8 is done (H2a-1, 2026-11-15).** The tokens are in `host/gui/theme/tokens.json` and the generated `Theme`; each G2 shell component is a `DL*` control in `host/gui/style/`. The open issues are assigned to steps in gui-design.md ("Open issues by host step"). Remote calibration actions need the lease (decided 2026-11-14).
+2. **Not in Figma, by decision:** LP's `loop.core` enum (Core 0, Core 1, Any core; Any core is the Add loop default; factory control/sensor stay 1/0) is built in code by H2c; the user chose not to apply it to the frames (2026-11-15). The agent's device list (H3b) has no frame either.
+3. **Token changes:** edit the variables in Figma, then re-export and regenerate as [host/gui/README.md](../host/gui/README.md) ("Theme") says. Two variables share the QML name `Theme.borderFocus`; the Size one is `borderFocusWidth` in code.
+4. A Figma edit from now on is made by the H step that needs it, on that step's branch, following the `/gui-design-step` rules for the file.
 
 ## Handoff note
 

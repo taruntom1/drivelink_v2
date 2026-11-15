@@ -46,7 +46,7 @@ jobs:
           python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O C:/Qt
           python -m aqt install-tool windows desktop tools_cmake qt.tools.cmake -O C:/Qt
           python -m aqt install-tool windows desktop tools_ninja qt.tools.ninja -O C:/Qt
-      - name: Build (warnings are errors), test and check the installed packages
+      - name: Build (warnings are errors), test (GUI offscreen) and check the installed packages
         run: |
           $qtVersion = & 'C:/Qt/6.12.0/mingw_64/bin/qmake.exe' -query QT_VERSION
           if ($LASTEXITCODE -ne 0 -or $qtVersion -ne '6.12.0') { throw "Expected Qt 6.12.0, found $qtVersion" }
@@ -63,10 +63,14 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
-      - name: Install host toolchain
-        run: apt-get update && apt-get install -y build-essential cmake ninja-build python3 python3-yaml git ca-certificates
+      # actions/checkout needs git to keep a repository; every other package
+      # comes from tools/setup_linux.sh.
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
-      - name: Build (warnings are errors), test against TCP and PTY vdev, check the installed packages
+      - name: Install the host packages (compilers, CMake, Ninja, Qt 6.10)
+        run: sh tools/setup_linux.sh host
+      - name: Build (warnings are errors), test against TCP and PTY vdev and the GUI offscreen, check the installed packages
         run: python3 tools/validate.py --only host-linux
 
   firmware:
@@ -101,9 +105,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
-      - name: Install native toolchain and PyYAML
-        run: apt-get update && apt-get install -y build-essential cmake ninja-build python3 python3-yaml git ca-certificates
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
+      - name: Install the native toolchain and PyYAML
+        run: sh tools/setup_linux.sh base
 
       - name: Generated files, generator tests, Python frame reference, native tests
         run: python3 tools/validate.py --only gen native

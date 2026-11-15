@@ -28,8 +28,9 @@ logs its internal choices.
 | H1a-2 | Device model snapshot and host-windows CI | H1a-1 | bare board: CLI smokes | independent |
 | H1b | Async path, events into the model, group buffers, command keepalives, periodic time and timestamp mapping | H1a-2 | bare board: time, 1 kHz groups, smokes | independent |
 | H1c | Device identity, core v9 (firmware, host, vdev, docs) | H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | independent |
-| H2a | GUI foundation: app, Theme from Figma tokens (G8 folded in), style, shell, status bar, DISARM/Esc, Qt adapters, test and screenshot tooling, vdev scenario hooks, `setup_linux.sh` | H1b, H1c | vdev | independent |
-| H2b | Connect and Device screens | H2a | bare board: GUI scenarios | independent |
+| H2a-1 | GUI build and style: `setup_linux.sh` and CI, Theme from Figma tokens (G8 folded in), fonts and icons, the shell controls, style gallery, Qt Quick Test | H1b, H1c | none (no device code) | self |
+| H2a-2 | GUI shell and backend: app, shell, DISARM/Esc, Qt adapters, arm/ack, command groups, item-model bases, vdev scenario hooks, screenshot tool | H2a-1 | vdev | independent |
+| H2b | Connect and Device screens | H2a-2 | bare board: GUI scenarios | independent |
 | H2c | Layout screen | H2b | vdev | self |
 | H2d | Monitor screen | H2c | vdev | independent |
 | H2e | Tune screen, run metrics and plant identification, session files | H2d | vdev; deferred: motor | independent |
@@ -146,6 +147,12 @@ Review: independent (wire and persistence).
 
 ## H2a GUI foundation
 
+User-approved split (2026-11-15): H2a-1 builds the style layer below; H2a-2
+builds the shell and backend. [H2a-1 plan and results](h2a-1-implementation.md).
+
+- **H2a-1** (self-review, no hardware): `host/gui/` in the superbuild, `setup_linux.sh` and CI, G8 tokens and the `Theme` generator, bundled fonts/icons, the shell controls (Button … Tooltip), a style gallery, Qt Quick Test in both host checks. Done; see the plan.
+- **H2a-2** (independent review, vdev): the application, the shell with Esc → DISARM, the scrim under the status bar, the faults drawer frame, toasts; the backend and item-model bases; vdev scenario hooks; the screenshot tool, grown from the gallery (`drivelink-style-gallery`).
+
 **Depends on** H1b, H1c. **Architecture:** "`drivelink-gui`", "Development environment". **Design:** [gui-design.md](gui-design.md) Decisions (G2, G3), [gui-design-status.md](gui-design-status.md).
 
 Scope:
@@ -164,7 +171,7 @@ Review: independent (DISARM and Esc, arming, command group keepalives, threading
 
 ## H2b Connect and Device
 
-**Depends on** H2a. **Design:** G3 frames and decisions, G7b Device loop table.
+**Depends on** H2a-2. **Design:** G3 frames and decisions, G7b Device loop table.
 
 Scope:
 - Connect: serial ports and baud, a TCP address for vdev, loading progress, protocol mismatch, recent devices keyed by device id (`QSettings`). The Agent tab is a disabled placeholder until H3b.

@@ -26,11 +26,14 @@ restores name/layout/settings.
 
 Requires CMake 3.24+, Ninja, a C++23 compiler (GCC 13.1 minimum) and Python 3. The first configure
 downloads SHA256-pinned standalone Asio 1.30.2 and nlohmann JSON 3.11.3.
-The presets do not build a GUI yet.
+The `linux` and `windows-mingw` presets also build the GUI's style layer
+([gui/README.md](gui/README.md)), which needs Qt 6.10 or newer (Quick,
+QuickTemplates2, Svg, QuickTest); `linux-no-gui` leaves it out. On Ubuntu
+26.04 (WSL or CI) `sudo sh tools/setup_linux.sh host` installs every package.
 
 ```sh
 cd host/superbuild
-cmake --preset linux-no-gui
+cmake --preset linux
 cmake --build --preset linux --parallel
 ctest --preset linux
 python3 ../test/install_smoke.py --build build/linux
@@ -48,7 +51,9 @@ ctest --preset windows-mingw
 python ../test/install_smoke.py --build build/windows-mingw
 ```
 
-The binaries are under `build/<preset>/cli/` and `build/<preset>/vdev/`.
+The binaries are under `build/<preset>/cli/`, `build/<preset>/vdev/` and
+`build/<preset>/gui/`. The Windows preset finds Qt in `C:/Qt/6.12.0/mingw_64`;
+the GUI tests prepend Qt's `bin` to their own PATH.
 Keep the same MinGW runtime DLLs on PATH when running them.
 
 From the repository root, `python tools/validate.py --only host-win host-linux`

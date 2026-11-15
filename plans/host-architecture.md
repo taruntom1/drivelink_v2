@@ -392,7 +392,7 @@ The steps, their dependencies and briefs are in [host-steps.md](host-steps.md); 
 | Done | S0, S1, F1–F10, LP: the workflow, the repo restructure, the firmware ([firmware-architecture.md](firmware-architecture.md)) and the first host slice. |
 | Tooling | T0: C++23 for the host and the native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, the native-tests job in `ubuntu:26.04`. |
 | Library | H1a typed API and device model; H1b async path, events, group buffers, time mapping; H1c device identity (core v9). |
-| GUI, local | H2a foundation; H2b Connect and Device; H2c Layout; H2d Monitor; H2e Tune; H2f IMU calibration panel; H2g installer and close-out. |
+| GUI, local | H2a-1 build and style, H2a-2 shell and backend; H2b Connect and Device; H2c Layout; H2d Monitor; H2e Tune; H2f IMU calibration panel; H2g installer and close-out. |
 | Agent and remote | H3a agent; H3b GUI remote mode; H3c Pi deployment. |
 | ROS | H4a `drivelink_hardware`; H4b `drivelink_bringup`. |
 | Finish | H5 agent `.deb`; H6 cleanup and the merge into `main`. |
