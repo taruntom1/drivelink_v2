@@ -16,7 +16,14 @@ from motor_smoke import Device, preflight
 def observe_console(port, seconds, expected, bench):
     import serial  # Only hardware console checks need pyserial.
     chunks = []
-    with serial.Serial(port, 115200, timeout=.2) as console:
+    console = serial.Serial(baudrate=115200, timeout=.2)
+    console.port = port
+    # Native USB control-line transitions can reset the ESP. Configure the
+    # inactive lines before opening, just as for the protocol transport.
+    console.dtr = False
+    console.rts = False
+    console.open()
+    with console:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             chunks.append(console.read(max(1, console.in_waiting)))
@@ -105,7 +112,13 @@ def run(cli_path, endpoint, console=None, stack_seconds=35, bench=False, report=
             expected = {f"core_loop_{loop['id']}": (-1 if value == 2 else value)
                         for loop, value in zip(info['loops'], original_cores)}
             expected.update({f'core_loop_{loop}': -1 for loop in loops})
-            evidence.update(observe_console(console, stack_seconds, expected, bench))
+            try:
+                evidence.update(observe_console(console, stack_seconds, expected, bench))
+            finally:
+                # Consume any console-induced Boot with a bounded read-only
+                # readiness query before issuing cleanup mutations. Never
+                # retry an uncertain mutation to hide a reboot.
+                cli.connect()
         print('PASS loop placement enum discovery, new default, choices, invalid values, pending edits, ticking and persistence', flush=True)
         print('Loop stats (ticks, overruns, last/max us):', evidence['loop_stats'], flush=True)
     finally:

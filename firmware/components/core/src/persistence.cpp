@@ -132,6 +132,7 @@ LoadedConfig loadConfig(core_os::KvStore &store)
         bool valid = false;
         uint32_t gen = 0;
         std::vector<LayoutRecord> records;
+        std::array<char, drivelink::protocol::kDeviceNameBytes + 1> name{};
     };
     Slot slots[2];
     for (size_t s = 0; s < 2U; ++s) {
@@ -140,7 +141,7 @@ LoadedConfig loadConfig(core_os::KvStore &store)
             cfg.found_any = true;
         }
         if (readBlob(store, kLayoutNamespace, kLayoutKeys[s], buf)) {
-            slots[s].valid = decodeLayoutBlob(buf, slots[s].gen, slots[s].records);
+            slots[s].valid = decodeLayoutBlob(buf, slots[s].gen, slots[s].records, &slots[s].name);
             // A blob in the wrong slot for its generation is not trusted.
             slots[s].valid = slots[s].valid && ((slots[s].gen & 1U) == s);
         }
@@ -187,6 +188,7 @@ LoadedConfig loadConfig(core_os::KvStore &store)
         if (complete) {
             cfg.complete = true;
             cfg.gen = slot.gen;
+            cfg.name = slot.name;
             cfg.cause = 0;
             cfg.instances = std::move(instances);
             cfg.system = std::move(system);
@@ -198,8 +200,11 @@ LoadedConfig loadConfig(core_os::KvStore &store)
 }
 
 Status saveConfig(core_os::KvStore &store, uint32_t gen, std::span<const StoredInstance> instances,
-                  std::span<const ParamPair> system)
+                  std::span<const ParamPair> system, std::string_view name)
 {
+    if (!drivelink::protocol::validDeviceName(name)) {
+        return Status::fail(Result::InvalidArgument, Detail::BadValue);
+    }
     const size_t slot = gen & 1U;
     auto writeInstance = [&](uint8_t type_id, uint8_t instance, std::span<const ParamPair> pairs) {
         const std::vector<uint8_t> blob = encodeInstanceBlob(gen, pairs);
@@ -234,7 +239,7 @@ Status saveConfig(core_os::KvStore &store, uint32_t gen, std::span<const StoredI
         std::memcpy(rec.label, s.label, sizeof(rec.label));
         records.push_back(rec);
     }
-    const std::vector<uint8_t> layout = encodeLayoutBlob(gen, records);
+    const std::vector<uint8_t> layout = encodeLayoutBlob(gen, records, name);
     const core_os::Err err = layout.empty() ? core_os::Err{-1}
                                             : store.set(kLayoutNamespace, kLayoutKeys[slot], layout.data(),
                                                         layout.size());

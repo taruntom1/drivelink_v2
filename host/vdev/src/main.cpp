@@ -196,6 +196,7 @@ struct Server
     uint16_t counter = 0;
     uint64_t last_rt_violations = 0;
     int64_t next_status = 0;
+    p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
     bool crash_enabled = false, stopping = false;
     std::array<char,17> ota_build_id{};
     std::string ota_version;
@@ -239,7 +240,7 @@ struct Server
         ota_version=boot_info.version.data();
         if (!ota_version.ends_with("-vdev")) { ota_version+="-vdev"; }
         commands = std::make_unique<core::CommandService>(
-            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow});
+            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow, device_id});
         counter = 0;
         next_status = 0;
         if (peer && !peer->closed)
@@ -782,6 +783,7 @@ int main(int argc, char **argv)
     {
         std::filesystem::path state = "vdev-state";
         unsigned port = 8765;
+        p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
         bool pty = false, bench = false;
         int64_t fail_after = -1;
         for (int i = 1; i < argc; ++i)
@@ -803,6 +805,12 @@ int main(int argc, char **argv)
             {
                 port = drivelink::parseUnsigned(value(), 65535);
             }
+            else if (arg == "--device-id")
+            {
+                const auto bytes = drivelink::parseHex(value());
+                if (bytes.size() != device_id.size()) { throw std::runtime_error("device id needs 12 hex digits"); }
+                std::copy(bytes.begin(), bytes.end(), device_id.begin());
+            }
             else if (arg == "--pty")
             {
                 pty = true;
@@ -818,7 +826,7 @@ int main(int argc, char **argv)
             else if (arg == "--help")
             {
                 std::cout << "drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] "
-                             "[--fail-writes-after N]\n";
+                             "[--device-id HEX12] [--fail-writes-after N]\n";
                 return 0;
             }
             else
@@ -837,6 +845,7 @@ int main(int argc, char **argv)
         TimerResolution timer_resolution;
 #endif
         Server s(bench);
+        s.device_id = device_id;
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)
         {

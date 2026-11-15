@@ -393,6 +393,14 @@ automatic application-data mapping and H3 model distribution. The host:
 
 ## Layout, persistence and boot
 
+**H1c identity (2026-11-15).** Core v9 GET_INFO appends the six-byte factory
+MAC and a u8-length UTF-8 name. SET_NAME (system op 10) is live, RAM-only and
+allowed armed; it marks dirty. Names are 0..16 bytes without C0/C1 controls.
+SAVE includes the name in the CRC-protected layout commit record (format 3);
+REVERT restores it after successful param batches and reset clears it. LP
+format 2 loads existing settings with an empty name. The factory MAC is read
+and checked at the IDF boundary; pure CommandService gets an injected id.
+
 **NVS layout:**
 - One namespace per instance, `t<type>i<inst>`.
 - Each instance's params are stored as one blob of `n × (id u16, value u32)`, with a header: format version, generation u32, count and CRC32.

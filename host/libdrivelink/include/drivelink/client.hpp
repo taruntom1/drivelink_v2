@@ -21,6 +21,7 @@ class Client
         }, std::move(completion));
     }
     Session &session() const { return m_session; }
+    SystemResult setName(std::string_view name);
     DeviceInfo info(); // validates the core protocol version, learns payload cap
     std::vector<TypeDescriptor> types();
     std::vector<ItemDescriptor> items(uint8_t type);
@@ -91,6 +92,7 @@ class Client
 // Descriptor types use the existing ValueType wire encoding. These functions
 // reject truncation, trailing junk, overflow, invalid bool/enum, NaN and Inf.
 Bytes parseHex(const std::string &text);
+// Filesystem path encoded as UTF-8 (including on Windows).
 Bytes readOtaImage(const std::string &path);
 std::string hex(std::span<const uint8_t> bytes);
 Ref parseRef(const std::string &text);

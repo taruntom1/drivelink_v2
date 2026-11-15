@@ -206,6 +206,11 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
     switch (static_cast<defs::Family>(h.family)) {
     case defs::Family::Ota:return ota(h,r,w);
     case defs::Family::System: {
+        if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::SetName) {
+            std::array<char, drivelink::protocol::kDeviceNameBytes + 1> name{};
+            if (!drivelink::protocol::readDeviceName(r, name) || !r.done()) { return bad(Detail::BadValue); }
+            return m_core.setName(name.data());
+        }
         if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::BenchStall) {
             const auto loop = r.readU8(); const auto ms = r.readU16Le();
             if (!r.done() || !ms || ms > 10000) { return bad(); }
@@ -230,6 +235,8 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
                 w.appendU8(l->id());cw::string(w,l->name());w.appendU32Le(hz);
                 w.appendU8(l->realtime()?1:0);
             }
+            w.appendBytes(m_info.device_id.data(), m_info.device_id.size());
+            (void)drivelink::protocol::writeDeviceName(w, m_core.name());
             return {};
         case defs::SystemOp::BenchCrash:
             if(!m_info.bench_crash) { return bad(Detail::Unsupported); }

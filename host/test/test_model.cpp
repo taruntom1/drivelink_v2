@@ -75,7 +75,9 @@ struct ModelPeer
             body.push_back(current == Mode::Version ? 99 : p::core_wire::kVersion);
             string(body, "test"); string(body, std::to_string(revision.load()));
             u32(body, 0x12345678); u32(body, 4096); u16(body, cap);
-            body.insert(body.end(), {0, 8, 0}); // safe mode, no running loops
+            body.insert(body.end(), {0, 8, 0, 2, 0x44, 0x4c, 0, 0, 1});
+            const auto name=std::to_string(revision.load());body.push_back(static_cast<uint8_t>(name.size()));
+            body.insert(body.end(),name.begin(),name.end()); // safe mode, no running loops
         }
         else if (family == 3)
         {
@@ -198,6 +200,7 @@ TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe m
     ModelPeer peer;
     Session session(peer.endpoint(),testOptions()); Client client(session); DeviceModel model(client);
     const auto &s = model.snapshot();
+    CHECK(s.info.name == "17"); CHECK(hex(s.info.device_id) == "02444c000001");
     CHECK(s.safeMode()); CHECK(s.info.loops.empty()); CHECK(s.info.descriptor_hash == 0x12345678);
     CHECK(s.types.at(223).descriptor.name == "unknown.module");
     CHECK(s.types.at(223).items.at(900).enums.at(0).name == "custom_mode");
@@ -215,6 +218,7 @@ TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe m
     peer.revision = 100;
     model.reload();
     CHECK(model.snapshot().info.build_id == "100");
+    CHECK(model.snapshot().info.name == "100");
     CHECK(std::get<uint32_t>(model.snapshot().pending.at({223, 31}).params.at(169)) == 1300);
     CHECK(copy.info.build_id == "17");
     CHECK(std::get<uint32_t>(copy.configured.at({223, 2}).params.at(169)) == 188);

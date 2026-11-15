@@ -7,7 +7,7 @@ and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
 H1a-1 adds typed services/errors and moves JSON formatting into the CLI;
 H1a-2 adds the discovered device snapshot/reload API and Windows host CI.
 H1b adds the asynchronous runtime, live model, group buffers, managed commands
-and timestamp mapping. Still to build: device identity, the GUI, agent and ROS.
+and timestamp mapping. H1c adds device identity. Still to build: the GUI, agent and ROS.
 
 This file is the design record. The steps that build it (T0, H1a–H6, HW), with
 a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
@@ -17,7 +17,7 @@ in [host-status.md](host-status.md). Everything runs on the
 **Baseline.** The host is written against the firmware on `host_overhaul`
 ([firmware-architecture.md](firmware-architecture.md) is the design record;
 `docs/protocol/` is the wire spec and wins where they differ). That firmware is
-core v8, time v1, diag v3, and is:
+core v9, time v1, diag v3, and is:
 - self-describing: module types, instances, params, signals, inputs, actions,
   sources and diag codes, all served by the device
 - configured through a pending layout that SAVE writes to NVS (A/B) and a
@@ -40,8 +40,7 @@ core v8, time v1, diag v3, and is:
 - updated over the link (disarmed OTA: FINISH prepares, explicit REBOOT
   commits after reply drain, the host CONFIRMs after verifying identity)
 
-The only firmware change the host phase plans is device identity (core v9,
-H1c). Any other firmware need found while building goes to the user first.
+H1c added device identity (core v9), the only planned host-phase firmware change. Any other firmware need found while building goes to the user first.
 
 ## Goals
 
@@ -115,7 +114,7 @@ after Boot. Subscription seqlocks/rings are pulled; managed command queues own
 prefix-only keepalives. I/O owns the periodic clock fit and timestamp mappings.
 The CLI keeps its output/codes, adding production mapped fields only to time
 JSON. Details, lifetimes, loss counters and bounds are in the library README.
-The rules are in [host/CLAUDE.md](../host/CLAUDE.md). Identity remains H1c.
+The rules are in [host/CLAUDE.md](../host/CLAUDE.md). H1c adds factory identity and a live device name, committed with the A/B layout.
 
 **Target (H1a, H1b, H1c):**
 

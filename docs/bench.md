@@ -37,6 +37,10 @@ commands are in [development.md](development.md).
   `motor_smoke.py --stall` does. Never time anything with host clocks over the
   CH343.
 - **Console and reboots.** Close a COM4 console capture before a cleanup reboot.
+  Native USB control-line transitions can reset the ESP (reset reason 11,
+  `ESP_RST_USB`). Configure DTR/RTS inactive before opening; after closing,
+  establish readiness with GET_INFO before cleanup mutations. The affinity
+  smoke does this explicitly; it never retries an uncertain mutation.
 - The host PC bugchecked (0xD1) once during an F5a-2 run on the CH343; the rerun
   passed. Rerun once before suspecting the firmware.
 
@@ -74,8 +78,9 @@ Every task keeps more than 1 KB free. Check the marks after adding a task or a
 large buffer. `app_main`'s locals are large, so look at `main` after adding
 anything it starts. Stack sizes: main 5632, core_cfg 6144, others 4096.
 
-Latest marks (LP, normal firmware, bytes free): main 3688, uart_rx 3164,
-uart_tx 3176, diag 1744, esp_timer 3352, core_cfg 4272, core_loop_0 3180,
-core_loop_1 3252, temporary core_loop_2 3168, core_loop_3 3192. F10's deeper
+Latest marks (H1c normal firmware, minimum across maximum-name and affinity
+observations, bytes free): main 3552, uart_rx 3028, uart_tx 3056, diag 1752,
+esp_timer 3264, core_cfg 2632, core_loop_0 3136, core_loop_1 3252, temporary
+core_loop_2 3168, core_loop_3 3192. F10's deeper
 OTA/safety hold reached core_cfg 2064 and diag 1628. There is no OTA or time
 task.

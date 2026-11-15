@@ -77,4 +77,4 @@ ESP32-S3 application binaries: segment bounds, descriptor magic, checksum and
 optional appended digest. It extracts the full ELF build hash; that hash is
 distinct from the SHA of the complete upload. IDF remains the authoritative
 chip/revision/image validator. These helpers have no OS/firmware dependency.
-The OTA family uses [core v8](../docs/protocol/ota.md).
+The OTA family uses [core v9](../docs/protocol/ota.md).

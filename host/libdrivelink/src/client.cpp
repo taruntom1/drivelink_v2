@@ -93,6 +93,20 @@ Reply Client::accepted(uint8_t family, uint8_t op, std::span<const uint8_t> body
     }
     return reply;
 }
+SystemResult Client::setName(std::string_view name)
+try
+{
+    if (!protocol::validDeviceName(name)) {
+        throw Error(ErrorKind::Usage, "name must be at most 16 UTF-8 bytes without control characters");
+    }
+    std::array<uint8_t, protocol::kDeviceNameBytes + 1> body{};
+    Writer w(body.data(), body.size());
+    (void)protocol::writeDeviceName(w, name);
+    const auto reply = accepted(1, static_cast<uint8_t>(protocol::defs::SystemOp::SetName), {body.data(), w.size()});
+    Reader r(reply.body.data(), reply.body.size()); exact(r);
+    return {true, reply.result};
+} catch(Error &e) { contextualize(e,1,static_cast<uint8_t>(protocol::defs::SystemOp::SetName),true);throw; }
+
 DeviceInfo Client::info()
 try
 {
@@ -132,6 +146,10 @@ try
 
         j.loops.push_back(l);
     }
+    for (auto &byte : j.device_id) { byte = r.readU8(); }
+    std::array<char, protocol::kDeviceNameBytes + 1> name{};
+    if (!r.ok() || !protocol::readDeviceName(r, name)) { malformed(); }
+    j.name = name.data();
     exact(r);
     m_session.setMaxPayload(cap);
     return j;

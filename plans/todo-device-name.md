@@ -1,6 +1,6 @@
 # To-do (firmware): device name and id in `GET_INFO`
 
-Status: **scheduled for H1c** (re-planned 2026-11-14; brief in [host-steps.md](host-steps.md)), as core v9 on `host_overhaul`. Added 2026-11-12 during the GUI design (G1). It changes the wire protocol, so it follows the "host and firmware change together" rule. The field layout must be rechecked against `GET_INFO` in `docs/protocol/core.md`, which has grown since this was written.
+Status: **implemented in H1c** (2026-11-15), core v9 on `host_overhaul`. See [approved plan and results](h1c-implementation.md). Added 2026-11-12 during the GUI design (G1). It changes the wire protocol, so it follows the "host and firmware change together" rule. The field layout must be rechecked against `GET_INFO` in `docs/protocol/core.md`, which has grown since this was written.
 
 ## Why
 
@@ -30,6 +30,8 @@ Status: **scheduled for H1c** (re-planned 2026-11-14; brief in [host-steps.md](h
 - It is allowed while armed: it never touches the loops.
 - Through the agent it is an exclusive operation (needs the lease, or a disarmed device with no holder).
 
-## Left to the H1c plan
+## H1c persistence decision
 
-- Store the name under its own NVS key, or in the saved config so it gets the A/B generation? An internal choice, made against `persistence.cpp` and logged.
+The name is part of the CRC-protected A/B layout commit record (format 3),
+so it commits with all params and follows the same complete-generation
+recovery. LP format 2 loads intact with an empty name. New SAVEs use format 3.

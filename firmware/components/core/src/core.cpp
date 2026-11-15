@@ -255,6 +255,7 @@ Status Core::boot(core_os::KvStore &store)
     if (cfg.complete) {
         m_config_loaded = true;
         m_complete_gen = cfg.gen;
+        m_name = cfg.name;
         detail::InstanceRecord &system = systemRecord();
         persist::applyPairs(*system.desc, cfg.system, system.shadow.get());
         initializeLimits(system);
@@ -562,6 +563,17 @@ Status Core::getPending(std::span<const Ref> refs, std::span<uint32_t> values) c
 
 // -- persistence -----------------------------------------------------------------
 
+Status Core::setName(std::string_view name)
+{
+    if (m_store == nullptr) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
+    if (!drivelink::protocol::validDeviceName(name)) { return Status::fail(Result::InvalidArgument, Detail::BadValue); }
+    decltype(m_name) next{};
+    if (!name.empty()) { std::memcpy(next.data(), name.data(), name.size()); }
+    m_name = next;
+    m_params.setNvsDirty(true);
+    return Status::success();
+}
+
 Status Core::save()
 {
     if (m_ota.transaction()) { return Status::fail(Result::Busy,Detail::OtaActive); }
@@ -606,7 +618,7 @@ Status Core::save()
     if (m_complete_gen != 0U && (gen & 1U) == (m_complete_gen & 1U)) {
         ++gen;
     }
-    const Status st = persist::saveConfig(*m_store, gen, items, system_pairs);
+    const Status st = persist::saveConfig(*m_store, gen, items, system_pairs, name());
     if (!st.ok()) {
         // Some blobs of `gen` may be written: the next SAVE goes past it.
         m_newest_gen = gen;
@@ -669,6 +681,7 @@ Status Core::revert()
             }
         }
     }
+    m_name = cfg.name;
     if (!m_pending.active()) {
         m_params.setNvsDirty(false);
     }
@@ -688,6 +701,7 @@ Status Core::factoryReset()
     if (st.ok()) {
         m_newest_gen = 0;
         m_complete_gen = 0;
+        m_name.fill(0);
     }
     return st;
 }

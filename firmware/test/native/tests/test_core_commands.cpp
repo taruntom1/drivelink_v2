@@ -142,3 +142,31 @@ TEST_CASE("Pure diagnostic counter bridge keeps instance identity") {
     CHECK(core_os::native::counterTotal(code,3)==4);
     CHECK(core_os::native::counterTotal(code)==0);
 }
+
+
+TEST_CASE("SET_NAME validates the entire request before applying and GET_INFO exposes identity")
+{
+    Fixture f;
+    constexpr auto v = drivelink::protocol::core_wire::kVersion;
+    CHECK(f.call({v,1,1,10,3,'b','o','t'}) == 6); REQUIRE(f.out[4] == 0);
+    CHECK(std::string(f.core.name()) == "bot"); CHECK(f.core.nvsDirty());
+    for (const auto &request : {std::vector<uint8_t>{v,1,1,10},
+            std::vector<uint8_t>{v,1,1,10,2,'x'},
+            std::vector<uint8_t>{v,1,1,10,1,'x',0},
+            std::vector<uint8_t>{v,1,1,10,1,0},
+            std::vector<uint8_t>{v,1,1,10,2,0xC0,0xAF}}) {
+        CHECK(f.service.handle(request, f.out) == 6);
+        CHECK(f.out[4] == static_cast<uint8_t>(core::Result::InvalidArgument));
+        CHECK(std::string(f.core.name()) == "bot");
+    }
+    f.core.params().setArmed(true);
+    CHECK(f.call({v,1,1,10,0}) == 6); CHECK(f.out[4] == 0);
+    CHECK(std::string(f.core.name()).empty());
+    core::DeviceInfo info; info.device_id = {2,4,6,8,10,12};
+    core::CommandService service(f.core, info);
+    const std::array<uint8_t,4> request{v,1,1,1};
+    const auto n = service.handle(request, f.out);
+    REQUIRE(n >= 13); CHECK(f.out[4] == 0);
+    CHECK(std::equal(info.device_id.begin(), info.device_id.end(), f.out.begin() + n - 7));
+    CHECK(f.out[n-1] == 0);
+}

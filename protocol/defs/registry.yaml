@@ -133,6 +133,7 @@ wire_enums:
     FactoryReset: 7
     Reboot: 8
     ExitSafeMode: 9
+    SetName: 10
     BenchStall: 253
     BenchCrash: 254
   LayoutOp:

@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart_comm'))
@@ -133,26 +134,72 @@ def pipeline_reboot(cli, endpoint, baseline, candidate):
     assert remote.scheme == 'tcp'
     data = Path(candidate).read_bytes()
 
+    def admitted_connection():
+        # A previous CLI may have exited before vdev processes its EOF. Only
+        # retry this read-only handshake, on the socket that will own REBOOT.
+        deadline = time.monotonic() + 5
+        attempts, last_error = 0, None
+        while time.monotonic() < deadline:
+            attempts += 1
+            connection = None
+            try:
+                connection = socket.create_connection((remote.hostname, remote.port),
+                                                      timeout=max(.001, min(1, deadline - time.monotonic())))
+                connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                connection.sendall(encode_frame(1, bytes((CORE_PROTOCOL_VERSION, 100, 1, 1))))
+                buffered = bytearray()
+                while True:
+                    connection.settimeout(max(.001, min(1, deadline - time.monotonic())))
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        raise ConnectionError('EOF before GET_INFO admission')
+                    buffered.extend(chunk)
+                    while (frame := UartCommProto._scan(buffered)) is not None:
+                        kind, body = frame
+                        if kind == 0x41 and body[:6] == bytes((CORE_PROTOCOL_VERSION, 100, 1, 1, 0, 0)):
+                            return connection, buffered, attempts
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('GET_INFO admission deadline')
+            except OSError as error:
+                last_error = error
+                if connection is not None:
+                    connection.close()
+                time.sleep(.02)
+        raise AssertionError(f'GET_INFO admission failed after {attempts} attempts: {last_error}')
+
     def reboot_then(op):
         first = bytes((CORE_PROTOCOL_VERSION, 101, 1, 8))
         second = bytes((CORE_PROTOCOL_VERSION, 102, 9, op))
-        buffered = bytearray(); accepted = False
-        with socket.create_connection((remote.hostname, remote.port), timeout=5) as connection:
-            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        connection, buffered, attempts = admitted_connection()
+        accepted, closed, headers, terminal = False, False, [], 'EOF'
+        deadline = time.monotonic() + 5
+        with connection:
+            # Never retry once either mutation may have been submitted.
             connection.sendall(encode_frame(1, first) + encode_frame(1, second))
             while True:
                 try:
+                    connection.settimeout(max(.001, deadline - time.monotonic()))
                     chunk = connection.recv(4096)
-                except ConnectionResetError:
+                except ConnectionResetError as error:
+                    closed, terminal = True, str(error)
+                    break
+                except TimeoutError as error:
+                    terminal = str(error)
                     break
                 if not chunk:
+                    closed = True
                     break
                 buffered.extend(chunk)
                 while (frame := UartCommProto._scan(buffered)) is not None:
                     kind, body = frame
-                    if kind == 0x41 and body[1:6] == bytes((101, 1, 8, 0, 0)):
+                    if len(headers) < 16:
+                        headers.append((kind, body[:6].hex()))
+                    if kind == 0x41 and body[:6] == bytes((CORE_PROTOCOL_VERSION, 101, 1, 8, 0, 0)):
                         accepted = True
-        assert accepted, 'REBOOT response was not drained'
+                if time.monotonic() >= deadline:
+                    terminal = 'REBOOT drain deadline'
+                    break
+        assert accepted and closed, ('REBOOT response/close missing after admission', attempts, headers, terminal)
 
     # REBOOT during Receiving must not consume a following FINISH and commit it.
     cli('ota-begin', len(data), hashlib.sha256(data).hexdigest())
@@ -160,7 +207,7 @@ def pipeline_reboot(cli, endpoint, baseline, candidate):
         cli('ota-write', offset, data[offset:offset+512].hex())
     reboot_then(3)
     state = cli('ota-status')
-    assert state['elf_sha256'] == Path(baseline).read_bytes()[176:208].hex() and not state['pending_confirm'], state
+    assert state['state'] == 0 and state['elf_sha256'] == Path(baseline).read_bytes()[176:208].hex() and not state['pending_confirm'], state
 
     # REBOOT during Ready must commit even if ABORT is the next input frame.
     cli('ota-upload', candidate, '--upload-only')

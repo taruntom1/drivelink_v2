@@ -6,7 +6,7 @@
 #include "drivelink/protocol/wire_codec.hpp"
 
 namespace drivelink::protocol::core_wire {
-inline constexpr uint8_t kVersion = 8;
+inline constexpr uint8_t kVersion = 9;
 inline constexpr uint16_t kEnd = 0xFFFF;
 inline constexpr size_t kRequestHeader = 4;
 inline constexpr size_t kResponseHeader = 6;

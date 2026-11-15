@@ -37,8 +37,11 @@ class Client:
             name=p[offset:offset+name_len].decode();offset+=name_len
             rate,loop_flags=struct.unpack_from("<IB",p,offset);offset+=5
             loops.append(dict(id=id_,name=name,rate_hz=rate,realtime=bool(loop_flags&1)))
-        assert offset==len(p)
-        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops)
+        device_id=p[offset:offset+6].hex();offset+=6
+        n=p[offset];offset+=1
+        name=p[offset:offset+n].decode("utf-8");offset+=n
+        assert len(device_id)==12 and n<=16 and offset==len(p)
+        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops,device_id=device_id,name=name)
     def connect(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:

@@ -168,6 +168,12 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 
 ## Host concurrency and time checks
 
+H1c adds `host-identity` to both host checks: CLI Unicode/byte limits,
+SAVE/reboot/REVERT, immutable device id and armed rename with a mock actuator
+through `async_probe`. Run the same workflow on the bare board with
+`python host/test/identity_smoke.py --cli <cli> --endpoint serial://COM3 --probe <async_probe>`.
+The script requires clean saved settings and idle groups and restores them.
+
 The host checks include `host-concurrency` and a separate real-vdev `host-async`
 consumer alongside unit, model, golden/replay, integration and install tests.
 `host/test/async_probe` takes one endpoint; on a bare loops-only serial device

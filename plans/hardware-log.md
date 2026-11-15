@@ -4,6 +4,21 @@ One short row per hardware run, newest first: the date, the step, what was run (
 
 | Date | Step | What was run | Result |
 |---|---|---|---|
+| 2026-11-15 | H1c | Final read-only state and normal bench-command refusals | Pass: core v9, factory id 1cdbd446ff38, empty saved name; confirmed normal ELF af77763ae42b77ea in ota_0; all twelve original loop/system settings, factory layout, disarmed idle groups/capture, no pending/dirty flags; crash/stall refused |
+| 2026-11-15 | H1c | `ota_smoke.py` with guarded normal baseline and distinct candidate | Pass: duplicate/conflict/gap/hash, partial reset, FINISH/ABORT, confirmed boot, rollback and exact H1c baseline/NVS restoration |
+| 2026-11-15 | H1c | Console-enabled affinity rerun after the harness fix | Pass: enum/default/choices/refusals/staging/persistence/ticking and full cleanup; all ten task stacks >1 KiB (minimum diag 1752); temporary loop stacks 3168/3192 bytes |
+| 2026-11-15 | H1c | Isolated COM4 observation with DTR/RTS inactive and maximum-name workload | Pass: all eight baseline tasks >1 KiB; core_cfg 2632, main 3552 bytes; saved empty name restored |
+| 2026-11-15 | H1c | Affinity rerun without console after guarded fixture removal | Pass: placement workflow and original layout/core selections restored; temporary loops had zero overruns |
+| 2026-11-15 | H1c | Initial affinity/console check | Stack/placement assertions passed, then cleanup stopped on Boot during DISARM. Diagnostics confirmed USB reset reason 11, healthy/disarmed with zero active errors. Recorded evidence and removed only known fixtures. Fixed console control lines/readiness and reran successfully; no uncertain mutation retry |
+| 2026-11-15 | H1c | `testgen_smoke.py --modules mock --loop-rate 1000` | Pass: regular 3000-sample step/chirp captures, longest ticks 189/267 us; STOP/hold/fresh handoff and watchdog; original layout/settings restored |
+| 2026-11-15 | H1c | `capture_smoke.py --loop-rate 1000 --expect-psram` | Pass: regular step/manual/event/abort captures and PSRAM; longest ticks 96/75 us for 1/16 refs; original layout/settings restored |
+| 2026-11-15 | H1c | `imu_smoke.py --modules mock` | Pass: signals, paused calibration/actions, rejection, SAVE/reboot/profile restore and modes; original layout/settings restored |
+| 2026-11-15 | H1c | `motor_smoke.py --modules mock --loop-rate 1000` | Pass: cascade velocity/position, mode freshness, persistence, watchdog/re-arm; original layout/settings restored |
+| 2026-11-15 | H1c | `hardware_smoke.py` through core v9 CLI | Pass: discovery, descriptors, layout, typed params, SAVE/reboot/reload, actions, status/diag; original layout/rates restored |
+| 2026-11-15 | H1c | `smoke_core_firmware.py` | Pass: v9 identity tail, descriptor paging, layout/persistence/actions/mocks, cleanup and status |
+| 2026-11-15 | H1c | `identity_smoke.py` plus production `async_probe` | Pass: factory MAC, 16-byte ASCII/Unicode names/clear, SAVE/reboot, unsaved reboot and REVERT, armed rename with mock; immutable id/model refresh, 1 kHz latest 191/mapped 191, watchdog/DISARM and Boot reload; restored original name/layout |
+| 2026-11-15 | H1c | `smoke_protocol_firmware.py` | Pass: diag v3 queries, time v1 RX/TX order and CRC |
+| 2026-11-15 | H1c | LP preflight/NVS backup, guarded normal v9 flash and migration readback | Pass: exact LP ELF/settings checkpoint and 24 KiB SHA-verified NVS backup; factory MAC independently read; new v9 ELF af77763ae42b77ea loaded format-2 settings intact with empty name and normal bench commands refused |
 | 2026-11-15 | H1b | Final read-only state and `bench-stall` refusal | Pass: exact LP ELF confirmed in ota_0; factory loops/params and rates 1000/100/10, watchdog 200 ms, disarmed, idle groups/capture, no pending/dirty flags; normal bench command refused |
 | 2026-11-15 | H1b | Final async probe after OTA readiness correction | Pass: 1 kHz latest 190, mapped 190, ring drop-oldest 870 with no ring consumer; keepalives/watchdog/DISARM and complete Boot reload reverified |
 | 2026-11-15 | H1b | `ota_smoke.py` with guarded distinct candidate and SHA-verified original LP backup | Pass: duplicate/conflict/gap/hash, reset/FINISH/ABORT, confirmed boot and rollback, exact original full ELF restored in ota_0; NVS restored |

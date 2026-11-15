@@ -1,16 +1,18 @@
-# Core protocol v8 (F9)
+# Core protocol v9 (H1c)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
 the capture family, the core event stream and the status capture state.
 F7b (v7) adds test generation, its completion event and capture trigger.
 F9 (v8) adds OTA, its status/identity query and the OTA ARM gate.
-Firmware, host library, CLI and vdev use v8 together; older peers are
-incompatible. Diagnostic framing remains v3; NVS formats are unchanged.
+H1c (v9) adds factory device identity and a live, persisted device name.
+Firmware, host library, CLI and vdev use v9 together; older peers are
+incompatible. Diagnostic framing remains v3 and time remains v1. NVS layout
+format 3 includes the name; LP format 2 loads with an empty name.
 F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 8.
+`core_response` (0x41). All integers are little-endian. Version is 9.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -22,7 +24,7 @@ Result, detail, family and operation numbers come from `registry.yaml`'s
 `Ok` and `PendingReboot` are accepted outcomes.
 
 Strings below are `length u16 | UTF-8 bytes` without a terminator, except
-layout command labels, which use a u8 length and 1..16 non-NUL bytes.
+device names (below) and layout command labels (u8 length, 1..16 non-NUL bytes).
 Ref: `type u8 | instance u8 | item u16`. A scalar value is a 4-byte slot,
 with the type declared by its descriptor (IEEE binary32 for f32).
 
@@ -59,11 +61,15 @@ Repeated targets within a pair share one slot. Exceeding it returns
 
 ## System (family 1)
 
-Requests have empty bodies except the bench stall described below. GET_INFO (1) answers:
+Requests have empty bodies except SET_NAME and the bench stall below. GET_INFO (1) answers:
 `protocol_version u8 | firmware_version string | build_id string |
 descriptor_hash u32 | capture_capacity u32 | max_payload u16 |
 running_instances u8 | flags u8 | loop_count u8`, followed by
-`loop_id u8 | name string | rate_hz u32 | loop_flags u8` per running loop.
+`loop_id u8 | name string | rate_hz u32 | loop_flags u8` per running loop,
+then `device_id[6] | name_len u8 | name bytes`. The id is the read-only factory
+MAC in native byte order, not a little-endian integer. The name is 0..16 UTF-8
+bytes without a terminator, empty by default; display the id when unnamed.
+CLI JSON formats the id as 12 lowercase hex digits. Names need not be unique.
 Loop flags: bit 0 `realtime`; the other bits are reserved and zero. A loop id
 can have gaps and is not its position in this list. Safe mode has zero running loops.
 `running_instances` includes running loop instances, excluding the system.
@@ -76,6 +82,16 @@ wrap the core operations. Reset, reboot and exit safe mode reply, wait for
 command TX to drain, then reboot. A drain timeout cancels the reboot and
 logs the failure; a host may retry REBOOT. BenchCrash (254) responds and aborts only in an
 explicit `CONFIG_CORE_BENCH_CRASH=y` test build. Normal builds reject it.
+
+SET_NAME (10): `name_len u8 | name bytes`, empty success body. The body must
+match the length exactly. Names are valid UTF-8 scalar sequences without
+C0/C1 controls (U+0000..001F, U+007F..009F); empty clears the name. The limit
+is bytes, not characters. No trimming, normalization or truncation. Invalid
+names return InvalidArgument/BadValue without mutation. SET_NAME applies live
+in RAM, including while armed, and sets `nvs_dirty`. SAVE persists it with the
+configuration in the same A/B layout commit; REVERT restores it after its
+parameter batches succeed. NoSavedConfig leaves it unchanged. FACTORY_RESET
+clears it. Identity remains readable in safe mode.
 
 ## Layout (family 2)
 
@@ -435,7 +451,8 @@ A blank store, factory reset or incompatible old layout creates control (id 0,
 core 0, priority 10), both with 4096-byte stacks. CORE_MAX_LOOPS=1 creates only
 control. A valid saved layout can contain zero loops. CORE_MAX_LOOPS bounds loop
 instances separately from CORE_MAX_INSTANCES, which bounds module instances.
-The layout blob format is 2; instance blobs retain format 1. Pre-F3d layouts
+The layout blob format is 3 (H1c); LP format 2 loads with an empty name.
+Instance blobs retain format 1. Pre-F3d layouts
 are discarded in favor of the factory layout, without migrating their modules.
 Loop task startup failure leaves that loop Failed and dependent modules
 DependencyMissing; unrelated loops and the config link stay available.
@@ -459,7 +476,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=8 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=9 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.

@@ -1,5 +1,9 @@
 # drivelink-cli
 
+Core v9 `info` includes `device_id` (12 lowercase hex digits) and `name`.
+`name [TEXT]` reads or renames; `name ""` clears. Names allow 0..16 UTF-8 bytes
+without C0/C1 controls, also while armed. SAVE persists; REVERT restores.
+
 Generic CLI over libdrivelink. `--help` lists commands and arguments.
 Options precede the command; supply `--endpoint tcp://127.0.0.1:8765` or
 `--endpoint serial://COM3` (921600 baud by default).
@@ -27,7 +31,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v8 before any requested mutation.
+vdev. Every connection checks core v9 before any requested mutation.
 
 F4c source parameters have `is_source: true` in item JSON (flag 0x80).
 Configure them through `set`, using the numeric packed reference
