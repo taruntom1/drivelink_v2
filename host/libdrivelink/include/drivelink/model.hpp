@@ -35,7 +35,7 @@ struct DeviceSnapshot
     ModelLayout configured;
     ModelLayout pending;
     uint64_t generation=0;
-    bool connected=true, reloading=false;
+    bool connected=true, reloading=false, ready=true;
     std::optional<StatusFrame> status;
     std::vector<DiagEntry> diagnostics;
     std::optional<CaptureDone> capture;

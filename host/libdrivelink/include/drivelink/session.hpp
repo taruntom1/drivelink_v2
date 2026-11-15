@@ -28,6 +28,8 @@ struct Reply
 {
     uint8_t result, detail;
     Bytes body;
+    ClockModel clock{};
+    uint64_t generation=0;
 };
 struct SessionOptions
 {
@@ -62,7 +64,7 @@ class Session
         auto finish = [this, state, callback](std::expected<T, Error> result) mutable {
             std::shared_ptr<void> reservation;
             { std::lock_guard lock(state->mutex); if (state->done) { return; } state->done = true; state->terminate={};state->interrupt={};reservation=std::move(state->reservation); }
-            dispatch([callback, reservation=std::move(reservation), result = std::move(result)]() mutable { (*callback)(std::move(result)); });
+            dispatchCompletion(state,[callback, reservation=std::move(reservation), result = std::move(result)]() mutable { (*callback)(std::move(result)); });
         };
         state->terminate = [finish](Error error) mutable { finish(std::unexpected(std::move(error))); };
         try {enqueueService(state, [state, operation = std::move(operation), finish = std::move(finish)]() mutable {
@@ -84,10 +86,10 @@ class Session
     uint64_t observe(EventHandler handler);
     void unobserve(uint64_t id);
     uint64_t droppedNotifications() const;
-    std::shared_ptr<GroupBuffer> subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity=2048);
+    std::shared_ptr<GroupBuffer> subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity=2048,uint64_t generation=0);
     void removeBuffer(uint8_t group);
     std::shared_ptr<CommandGroup> manageCommand(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                                               std::span<const uint32_t> hold,uint16_t watchdog_ms);
+                                               std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t generation=0);
     void stopCommand(uint8_t group);
     // OTA WRITE only, 1..4 owned request bodies. Holds ordinary call ownership
     // until every reply arrives; timeouts retire missing IDs before throwing.
@@ -109,5 +111,6 @@ class Session
     void enqueueService(const std::shared_ptr<detail::Cancellation> &state, Task task);
     std::shared_ptr<void> callbackSlot(bool disarm=false);
     void dispatch(Task task);
+    void dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task);
 };
 } // namespace drivelink

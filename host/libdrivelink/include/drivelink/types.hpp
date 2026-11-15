@@ -204,6 +204,7 @@ struct GroupMutation
 {
     uint8_t epoch = 0;
     uint8_t channel = 0;
+    uint64_t generation=0;
 };
 struct CaptureTrigger
 {

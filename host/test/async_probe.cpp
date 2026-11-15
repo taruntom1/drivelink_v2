@@ -41,7 +41,7 @@ int main(int argc,char **argv) {
             namespace l=protocol::defs::loop;
             const std::array<Ref,4> refs{{{5,loop,l::kTicks},{5,loop,l::kOverruns},{5,loop,l::kLastRunUs},{5,loop,l::kMaxRunUs}}};
             const auto configured=client.subConfigure(0,loop,1,refs);
-            auto buffer=session.subscribeBuffer(0,configured.epoch,4,128);
+            auto buffer=session.subscribeBuffer(0,configured.epoch,4,128,configured.generation);
             uint64_t reads=0,mapped=0,last_time=0;uint32_t last_tick=0;GroupSample sample;
             const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(3);
             while(std::chrono::steady_clock::now()<end) {

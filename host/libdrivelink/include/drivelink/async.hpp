@@ -15,6 +15,7 @@ template<class T> using Completion = std::move_only_function<void(std::expected<
 
 namespace detail
 {
+struct DeliverySlot {Task task;bool ready=false;};
 struct Cancellation
 {
     std::mutex mutex;
@@ -25,6 +26,7 @@ struct Cancellation
     std::shared_ptr<void> reservation;
     uint8_t family=0,op=0;
     bool has_context=false;
+    std::shared_ptr<DeliverySlot> reply_slot;
 };
 }
 class RequestHandle

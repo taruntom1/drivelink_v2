@@ -236,7 +236,7 @@ DeviceModel::DeviceModel(Client &client) : m_client(client),m_state(std::make_sh
                 },event);
             } catch(const Error &) {++next->malformed_events;}
             if(frame.type==0) {next->connected=false;boot=false;change=Change::Link;}
-            if(boot) {next->generation=frame.generation;next->reloading=true;next->status.reset();next->diagnostics.clear();next->capture.reset();next->testgen.clear();}
+            if(boot) {next->generation=frame.generation;next->ready=false;next->reloading=true;next->status.reset();next->diagnostics.clear();next->capture.reset();next->testgen.clear();}
             state->snapshot=std::move(next);
         }
         if(change==Change::Diagnostic || loss) {

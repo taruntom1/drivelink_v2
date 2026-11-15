@@ -67,6 +67,10 @@ bool retryable(uint8_t family,uint8_t op) {
 Error contextError(ErrorKind kind,const std::string &why,uint8_t family,uint8_t op,bool uncertain) {
     Error e(kind,why);e.family=family;e.op=op;e.has_request_context=true;e.outcome_unknown=uncertain;return e;
 }
+ClockModel aged(ClockModel model) {
+    const auto now=monotonicUs();model.age_us=now>=model.updated_us?now-model.updated_us:0;
+    if(model.age_us>5000000) {model.offset_valid=false;model.drift_valid=false;}return model;
+}
 }
 void RequestHandle::cancel() const {
     if(!m_state) { return; }
@@ -105,6 +109,8 @@ struct Session::Impl
     std::string failure="session closed";
     size_t admitted=0, service_count=0, pending_streams=0;
     std::shared_ptr<std::atomic<size_t>> callback_count=std::make_shared<std::atomic<size_t>>(0);
+    std::mutex delivery_mutex;
+    std::deque<std::shared_ptr<detail::DeliverySlot>> deliveries;
     std::vector<std::weak_ptr<detail::Cancellation>> service_states;
     std::deque<Frame> events;
     uint64_t dropped=0;
@@ -126,6 +132,8 @@ struct Session::Impl
         asio::steady_timer timer;
         Completion<Bytes> finish;
         std::shared_ptr<detail::Cancellation> cancellation;
+        std::shared_ptr<detail::Cancellation> owner;
+        std::shared_ptr<size_t> batch_remaining;
         explicit Pending(asio::io_context &io_) : timer(io_) {}
     };
     std::map<uint8_t,std::shared_ptr<Pending>> pending;
@@ -296,6 +304,30 @@ struct Session::Impl
             if(dispatcher) { dispatcher(std::move(task)); } else { task(); }
         });
     }
+    void drainDeliveries() {
+        // delivery_mutex is held while posting, preserving order even when a
+        // service parser and I/O finish on different threads.
+        while(!deliveries.empty() && deliveries.front()->ready) {
+            auto slot=std::move(deliveries.front());deliveries.pop_front();
+            if(slot->task) {dispatch(std::move(slot->task));}
+        }
+    }
+    void reserveReply(const std::shared_ptr<detail::Cancellation> &owner) {
+        if(!owner) {return;}std::lock_guard lock(owner->mutex);if(owner->done) {return;}
+        auto slot=std::make_shared<detail::DeliverySlot>();
+        std::lock_guard delivery(delivery_mutex);deliveries.push_back(slot);owner->reply_slot=std::move(slot);
+    }
+    void releaseReply(const std::shared_ptr<detail::Cancellation> &owner) {
+        if(!owner) {return;}std::lock_guard lock(owner->mutex);
+        if(auto slot=std::move(owner->reply_slot)) {std::lock_guard delivery(delivery_mutex);slot->ready=true;drainDeliveries();}
+    }
+    void deliver(Task task,const std::shared_ptr<detail::Cancellation> &owner={}) {
+        std::shared_ptr<detail::DeliverySlot> slot;
+        if(owner) {std::lock_guard lock(owner->mutex);slot=std::move(owner->reply_slot);}
+        std::lock_guard delivery(delivery_mutex);
+        if(!slot) {slot=std::make_shared<detail::DeliverySlot>();deliveries.push_back(slot);}
+        slot->task=std::move(task);slot->ready=true;drainDeliveries();
+    }
     void complete(const std::shared_ptr<Pending> &r,std::expected<Bytes,Error> result,bool retire=false) {
         if(r->completed) { return; }
         r->completed=true;r->timer.cancel();
@@ -303,6 +335,7 @@ struct Session::Impl
         if(retire) { retired[r->seq]=true; }
         if(auto it=pending.find(r->seq);it!=pending.end() && it->second==r) { pending.erase(it); }
         { std::lock_guard lock(mutex);--admitted; }
+        if(!r->batch_remaining || --*r->batch_remaining==0) {reserveReply(r->owner);}
         r->finish(std::move(result));
     }
     Error error(const std::shared_ptr<Pending> &r,ErrorKind kind,const std::string &why) {
@@ -351,10 +384,12 @@ struct Session::Impl
         });
     }
     uint16_t maxPayload() const { std::lock_guard lock(mutex);return max_payload; }
-    RequestHandle submit(uint8_t kind,uint8_t family,uint8_t op,Bytes body,Completion<Bytes> finish) {
+    RequestHandle submit(uint8_t kind,uint8_t family,uint8_t op,Bytes body,Completion<Bytes> finish,
+                         std::shared_ptr<detail::Cancellation> owner={}) {
         auto r=std::make_shared<Pending>(io);r->kind=kind;r->family=family;r->op=op;r->body=std::move(body);
         r->read_only=kind==msg::kDiagQuery?(op==1 || op==2):retryable(family,op);
         r->mutation=!r->read_only && !(family==7 && op==3);r->finish=std::move(finish);
+        r->owner=std::move(owner);
         r->cancellation=std::make_shared<detail::Cancellation>();
         { std::lock_guard lock(mutex);
           if(admitted>=options.request_capacity+(kind==msg::kDisarm?1U:0U)) { throw Error(ErrorKind::Usage,"request capacity exhausted"); }
@@ -385,13 +420,14 @@ struct Session::Impl
         std::unique_lock calls(sync_mutex,std::defer_lock);if(kind!=msg::kDisarm) {calls.lock();}
         if(thread.get_id()==std::this_thread::get_id()) { throw Error(ErrorKind::Usage,"sync request on I/O thread"); }
         if(service_context && service_context->cancelled) { throw Error(ErrorKind::Cancelled,"operation cancelled"); }
+        releaseReply(service_context);
         if(service_context) {
             std::lock_guard lock(service_context->mutex);
             service_context->family=family;service_context->op=op;service_context->has_context=true;
             if(!(kind==msg::kDiagQuery?(op==1 || op==2):retryable(family,op)) && !(family==7 && op==3)) {service_context->mutation=true;}
         }
         auto promise=std::make_shared<std::promise<std::expected<Bytes,Error>>>();auto future=promise->get_future();
-        auto handle=submit(kind,family,op,Bytes(body.begin(),body.end()),[promise](auto result){promise->set_value(std::move(result));});
+        auto handle=submit(kind,family,op,Bytes(body.begin(),body.end()),[promise](auto result){promise->set_value(std::move(result));},service_context);
         if(service_context) {
             std::lock_guard lock(service_context->mutex);
             service_context->interrupt=[handle]{handle.cancel();};
@@ -580,15 +616,19 @@ void Session::close() {
     d.cv.notify_all();
 }
 Reply Session::request(uint8_t family,uint8_t op,std::span<const uint8_t> body) {
+    const auto before=generation();
     auto data=m_impl->exchange(family==1 && op==3?msg::kDisarm:msg::kCoreCommand,family,op,body);
-    return {data[4],data[5],Bytes(data.begin()+6,data.end())};
+    std::lock_guard lock(m_impl->mutex);
+    if(m_impl->boot_generation!=before) {throw contextError(ErrorKind::Protocol,"boot changed before reply was consumed",family,op,!retryable(family,op) && !(family==7 && op==3));}
+    return {data[4],data[5],Bytes(data.begin()+6,data.end()),aged(m_impl->clock),before};
 }
 RequestHandle Session::asyncRequest(uint8_t family,uint8_t op,Bytes body,Completion<Reply> completion) {
     auto reservation=callbackSlot(family==1 && op==3);
     return m_impl->submit(family==1 && op==3?msg::kDisarm:msg::kCoreCommand,family,op,std::move(body),
         [this,reservation=std::move(reservation),completion=std::move(completion)](std::expected<Bytes,Error> data) mutable {
             std::expected<Reply,Error> result=data?std::expected<Reply,Error>(Reply{(*data)[4],(*data)[5],Bytes(data->begin()+6,data->end())}):std::unexpected(data.error());
-            dispatch([reservation=std::move(reservation),completion=std::move(completion),result=std::move(result)]() mutable {completion(std::move(result));});
+            if(result) {std::lock_guard lock(m_impl->mutex);result->clock=aged(m_impl->clock);result->generation=m_impl->boot_generation;}
+            m_impl->deliver([reservation=std::move(reservation),completion=std::move(completion),result=std::move(result)]() mutable {completion(std::move(result));});
         });
 }
 Bytes Session::diagRequest(uint8_t op,std::span<const uint8_t> body) {
@@ -602,16 +642,17 @@ RequestHandle Session::asyncDiagRequest(uint8_t op,Bytes body,Completion<Bytes> 
             if((*data)[3]) {data=std::unexpected(DeviceError("diagnostic query rejected",(*data)[3],0,0,op));}
             else {data=Bytes(data->begin()+4,data->end());}
         }
-        dispatch([reservation=std::move(reservation),completion=std::move(completion),data=std::move(data)]() mutable {completion(std::move(data));});
+        m_impl->deliver([reservation=std::move(reservation),completion=std::move(completion),data=std::move(data)]() mutable {completion(std::move(data));});
     });
 }
 TimeSample Session::timePing() {
     std::lock_guard calls(m_impl->sync_mutex);
     if(m_impl->thread.get_id()==std::this_thread::get_id()) {throw Error(ErrorKind::Usage,"sync ping on I/O thread");}
     auto promise=std::make_shared<std::promise<std::expected<TimeSample,Error>>>();auto future=promise->get_future();
+    m_impl->releaseReply(service_context);
     {std::lock_guard closing(m_impl->close_mutex);
      if(m_impl->closed) {throw Error(ErrorKind::Connection,"session closed");}
-     asio::post(m_impl->io,[d=m_impl.get(),promise]{d->startPing([promise](auto result){promise->set_value(std::move(result));});});}
+     asio::post(m_impl->io,[d=m_impl.get(),promise,owner=service_context]{d->startPing([d,promise,owner](auto result){d->reserveReply(owner);promise->set_value(std::move(result));});});}
     auto result=future.get();if(!result) {throw result.error();}return *result;
 }
 RequestHandle Session::asyncTimePing(Completion<TimeSample> completion) {
@@ -637,12 +678,15 @@ std::vector<Reply> Session::requestBatch(uint8_t family,uint8_t op,std::span<con
     }
     for(const auto &body:bodies) {if(body.size()+4>maxPayload()) {throw contextError(ErrorKind::Usage,"batch page exceeds payload",family,op,false);}}
     if(service_context && service_context->cancelled) {throw Error(ErrorKind::Cancelled,"operation cancelled");}
+    d.releaseReply(service_context);
     std::vector<std::future<std::expected<Bytes,Error>>> futures;
     std::vector<std::shared_ptr<Impl::Pending>> requests;
     std::vector<RequestHandle> handles;
+    auto remaining=std::make_shared<size_t>(bodies.size());
     for(const auto &body:bodies) {
         auto r=std::make_shared<Impl::Pending>(d.io);r->kind=msg::kCoreCommand;r->family=family;r->op=op;r->body=body;
         r->read_only=retryable(family,op);r->mutation=!r->read_only;r->cancellation=std::make_shared<detail::Cancellation>();
+        r->owner=service_context;r->batch_remaining=remaining;
         auto promise=std::make_shared<std::promise<std::expected<Bytes,Error>>>();futures.push_back(promise->get_future());
         r->finish=[promise](auto result){promise->set_value(std::move(result));};
         r->cancellation->interrupt=[&d,weak=std::weak_ptr<Impl::Pending>(r)] {
@@ -697,9 +741,9 @@ bool Session::nextEvent(Frame &frame,std::chrono::milliseconds timeout) {
 }
 uint64_t Session::droppedEvents() const {std::lock_guard lock(m_impl->mutex);return m_impl->dropped;}
 uint64_t Session::droppedNotifications() const {auto box=m_impl->mailbox;std::lock_guard lock(box->mutex);return box->dropped;}
-std::shared_ptr<GroupBuffer> Session::subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity) {
+std::shared_ptr<GroupBuffer> Session::subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity,uint64_t configured_generation) {
     auto buffer=std::make_shared<GroupBuffer>(group,epoch,width,capacity);auto &d=*m_impl;
-    const auto expected=generation();
+    const auto expected=configured_generation?configured_generation:generation();
     std::lock_guard closing(d.close_mutex);if(d.closed) {throw Error(ErrorKind::Connection,"session closed");}
     asio::post(d.io,[&d,group,buffer,expected] {
         if(d.closed || d.boot_generation!=expected) {buffer->invalidate();return;}
@@ -712,9 +756,9 @@ void Session::removeBuffer(uint8_t group) {
     asio::post(d.io,[&d,group] {if(auto it=d.buffers.find(group);it!=d.buffers.end()) {it->second->invalidate();d.buffers.erase(it);}});
 }
 std::shared_ptr<CommandGroup> Session::manageCommand(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                                                   std::span<const uint32_t> hold,uint16_t watchdog_ms) {
+                                                   std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t configured_generation) {
     auto command=std::shared_ptr<CommandGroup>(new CommandGroup(group,epoch,std::move(descriptors),hold,watchdog_ms));
-    const auto expected=generation();
+    const auto expected=configured_generation?configured_generation:generation();
     auto &d=*m_impl;std::lock_guard closing(d.close_mutex);if(d.closed) {throw Error(ErrorKind::Connection,"session closed");}
     asio::post(d.io,[&d,command,expected] {
         if(d.closed || d.boot_generation!=expected) {command->stop();return;}
@@ -734,9 +778,7 @@ void Session::setMaxPayload(uint16_t cap) {
 uint16_t Session::maxPayload() const {return m_impl->maxPayload();}
 uint64_t Session::generation() const {std::lock_guard lock(m_impl->mutex);return m_impl->boot_generation;}
 ClockModel Session::clockModel() const {
-    std::lock_guard lock(m_impl->mutex);auto result=m_impl->clock;const auto now=monotonicUs();
-    result.age_us=now>=result.updated_us?now-result.updated_us:0;
-    if(result.age_us>5000000) {result.offset_valid=false;result.drift_valid=false;}return result;
+    std::lock_guard lock(m_impl->mutex);return aged(m_impl->clock);
 }
 uint64_t Session::observe(EventHandler handler) {
     auto observer=std::make_shared<Impl::Observer>();observer->handler=std::move(handler);
@@ -749,6 +791,7 @@ void Session::unobserve(uint64_t id) {
     std::lock_guard lock(observer->mutex);observer->active=false;
 }
 void Session::dispatch(Task task) {m_impl->dispatch(std::move(task));}
+void Session::dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task) {m_impl->deliver(std::move(task),state);}
 void Session::enqueueService(const std::shared_ptr<detail::Cancellation> &state,Task task) {
     auto &d=*m_impl;
     state->reservation=callbackSlot();

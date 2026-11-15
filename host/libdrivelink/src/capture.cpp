@@ -101,7 +101,8 @@ try
         j.recorded > j.samples) { malformed(); }
     for (unsigned i = 0; i < n; ++i) { j.refs.push_back(readRef(r)); }
     exact(r);
-    j.time=mapTime(m_session.clockModel(),j.trigger_timestamp_us,m_session.generation());
+    j.time=mapTime(reply.clock,j.trigger_timestamp_us,reply.generation);
+    if(!j.trigger_index) {j.time.valid=false;}
     return j;
 } catch(Error &e) { contextualize(e,6,4,false);throw; }
 
@@ -145,7 +146,7 @@ try
     }
     if(m_session.generation()!=capture_generation) {throw Error(ErrorKind::Protocol,"boot changed during capture read");}
     CaptureData result{std::move(status),std::move(samples),{}};
-    const auto clock=m_session.clockModel();const auto generation=m_session.generation();
+    const auto clock=m_session.clockModel();const auto generation=capture_generation;
     if(result.status.trigger_index) {
         const auto period=result.status.sample_period_us;
         for(uint64_t i=0;i<result.data.size();++i) {
@@ -157,6 +158,7 @@ try
             result.times.push_back(mapped);
         }
     }
+    if(m_session.generation()!=capture_generation) {throw Error(ErrorKind::Protocol,"boot changed during capture mapping");}
     return result;
 } catch(Error &e) { contextualize(e,6,4,false);throw; }
 } // namespace drivelink

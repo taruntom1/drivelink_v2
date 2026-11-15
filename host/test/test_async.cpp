@@ -98,6 +98,22 @@ TEST_CASE("typed asynchronous operations own inputs and propagate typed errors")
     REQUIRE(future.wait_for(std::chrono::seconds(2))==std::future_status::ready);
     auto result=future.get();REQUIRE(result);CHECK(result->values==std::vector<uint32_t>{42});
 }
+TEST_CASE("typed and raw completions preserve reply order while a typed parser finishes") {
+    std::promise<void> first,answered,decoded,release;
+    auto got_first=first.get_future(),both_answered=answered.get_future(),parsed=decoded.get_future();auto allowed=release.get_future().share();
+    Peer peer([&](Socket &s) {auto a=read(s);first.set_value();auto b=read(s);answer(s,a,{1,42,0,0,0});answer(s,b);answered.set_value();untilClosed(s);});
+    ManualDispatcher dispatcher;auto options=testOptions();options.dispatcher=dispatcher.dispatcher();
+    Session session(peer.endpoint(),options);Client client(session);std::vector<int> order;
+    client.async([&](Client &c) {const Ref ref{0,0,4};auto value=c.get({&ref,1});decoded.set_value();allowed.wait();return value;},
+                 [&](auto r) {REQUIRE(r);order.push_back(1);});
+    REQUIRE(got_first.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    session.asyncRequest(3,1,{},[&](auto r) {REQUIRE(r);order.push_back(2);});
+    REQUIRE(both_answered.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    REQUIRE(parsed.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    {std::lock_guard lock(dispatcher.mutex);CHECK(dispatcher.queue.empty());}
+    release.set_value();REQUIRE(dispatcher.run());REQUIRE(dispatcher.run());CHECK(order==std::vector<int>{1,2});
+}
 TEST_CASE("DISARM bypasses a stalled service and reserves admission when ordinary requests are full") {
     std::promise<void> received;auto ready=received.get_future();
     Peer peer([&](Socket &s) {

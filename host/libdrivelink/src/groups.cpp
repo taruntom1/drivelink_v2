@@ -77,7 +77,7 @@ try
     const auto capacity = command ? defs::kCmdGroupChannelCount : defs::kSubGroupChannelCount;
     if (body.empty() || body[0] >= capacity || channel != first + body[0]) { malformed(); }
     exact(r);
-    return {epoch,channel};
+    return {epoch,channel,reply.generation};
 } catch(Error &e) { contextualize(e,5,op,true);throw; }
 GroupMutation Client::subConfigure(uint8_t group, uint8_t loop, uint16_t divider, std::span<const Ref> refs)
 { auto result=groupMutation(static_cast<uint8_t>(defs::GroupOp::SubConfig), configBody(group, loop, divider, refs, true));m_session.removeBuffer(group);return result; }
@@ -109,7 +109,7 @@ std::shared_ptr<CommandGroup> Client::managedCommand(uint8_t group,uint8_t loop,
     const auto ms=get({&watchdog,1}).values.at(0);
     if(ms<3 || ms>65535) {throw Error(ErrorKind::Usage,"watchdog must allow managed keepalives");}
     const auto result=cmdConfigure(group,loop,refs);
-    return m_session.manageCommand(group,result.epoch,std::move(descriptors),hold,static_cast<uint16_t>(ms));
+    return m_session.manageCommand(group,result.epoch,std::move(descriptors),hold,static_cast<uint16_t>(ms),result.generation);
 }
 std::optional<SubscriptionSample> decodeSubscription(const Frame &frame,const Group &group,std::span<const ItemDescriptor> descriptors) {
     Reader r(frame.payload.data(),frame.payload.size());const auto version=r.readU8(),epoch=r.readU8();
