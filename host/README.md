@@ -9,6 +9,19 @@ pulled group buffers, managed command keepalives and timestamp mapping. CI build
 and tests it on Windows and Linux.
 See [the library API](libdrivelink/README.md).
 
+## Device identity (H1c)
+
+Core v9 adds the immutable factory MAC and a user-set UTF-8 name. `info`
+reports both; `name "base"` renames and `name ""` clears. Names allow up to
+16 UTF-8 bytes without C0/C1 controls. Rename is live, also armed; SAVE persists
+and REVERT restores it. Existing LP saved settings load with an empty name.
+
+Both host checks run `host-identity` against vdev. Bare-board verification:
+`python host/test/identity_smoke.py --cli <cli> --endpoint serial://COM3 --probe <async_probe>`.
+It requires saved settings, idle groups and a disarmed normal device, uses a
+temporary mock actuator, checks armed rename through the async consumer, and
+restores name/layout/settings.
+
 ## Build
 
 Requires CMake 3.24+, Ninja, a C++23 compiler (GCC 13.1 minimum) and Python 3. The first configure
@@ -241,7 +254,7 @@ drivelink-cli --endpoint serial://COM3 ota-status
 
 Normal upload preflights/hashes the unsigned ESP32-S3 app, streams bounded
 chunks, prepares it with FINISH, requests the explicit REBOOT commit, reconnects,
-checks GET_INFO/core v8 and full ELF identity, and confirms that image. Progress
+checks GET_INFO/core v9 and full ELF identity, and confirms that image. Progress
 uses stderr; `--json` stdout retains JSON envelopes. `--window 1..4` is bounded
 by the device's advertised limit and chunk size fits its payload cap.
 

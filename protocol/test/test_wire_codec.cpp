@@ -155,3 +155,37 @@ TEST_CASE("Writer::appendBytes and patchU8")
         CHECK(w.size() == 4);
     }
 }
+
+
+#include "drivelink/protocol/identity_codec.hpp"
+#include <string>
+
+TEST_CASE("Device names validate Unicode scalars and exact byte limits")
+{
+    namespace p = drivelink::protocol;
+    for (const std::string name : {"", "sixteen_bytes___", " Base ", "\xC3\xA9", "\xF0\x9F\x9A\x97"}) {
+        CHECK(p::validDeviceName(name));
+        std::array<uint8_t, 17> bytes{};
+        Writer w(bytes.data(), bytes.size());
+        REQUIRE(p::writeDeviceName(w, name));
+        CHECK(bytes[0] == name.size());
+        std::array<char, 17> decoded{};
+        Reader r(bytes.data(), w.size());
+        REQUIRE(p::readDeviceName(r, decoded));
+        CHECK(r.done()); CHECK(std::string(decoded.data()) == name);
+        for (size_t size = 0; size < w.size(); ++size) {
+            Reader truncated(bytes.data(), size); CHECK_FALSE(p::readDeviceName(truncated, decoded));
+        }
+    }
+    CHECK(p::validDeviceName(std::string(16, 'a')));
+    for (const std::string &name : {std::string(17, 'a'), std::string("a\0b", 3), std::string("\n"),
+             std::string("\x7F"), std::string("\xC2\x85"), std::string("\x80"), std::string("\xC0\xAF"),
+             std::string("\xED\xA0\x80"), std::string("\xF4\x90\x80\x80"), std::string("\xE2\x82")}) {
+        CHECK_FALSE(p::validDeviceName(name));
+        std::array<uint8_t, 20> bytes{}; Writer w(bytes.data(), bytes.size());
+        CHECK_FALSE(p::writeDeviceName(w, name)); CHECK(w.size() == 0);
+    }
+    const uint8_t oversized[]{17};
+    Reader r(oversized, 1); std::array<char, 17> decoded{};
+    CHECK_FALSE(p::readDeviceName(r, decoded));
+}

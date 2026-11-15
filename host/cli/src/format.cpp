@@ -100,7 +100,9 @@ Json toJson(const LoopInfo &v)
 }
 Json toJson(const DeviceInfo &v)
 {
-    return {{"protocol_version", v.protocol_version},
+    return {{"device_id", hex(v.device_id)},
+            {"name", v.name},
+            {"protocol_version", v.protocol_version},
             {"firmware_version", v.firmware_version},
             {"build_id", v.build_id},
             {"descriptor_hash", v.descriptor_hash},

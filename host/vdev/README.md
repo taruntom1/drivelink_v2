@@ -16,11 +16,14 @@ A failed PTY drain cancels/drops queued replies and effects, retaining the maste
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v8, time v1, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v9, time v1, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock
 definitions are served by the core.
+
+Device id defaults to `02444c000001`, stable across reboot and reset.
+`--device-id HEX12` simulates distinct boards. Names use real core storage.
 
 ## Persistence and crashes
 
@@ -49,7 +52,8 @@ injection and remains the default unless a file directory is attached.
 
 Loop instances, the factory layout and safe mode use the same core as firmware.
 Native real-time guard violations are counted and reported on stderr; safe mode
-starts no loop threads. Old layout blobs fall back to the factory loops.
+starts no loop threads. LP format-2 layouts load intact with an empty name;
+older formats fall back to factory loops. SAVEs now write format 3.
 
 Group command frames use the real core RX mailbox and disarmed gate. The
 config timer drains subscription snapshots; stream coalescing compares the

@@ -3,6 +3,7 @@
 #include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <fstream>
+#include <filesystem>
 #include <thread>
 
 namespace drivelink {
@@ -34,7 +35,10 @@ Bytes writeBody(uint32_t offset,std::span<const uint8_t> bytes) {
 }
 }
 Bytes readOtaImage(const std::string &path) {
-    std::ifstream f(path,std::ios::binary|std::ios::ate);
+    // CLI and GUI strings are UTF-8. Use native wide paths on Windows rather
+    // than interpreting those bytes through the process ANSI code page.
+    const std::u8string utf8(path.begin(), path.end());
+    std::ifstream f(std::filesystem::path(utf8),std::ios::binary|std::ios::ate);
     if (!f) { throw Error(ErrorKind::Usage,"cannot open OTA image"); }
     const auto size=f.tellg();if (size<=0 || size>p::kOtaSlotBytes) { throw Error(ErrorKind::Usage,"OTA image does not fit the 4 MiB slot"); }
     Bytes bytes(static_cast<size_t>(size));f.seekg(0);

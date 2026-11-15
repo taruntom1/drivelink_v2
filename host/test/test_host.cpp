@@ -505,6 +505,7 @@ TEST_CASE("GET_INFO v5 validates sparse ids, loop flags and duplicate loop ident
         w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);w.appendU8(2);w.appendU8(0);w.appendU8(2);
         w.appendU8(3);protocol::core_wire::string(w,"first");w.appendU32Le(1000);w.appendU8(1);
         w.appendU8(duplicate?3:19);protocol::core_wire::string(w,"second");w.appendU32Le(100);w.appendU8(bad_flags?2:0);
+        const uint8_t id[6]={2,0x44,0x4c,0,0,1};w.appendBytes(id,6);w.appendU8(0);
         bytes.resize(w.size());return bytes;
     };
     FakeDevice device([&](Socket &socket) {
@@ -591,6 +592,7 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
         Bytes info(64);protocol::wire::Writer iw(info.data(),info.size());
         iw.appendU8(protocol::core_wire::kVersion);protocol::core_wire::string(iw,"t");protocol::core_wire::string(iw,"b");
         iw.appendU32Le(1);iw.appendU32Le(65536);iw.appendU16Le(28);iw.appendU8(0);iw.appendU8(0);iw.appendU8(0);
+        const uint8_t id[6]={2,0x44,0x4c,0,0,1};iw.appendBytes(id,6);iw.appendU8(0);
         info.resize(iw.size());
         answer(socket,readFrame(socket),info);
         answer(socket,readFrame(socket),status(2,1));
@@ -663,4 +665,47 @@ TEST_CASE("testgen SDK encodes requests and rejects malformed status and events"
     event[7]=0; CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     event[7]=3; event.push_back(0); CHECK_THROWS_AS(client.event({protocol::defs::msg::kCoreEvent,event}),Error);
     CHECK(parseTestgenWaveform("chirp_log")==5); CHECK_THROWS_AS(parseTestgenWaveform("invalid"),Error);
+}
+
+
+TEST_CASE("SET_NAME owns valid UTF-8 bytes and reports uncertain malformed mutation replies")
+{
+    FakeDevice device([](Socket &socket) {
+        const auto req=readFrame(socket);
+        if (req.size()!=7 || req[2]!=1 || req[3]!=10 || req[4]!=2 || req[5]!=0xC3 || req[6]!=0xA9) {
+            throw std::runtime_error("bad SET_NAME encoding");
+        }
+        answer(socket,req,{});
+        answer(socket,readFrame(socket),{42}); // a success with an impossible body
+    });
+    Session session(device.endpoint(),testOptions()); Client client(session);
+    try {client.setName(std::string(17,'a')); FAIL("accepted oversized name");}
+    catch(const Error &e) {CHECK(e.kind==ErrorKind::Usage);CHECK_FALSE(e.outcome_unknown);}
+    CHECK(client.setName("\xC3\xA9").ok);
+    try {client.setName(""); FAIL("accepted malformed reply");}
+    catch(const Error &e) {CHECK(e.kind==ErrorKind::Protocol);CHECK(e.outcome_unknown);CHECK(e.family==1);CHECK(e.op==10);}
+}
+
+TEST_CASE("GET_INFO requires complete identity and validates name bytes")
+{
+    auto info=[] {
+        Bytes b(128); protocol::wire::Writer w(b.data(),b.size());
+        w.appendU8(protocol::core_wire::kVersion);
+        protocol::core_wire::string(w,"test");protocol::core_wire::string(w,"id");
+        w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);
+        w.appendU8(0);w.appendU8(8);w.appendU8(0);
+        const uint8_t id[]{2,4,6,8,10,12};w.appendBytes(id,6);
+        (void)protocol::writeDeviceName(w,"robot");b.resize(w.size());return b;
+    };
+    FakeDevice device([&](Socket &socket) {
+        auto good=info();answer(socket,readFrame(socket),good);
+        auto b=good;b.pop_back();answer(socket,readFrame(socket),b);
+        b=good;b.back()=0;answer(socket,readFrame(socket),b);
+        b=good;b.push_back(0);answer(socket,readFrame(socket),b);
+        b=good;b.resize(b.size()-12);answer(socket,readFrame(socket),b);
+    });
+    Session session(device.endpoint(),testOptions());Client client(session);
+    const auto result=client.info();
+    CHECK(hex(result.device_id)=="020406080a0c");CHECK(result.name=="robot");
+    for(int i=0;i<4;++i) {CHECK_THROWS_AS(client.info(),Error);}
 }

@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v8](../../../docs/protocol/core.md).
+[core v9](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -93,11 +93,24 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 - `get()` and the applied values come from the shadow the config task keeps, never from loop-owned storage. `stage()` and `complete(timeout)` are public, so tests drive a batch without threads.
 - `nvsDirty()` is set by an applied `persist` param or a pending op, and cleared by SAVE.
 
+## Device identity
+
+IDF CoreLink reads the immutable factory MAC using `esp_efuse_mac_get_default`,
+checks errors, and injects six bytes into pure CommandService. Native callers
+inject a stable id. `Core::setName` and `name()` belong to the config caller,
+never loops/RX. SET_NAME changes RAM only, also armed, validates UTF-8 (0..16
+bytes, no C0/C1 controls), and marks dirty. GET_INFO appends the id/name.
+REVERT restores the saved name after parameter batches succeed; reset clears it.
+
 ## NVS A/B persistence
+
+Layout format 3 includes the name in its CRC-protected commit record. LP
+format 2 loads with an empty name, preserving records/params. New writes use
+format 3; wire compatibility requires core v9.
 
 - **Blobs** (`config_blob.hpp`, little-endian through `wire::Reader` / `Writer`, closed by a CRC-32):
   - instance: `fmt u8 | gen u32 | count u16 | count × (id u16, value u32) | crc32`, in namespace `t<type>i<inst>` (`t00i00` is the system), keys `p_a` / `p_b`
-  - layout: `fmt u8 | gen u32 | count u8 | count × (type u8, inst u8, loop u8, label[16]) | crc32`, in namespace `core`, keys `layout_a` / `layout_b`
+  - layout: `fmt u8 | gen u32 | count u8 | count × (type u8, inst u8, loop u8, label[16]) | name_len u8 | name bytes | crc32`, in namespace `core`, keys `layout_a` / `layout_b`
 - **SAVE** (`save()`): refused while armed. Generation `newest + 1` goes to slot `gen & 1`: every instance blob (every `persist` param of every record, or of the pending layout when there is one), the system's, then the layout blob as the commit record. Then the namespaces of instances no longer in the layout are erased. A failed write reports `core.NvsWriteFailed` and answers `Fault` / `StorageFailed`; the previous generation stays intact, so a power loss at any point leaves it loadable.
 - **Load**: the valid layout slot with the highest generation, with every instance blob (and the system's) of that same generation; else the other slot's generation; else the defaults with `core.ConfigLoadFailed` (not on a blank store). Unknown and retired ids and non-`persist` params are ignored, a missing id takes its default, an invalid value its default, and a value out of range is clamped.
 - **REVERT** (`revert()`): reloads every live, persisted param of the configured instances and the system from the newest complete generation, through `ParamService::set`, per domain in batches of at most 64. `NoSavedConfig` when there is none.

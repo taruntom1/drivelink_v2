@@ -1,4 +1,5 @@
 #pragma once
+#include "drivelink/protocol/identity_codec.hpp"
 
 #include "core/source_service.hpp"
 
@@ -117,6 +118,9 @@ public:
     /// A write failure answers `Fault` / `StorageFailed` and leaves the
     /// previous generation intact.
     Status save();
+    // Config caller only; RAM-only, also allowed armed.
+    Status setName(std::string_view name);
+    const char *name() const { return m_name.data(); }
 
     /// Reload the live params of the configured instances (and the system's)
     /// from the newest complete generation, through the param service: per
@@ -186,6 +190,7 @@ public:
     uint32_t loopStackHighWater(uint8_t id) const;
 
 private:
+    std::array<char, drivelink::protocol::kDeviceNameBytes + 1> m_name{};
     static bool applySystemParam(void *ctx, const Ref &ref, uint32_t bits);
     size_t loopSlot(uint8_t id) const;
     void createLoop(detail::InstanceRecord &record);

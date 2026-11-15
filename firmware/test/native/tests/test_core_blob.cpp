@@ -111,7 +111,7 @@ TEST_CASE("Layout blob: round trip, labels padded to 16 bytes")
                                                rec(0x05, 254, 0, "x")};
     const std::vector<uint8_t> blob = core::encodeLayoutBlob(0x01020304, recs);
     REQUIRE(blob.size() == core::layoutBlobSize(3));
-    CHECK(blob.size() == 1 + 4 + 1 + 3 * 19 + 4);
+    CHECK(blob.size() == 1 + 4 + 1 + 3 * 19 + 1 + 4);
     CHECK(blob[1] == 0x04);
     CHECK(blob[5] == 3);
     CHECK(blob[6] == 0x20);
@@ -172,4 +172,26 @@ TEST_CASE("Namespaces: t<type>i<inst> in lower-case hex")
     CHECK_FALSE(core::persist::parseInstanceNamespace("t2ci011", t, i));
     CHECK_FALSE(core::persist::parseInstanceNamespace("x2ci01", t, i));
     CHECK_FALSE(core::persist::parseInstanceNamespace(nullptr, t, i));
+}
+
+
+TEST_CASE("Layout name commits with the CRC; LP format 2 migrates without losing records")
+{
+    const std::vector<core::LayoutRecord> records{rec(5, 0, 255, "control")};
+    auto blob = core::encodeLayoutBlob(7, records, "robot");
+    uint32_t generation = 0;
+    std::vector<core::LayoutRecord> loaded;
+    std::array<char, 17> name{};
+    REQUIRE(core::decodeLayoutBlob(blob, generation, loaded, &name));
+    CHECK(std::string(name.data()) == "robot"); CHECK(generation == 7);
+    auto bad = blob; bad[6 + 19] = 17; fixCrc(bad);
+    CHECK_FALSE(core::decodeLayoutBlob(bad, generation, loaded, &name));
+    bad = blob; bad[6 + 19 + 1] = 0; fixCrc(bad);
+    CHECK_FALSE(core::decodeLayoutBlob(bad, generation, loaded, &name));
+    // A byte-for-byte LP record with no name extension.
+    blob.erase(blob.begin() + 6 + 19, blob.end() - 4); blob[0] = 2; fixCrc(blob);
+    REQUIRE(core::decodeLayoutBlob(blob, generation, loaded, &name));
+    CHECK(name[0] == 0); REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0].type_id == 5); CHECK(std::string(loaded[0].label) == "control");
+    CHECK(core::encodeLayoutBlob(8, records, std::string(17, 'a')).empty());
 }

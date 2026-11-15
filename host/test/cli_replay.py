@@ -38,13 +38,13 @@ def exact(peer, count):
     return bytes(data)
 
 
-INFO = pack('B', 8) + string('replay') + string('0123456789abcdef') + pack('IIHBBB', 123, 4096, 1024, 2, 0, 0)
+INFO = pack('B', 9) + string('replay') + string('0123456789abcdef') + pack('IIHBBB', 123, 4096, 1024, 2, 0, 0) + bytes.fromhex('02444c00000100')
 REF = pack('BBH', 112, 0, 1)
 CAPTURE = (pack('BBBHIIB', 3, 1, 0, 1, 2, 1, 0) + bytes(4) + pack('BIIIIQB', 0, 0, 2, 1, 1000, 42, 1) + REF)
 EVENTS = [
-    (128, pack('BBHQBBBBBB', 8, 7, 65535, 123456, 1, 3, 2, 11, 22, 2) + pack('BIBIB', 3, 5, 19, 9, 4)),
-    (193, pack('BBIIB', 8, 1, 2, 1, 2)),
-    (193, pack('BB BIB', 8, 2, 3, 99, 2)),
+    (128, pack('BBHQBBBBBB', 9, 7, 65535, 123456, 1, 3, 2, 11, 22, 2) + pack('BIBIB', 3, 5, 19, 9, 4)),
+    (193, pack('BBIIB', 9, 1, 2, 1, 2)),
+    (193, pack('BB BIB', 9, 2, 3, 99, 2)),
     (192, pack('BHBBQBBBHiII', 3, 65535, 1, 0, 123, 2, 112, 7, 42, -1, 99, 101)),
     (192, pack('BHBBQB BBHII', 3, 2, 2, 0, 124, 1, 112, 7, 42, 3, 9)),
     (192, pack('BHBBQBBH', 3, 3, 3, 0, 125, 112, 7, 42)),
@@ -113,12 +113,12 @@ def run_case(cli, command, json_mode):
                         body = pack('I', 99)
                     else:
                         raise AssertionError((family, op, data.hex()))
-                    peer.sendall(encode_frame(65, bytes([8, data[1], family, op, 0, 0]) + body))
+                    peer.sendall(encode_frame(65, bytes([9, data[1], family, op, 0, 0]) + body))
                     if (family, op) == (1, 1) and command[0] in ('events', 'status'):
                         for kind, event in (EVENTS if command[0] == 'events' else EVENTS[:1]):
                             peer.sendall(encode_frame(kind, event))
                     if (family, op) == (3, 2) and command[0] in ('sub-stream', 'sub-csv'):
-                        peer.sendall(encode_frame(129, pack('BBHQI', 8, 4, 65535, 77, 0x3fc00000)))
+                        peer.sendall(encode_frame(129, pack('BBHQI', 9, 4, 65535, 77, 0x3fc00000)))
         except (EOFError, ConnectionResetError):
             pass
         except Exception as error:

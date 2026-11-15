@@ -8,6 +8,7 @@ struct DeviceInfo {
     uint16_t max_payload = 1024;
     bool bench_crash = false;
     uint8_t ota_window = 1; // <= config queue depth and protocol's four-chunk bound
+    drivelink::protocol::DeviceId device_id{};
 };
 enum class AfterReply : uint8_t { None, Reboot, Crash, CommitAndReboot };
 inline constexpr size_t kCaptureDoneEventBytes = 11;

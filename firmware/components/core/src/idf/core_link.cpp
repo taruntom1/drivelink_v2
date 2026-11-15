@@ -11,6 +11,7 @@
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_mac.h"
 #include "diag.hpp"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -19,6 +20,13 @@ static const char *const TAG="core_link";
 namespace core {
 namespace msg=drivelink::protocol::defs::msg;
 namespace {
+struct FactoryIdentity { drivelink::protocol::DeviceId id{}; esp_err_t error = ESP_OK; };
+const FactoryIdentity &factoryIdentity() {
+    static const auto value=[] {
+        FactoryIdentity value; value.error=esp_efuse_mac_get_default(value.id.data());return value;
+    }();
+    return value;
+}
 const char *buildId() {
     static const auto id=[] {
         std::array<char,17> text{};
@@ -57,7 +65,7 @@ struct CoreLink::Impl {
 #else
         false
 #endif
-        ,static_cast<uint8_t>(std::min<int>(CONFIG_CORE_COMMAND_QUEUE_DEPTH,drivelink::protocol::kOtaWindow))}) {}
+        ,static_cast<uint8_t>(std::min<int>(CONFIG_CORE_COMMAND_QUEUE_DEPTH,drivelink::protocol::kOtaWindow)),factoryIdentity().id}) {}
     void run() {
         if(xQueueReceive(queue,&frame,0)==pdTRUE) {
             const auto n=service.handle({frame.payload,frame.len},reply);
@@ -124,6 +132,9 @@ struct CoreLink::Impl {
     }
 };
 CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique<Impl>(core,uart)) {
+    if (factoryIdentity().error != ESP_OK) {
+        ESP_LOGE(TAG,"factory MAC read: %s",esp_err_to_name(factoryIdentity().error));return;
+    }
     auto &d=*m_impl;
     d.queue=xQueueCreateStatic(CONFIG_CORE_COMMAND_QUEUE_DEPTH,sizeof(uart_comm::RxFrame),d.queue_bytes.data(),&d.queue_storage);
     if(!d.queue) { return; }

@@ -8,6 +8,13 @@
 #include <map>
 #include <thread>
 #include <csignal>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace
 {
@@ -31,6 +38,7 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   info | types | items TYPE | enums TYPE ITEM | codes
   instances [pending] | add TYPE LABEL [LOOP] | remove TYPE INSTANCE
   label TYPE INSTANCE LABEL | discard
+  name [TEXT]                  Read or rename device (empty TEXT clears)
   get REF... | get-pending REF... | set REF=VALUE...
   action REF [ARG...] [--blob HEX]
   save | revert | factory-reset | reboot | exit-safe-mode
@@ -132,6 +140,12 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     {
         count(0);
         return toJson(client.info());
+    }
+    if (cmd == "name")
+    {
+        if (args.size() > 2) { usage("name takes zero or one argument"); }
+        if (args.size() == 2) { (void)client.setName(args[1]); }
+        return Json{{"name", client.info().name}};
     }
     if (cmd=="ota-status") { count(0);return toJson(client.otaStatus()); }
     if (cmd=="ota-abort") { count(0);return Json{{"aborted",client.otaAbort().ok}}; }
@@ -742,6 +756,31 @@ int main(int argc, char **argv)
     }
     try
     {
+#ifdef _WIN32
+        // main's narrow argv follows the Windows ANSI code page. Device names
+        // are UTF-8 even on machines whose system code page is not UTF-8.
+        int wide_count = 0;
+        const auto wide = CommandLineToArgvW(GetCommandLineW(), &wide_count);
+        if (!wide) { throw std::runtime_error("cannot decode Windows command line"); }
+        const auto release = [](wchar_t **p) { LocalFree(p); };
+        const std::unique_ptr<wchar_t *, decltype(release)> owned(wide, release);
+        std::vector<std::string> utf8;
+        utf8.reserve(wide_count);
+        for (int i = 0; i < wide_count; ++i) {
+            const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1,
+                                                nullptr, 0, nullptr, nullptr);
+            if (!size) { usage("invalid Unicode command-line argument"); }
+            std::string value(static_cast<size_t>(size), '\0');
+            if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1,
+                                     value.data(), size, nullptr, nullptr)) {
+                usage("invalid Unicode command-line argument");
+            }
+            value.pop_back(); utf8.push_back(std::move(value));
+        }
+        std::vector<char *> pointers;
+        for (auto &arg : utf8) { pointers.push_back(arg.data()); }
+        argc = wide_count; argv = pointers.data();
+#endif
         std::string endpoint;
         SessionOptions options;
         // Short CLI commands own their explicit time measurement; background

@@ -3,6 +3,7 @@
 #include "drivelink/protocol/sha256.hpp"
 #include "drivelink/session.hpp"
 #include <array>
+#include "drivelink/protocol/identity_codec.hpp"
 #include <optional>
 #include <variant>
 
@@ -122,6 +123,8 @@ struct LoopInfo
 };
 struct DeviceInfo
 {
+    protocol::DeviceId device_id{};
+    std::string name;
     uint8_t protocol_version = 0;
     std::string firmware_version;
     std::string build_id;

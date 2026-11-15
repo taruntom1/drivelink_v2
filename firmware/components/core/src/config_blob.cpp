@@ -89,12 +89,12 @@ bool decodeInstanceBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vecto
     return true;
 }
 
-std::vector<uint8_t> encodeLayoutBlob(uint32_t gen, std::span<const LayoutRecord> records)
+std::vector<uint8_t> encodeLayoutBlob(uint32_t gen, std::span<const LayoutRecord> records, std::string_view name)
 {
-    if (records.size() > kMaxLayoutRecords) {
+    if (records.size() > kMaxLayoutRecords || !drivelink::protocol::validDeviceName(name)) {
         return {};
     }
-    std::vector<uint8_t> out(layoutBlobSize(records.size()));
+    std::vector<uint8_t> out(layoutBlobSize(records.size(), name.size()));
     wire::Writer w(out.data(), out.size());
     w.appendU8(kLayoutBlobFormat);
     w.appendU32Le(gen);
@@ -107,11 +107,13 @@ std::vector<uint8_t> encodeLayoutBlob(uint32_t gen, std::span<const LayoutRecord
         std::memcpy(label, rec.label, boundedLen(rec.label, kLabelBytes));
         w.appendBytes(label, kLabelBytes);
     }
+    (void)drivelink::protocol::writeDeviceName(w, name);
     appendCrc(out, w);
     return w.ok() ? out : std::vector<uint8_t>{};
 }
 
-bool decodeLayoutBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vector<LayoutRecord> &records)
+bool decodeLayoutBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vector<LayoutRecord> &records,
+                      std::array<char, drivelink::protocol::kDeviceNameBytes + 1> *name)
 {
     records.clear();
     if (!crcOk(blob)) {
@@ -121,7 +123,10 @@ bool decodeLayoutBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vector<
     const uint8_t fmt = r.readU8();
     const uint32_t g = r.readU32Le();
     const uint8_t count = r.readU8();
-    if (!r.ok() || fmt != kLayoutBlobFormat || blob.size() != layoutBlobSize(count)) {
+    const bool legacy = fmt == 2;
+    const size_t minimum = layoutBlobSize(count) - (legacy ? 1U : 0U);
+    if (!r.ok() || (!legacy && fmt != kLayoutBlobFormat) || blob.size() < minimum ||
+        (legacy && blob.size() != minimum)) {
         return false;
     }
     records.reserve(count);
@@ -136,11 +141,13 @@ bool decodeLayoutBlob(std::span<const uint8_t> blob, uint32_t &gen, std::vector<
         rec.label[kLabelBytes] = '\0';
         records.push_back(rec);
     }
-    if (!r.done()) {
+    std::array<char, drivelink::protocol::kDeviceNameBytes + 1> loaded_name{};
+    if ((!legacy && !drivelink::protocol::readDeviceName(r, loaded_name)) || !r.done()) {
         records.clear();
         return false;
     }
     gen = g;
+    if (name) { *name = loaded_name; }
     return true;
 }
 

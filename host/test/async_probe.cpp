@@ -88,6 +88,12 @@ int main(int argc,char **argv) {
                 for(const auto &d:client.diagEntries()) {std::cerr<<"diag "<<unsigned(d.source)<<':'<<d.code<<" count="<<d.count<<" state="<<unsigned(d.state)<<'\n';}
                 throw Error(ErrorKind::Protocol,"keepalives did not preserve arming");
             }
+            client.setName("armed mock");
+            require(client.info().name=="armed mock" && client.info().device_id==original.info.device_id,"armed identity change failed");
+            model.reload();
+            require(model.snapshot().info.name=="armed mock" && model.snapshot().status && model.snapshot().status->arm_state==1,"rename changed arm state or failed model reload");
+            client.setName(original.info.name);
+            std::cout<<"PASS armed rename, immutable id and model identity refresh\n";
             command->stop();
             waitFor([&]{auto s=model.snapshotShared();return s->status && s->status->arm_state==0 && s->status->last_disarm_reason==2;},watchdog_ms+5000);
             std::promise<std::expected<SystemResult,Error>> disarmed;auto done=disarmed.get_future();
@@ -109,6 +115,7 @@ int main(int argc,char **argv) {
         } catch(...) {
             if(command) {command->stop();}
             try {client.disarm();groupRetry([&]{return client.groupClear(0,true);});groupRetry([&]{return client.groupClear(0,false);});}catch(...) {}
+            try {client.setName(original.info.name);}catch(...) {}
             if(rate_changed) {try {const uint32_t restore=1000;client.set({&rate,1},{&restore,1});}catch(...) {}}
             throw;
         }

@@ -14,7 +14,7 @@ auto types = client.types(); // whole descriptors, all pages
 ```
 
 Call `info()` before issuing other service calls. A successful info checks core
-v8 and sets the device's maximum receive payload; the scanner's hard limit is
+v9 and sets the device's maximum receive payload; the scanner's hard limit is
 1024. A different descriptor hash is accepted because module definitions are
 dynamic. It is not a core protocol-version mismatch.
 
@@ -53,6 +53,20 @@ param/action results, group configuration, capture, testgen, OTA and diagnostics
 counter, cleared and Boot events; unknown message types retain a raw `Frame`.
 `DeviceModel` provides the discovered snapshot, explicit reload and event-driven
 runtime state described below.
+
+## Device identity
+
+File helper `readOtaImage(path)` takes a UTF-8 path and opens the native
+filesystem path, including Unicode directories on Windows.
+
+`DeviceInfo::device_id` is the factory MAC as six bytes; `name` is a UTF-8
+string, empty by default. `Client::setName(std::string_view)` accepts 0..16
+bytes without C0/C1 controls, applies live (also armed), and returns a typed
+`SystemResult`. Local validation precedes submission; sent mutations never
+retry. SAVE persists and REVERT restores the name. Names and params commit
+in the same A/B layout generation. Call `reload()`/`reloadAsync()` after rename
+or REVERT to refresh `DeviceSnapshot::info`; Boot reload includes identity.
+The id stays stable across rename, reboot and reset; names need not be unique.
 
 ## Device snapshot
 
@@ -168,7 +182,7 @@ Session event queue carries subscriptions as well as status and diagnostics.
 Pulled buffers and mappings are described below; legacy event consumers retain
 their existing behavior.
 
-Arming wrappers use core v8: arm(), disarm() and acknowledgeFault(). Session
+Arming wrappers use core v9: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
 read-only system params; Client::groups retains convenience capacity fields.
 
