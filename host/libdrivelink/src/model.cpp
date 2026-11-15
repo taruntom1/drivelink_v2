@@ -113,6 +113,7 @@ struct DeviceModel::State : std::enable_shared_from_this<DeviceModel::State>
 {
     mutable std::mutex mutex;
     std::recursive_mutex callback_mutex;
+    std::mutex load_mutex;
     std::shared_ptr<const DeviceSnapshot> snapshot;
     Handler handler;
     Session *session;
@@ -139,6 +140,7 @@ struct DeviceModel::State : std::enable_shared_from_this<DeviceModel::State>
         try {
             auto state=shared_from_this();
             auto handle=session->async<DeviceSnapshot>([state,generation] {
+                std::lock_guard loading(state->load_mutex);
                 Client client(*state->session);auto next=load(client);
                 if(state->session->generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during model reload");}
                 next.generation=generation;return next;
@@ -178,7 +180,7 @@ struct DeviceModel::State : std::enable_shared_from_this<DeviceModel::State>
     }
 };
 
-DeviceModel::DeviceModel(Client &client) : m_client(client),m_state(std::make_shared<State>(client.session())) {
+DeviceModel::DeviceModel(Client &client) : m_session(client.session()),m_state(std::make_shared<State>(client.session())) {
     reload();
     m_observer=client.session().observe([weak=std::weak_ptr<State>(m_state)](const Frame &frame) {
         auto state=weak.lock();if(!state) {return;}
@@ -251,7 +253,7 @@ DeviceModel::DeviceModel(Client &client) : m_client(client),m_state(std::make_sh
     });
 }
 DeviceModel::~DeviceModel() {
-    m_client.session().unobserve(m_observer);
+    m_session.unobserve(m_observer);
     std::lock_guard callbacks(m_state->callback_mutex);
     {std::lock_guard lock(m_state->mutex);m_state->active=false;m_state->handler={};}
     m_state->reload.cancel();
@@ -261,8 +263,9 @@ std::shared_ptr<const DeviceSnapshot> DeviceModel::snapshotShared() const {
 }
 void DeviceModel::onChange(Handler handler) {std::lock_guard callbacks(m_state->callback_mutex);std::lock_guard lock(m_state->mutex);m_state->handler=std::move(handler);}
 RequestHandle DeviceModel::reloadAsync(Completion<OperationResult> completion) {
-    const auto generation=m_client.session().generation();auto state=m_state;
-    return m_client.session().async<OperationResult>([state,generation] {
+    const auto generation=m_session.generation();auto state=m_state;
+    return m_session.async<OperationResult>([state,generation] {
+        std::lock_guard loading(state->load_mutex);
         Client client(*state->session);auto next=load(client);next.generation=generation;
         if(state->session->generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during model reload");}
         {std::lock_guard lock(state->mutex);if(state->active) {
@@ -279,9 +282,10 @@ RequestHandle DeviceModel::reloadAsync(Completion<OperationResult> completion) {
 
 void DeviceModel::reload()
 {
-    const auto generation=m_client.session().generation();
-    auto next=load(m_client);next.generation=generation;
-    if(m_client.session().generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during model reload");}
+    std::lock_guard loading(m_state->load_mutex);
+    const auto generation=m_session.generation();
+    Client client(m_session);auto next=load(client);next.generation=generation;
+    if(m_session.generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during model reload");}
     std::lock_guard lock(m_state->mutex);
     if(m_state->snapshot) {
         if(m_state->snapshot->generation!=generation) {throw Error(ErrorKind::Protocol,"model advanced during reload");}

@@ -9,7 +9,7 @@ namespace drivelink {
 class Client
 {
   public:
-    explicit Client(Session &session) : m_session(session), m_max_payload(session.maxPayload()) {}
+    explicit Client(Session &session) : m_session(session) {}
     // Own all arguments in operation. A fresh Client on the session's serial
     // service executor shares the same typed services and parsers as sync calls.
     template<class F>
@@ -87,7 +87,6 @@ class Client
     GroupMutation groupMutation(uint8_t op, const Bytes &body);
     OperationResult captureOp(uint8_t op);
     Session &m_session;
-    uint16_t m_max_payload = 1024;
 };
 // Descriptor types use the existing ValueType wire encoding. These functions
 // reject truncation, trailing junk, overflow, invalid bool/enum, NaN and Inf.

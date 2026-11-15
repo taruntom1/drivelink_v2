@@ -134,7 +134,6 @@ try
     }
     exact(r);
     m_session.setMaxPayload(cap);
-    m_max_payload = cap;
     return j;
 } catch(Error &e) { contextualize(e,1,1,false);throw; }
 template<class T> std::vector<T> Client::pages(uint8_t family, uint8_t op, const Bytes &prefix)

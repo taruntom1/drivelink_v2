@@ -127,7 +127,8 @@ try
     if(!width) { malformed(); }
     const uint32_t recorded = status.recorded;
     // A reply holds the response and READ headers, then whole samples.
-    const size_t room = std::min<size_t>(kReadBytes, m_max_payload > 12 ? m_max_payload - 12U : 0U);
+    const auto cap=m_session.maxPayload();
+    const size_t room = std::min<size_t>(kReadBytes, cap > 12 ? cap - 12U : 0U);
     const uint32_t page = static_cast<uint32_t>(room / (4U * width));
     if (!page) { throw Error(ErrorKind::Protocol, "capture sample does not fit the device payload"); }
     std::vector<std::vector<uint32_t>> samples;

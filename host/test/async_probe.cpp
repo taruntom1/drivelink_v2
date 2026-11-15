@@ -19,7 +19,11 @@ template<class F> void waitFor(F predicate,unsigned ms=5000) {
 int main(int argc,char **argv) {
     if(argc!=2) {std::cerr<<"usage: async_probe ENDPOINT\n";return 2;}
     try {
-        Session session(argv[1]);Client client(session);DeviceModel model(client);
+        Session session(argv[1]);Client client(session);
+        std::promise<std::expected<std::shared_ptr<DeviceModel>,Error>> connected;auto loading=connected.get_future();
+        client.async([](Client &worker){return std::make_shared<DeviceModel>(worker);},[&](auto r){connected.set_value(std::move(r));});
+        require(loading.wait_for(std::chrono::seconds(15))==std::future_status::ready,"async model connect timed out");
+        auto loaded=loading.get();if(!loaded) {throw loaded.error();}auto &model=**loaded;
         const auto original=model.snapshot();
         require(!original.safeMode() && !(original.info.flags&3),"requires clean, valid normal layout");
         const auto groups=client.groups();for(const auto &g:groups.groups) {require(!g.configured,"requires idle groups");}

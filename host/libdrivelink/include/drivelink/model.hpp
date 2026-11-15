@@ -68,7 +68,7 @@ class DeviceModel
     void reload();
 
   private:
-    Client &m_client;
+    Session &m_session;
     struct State;
     std::shared_ptr<State> m_state;
     uint64_t m_observer=0;
