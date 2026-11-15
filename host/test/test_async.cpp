@@ -189,6 +189,28 @@ TEST_CASE("managed command groups map NaN to finite hold and keepalives stay pre
     REQUIRE(ready.wait_for(std::chrono::seconds(2))==std::future_status::ready);
     command->stop();CHECK_FALSE(command->write({&nan,1}));CHECK(command->rejected()>=2);
 }
+TEST_CASE("managed command queue stays coherent across producer backpressure and flushes") {
+    std::promise<void> last;auto done=last.get_future();
+    Peer peer([&](Socket &s) {
+        uint32_t previous=0;
+        for(;;) {
+            const auto packet=read(s);if(packet.payload.size()==4) {continue;}
+            REQUIRE(packet.payload.size()==260);p::wire::Reader r(packet.payload.data()+4,256);
+            const auto value=r.readU32Le();CHECK(value>previous);previous=value;
+            for(unsigned i=1;i<64;++i) {CHECK(r.readU32Le()==value);}
+            if(value==100) {last.set_value();break;}
+        }untilClosed(s);
+    });
+    Session session(peer.endpoint(),testOptions());std::vector<ItemDescriptor> descriptors(64);
+    for(auto &d:descriptors) {d.kind=ItemKind::Input;d.value_type=ValueType::U32;}
+    std::array<uint32_t,64> values{};auto command=session.manageCommand(0,3,std::move(descriptors),values,200);
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(8);
+    for(uint32_t n=1;n<=100;++n) {
+        if(n%10==1) {command->discardQueued();}values.fill(n);
+        while(!command->writeBits(values) && std::chrono::steady_clock::now()<deadline) {std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+    }
+    REQUIRE(done.wait_for(std::chrono::seconds(8))==std::future_status::ready);command->stop();
+}
 TEST_CASE("periodic ping ownership and mapping reset across Boot") {
     std::atomic<unsigned> pings=0;
     Peer peer([&](Socket &s) {

@@ -133,7 +133,7 @@ struct Session::Impl
     std::map<uint8_t,std::weak_ptr<CommandGroup>> commands;
     std::array<bool,256> retired{};
     unsigned sequence=0;
-    struct Write { std::shared_ptr<Bytes> bytes;std::shared_ptr<Pending> request;bool stream=false;bool ping=false;std::weak_ptr<CommandGroup> command={};bool managed=false; };
+    struct Write { std::shared_ptr<Bytes> bytes;std::shared_ptr<Pending> request;bool stream=false;bool ping=false;std::weak_ptr<CommandGroup> command={};bool managed=false;uint64_t command_generation=0; };
     std::deque<Write> writes;
     struct Ping {
         asio::steady_timer timer;
@@ -464,11 +464,11 @@ struct Session::Impl
             for(auto it=commands.begin();it!=commands.end();) {
                 auto command=it->second.lock();
                 if(!command || !command->active()) {it=commands.erase(it);continue;}
-                Bytes payload;
-                if(writes.size()<options.request_capacity+8 && command->poll(monotonicUs(),payload)) {
+                Bytes payload;uint64_t generation=0;
+                if(writes.size()<options.request_capacity+8 && command->poll(monotonicUs(),payload,generation)) {
                     auto bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
                     p::encodeFrame(bytes->data(),bytes->size(),static_cast<uint8_t>(p::defs::kCmdGroupChannelFirst+it->first),payload.data(),payload.size());
-                    Write queued{bytes,{},false,false,command,true};
+                    Write queued{bytes,{},false,false,command,true,generation};
                     if(writes.empty()) {writes.push_back(std::move(queued));write();}
                     else {
                         auto position=std::next(writes.begin());
@@ -539,7 +539,7 @@ struct Session::Impl
     void write() {
         while(!writes.empty()) {
             auto &w=writes.front();
-            if(w.managed) {auto command=w.command.lock();if(!command || !command->active()) {writes.pop_front();continue;}}
+            if(w.managed) {auto command=w.command.lock();if(!command || !command->active() || command->queueGeneration()!=w.command_generation) {writes.pop_front();continue;}}
             if((w.request && (w.request->completed || w.request->bytes!=w.bytes)) ||
                (w.ping && (!ping || ping->bytes!=w.bytes))) {writes.pop_front();continue;}
             if(w.request) {w.request->sent=true;}

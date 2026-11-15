@@ -25,7 +25,8 @@ class CommandGroup
     std::unique_ptr<Impl> m_impl;
     CommandGroup(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
                  std::span<const uint32_t> hold,uint16_t watchdog_ms);
-    bool poll(uint64_t now,Bytes &payload);
+    bool poll(uint64_t now,Bytes &payload,uint64_t &generation);
+    uint64_t queueGeneration() const noexcept;
     uint8_t id() const;
 };
 }

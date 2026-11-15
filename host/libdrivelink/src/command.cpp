@@ -79,15 +79,15 @@ bool CommandGroup::writeBits(std::span<const uint32_t> values) noexcept {
     auto &packet=d.queue[tail%d.queue.size()];packet.generation=d.generation.load();
     std::copy(values.begin(),values.end(),packet.values.begin());d.tail.store(tail+1,std::memory_order_release);return true;
 }
-bool CommandGroup::poll(uint64_t now,Bytes &payload) {
+bool CommandGroup::poll(uint64_t now,Bytes &payload,uint64_t &generation) {
     auto &d=*m_impl;if(!d.active) {return false;}
     auto head=d.head.load(std::memory_order_relaxed);
     while(head<d.tail.load(std::memory_order_acquire)) {
         const auto packet=d.queue[head%d.queue.size()];d.head.store(++head,std::memory_order_release);
         if(packet.generation!=d.generation.load()) {continue;}
-        payload=commandPayload(d.epoch,d.counter++,{packet.values.data(),d.descriptors.size()});d.last=now;return true;
+        generation=packet.generation;payload=commandPayload(d.epoch,d.counter++,{packet.values.data(),d.descriptors.size()});d.last=now;return true;
     }
-    if(now-d.last>=d.interval) {payload=commandPayload(d.epoch,d.counter++,{});d.last=now;return true;}
+    if(now-d.last>=d.interval) {generation=d.generation.load();payload=commandPayload(d.epoch,d.counter++,{});d.last=now;return true;}
     return false;
 }
 void CommandGroup::discardQueued() noexcept {++m_impl->generation;}
@@ -95,4 +95,5 @@ void CommandGroup::stop() noexcept {m_impl->active=false;discardQueued();}
 bool CommandGroup::active() const noexcept {return m_impl->active;}
 uint64_t CommandGroup::rejected() const noexcept {return m_impl->rejected;}
 uint8_t CommandGroup::id() const {return m_impl->group;}
+uint64_t CommandGroup::queueGeneration() const noexcept {return m_impl->generation;}
 }
