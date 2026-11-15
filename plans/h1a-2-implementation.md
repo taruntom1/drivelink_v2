@@ -5,6 +5,8 @@ branch: `codex/overhaul-H1a-2`; PR target: `host_overhaul`.
 Codex plans and implements, with an independent Codex review at high effort,
 under the existing H1a exception.
 
+Implemented; [PR #70 in review](https://github.com/taruntom1/drivelink_v2/pull/70).
+
 ## Scope
 
 - Add a synchronous, read-only device model over H1a-1's typed services. Its
@@ -68,7 +70,8 @@ its link in the status file, and the next-step handoff.
   OSes. Final doc/PR revisions refresh the gate with unchanged checks reused.
 - Self-review and independent Codex review at high effort found no actionable
   correctness issue. No rejected findings; no firmware, wire, safety or later-step
-  deviation. Hosted Windows installation/build verification follows PR creation.
+  deviation. Hosted Windows installation/build verification is recorded in the
+  PR's checks.
 - COM3 was initially absent; the user reconnected it before any board check.
   The read-only model probe passed for the normal layout, a pending mock and
   the restored final layout. The scratch harness initially left nvs_dirty after
