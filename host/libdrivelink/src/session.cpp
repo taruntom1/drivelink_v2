@@ -416,7 +416,8 @@ struct Session::Impl
         }
         return RequestHandle(r->cancellation);
     }
-    Bytes exchange(uint8_t kind,uint8_t family,uint8_t op,std::span<const uint8_t> body) {
+    Bytes exchange(uint8_t kind,uint8_t family,uint8_t op,std::span<const uint8_t> body,
+                   ClockModel *reply_clock=nullptr,uint64_t *reply_generation=nullptr) {
         std::unique_lock calls(sync_mutex,std::defer_lock);if(kind!=msg::kDisarm) {calls.lock();}
         if(thread.get_id()==std::this_thread::get_id()) { throw Error(ErrorKind::Usage,"sync request on I/O thread"); }
         if(service_context && service_context->cancelled) { throw Error(ErrorKind::Cancelled,"operation cancelled"); }
@@ -427,7 +428,14 @@ struct Session::Impl
             if(!(kind==msg::kDiagQuery?(op==1 || op==2):retryable(family,op)) && !(family==7 && op==3)) {service_context->mutation=true;}
         }
         auto promise=std::make_shared<std::promise<std::expected<Bytes,Error>>>();auto future=promise->get_future();
-        auto handle=submit(kind,family,op,Bytes(body.begin(),body.end()),[promise](auto result){promise->set_value(std::move(result));},service_context);
+        auto handle=submit(kind,family,op,Bytes(body.begin(),body.end()),[this,promise,reply_clock,reply_generation](auto result) {
+            if(result) {
+                std::lock_guard lock(mutex);
+                if(reply_clock) {*reply_clock=aged(clock);}
+                if(reply_generation) {*reply_generation=boot_generation;}
+            }
+            promise->set_value(std::move(result));
+        },service_context);
         if(service_context) {
             std::lock_guard lock(service_context->mutex);
             service_context->interrupt=[handle]{handle.cancel();};
@@ -616,11 +624,9 @@ void Session::close() {
     d.cv.notify_all();
 }
 Reply Session::request(uint8_t family,uint8_t op,std::span<const uint8_t> body) {
-    const auto before=generation();
-    auto data=m_impl->exchange(family==1 && op==3?msg::kDisarm:msg::kCoreCommand,family,op,body);
-    std::lock_guard lock(m_impl->mutex);
-    if(m_impl->boot_generation!=before) {throw contextError(ErrorKind::Protocol,"boot changed before reply was consumed",family,op,!retryable(family,op) && !(family==7 && op==3));}
-    return {data[4],data[5],Bytes(data.begin()+6,data.end()),aged(m_impl->clock),before};
+    ClockModel clock;uint64_t reply_generation=0;
+    auto data=m_impl->exchange(family==1 && op==3?msg::kDisarm:msg::kCoreCommand,family,op,body,&clock,&reply_generation);
+    return {data[4],data[5],Bytes(data.begin()+6,data.end()),clock,reply_generation};
 }
 RequestHandle Session::asyncRequest(uint8_t family,uint8_t op,Bytes body,Completion<Reply> completion) {
     auto reservation=callbackSlot(family==1 && op==3);

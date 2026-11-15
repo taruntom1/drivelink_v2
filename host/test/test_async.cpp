@@ -188,6 +188,20 @@ TEST_CASE("Boot invalidates group buffers before subsequent samples") {
     Session session(peer.endpoint(),testOptions());auto buffer=session.subscribeBuffer(0,4,1);const auto generation=session.generation();
     CHECK_THROWS_AS(session.request(3,1),Error);GroupSample s;CHECK_FALSE(buffer->latest(s));CHECK(session.generation()!=generation);
 }
+TEST_CASE("a sync request queued across Boot receives its actual reply generation") {
+    std::promise<void> first,release,second_started;auto received=first.get_future();auto allowed=release.get_future().share();auto started=second_started.get_future();
+    Peer peer([&](Socket &s) {(void)read(s);first.set_value();allowed.wait();send(s,0xc0,boot());auto request=read(s);answer(s,request,{42});untilClosed(s);});
+    Session session(peer.endpoint(),testOptions());const auto original=session.generation();
+    auto first_call=std::async(std::launch::async,[&] {
+        try {(void)session.request(3,1);return false;}catch(const Error &e) {return e.kind==ErrorKind::Protocol;}
+    });
+    REQUIRE(received.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    auto second_call=std::async(std::launch::async,[&] {second_started.set_value();return session.request(3,1);});
+    REQUIRE(started.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));release.set_value();
+    CHECK(first_call.get());const auto reply=second_call.get();CHECK(reply.body==Bytes{42});
+    CHECK(reply.generation!=original);CHECK(reply.generation==session.generation());
+}
 TEST_CASE("managed command groups map NaN to finite hold and keepalives stay prefix only") {
     std::promise<void> observed;auto ready=observed.get_future();std::atomic<bool> value_seen=false;
     Peer peer([&](Socket &s) {
