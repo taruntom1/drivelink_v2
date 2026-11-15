@@ -74,8 +74,10 @@ model construction, 1 kHz pulled data, mappings, keepalives/watchdog and DISARM;
 a serial endpoint also exercises Boot and automatic complete model reload.
 Use only a clean loops-only bare bench device with idle groups/capture and a
 1 kHz loop. It restores groups and native test rates. On vdev, 1 kHz data is
-tested disarmed and arming is tested at 50 Hz to avoid desktop scheduling trips;
-the physical board retains 1 kHz for both. Linux ThreadSanitizer instructions
+tested disarmed; arming uses 10 Hz for every native loop and a 1 s command
+watchdog to allow desktop scheduling jitter. All original rates/watchdog values
+are restored and read back. The physical board retains its timing for both phases.
+Linux ThreadSanitizer instructions
 are in [development.md](../docs/development.md#host-concurrency-and-time-checks).
 
 Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)

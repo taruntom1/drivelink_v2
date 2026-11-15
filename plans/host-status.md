@@ -39,6 +39,7 @@ Every session reads all of this file, so it holds only what has no other home.
 - **Async consumers:** retain Session, own callable captures, supply a FIFO dispatcher and consume completions. Use `disarmAsync` for emergency bypass. Boot clears readiness until a matching complete reload; group buffers are pulled and attach with the mutation generation.
 - **Commands/time:** explicit finite holds, no value replay or automatic arming, flush pending TX generations before mode changes. Session owns periodic time; the future agent client disables it.
 - **Verification:** full gate, self-review and independent high-effort Codex review passed. The reviewer's Windows Unicode OTA-path finding was fixed and cleared. Bare-board identity/persistence/armed rename, 1 kHz model consumer, protocol/core/CLI/module/capture/testgen/affinity/OTA and stack checks passed. A console-induced USB reset exposed a smoke-harness cleanup trap; inactive DTR/RTS and read-only readiness fixed it, and the console case passed on rerun. Details are in the H1c plan and hardware log.
+- **Native async fixture:** Windows CI exposed a loop-stall trip in the armed phase. Every vdev loop now uses 10 Hz with a 1 s command watchdog during that phase; exact original values are restored and read back. The 1 kHz data phase and physical-board timing are unchanged. The independent reviewer cleared this test-only repair; see the H1c results.
 
 ## Steps
 

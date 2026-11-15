@@ -83,6 +83,17 @@ Implementation is complete. All production code was written in this session.
   console-harness fix, with no omissions and zero-warning builds. The report
   is `build/validate/summary.json`; passing unchanged checks are reused.
   The gate is refreshed for each pushed commit.
+- **Windows CI follow-up:** run `43729629264` built successfully but
+  `host-identity` tripped the real vdev loop-stall monitor during armed rename.
+  The async fixture slowed only its selected loop to 50 Hz, leaving another
+  monitored loop at 100 Hz (a 35 ms stall window). The native armed phase now
+  uses 10 Hz for every loop and a 1 s command watchdog, restoring and reading
+  back all original rates/watchdog after DISARM. The disarmed 1 kHz data phase,
+  keepalive/watchdog assertions and physical-board timing remain covered.
+  Self-review and the same independent high-effort reviewer cleared the fix.
+  Production safety thresholds are unchanged; prior hardware results apply.
+  The Windows check passed, followed by five consecutive runs each of
+  `host-async` and `host-identity` (10/10 passes), then the full seven-check gate.
 
 Real motor/IMU/Pi checks remain in the existing deferred rows; identity adds no
 new hardware requirement. Time v1 is unchanged; protocol pings and production

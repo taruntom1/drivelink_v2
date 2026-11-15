@@ -54,8 +54,21 @@ int main(int argc,char **argv) {
         auto reply=result.get();require(bool(reply),"typed async get failed");const auto watchdog_ms=reply->values.at(0);
         std::shared_ptr<CommandGroup> command;
         const bool native=original.info.firmware_version.ends_with("-vdev");
-        const Ref rate{5,loop,protocol::defs::loop::kRateHz};
-        bool rate_changed=false;
+        std::vector<Ref> timing_refs;
+        std::vector<uint32_t> saved_timing,native_timing;
+        for(const auto &l:original.info.loops) {
+            timing_refs.push_back({5,l.id,protocol::defs::loop::kRateHz});
+            saved_timing.push_back(l.rate_hz);native_timing.push_back(10);
+        }
+        timing_refs.push_back(watchdog);saved_timing.push_back(watchdog_ms);native_timing.push_back(1000);
+        bool timing_changed=false;
+        const auto restoreTiming=[&] {
+            if(timing_changed) {
+                client.set(timing_refs,saved_timing);
+                require(client.get(timing_refs).values==saved_timing,"native timing was not restored");
+                timing_changed=false;
+            }
+        };
         try {
             namespace l=protocol::defs::loop;
             const std::array<Ref,4> refs{{{5,loop,l::kTicks},{5,loop,l::kOverruns},{5,loop,l::kLastRunUs},{5,loop,l::kMaxRunUs}}};
@@ -74,10 +87,11 @@ int main(int argc,char **argv) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             require(reads>100 && mapped>100,"insufficient mapped 1 kHz data");
-            // Native timers are scheduled by a desktop OS. At 1 kHz its
-            // three-period safety threshold is below normal Windows jitter.
-            // Exercise arming independently at 50 Hz, then restore 1 kHz.
-            if(native) {const uint32_t slow=50;client.set({&rate,1},{&slow,1});rate_changed=true;}
+            // Desktop scheduling can pause any loop, including an empty one.
+            // The real safety monitor checks them all. Test native arming at
+            // 10 Hz with a 1 s command watchdog, then restore every setting.
+            // The disarmed data test above and physical-board timing stay intact.
+            if(native) {timing_changed=true;client.set(timing_refs,native_timing);}
             command=groupRetry([&]{return client.managedCommand(0,loop,{},{});});client.arm();
             waitFor([&]{auto s=model.snapshotShared();return s->status && s->status->arm_state==1;});
             std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -95,12 +109,12 @@ int main(int argc,char **argv) {
             client.setName(original.info.name);
             std::cout<<"PASS armed rename, immutable id and model identity refresh\n";
             command->stop();
-            waitFor([&]{auto s=model.snapshotShared();return s->status && s->status->arm_state==0 && s->status->last_disarm_reason==2;},watchdog_ms+5000);
+            waitFor([&]{auto s=model.snapshotShared();return s->status && s->status->arm_state==0 && s->status->last_disarm_reason==2;},(native?1000:watchdog_ms)+5000);
             std::promise<std::expected<SystemResult,Error>> disarmed;auto done=disarmed.get_future();
             client.disarmAsync([&](auto r){disarmed.set_value(std::move(r));});
             require(done.wait_for(std::chrono::seconds(5))==std::future_status::ready && bool(done.get()),"async DISARM failed");
             groupRetry([&]{return client.groupClear(0,true);});groupRetry([&]{return client.groupClear(0,false);});
-            if(rate_changed) {const uint32_t restore=1000;client.set({&rate,1},{&restore,1});rate_changed=false;}
+            restoreTiming();
             if(std::string(argv[1]).starts_with("serial://")) {
                 const auto generation=session.generation();client.system(8);
                 waitFor([&]{auto s=model.snapshotShared();return session.generation()!=generation && s->generation==session.generation() && !s->reloading;},15000);
@@ -116,7 +130,7 @@ int main(int argc,char **argv) {
             if(command) {command->stop();}
             try {client.disarm();groupRetry([&]{return client.groupClear(0,true);});groupRetry([&]{return client.groupClear(0,false);});}catch(...) {}
             try {client.setName(original.info.name);}catch(...) {}
-            if(rate_changed) {try {const uint32_t restore=1000;client.set({&rate,1},{&restore,1});}catch(...) {}}
+            try {restoreTiming();}catch(...) {}
             throw;
         }
         model.onChange({});session.close();
