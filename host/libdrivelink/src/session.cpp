@@ -95,6 +95,7 @@ struct Session::Impl
     asio::ip::tcp::socket tcp{io};
     asio::serial_port serial{io};
     bool use_tcp=false;
+    bool failed=false; // I/O-owned; work stays alive until explicit close.
     p::Scanner scanner{p::kMaxPayload};
     asio::steady_timer stale{io}, periodic{io}, command_tick{io};
     std::array<uint8_t,2048> input{};
@@ -334,6 +335,10 @@ struct Session::Impl
         {std::lock_guard lock(r->cancellation->mutex);r->cancellation->done=true;r->cancellation->interrupt={};}
         if(retire) { retired[r->seq]=true; }
         if(auto it=pending.find(r->seq);it!=pending.end() && it->second==r) { pending.erase(it); }
+        if(writes.size()>1) {
+            auto first=std::next(writes.begin());
+            writes.erase(std::remove_if(first,writes.end(),[&](const Write &w){return w.request==r;}),writes.end());
+        }
         { std::lock_guard lock(mutex);--admitted; }
         if(!r->batch_remaining || --*r->batch_remaining==0) {reserveReply(r->owner);}
         r->finish(std::move(result));
@@ -342,6 +347,7 @@ struct Session::Impl
         return contextError(kind,why,r->family,r->op,r->mutation && r->sent);
     }
     void fail(const std::string &why) {
+        if(failed) {return;}failed=true;
         { std::lock_guard lock(mutex);closed=true;failure=why; }
         cv.notify_all();
         for(auto &[id,buffer]:buffers) {(void)id;buffer->invalidate();}buffers.clear();
@@ -351,7 +357,16 @@ struct Session::Impl
         while(!pending.empty()) { auto r=pending.begin()->second;complete(r,std::unexpected(error(r,ErrorKind::Connection,why)),true); }
         if(ping) { finishPing(std::unexpected(Error(ErrorKind::Connection,why)),true); }
         asio::error_code ec;tcp.close(ec);serial.close(ec);stale.cancel();periodic.cancel();command_tick.cancel();writes.clear();
-        if(work) {work->reset();}
+    }
+    void pruneQueued() {
+        if(writes.size()<2) {return;}
+        auto first=std::next(writes.begin());
+        writes.erase(std::remove_if(first,writes.end(),[this](const Write &w) {
+            if(w.request && (w.request->completed || w.request->bytes!=w.bytes)) {return true;}
+            if(w.ping && (!ping || ping->bytes!=w.bytes)) {return true;}
+            if(w.managed) {auto c=w.command.lock();return !c || !c->active() || c->queueGeneration()!=w.command_generation;}
+            return false;
+        }),writes.end());
     }
     void begin(const std::shared_ptr<Pending> &r) {
         if(closed) { complete(r,std::unexpected(error(r,ErrorKind::Connection,failure)));return; }
@@ -368,7 +383,9 @@ struct Session::Impl
         r->bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
         p::encodeFrame(r->bytes->data(),r->bytes->size(),r->kind,payload.data(),payload.size());
         pending.emplace(r->seq,r);
-        if(writes.size()>=options.request_capacity+8) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"TX queue full")));return; }
+        pruneQueued();
+        const auto tx_limit=options.request_capacity+8+(r->kind==msg::kDisarm?1U:0U);
+        if(writes.size()>=tx_limit) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"TX queue full")));return; }
         Write queued{r->bytes,r,false,false};
         if(r->kind==msg::kDisarm && !writes.empty()) {writes.insert(std::next(writes.begin()),std::move(queued));}
         else {writes.push_back(std::move(queued));}
@@ -610,7 +627,9 @@ void Session::close() {
     auto &d=*m_impl;
     std::vector<std::shared_ptr<detail::Cancellation>> jobs;
     {std::lock_guard closing(d.close_mutex);
-     if(!d.closed.exchange(true)) {asio::post(d.io,[&d]{d.fail("session closed");});}
+     if(!d.thread.joinable()) {return;}
+     d.closed=true;
+     asio::post(d.io,[&d]{d.fail("session closed");if(d.work) {d.work->reset();}});
      {std::lock_guard lock(d.mutex);for(auto &weak:d.service_states) {if(auto s=weak.lock()) {jobs.push_back(s);}}} }
     for(auto &state:jobs) {
         std::function<void(Error)> terminate;

@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "test_options.hpp"
+#include "test_dispatcher.hpp"
 #include "drivelink/model.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
@@ -55,6 +56,7 @@ struct ModelPeer
     std::atomic<uint32_t> revision{17};
     std::atomic<size_t> largest_batch{0};
     std::atomic<int> inject{0};
+    std::atomic<bool> close_after_diag{false};
     uint16_t cap;
     std::thread worker;
     std::exception_ptr error;
@@ -183,6 +185,7 @@ struct ModelPeer
                 Bytes frame(p::frameSize(out.size()));
                 p::encodeFrame(frame.data(), frame.size(), header[3]==p::defs::msg::kDiagQuery?p::defs::msg::kDiagQueryResponse:p::defs::msg::kCoreResponse, out.data(), out.size());
                 asio::write(socket, asio::buffer(frame));
+                if(header[3]==p::defs::msg::kDiagQuery && close_after_diag.exchange(false)) {return;}
             }
         }
         catch (...) { error = std::current_exception(); }
@@ -261,4 +264,23 @@ TEST_CASE("model follows status flags and automatically replaces its snapshot af
     CHECK(before->info.build_id=="17");
     session.close();REQUIRE(wait([&]{return !model.snapshotShared()->connected;}));
     model.onChange({});
+}
+TEST_CASE("a delayed successful Boot reload cannot resurrect a disconnected model") {
+    using namespace drivelink_test;
+    ModelPeer peer;auto gate=std::make_shared<CopyGate>();auto entered=gate->entered.get_future();
+    auto options=testOptions();options.dispatcher=GatedDispatcher(gate);
+    Session session(peer.endpoint(),options);OpenGateOnExit cleanup{gate};Client client(session);DeviceModel model(client);
+    std::promise<std::thread::id> worker;auto worker_id=worker.get_future();
+    session.async<std::thread::id>([]{return std::this_thread::get_id();},[&](auto r){REQUIRE(r);worker.set_value(*r);});
+    REQUIRE(gate->output.run());gate->arm(worker_id.get());
+    peer.revision=777;peer.close_after_diag=true;peer.inject=2;
+    try {(void)client.info();}catch(const Error &) {}
+    REQUIRE(gate->output.run()); // Boot starts the reload on the service executor.
+    REQUIRE(entered.wait_for(std::chrono::seconds(3))==std::future_status::ready);
+    while(model.snapshotShared()->connected) {REQUIRE(gate->output.run());}
+    CHECK_FALSE(model.snapshotShared()->ready);
+    gate->open();
+    while(!model.snapshotShared()->ready) {REQUIRE(gate->output.run());}
+    const auto snapshot=model.snapshotShared();CHECK(snapshot->info.build_id=="777");CHECK_FALSE(snapshot->connected);
+    session.close();
 }

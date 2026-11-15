@@ -108,6 +108,17 @@ DeviceSnapshot load(Client &client)
     return snapshot;
 }
 } // namespace
+namespace {
+void retainRuntime(DeviceSnapshot &next,const DeviceSnapshot &previous) {
+    next.status=previous.status;next.capture=previous.capture;next.testgen=previous.testgen;
+    next.connected=previous.connected;next.notification_losses=previous.notification_losses;
+    next.malformed_events=previous.malformed_events;
+    if(next.status) {
+        const auto flags=next.status->flags;
+        next.info.flags=static_cast<uint8_t>((next.info.flags&~9U)|((flags&4U)?1U:0U)|((flags&32U)?8U:0U));
+    }
+}
+}
 
 struct DeviceModel::State : std::enable_shared_from_this<DeviceModel::State>
 {
@@ -150,7 +161,7 @@ struct DeviceModel::State : std::enable_shared_from_this<DeviceModel::State>
                  if(!state->active || state->snapshot->generation!=generation || state->session->generation()!=generation) {return;}
                  state->reload_pending=false;
                  if(result) {
-                     result->status=state->snapshot->status;result->capture=state->snapshot->capture;result->testgen=state->snapshot->testgen;
+                     retainRuntime(*result,*state->snapshot);
                      state->snapshot=std::make_shared<DeviceSnapshot>(std::move(*result));
                  } else {
                      auto next=std::make_shared<DeviceSnapshot>(*state->snapshot);next->reloading=false;state->snapshot=std::move(next);
@@ -270,7 +281,7 @@ RequestHandle DeviceModel::reloadAsync(Completion<OperationResult> completion) {
         if(state->session->generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during model reload");}
         {std::lock_guard lock(state->mutex);if(state->active) {
             if(state->snapshot->generation!=generation) {throw Error(ErrorKind::Protocol,"model advanced during reload");}
-            next.status=state->snapshot->status;next.capture=state->snapshot->capture;next.testgen=state->snapshot->testgen;
+            retainRuntime(next,*state->snapshot);
             state->snapshot=std::make_shared<DeviceSnapshot>(std::move(next));
         }}
         return OperationResult{};
@@ -289,7 +300,7 @@ void DeviceModel::reload()
     std::lock_guard lock(m_state->mutex);
     if(m_state->snapshot) {
         if(m_state->snapshot->generation!=generation) {throw Error(ErrorKind::Protocol,"model advanced during reload");}
-        next.status=m_state->snapshot->status;next.capture=m_state->snapshot->capture;next.testgen=m_state->snapshot->testgen;
+        retainRuntime(next,*m_state->snapshot);
     }
     m_state->snapshot=std::make_shared<DeviceSnapshot>(std::move(next));
 }

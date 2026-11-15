@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "test_options.hpp"
+#include "test_dispatcher.hpp"
 #include "drivelink/buffers.hpp"
 #include "drivelink/command.hpp"
 #include "drivelink/client.hpp"
@@ -41,14 +42,7 @@ struct Peer {
     ~Peer() {worker.join();CHECK(error==nullptr);}
     std::string endpoint() const {return "tcp://127.0.0.1:"+std::to_string(acceptor.local_endpoint().port());}
 };
-struct ManualDispatcher {
-    std::mutex mutex;std::condition_variable cv;std::deque<Task> queue;
-    Dispatcher dispatcher() {return [this](Task task) {{std::lock_guard lock(mutex);queue.push_back(std::move(task));}cv.notify_one();};}
-    bool run() {
-        Task task;{std::unique_lock lock(mutex);if(!cv.wait_for(lock,std::chrono::seconds(2),[&]{return !queue.empty();})) {return false;}
-        task=std::move(queue.front());queue.pop_front();}task();return true;
-    }
-};
+using drivelink_test::ManualDispatcher;
 Bytes boot() {Bytes b(17);p::wire::Writer w(b.data(),b.size());w.appendU8(3);w.appendU16Le(1);w.appendU8(4);w.appendU8(0);w.appendU64Le(1);w.appendU8(0);w.appendU8(0);w.appendU8(0);w.appendU8(0);return b;}
 Bytes sample(uint32_t n,size_t width=64,uint8_t epoch=4) {
     Bytes b(12+4*width);p::wire::Writer w(b.data(),b.size());w.appendU8(p::core_wire::kVersion);w.appendU8(epoch);
@@ -129,6 +123,48 @@ TEST_CASE("DISARM bypasses a stalled service and reserves admission when ordinar
     client.disarmAsync([&](auto r){promise.set_value(std::move(r));});
     REQUIRE(done.wait_for(std::chrono::seconds(2))==std::future_status::ready);CHECK(done.get().has_value());
     session.close();REQUIRE(pending.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+}
+TEST_CASE("DISARM reserves a TX entry when ordinary requests and command frames fill the queue") {
+    using namespace drivelink_test;
+    std::promise<void> trigger,drained;auto start=trigger.get_future().share();auto all_sent=drained.get_future();
+    Peer peer([&](Socket &s) {
+        start.wait();send(s,0x80,{});
+        auto first=read(s);CHECK(first.type==1);answer(s,first);
+        auto emergency=read(s);CHECK(emergency.type==3);answer(s,emergency);
+        for(unsigned i=0;i<11;++i) {auto packet=read(s);if(packet.type==1) {answer(s,packet);}}
+        drained.set_value();
+        untilClosed(s);
+    });
+    auto gate=std::make_shared<CopyGate>();auto entered=gate->entered.get_future();
+    auto options=testOptions();options.request_capacity=4;options.dispatcher=GatedDispatcher(gate);
+    Session session(peer.endpoint(),options);OpenGateOnExit cleanup{gate};
+    const auto observer=session.observe([](const Frame &){});gate->arm();trigger.set_value();
+    REQUIRE(entered.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    unsigned ordinary=0;bool disarmed=false;
+    for(unsigned i=0;i<4;++i) {session.asyncRequest(3,1,{},[&](auto r){CHECK(r.has_value());++ordinary;});}
+    const auto payload=commandPayload(1,0,{});
+    for(unsigned i=0;i<8;++i) {REQUIRE(session.sendCommandGroup(0,payload));}
+    Client client(session);client.disarmAsync([&](auto r){CHECK(r.has_value());disarmed=true;});
+    gate->open();
+    for(unsigned i=0;i<6 && (!disarmed || ordinary<4);++i) {REQUIRE(gate->output.run());}
+    CHECK(disarmed);CHECK(ordinary==4);
+    REQUIRE(all_sent.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    session.unobserve(observer);session.close();
+}
+TEST_CASE("submissions racing peer EOF all finish and explicit close remains bounded") {
+    for(unsigned iteration=0;iteration<24;++iteration) {
+        Peer peer([](Socket &s) {(void)read(s);});
+        auto options=testOptions();options.request_capacity=128;options.read_retries=0;
+        Session session(peer.endpoint(),options);std::atomic<unsigned> accepted=0,completed=0;
+        std::array<std::thread,4> callers;
+        for(auto &caller:callers) {caller=std::thread([&] {
+            for(unsigned i=0;i<16;++i) {session.asyncRequest(3,1,{},[&](auto r){CHECK_FALSE(r);++completed;});++accepted;}
+        });}
+        for(auto &caller:callers) {caller.join();}
+        const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+        while(completed<accepted && std::chrono::steady_clock::now()<until) {std::this_thread::yield();}
+        CHECK(completed==accepted);session.close();
+    }
 }
 TEST_CASE("close completes queued typed operations without sending their mutations") {
     std::promise<void> received;auto ready=received.get_future();std::atomic<unsigned> requests=0;
