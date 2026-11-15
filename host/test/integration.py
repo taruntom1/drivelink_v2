@@ -51,6 +51,21 @@ def main():
                 break
             assert completed.returncode == code, (command, completed.returncode, completed.stdout, completed.stderr)
             assert result['ok'] == (code == 0), result
+            if command == ('reboot',) and code == 0:
+                # REBOOT acknowledges acceptance before Boot is delivered. A
+                # PTY stays open, so Boot can invalidate the next CLI's initial
+                # GET_INFO. Poll only this read; never repeat the mutation or
+                # swallow other protocol errors/failed scenario assertions.
+                for ready_attempt in range(10):
+                    ready = subprocess.run([args.cli, '--endpoint', endpoint or url, '--json', 'info'],
+                                           capture_output=True, text=True, timeout=20)
+                    data = json.loads(ready.stdout)
+                    if ready.returncode == 0 and data['ok']:
+                        break
+                    transient = ready.returncode in (3, 4) or (
+                        ready.returncode == 6 and data.get('error') == 'device reboot during request')
+                    assert transient and ready_attempt < 9, (ready.returncode, data, ready.stderr)
+                    time.sleep(.02)
             return result.get('data', result)
 
         try:

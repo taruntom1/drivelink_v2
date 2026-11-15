@@ -117,3 +117,10 @@ physical OTA/async probes were repeated successfully afterward; unchanged clock
 and module results above were retained. The vdev probe also applies the existing
 ten-attempt test-only group Busy/StagingBusy/Withdrawn policy, excluding uncertain
 outcomes, timeouts and other families; production retry behavior is unchanged.
+
+The first PR Linux CI run caught a PTY readiness race: the next CLI's GET_INFO
+could be invalidated by a late Boot event after REBOOT acceptance. The integration
+harness now polls read-only info at most ten times after an acknowledged reboot,
+accepting only connection loss, timeout or the specific Boot interruption. It
+never repeats REBOOT or retries scenario mutations/assertions. Independent review
+cleared this harness-only correction; production and board results are unchanged.
