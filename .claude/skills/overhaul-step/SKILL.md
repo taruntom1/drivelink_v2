@@ -40,7 +40,7 @@ Present the plan (in plan mode if the environment has one) and wait for approval
 - **Scope:** what this PR does and what it leaves to later steps. If it would pass about 4–5k lines, propose a split into rows such as H3a-1 and H3a-2.
 - **Changes:** the files and components touched.
 - **Tests:** changed and new tests; every piece of pure logic gets host or native tests.
-- **Hardware check:** what the session runs on the bench board, which checks are deferred and the scripts written for them, and anything the user must do.
+- **Hardware check:** the selected checks and why each exercises a change, any checks explicitly required by the brief, which checks are deferred and the scripts written for them, and anything the user must do.
 - **Review:** self-review or independent review, from the brief's Review column, and why.
 - **Deviations:** internal choices you will make and log; anything that changes the wire protocol, a safety rule or a later step, put to the user now.
 - **Docs:** which of `docs/protocol/`, `docs/development.md`, `docs/bench.md`, the scoped `CLAUDE.md` files, `host/README.md` and component READMEs change.
@@ -53,12 +53,12 @@ Build in this session, right after approval, on the model that planned it; don't
 
 Validate with `python tools/validate.py` from the repository root (guide: `docs/development.md`, "Validation"):
 
-1. While iterating, run `quick` or `--only <check>`; after a fix, rerun the affected check first.
+1. While iterating, run the smallest relevant test or `--only <check>`; use `quick` when its scope is relevant. After a fix, rerun the affected test/check first. Finish the implementation changes before starting the full gate.
 2. Before review, run `full` once in the background and wait for it. Checks run one at a time because the timing tests fail under parallel load, so never start another build beside it. Passing checks whose inputs are unchanged are reused.
 3. Read the outcome from `build/validate/summary.json`, not from console output. First confirm `finished_at` and `source` belong to your current revision, since the file describes the last completed run. Then read `full_gate_passed`, and for a failed check its `failure_reason` and `diagnostic_excerpt`; open its `log_path` only when the excerpt isn't enough. A `reused` check counts as passed.
 4. Fix and repeat until `full_gate_passed` is true with nothing skipped.
 
-A new test suite becomes a `Check` in `tools/validate.py` and is named in the CI job that has its toolchain.
+Add tests to the existing host/native checks when appropriate. Create a new `Check` in `tools/validate.py` only for a distinct validation target or toolchain, and name it in the CI job that provides that toolchain.
 
 When the plan turns out wrong while building: decide a small internal choice and log it in the status file's decision log. Stop and ask about anything touching the wire protocol, a safety rule or a later step, then update the plan document in this PR.
 
@@ -72,9 +72,9 @@ Check every finding against the code. Fix those that hold, rerun `validate.py fu
 
 ## 5. Hardware check
 
-Run the check the brief and the approved plan name, after review. Read `docs/bench.md` first.
+After review, run the checks selected in the approved plan. Keep checks explicitly required by the brief; select additional checks to exercise the changed behavior. Reuse prior results for other unchanged paths, and broaden coverage when shared transport, protocol, persistence, timing or safety changes justify it. Read `docs/bench.md` before board checks.
 
-- **Bench board** (mock modules, smoke tests, HIL, OTA, bench builds): the session flashes and runs it. Use `tools/bench_fw.py` for bench and normal images, restore the board to "Board state" in the status file afterwards, and confirm it refuses bench commands. Judge timing only from device timestamps and counters, because the CH343 delivers status frames late. If a port is missing or the board doesn't answer, stop and tell the user.
+- **Bench board** (mock modules, smoke tests, HIL, OTA, bench builds): the session runs the selected checks on the existing firmware. Flash only when the firmware/configuration changed or the check requires another image; use `tools/bench_fw.py` for bench and normal images. Restore the board to "Board state" in the status file afterwards, including the original firmware when changed, and confirm it refuses bench commands. Judge timing only from device timestamps and counters, because the CH343 delivers status frames late. If a port is missing or the board doesn't answer, stop and tell the user.
 - **Motors, a real IMU, the Pi or the robot:** deferred. Write the script with a mock mode, dry-run it on vdev or the bench board, and add its row to "Deferred hardware checks" in the status file. The step doesn't wait.
 - **A check that needs the user's hands** (wiring, a Pi, a one-time admin command): set the step to `waiting on hardware` and give the user the exact build and flash commands, what to run, and what result means pass. Wait for their result.
 
@@ -95,6 +95,7 @@ A step is long, so keep context lean without weakening any gate above:
 
 - Read a file once; afterwards use targeted searches, excerpts and diffs. Keep a short working record (approved decisions, invariants, paths, open issues, checks done, next action) instead of rebuilding the task.
 - Send long build, flash and test output to logs, and read summaries and failure excerpts.
+- While a build, test, review or hardware script runs, keep settled decisions fixed. Continue useful independent work; otherwise use one bounded wait of up to 60 seconds, then inspect only new output. Reopen analysis when a failure, new evidence or user input requires a decision. Keep progress updates brief.
 - Debug from the smallest evidence that discriminates (timestamps, state, failure reason, the relevant log lines). Capture transient evidence before cleanup when that is safe; stopping unsafe behaviour comes first.
 - Put multi-line edits and scripts in files, not shell heredocs.
 - Write docs and the status file once, after review and hardware results.
