@@ -63,6 +63,13 @@ scheduling can jitter more than a board: use slower loop rates (for example
 100 Hz) for desktop arming tests. `--allow-crash` also enables BenchStall; a
 native stall exercises the monitor, while Task WDT panic-reset is device-only.
 
+On Windows, vdev requests 1 ms timer resolution for its process before starting
+the core and releases it after all core threads stop. Startup fails explicitly
+if Windows refuses the request. This prevents coarse default waits from
+dominating short loop periods, including on CI. It does not guarantee real-time
+scheduling; elapsed-period accounting, overruns and all control/safety rules are
+unchanged. The shared native backend and hardware firmware are unaffected.
+
 F5a-1 also registers the actual `controller.cascade_pid` implementation (0x20).
 It drives `actuator.mock` through the same interface as future PWM hardware and
 reads quantized counts/position/filtered velocity from `feedback.mock`. Plant

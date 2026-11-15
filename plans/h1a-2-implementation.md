@@ -84,3 +84,25 @@ its link in the status file, and the next-step handoff.
   confirmed in ota_0; saved layout/params, disarmed idle state, unconfigured
   capture/groups and normal bench refusal were verified. Evidence is in
   build/h1a2-bench/; no new deferred hardware row is needed.
+
+## Hosted Windows follow-up
+
+The first Windows CI run installed the complete kit and passed model/unit/CLI
+golden tests, then failed the existing virtual motor velocity-settling check.
+The trace showed 9742 native-loop overruns during the earlier time test and
+irregular captures, consistent with coarse Windows wait granularity. The last
+five velocity samples included a transient 4.07 rad/s value against the 2 rad/s
+target; tolerances are preserved.
+
+The internal fix is limited to Windows vdev: a noncopyable RAII guard requests
+1 ms timer resolution before Server construction and balances it after all core
+threads stop. Failure is an explicit startup error. Only vdev links winmm;
+firmware, shared native scheduling, timestep/overrun accounting, control math
+and safety rules are unchanged. The independent reviewer approved this approach;
+the actual delta and full gate are reviewed again before pushing. Microsoft
+documents the [wait-resolution request and balancing requirement](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod).
+
+The complete local Windows host check and the subsequent seven-check full gate
+passed with this fix. The hosted rerun is recorded in the PR checks. Earlier
+bare-board results remain applicable: only the Windows virtual-device executable
+and its private linkage changed; the CLI, model library and board are unchanged.
