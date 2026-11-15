@@ -4,7 +4,8 @@
 `drivelink-cli` drives the ESP32 or `drivelink-vdev` with identical commands.
 The library has no Qt or ROS dependency. All service results and events are
 typed C++; JSON formatting belongs to the CLI, whose output stays unchanged.
-The device snapshot and Windows CI land in H1a-2. F8 supplies time pings and a
+The library includes a discovered device snapshot with explicit reload, and CI
+builds the host on Windows and Linux. F8 supplies time pings and a
 reusable clock estimator; async calls, buffers and timestamp mapping are H1b.
 See [the library API](libdrivelink/README.md).
 
@@ -42,6 +43,16 @@ runs both sequences above with the right toolchain for each, the Linux one
 inside WSL (see [docs/development.md](../docs/development.md#validation-toolsvalidatepy)).
 Windows host binaries use Qt's MinGW 13.1 exclusively; MSYS2 UCRT64 GCC 16.2
 is reserved for firmware native tests. Never mix their runtime DLLs or build directories.
+The Windows preset and validator enforce GCC 13.1.0; Linux GNU builds require
+at least GCC 13.1. The Windows CI job provisions and caches Qt 6.12.0 plus that
+MinGW kit; details are in [development.md](../docs/development.md#ci-githubworkflowsciyml).
+
+Both host checks run the `host-model` CTest case against vdev, covering initial
+load/reload, safe mode and configured/pending layouts. `test/model_probe` (with
+`.exe` on Windows) is a read-only public model consumer used by that test and by
+bench verification: pass it one endpoint such as `serial://COM3`. It loads and
+reloads the complete snapshot and prints test TSV; it does not alter the CLI's
+output formats or change the device.
 
 Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)
 include the integration test's stdout and PASS lines. Validation runs the

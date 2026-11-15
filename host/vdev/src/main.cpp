@@ -25,6 +25,7 @@
 #include <mutex>
 #ifdef _WIN32
 #include <windows.h>
+#include <timeapi.h>
 #else
 #include <fcntl.h>
 #include <sys/file.h>
@@ -38,6 +39,24 @@ namespace p = drivelink::protocol;
 namespace msg = p::defs::msg;
 namespace dp = diag::protocol;
 using drivelink::Bytes;
+#ifdef _WIN32
+// Native loops wait on steady-clock deadlines. Request process-local 1 ms
+// waits rather than relying on the desktop/runner's coarse default quantum.
+// Keep this alive outside Server so all core threads stop before release.
+struct TimerResolution
+{
+    TimerResolution()
+    {
+        if (timeBeginPeriod(1) != TIMERR_NOERROR)
+        {
+            throw std::runtime_error("cannot request 1 ms Windows timer resolution");
+        }
+    }
+    ~TimerResolution() { timeEndPeriod(1); }
+    TimerResolution(const TimerResolution &) = delete;
+    TimerResolution &operator=(const TimerResolution &) = delete;
+};
+#endif
 struct DirectoryLock
 {
 #ifdef _WIN32
@@ -814,6 +833,9 @@ int main(int argc, char **argv)
         std::copy_n(source_id.begin(),std::min(source_id.size(),baseline_elf.size()),baseline_elf.begin());
         core_os::native::setOtaBaseline(baseline_elf,"0.1.0-vdev");
         core_os::native::setOtaDirectory(state);
+#ifdef _WIN32
+        TimerResolution timer_resolution;
+#endif
         Server s(bench);
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)

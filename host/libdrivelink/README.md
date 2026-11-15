@@ -47,7 +47,51 @@ configuration automatically. Reconnect after a reboot and call `info()` again.
 param/action results, group configuration, capture, testgen, OTA and diagnostics.
 `Event` distinguishes status, capture/testgen completion, diagnostic record,
 counter, cleared and Boot events; unknown message types retain a raw `Frame`.
-The model snapshot and reload API land in H1a-2; event-driven updates in H1b.
+`DeviceModel` provides the snapshot and explicit reload described below;
+event-driven updates remain H1b.
+
+## Device snapshot
+
+```cpp
+#include <drivelink/model.hpp>
+drivelink::Session session("tcp://127.0.0.1:8765");
+drivelink::Client client(session);
+drivelink::DeviceModel model(client); // GET_INFO, discovery, layouts, params
+const auto previous = model.snapshot(); // independent value copy
+model.reload(); // replaces the model only after every read succeeds
+```
+
+Construction and `reload()` negotiate the payload through `Client::info()`,
+check the core version, discover types, items, enum entries and diagnostic
+codes, list both layouts, and read all parameters. Safe mode is readable:
+`snapshot().safeMode()` reports it without starting loops or exiting safe mode.
+Descriptor hash differences are accepted; the device supplies the metadata.
+
+`DeviceSnapshot` contains:
+
+- `info`, `types` keyed by type ID (each has `items` keyed by item ID), and `codes`.
+  Each `ModelItem` retains its descriptor and discovered enum entries, including
+  units, ranges, flags, source/wiring metadata and action arguments/results.
+- `system_params`, keyed by item ID. This includes every `limits.*` parameter;
+  the system has no layout entry or separate pending copy.
+- `configured` and `pending`, keyed by `InstanceKey{type, instance}`. Each entry
+  has the instance record and descriptor-typed `params`, keyed by item ID.
+  IDs may have gaps. The pending view includes staged values and labels, added
+  instances and removals; without pending edits it is the effective current view.
+
+Signals, inputs and actions have descriptors, but no values in this snapshot.
+Use `valueBits(value)` to recover a parameter's exact slot representation.
+Malformed discovery (including duplicate IDs and undescribed enum values) fails
+explicitly. Parameter reads obey both the 64-ref limit and the negotiated payload.
+
+The model, Client and its Session are single-caller from the model's perspective;
+keep them alive and never invoke the model on the I/O thread. It consumes no
+events and performs no mutations or automatic refresh. Call `reload()` after
+service mutations. Errors propagate without replacing any part of the previous
+snapshot. Successful reload invalidates references into its old contents; retain
+a value copy when needed. Reads span multiple requests, so publication is atomic
+on the host, not a device-wide transaction: coordinate other writers if a stable
+device view is required during the load. Boot/event updates remain H1b.
 
 `parseValue(descriptor, text, enums)` parses into an exact 32-bit wire slot.
 `decodeValue(ValueType, bits)` returns a `Value` variant (bool, u8/u16/u32,
@@ -99,7 +143,7 @@ descriptors)` checks exact lengths and converts values in configured order;
 it returns `std::nullopt` for a stale epoch/channel. Resolve descriptors from the device.
 Reconfigure/reload group metadata explicitly after a mutation. The bounded
 Session event queue carries subscriptions as well as status and diagnostics.
-The snapshot is H1a-2; lock-free buffers, async calls and time mapping are H1b.
+Lock-free buffers, async calls and time mapping remain H1b.
 
 Arming wrappers use core v8: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
