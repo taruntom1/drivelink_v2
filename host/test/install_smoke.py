@@ -23,7 +23,7 @@ find_package(drivelink REQUIRED)
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE drivelink::drivelink)
 ''')
-        (source / 'main.cpp').write_text('''#include <drivelink/client.hpp>
+        (source / 'main.cpp').write_text('''#include <drivelink/model.hpp>
 #include <expected>
 #if __cplusplus <= 202002L
 #error drivelink must propagate its C++23 requirement to consumers
@@ -36,7 +36,9 @@ int main() {
     try {
         drivelink::Session session("invalid-endpoint");
         drivelink::Client client(session);
-        client.info();
+        drivelink::DeviceModel model(client);
+        model.reload();
+        if(model.snapshot().types.empty()) { return 5; }
         return 2;
     } catch(const drivelink::Error &error) {
         return error.kind==drivelink::ErrorKind::Usage ? 0 : 3;

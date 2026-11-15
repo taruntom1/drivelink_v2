@@ -1,5 +1,5 @@
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_executable(host_tests test_host.cpp test_time.cpp test_ota.cpp)
+add_executable(host_tests test_host.cpp test_time.cpp test_ota.cpp test_model.cpp)
 target_include_directories(host_tests SYSTEM PRIVATE ../../firmware/test/native/third_party/doctest)
 target_link_libraries(host_tests PRIVATE drivelink drivelink_asio drivelink_native_core)
 add_test(NAME host-unit COMMAND host_tests)
@@ -11,3 +11,8 @@ add_test(NAME host-cli-golden COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOUR
 set_tests_properties(host-cli-golden PROPERTIES TIMEOUT 90)
 add_test(NAME host-cli-replay COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cli_replay.py --cli $<TARGET_FILE:drivelink-cli>)
 set_tests_properties(host-cli-replay PROPERTIES TIMEOUT 90)
+
+add_executable(model_probe model_probe.cpp)
+target_link_libraries(model_probe PRIVATE drivelink)
+add_test(NAME host-model COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/model_integration.py --probe $<TARGET_FILE:model_probe> --cli $<TARGET_FILE:drivelink-cli> --vdev $<TARGET_FILE:drivelink-vdev>)
+set_tests_properties(host-model PROPERTIES TIMEOUT 120)

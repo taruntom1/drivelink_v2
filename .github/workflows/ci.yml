@@ -15,6 +15,49 @@ concurrency:
 # The commands of every check are in tools/validate.py, which is also what
 # runs locally. A job here only provides the toolchain and names its checks.
 jobs:
+  host-windows:
+    name: Host Windows (Qt MinGW 13.1)
+    runs-on: windows-2025
+    env:
+      CMAKE_PREFIX_PATH: C:/Qt/6.12.0/mingw_64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache the pinned Qt and MinGW kit
+        id: qt-cache
+        uses: actions/cache@v4
+        with:
+          path: C:/Qt
+          key: windows-2025-qt-6.12.0-mingw-13.1.0-aqt-5a49f2b-tools-v1
+      - name: Install Qt 6.12.0 and Qt's build tools
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Released aqt 3.3.0 predates the split Windows Qt 6.11+ repositories.
+          # Pin the upstream revision that supports them; never patch vendored code.
+          python -m pip install 'aqtinstall @ https://github.com/miurahr/aqtinstall/archive/5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7.zip'
+          python -m aqt install-qt windows desktop 6.12.0 win64_mingw -O C:/Qt
+          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O C:/Qt
+          python -m aqt install-tool windows desktop tools_cmake qt.tools.cmake -O C:/Qt
+          python -m aqt install-tool windows desktop tools_ninja qt.tools.ninja -O C:/Qt
+      - name: Build (warnings are errors), test and check the installed packages
+        run: |
+          $qtVersion = & 'C:/Qt/6.12.0/mingw_64/bin/qmake.exe' -query QT_VERSION
+          if ($LASTEXITCODE -ne 0 -or $qtVersion -ne '6.12.0') { throw "Expected Qt 6.12.0, found $qtVersion" }
+          python tools/validate.py --only host-win
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-windows-validation
+          path: build/validate/
+
   host-linux:
     name: Host Linux (Ubuntu 26.04)
     runs-on: ubuntu-latest

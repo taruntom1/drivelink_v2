@@ -210,6 +210,16 @@ def plan_host_win(jobs):
         raise Unavailable('Qt tools not found: ' + ', '.join(missing))
     env = dict(os.environ)
     env['PATH'] = ';'.join([*map(str, QT_DIRS), env['PATH']])
+    # Fail explicitly if the selected directory contains another compiler;
+    # neither runner PATH defaults nor another MinGW kit enforce our floor.
+    compiler = QT_DIRS[0] / 'g++.exe'
+    try:
+        version = subprocess.run([str(compiler), '-dumpfullversion'], env=env,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise Unavailable(f'cannot query Qt MinGW compiler {compiler}: {error}') from error
+    if version != '13.1.0':
+        raise Unavailable(f'host-win requires Qt MinGW GCC 13.1.0, found {version!r}')
     return plan_host('windows-mingw', 'windows-mingw', jobs, env)
 
 

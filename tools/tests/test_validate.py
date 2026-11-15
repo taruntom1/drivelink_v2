@@ -53,6 +53,37 @@ class ParsingTest(unittest.TestCase):
         self.assertEqual(env, {'PATH': 'C:\\a;C:\\b', 'IDF_PATH': 'C:\\idf', 'A': 'b=c'})
 
 
+class HostWindowsToolchainTest(unittest.TestCase):
+    def plan(self, version):
+        result = subprocess.CompletedProcess([], 0, stdout=version + '\n', stderr='')
+        with mock.patch.object(validate.Path, 'is_dir', return_value=True), \
+                mock.patch.object(validate.subprocess, 'run', return_value=result) as run, \
+                mock.patch.dict(validate.os.environ, {'PATH': 'C:/Strawberry/c/bin'}):
+            steps = validate.plan_host_win('2')
+            self.assertEqual(run.call_args.args[0][0], str(validate.QT_DIRS[0] / 'g++.exe'))
+            return steps
+
+    def test_selected_qt_compiler_and_runtime_precede_runner_tools(self):
+        steps = self.plan('13.1.0')
+        path = steps[0].env['PATH'].split(';')
+        self.assertEqual(path[:3], list(map(str, validate.QT_DIRS)))
+        self.assertEqual(steps[0].argv, ['cmake', '--preset', 'windows-mingw'])
+        self.assertEqual(steps[-1].title, 'installed packages')
+
+    def test_other_mingw_versions_are_refused(self):
+        for version in ('12.2.0', '15.1.0', ''):
+            with self.subTest(version=version), self.assertRaises(validate.Unavailable):
+                self.plan(version)
+
+    def test_a_missing_or_broken_compiler_reports_a_missing_prerequisite(self):
+        for error in (FileNotFoundError('missing compiler'), subprocess.CalledProcessError(1, 'g++')):
+            with self.subTest(error=error), \
+                    mock.patch.object(validate.Path, 'is_dir', return_value=True), \
+                    mock.patch.object(validate.subprocess, 'run', side_effect=error), \
+                    self.assertRaises(validate.Unavailable):
+                validate.plan_host_win('2')
+
+
 class NativeToolchainTest(unittest.TestCase):
     def windows_plan(self, missing=None):
         def exists(path):
