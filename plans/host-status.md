@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step:** H1b after the H1a-2 PR merges; H1c may run beside it. HW runs as hardware arrives.
+- **Next step:** H1c. H2a waits for both H1b and H1c to merge. HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -32,24 +32,27 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for H1b / H1c (and HW)
+## Handoff for H1c (and H2a / HW)
 
-- **H1a-2 is in review; H1a-1 (#69) is merged.** Start from the
-  [model API](../host/libdrivelink/README.md#device-snapshot) and
-  [approved plan/results](h1a-2-implementation.md). DeviceModel owns a synchronous
-  read-only snapshot, publishes only complete reloads, keeps system params
-  separate from the two layout views, and consumes no events.
-- **Next is H1b:** async requests, event-driven model/Boot updates, group buffers,
-  automatic keepalives, periodic time and mapped timestamps. H1c may run beside
-  it; identity belongs there. Coordinate changes to the shared library when the
-  second branch rebases. Plant identification stays H2e.
-- **Windows CI** now provisions the Qt 6.12.0/MinGW 13.1 kit; see the development
-  guide for the pinned aqt revision and cache rules. GUI/Qt tests still land in H2a.
-- **Verification:** seven-check full gate, independent Codex review at high
-  effort (no findings), real-vdev snapshot scenarios and all planned bare-board
-  checks passed. No firmware was flashed. Exact LP ELF identity, saved layout
-  and params, idle state and normal bench refusal were reverified; hardware log
-  and the implementation plan hold the results.
+- **H1a-2 (#70) is merged; H1b is in review.** Start with the
+  [runtime API](../host/libdrivelink/README.md) and
+  [approved plan/results](h1b-implementation.md). Identity remains H1c; core/time/
+  diag wire versions stay 8/1/3. Rebase the second shared-library branch to merge.
+- **Async consumers:** `Client::async` owns captures and gives its callable a
+  temporary Client on the serial service executor. A model retains Session only;
+  keep Session alive. Supply a FIFO dispatcher, consume completions to release
+  admission, and use `disarmAsync` for emergency bypass. Shared snapshots are
+  immutable; Boot clears readiness until a complete matching reload.
+- **Groups/time:** pass GroupMutation's generation when attaching a buffer;
+  high-rate samples are pulled. Managed commands require explicit finite holds,
+  never arm/replay values, and flush pending TX generations before mode changes.
+  Session owns periodic time; the future agent client must disable that ownership.
+- **Verification:** full seven-check gate, self-review and independent Codex
+  review at high effort passed. Three review findings were fixed and rechecked;
+  concurrency and model sanitizer cases passed. The production vdev consumer
+  and complete approved bare-board campaign passed; exact original LP ELF,
+  saved layout/params and disarmed idle state were restored. Details are in the
+  implementation plan and hardware log. Pi timing remains deferred.
 
 ## Steps
 
@@ -59,8 +62,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 |---|---|---|---|---|---|
 | T0 | Tooling: C++23 for the host and native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, native-tests CI in `ubuntu:26.04` | no | high, self | merged | [#68](https://github.com/taruntom1/drivelink_v2/pull/68) |
 | H1a-1 | Typed values/descriptors, errors and synchronous services; CLI formatting with unchanged output. Depends on T0 | bare board: all planned CLI/mock/OTA smokes passed | high, independent | merged | [#69](https://github.com/taruntom1/drivelink_v2/pull/69) |
-| H1a-2 | Device snapshot and host-windows CI. Depends on H1a-1 | bare board: snapshot/pending and CLI/mock smokes passed | high, independent | in review | [#70](https://github.com/taruntom1/drivelink_v2/pull/70) |
-| H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a-2 | bare board: time, 1 kHz groups, smokes | high, independent | planned | |
+| H1a-2 | Device snapshot and host-windows CI. Depends on H1a-1 | bare board: snapshot/pending and CLI/mock smokes passed | high, independent | merged | [#70](https://github.com/taruntom1/drivelink_v2/pull/70) |
+| H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a-2 | bare board: time, 1 kHz groups, smokes | high, independent | in review | [#71](https://github.com/taruntom1/drivelink_v2/pull/71) |
 | H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | planned | |
 | H2a | GUI foundation: app, Theme from Figma tokens (G8 folded in), style, shell, DISARM/Esc, Qt adapters, test and screenshot tooling, vdev scenario hooks, `setup_linux.sh`. Depends on H1b, H1c | vdev | high, independent | planned | |
 | H2b | Connect and Device screens (rename, OTA, link lost, reboot notice). Depends on H2a | bare board: GUI scenarios | high, independent | planned | |
@@ -118,15 +121,18 @@ Normal LP firmware (core v8, time v1; ELF build id b8ad3d153466c34d, from the d8
 
 - **H1a exception (user-approved 2026-11-15).** Codex plans/builds H1a, with an independent Codex review at high effort. The user also approved the H1a-1/H1a-2 split; both parts precede H1b/H1c.
 
+- **H1b exception (user-approved 2026-11-15).** Codex plans/builds H1b with an
+  independent Codex review at high effort. The user kept H1b in one PR after a
+  proposed split. The approved scope and runtime choices are in
+  [h1b-implementation.md](h1b-implementation.md).
+
 ## Decision log
 
 Choices that the plans don't cover or that change them, and that a later step must respect. Anything that touches the wire protocol, a safety rule or a later phase is decided by the user first, and the plan is updated in the same PR. Firmware-era rows are in the archive.
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-14 | planning | `overhaul-status.md` is archived unchanged as `archive/firmware-status.md`; this file replaces it for the host. The bench reference moves to `docs/bench.md`, hardware results to `hardware-log.md`; open deferred checks stay here. Finished or superseded plans are archived | User decision: the old file was 40 KB, mostly finished firmware history read by every session | yes |
-| 2026-11-14 | planning | Host re-planned with the user into T0 and H1a–H6 ([host-steps.md](host-steps.md)): library → local GUI → agent and remote → ROS; H1a split in two (H1b async/time) with identity as H1c; GUI as a foundation plus screen slices; G8 folded into H2a; plant identification in H2e. Also decided: C++23 host (GCC 13.1 floor, `protocol/` C++20), typed exceptions with `std::expected` completions, the async dispatcher contract, Qt 6.12.0 with a 6.10 floor, Windows-only GUI product with a Linux CI build, GUI tests with scenario screenshots, JSON session files, Inno Setup; the agent on localhost with opt-in LAN, token and mDNS, actions as lease-only operations, install script then `.deb`; SET_NAME live + `nvs_dirty`; WSL with `setup_linux.sh` and `wsl_serial.py`, no devcontainer; no Python bindings; no firmware change beyond identity; independent review by risk | User decisions in the host planning interview. Planning-session choices: SET_NAME is an exclusive agent operation, `setup_linux.sh` lands in H2a (first step needing Linux packages), H2f may run beside H2d/H2e | yes |
-| 2026-11-14 | planning | Follow-up decisions: proprietary license (root `LICENSE` added; artifacts ship third-party notices); one semver in a root `VERSION` file from H2g, tagged on `main` in H6; installer unsigned for now; one agent serves several ESPs, one TCP connection per device chosen in the hello by alias or device id, lease per device, one token per agent. Step-level open items are listed in host-steps.md, "Left to the step plans" | User decisions after the host re-plan | yes |
+| 2026-11-15 | H1b | Serial typed async executor over the common request engine, immutable shared model snapshots, pulled atomic group buffers, explicit finite command holds and I/O-owned time; DISARM reserves request/completion/TX capacity | Shared parsers and bounded lifetimes/queues; no module-specific policy or value replay. Detailed contract is in the library README and approved H1b plan | yes |
 | 2026-11-13 | F6, F10 | Test harnesses retry group-only Busy/StagingBusy rejections (in addition to Withdrawn), bounded to ten attempts; production SDK/CLI stays unchanged. F10 applies the same bounded retry to the native "autonomous loops" group test (`test_core_groups.cpp`) | CI's existing sub-enable scenario raced a loop's atomic slot claim (host-linux in F6; the native test on PR #60's CI, where the owning loop's `endTick` held the slot during `enable`). The rejection occurs before mutation; unit tests and independent review confirm timeouts/actions/expected refusals are not broadened | n/a |
 
 ## Hardware results

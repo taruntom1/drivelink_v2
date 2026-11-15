@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -11,19 +12,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart
 from protocol import UartCommProto, encode_frame, CORE_PROTOCOL_VERSION
 
 
-def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
+def check(cli_path, endpoint, image, mismatch=False, hold_commit=False, boot_reconnect=False):
     remote = urlparse(endpoint)
     if remote.scheme != 'tcp':
         return  # TCP case runs on both OSes; PTY still runs the shared campaign.
     stopped = threading.Event()
     listener = socket.socket(); listener.bind(('127.0.0.1', 0)); listener.listen(); listener.settimeout(.1)
     endpoint = f'tcp://127.0.0.1:{listener.getsockname()[1]}'
-    seen = {'confirm': False, 'mismatch': False, 'reboot': 0}
+    seen = {'confirm': False, 'mismatch': False, 'reboot': 0, 'boot_injected': False}
     client_write = threading.Lock()
     dropped = set()
     workers, sockets, errors = [], [], []
 
-    def pump(source, destination, incoming):
+    def pump(source, destination, incoming, connection_stopped):
         buffered = bytearray()
         try:
             while not stopped.is_set():
@@ -46,6 +47,14 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
                             continue
                     if not incoming and kind == 1 and body[2:4] == bytes((9, 5)):
                         seen['confirm'] = True
+                    if incoming and boot_reconnect and not seen['boot_injected'] and seen['reboot'] and kind == 0x41 and body[2:4] == bytes((1, 1)):
+                        # UART can deliver Boot while reconnect GET_INFO is in
+                        # flight. Restart only readiness reads, never REBOOT.
+                        boot = struct.pack('<BHBBQBBBB', 3, 0, 4, 0, 0, 0, 2, 0, 0)
+                        with client_write:
+                            destination.sendall(encode_frame(0xc0, boot) + encode_frame(kind, body))
+                        seen['boot_injected'] = True
+                        continue
                     if incoming and kind == 0x41 and len(body) >= 6 and body[2] == 9 and body[4:6] == bytes((0, 0)):
                         if mismatch and body[3] == 6 and len(body) == 94 and body[9] == 1:
                             body = bytearray(body); body[62] ^= 1; seen['mismatch'] = True
@@ -59,9 +68,10 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
         except (ConnectionResetError, BrokenPipeError):
             pass
         except OSError as error:
-            if not stopped.is_set():
+            if not stopped.is_set() and not connection_stopped.is_set():
                 errors.append(str(error))
         finally:
+            connection_stopped.set()
             # Close this connection only. The CLI reconnects through the same
             # listener after SYSTEM REBOOT, with no proxy-induced extra reboot.
             for current in (source, destination):
@@ -81,8 +91,9 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
             try:
                 device = socket.create_connection((remote.hostname, remote.port), timeout=3)
                 client.settimeout(.1); device.settimeout(.1); sockets.extend((client, device))
+                connection_stopped = threading.Event()
                 for source, destination, incoming in ((client, device, False), (device, client, True)):
-                    thread = threading.Thread(target=pump, args=(source, destination, incoming)); workers.append(thread); thread.start()
+                    thread = threading.Thread(target=pump, args=(source, destination, incoming, connection_stopped)); workers.append(thread); thread.start()
             except OSError as error:
                 errors.append(str(error)); client.close()
 
@@ -108,7 +119,11 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
     else:
         assert result.returncode == 0 and data['ok'] and data['data']['confirmed'], (data, dropped, result.stderr)
         assert dropped == {1, 2, 3, 5} and seen['confirm'], (dropped, seen)
+        if boot_reconnect:
+            assert seen['boot_injected'] and seen['reboot'] == 1, seen
         print('PASS OTA reconciles applied BEGIN/WRITE/FINISH/CONFIRM after lost replies', flush=True)
+        if boot_reconnect:
+            print('PASS OTA restarts Boot-interrupted readiness reads without repeating REBOOT', flush=True)
 
 
 def pipeline_reboot(cli, endpoint, baseline, candidate):

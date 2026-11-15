@@ -3,6 +3,7 @@
 #include "core_os/native_kv.hpp"
 #include "diag_protocol.hpp"
 #include "doctest.h"
+#include "test_options.hpp"
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/core_codec.hpp"
@@ -86,7 +87,7 @@ TEST_CASE("device refusal metadata survives value-based error propagation") {
         const auto request=readFrame(socket);
         sendFrame(socket,0x41,{protocol::core_wire::kVersion,request[1],request[2],request[3],6,8});
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     try { client.system(5);FAIL("accepted refusal"); }
     catch(const DeviceError &e) {
         CHECK(e.kind==ErrorKind::Rejected);CHECK(e.result==6);CHECK(e.detail==8);
@@ -100,7 +101,7 @@ TEST_CASE("submitted mutation failures report uncertainty while reads and prefli
     struct Request { uint8_t family,op;bool mutation; };
     for(const auto request:{Request{1,1,false},Request{1,5,true},Request{7,3,false}}) {
         FakeDevice device([](Socket &socket) { readFrame(socket);std::this_thread::sleep_for(std::chrono::milliseconds(90)); });
-        SessionOptions options;options.timeout=std::chrono::milliseconds(40);options.read_retries=0;
+        SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(40);options.read_retries=0;
         Session session(device.endpoint(),options);
         try { session.request(request.family,request.op);FAIL("missing timeout"); }
         catch(const Error &e) {
@@ -114,20 +115,20 @@ TEST_CASE("submitted mutation failures report uncertainty while reads and prefli
             std::array<uint8_t,1> byte{};asio::error_code error;
             received.set_value(socket.read_some(asio::buffer(byte),error));
         });
-        Session session(device.endpoint());session.setMaxPayload(16);
+        Session session(device.endpoint(),testOptions());session.setMaxPayload(16);
         try { session.request(1,5,Bytes(17));FAIL("accepted oversized mutation"); }
         catch(const Error &e) { CHECK(e.kind==ErrorKind::Usage);CHECK_FALSE(e.outcome_unknown);CHECK(e.op==5); }
         session.close();CHECK(received.get_future().get()==0);
     }
     SUBCASE("peer closes after mutation") {
         FakeDevice device([](Socket &socket) { readFrame(socket); });
-        Session session(device.endpoint());
+        Session session(device.endpoint(),testOptions());
         try { session.request(1,5);FAIL("missing disconnect"); }
         catch(const Error &e) { CHECK(e.kind==ErrorKind::Connection);CHECK(e.outcome_unknown);CHECK(e.op==5); }
     }
     SUBCASE("closed session never submits") {
         FakeDevice device([](Socket &socket) { std::array<uint8_t,1> b{};asio::error_code ec;socket.read_some(asio::buffer(b),ec); });
-        Session session(device.endpoint());session.close();
+        Session session(device.endpoint(),testOptions());session.close();
         try { session.request(1,5);FAIL("accepted closed session"); }
         catch(const Error &e) { CHECK(e.kind==ErrorKind::Connection);CHECK_FALSE(e.outcome_unknown); }
     }
@@ -155,7 +156,7 @@ TEST_CASE("malformed successful service replies keep request context and mutatio
             const auto req=readFrame(socket);
             answer(socket,req,Bytes{test.family==1?protocol::core_wire::kVersion:uint8_t{1}});
         });
-        Session session(device.endpoint());Client client(session);
+        Session session(device.endpoint(),testOptions());Client client(session);
         try {
             const std::array<Ref,1> refs{{{0,0,4}}};const std::array<uint32_t,1> values{200};
             switch(test.family) {
@@ -187,7 +188,7 @@ TEST_CASE("time pings correlate u16 IDs, reject stale replies and timestamp on I
         tw::response(p.data(),p.size(),{second,30,40});
         sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),p.end()));
     });
-    SessionOptions o;o.timeout=std::chrono::milliseconds(60);o.read_retries=0;
+    SessionOptions o=testOptions();o.timeout=std::chrono::milliseconds(60);o.read_retries=0;
     Session session(device.endpoint(),o);
     CHECK_THROWS_AS(session.timePing(),Error);
     const auto before=monotonicUs();const auto s=session.timePing();const auto after=monotonicUs();
@@ -202,14 +203,14 @@ TEST_CASE("matching malformed time reply is an explicit protocol failure") {
             if(bad_version){p[0]=2;}
             sendFrame(socket,protocol::defs::msg::kTimeResponse,Bytes(p.begin(),bad_version?p.end():p.end()-1));
         });
-        Session session(device.endpoint());
+        Session session(device.endpoint(),testOptions());
         try {session.timePing();FAIL("accepted malformed ping");} catch(const Error &e){CHECK(e.kind==ErrorKind::Protocol);}
     }
 }
 TEST_CASE("closing session wakes a pending time ping") {
     std::promise<void> received;auto got=received.get_future();
     FakeDevice device([&](Socket &socket) {readFrame(socket);received.set_value();std::this_thread::sleep_for(std::chrono::milliseconds(80));});
-    Session session(device.endpoint());
+    Session session(device.endpoint(),testOptions());
     auto pending=std::async(std::launch::async,[&] {try{session.timePing();return false;}catch(const Error &e){return e.kind==ErrorKind::Connection;}});
     got.wait();session.close();CHECK(pending.get());
 }
@@ -226,7 +227,7 @@ TEST_CASE("Boot rejects a ping spanning reset and changes the next sample genera
         sendFrame(socket,protocol::defs::msg::kDiagEvent,Bytes(event.begin(),event.begin()+static_cast<ptrdiff_t>(n)));
         answer_ping();
     });
-    Session session(device.endpoint());const auto first=session.timePing();
+    Session session(device.endpoint(),testOptions());const auto first=session.timePing();
     try {session.timePing();FAIL("ping spanned Boot");}catch(const Error &e){CHECK(e.kind==ErrorKind::Protocol);}
     const auto next=session.timePing();CHECK(first.boot_generation!=next.boot_generation);
 }
@@ -326,7 +327,7 @@ TEST_CASE("session matches family and seq through wrap and bounds its event queu
                 answer(socket, request, {static_cast<uint8_t>(i)});
             }
         });
-    SessionOptions opts;
+    SessionOptions opts=testOptions();
     opts.event_capacity = 2;
     opts.read_retries = 0;
     Session session(device.endpoint(), opts);
@@ -370,7 +371,7 @@ TEST_CASE("read retries retire timed out seqs, writes do not retry, close cancel
             asio::error_code ec;
             socket.read_some(asio::buffer(ignored), ec);
         });
-    SessionOptions opts;
+    SessionOptions opts=testOptions();
     opts.timeout = std::chrono::milliseconds(100);
     opts.read_retries = 1;
     Session session(device.endpoint(), opts);
@@ -410,7 +411,7 @@ TEST_CASE("client rejects truncated replies, nonprogress pages and malformed str
             answer(socket, readFrame(socket), {1});
             answer(socket, readFrame(socket), {1, 0, 0, 0, 0});
         });
-    Session session(device.endpoint());
+    Session session(device.endpoint(),testOptions());
     Client client(session);
     CHECK_THROWS_AS(client.info(), Error);
     CHECK_THROWS_AS(client.types(), Error);
@@ -425,7 +426,7 @@ TEST_CASE("protocol mismatch is an explicit connection error rather than a timeo
             auto request = readFrame(socket);
             sendFrame(socket, 0x41, {1, request[1], 1, 1, 0, 0});
         });
-    Session session(device.endpoint());
+    Session session(device.endpoint(),testOptions());
     try
     {
         session.request(1, 1);
@@ -444,14 +445,14 @@ TEST_CASE("diagnostic pages cannot end before their advertised total")
             auto request = readFrame(socket);
             sendFrame(socket, 0x63, {3, request[1], 2, 0, 1, 255, 0});
         });
-    Session session(device.endpoint());
+    Session session(device.endpoint(),testOptions());
     Client client(session);
     CHECK_THROWS_AS(client.diagEntries(), Error);
 }
 TEST_CASE("diagnostic event decoding preserves instance identity and exact lengths")
 {
     FakeDevice device([](Socket &) {});
-    Session session(device.endpoint());
+    Session session(device.endpoint(),testOptions());
     Client client(session);
     std::array<uint8_t, 1024> buffer{};
     diag::protocol::RecordEvent report{123456789, 2, 112, 7, 42, -1, 99, 101};
@@ -484,7 +485,7 @@ TEST_CASE("status v5 carries sparse loop ids and rejects duplicate ids and bad c
         std::array<uint8_t,1> byte{};asio::error_code ec;
         socket.read_some(asio::buffer(byte),ec);
     });
-    Session session(device.endpoint()); Client client(session);
+    Session session(device.endpoint(),testOptions()); Client client(session);
     Bytes payload(18,0); payload[0]=protocol::core_wire::kVersion; payload[17]=2;
     payload.insert(payload.end(), {3,1,0,0,0, 19,9,0,0,0, 0});
     auto status=std::get<StatusFrame>(client.event({128,payload}));
@@ -511,7 +512,7 @@ TEST_CASE("GET_INFO v5 validates sparse ids, loop flags and duplicate loop ident
         answer(socket,readFrame(socket),body(true,false));
         answer(socket,readFrame(socket),body(false,true));
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     const auto info=client.info();CHECK(info.loops[0].realtime()==true);
     CHECK(info.loops[1].id==19);CHECK(info.loops[1].realtime()==false);
     CHECK_THROWS_AS(client.info(),Error);CHECK_THROWS_AS(client.info(),Error);
@@ -556,7 +557,7 @@ TEST_CASE("host groups validate pages and mutations and send stream frames on th
         answer(socket,readFrame(socket),{3,1,0,0,0,1,0,0,0,64,0,0,0});
         answer(socket,readFrame(socket),{2,0,0,0,0});
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     const auto listing=client.groups();CHECK(listing.groups.size()==2);
     CHECK(listing.groups[0].loop==19);CHECK(listing.groups[0].refs[0].item==256);
     CHECK(client.subEnable(0,true).epoch==8);
@@ -602,7 +603,7 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
         answer(socket,readFrame(socket),page(0,1));    // two values for a one-ref capture
         answer(socket,readFrame(socket),status(0,1));   // configured without refs
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     const auto s=client.captureStatus();
     CHECK(s.state==CaptureState::Done);CHECK(s.irregular==true);CHECK(s.divider==2);
     CHECK(s.trigger.kind==3);CHECK(s.trigger.edge==1);
@@ -648,7 +649,7 @@ TEST_CASE("testgen SDK encodes requests and rejects malformed status and events"
         malformed=status(); malformed[1]=9; answer(socket,readFrame(socket),malformed);
         answer(socket,readFrame(socket),Bytes{1}); // truncated START reply
     });
-    Session session(device.endpoint()); Client client(session);
+    Session session(device.endpoint(),testOptions()); Client client(session);
     TestgenConfig c; c.loop=3; c.target={32,0,514}; c.waveform=4;
     c.amplitude=.1F; c.frequency_start=.5F; c.frequency_end=3; c.duration_ms=2000;
     CHECK(client.testgenStart(c).run==42);

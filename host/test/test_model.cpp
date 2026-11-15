@@ -1,10 +1,13 @@
 #include "doctest.h"
+#include "test_options.hpp"
+#include "test_dispatcher.hpp"
 #include "drivelink/model.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include <asio.hpp>
 #include <atomic>
 #include <thread>
+#include <chrono>
 
 namespace
 {
@@ -52,6 +55,8 @@ struct ModelPeer
     std::atomic<Mode> mode{Mode::Normal};
     std::atomic<uint32_t> revision{17};
     std::atomic<size_t> largest_batch{0};
+    std::atomic<int> inject{0};
+    std::atomic<bool> close_after_diag{false};
     uint16_t cap;
     std::thread worker;
     std::exception_ptr error;
@@ -163,10 +168,24 @@ struct ModelPeer
                 const size_t n = size_t(header[4]) + (size_t(header[5]) << 8);
                 if (n > 1024) { throw std::runtime_error("bad request"); }
                 Bytes req(n + 2); asio::read(socket, asio::buffer(req)); req.resize(n);
-                const auto out = respond(req);
+                const auto injection=inject.exchange(0);
+                if(injection) {
+                    Bytes event(injection==1?19:17);p::wire::Writer w(event.data(),event.size());
+                    if(injection==1) {
+                        w.appendU8(p::core_wire::kVersion);w.appendU8(0);w.appendU16Le(1);w.appendU64Le(100);
+                        w.appendU8(1);w.appendU8(12);w.appendU8(0);w.appendU8(1);w.appendU8(2);w.appendU8(0);w.appendU8(0);
+                    } else {
+                        w.appendU8(3);w.appendU16Le(0);w.appendU8(4);w.appendU8(0);w.appendU64Le(1);
+                        w.appendU8(0);w.appendU8(0);w.appendU8(0);w.appendU8(0);
+                    }
+                    Bytes frame(p::frameSize(event.size()));p::encodeFrame(frame.data(),frame.size(),injection==1?0x80:0xc0,event.data(),event.size());
+                    asio::write(socket,asio::buffer(frame));
+                }
+                const auto out = header[3]==p::defs::msg::kDiagQuery?Bytes{3,req[1],2,0,0,255,0}:respond(req);
                 Bytes frame(p::frameSize(out.size()));
-                p::encodeFrame(frame.data(), frame.size(), p::defs::msg::kCoreResponse, out.data(), out.size());
+                p::encodeFrame(frame.data(), frame.size(), header[3]==p::defs::msg::kDiagQuery?p::defs::msg::kDiagQueryResponse:p::defs::msg::kCoreResponse, out.data(), out.size());
                 asio::write(socket, asio::buffer(frame));
+                if(header[3]==p::defs::msg::kDiagQuery && close_after_diag.exchange(false)) {return;}
             }
         }
         catch (...) { error = std::current_exception(); }
@@ -177,7 +196,7 @@ struct ModelPeer
 TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe mode")
 {
     ModelPeer peer;
-    Session session(peer.endpoint()); Client client(session); DeviceModel model(client);
+    Session session(peer.endpoint(),testOptions()); Client client(session); DeviceModel model(client);
     const auto &s = model.snapshot();
     CHECK(s.safeMode()); CHECK(s.info.loops.empty()); CHECK(s.info.descriptor_hash == 0x12345678);
     CHECK(s.types.at(223).descriptor.name == "unknown.module");
@@ -203,22 +222,22 @@ TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe m
 
 TEST_CASE("snapshot parameter batches also respect the 64-reference wire maximum")
 {
-    ModelPeer peer(1024); Session session(peer.endpoint()); Client client(session); DeviceModel model(client);
+    ModelPeer peer(1024); Session session(peer.endpoint(),testOptions()); Client client(session); DeviceModel model(client);
     CHECK(model.snapshot().configured.at({223, 19}).params.size() == 71);
     CHECK(peer.largest_batch == 64);
 }
 
 TEST_CASE("snapshot rejects malformed discovery and preserves the last complete reload")
 {
-    ModelPeer peer; Session session(peer.endpoint()); Client client(session); DeviceModel model(client);
-    const auto *original = &model.snapshot().configured.at({223, 2});
+    ModelPeer peer; Session session(peer.endpoint(),testOptions()); Client client(session); DeviceModel model(client);
+    const auto original = model.snapshotShared();
     for (const auto mode : {Mode::Version, Mode::TypeDuplicate, Mode::ItemDuplicate, Mode::EnumDuplicate,
                            Mode::InstanceDuplicate, Mode::UnknownType, Mode::MissingSystem,
                            Mode::InvalidEnum, Mode::Refusal, Mode::Truncated})
     {
         CAPTURE(int(mode)); peer.mode = mode; peer.revision = 200;
         CHECK_THROWS_AS(model.reload(), Error);
-        CHECK(&model.snapshot().configured.at({223, 2}) == original);
+        CHECK(model.snapshotShared() == original);
         CHECK(model.snapshot().info.build_id == "17");
         CHECK(model.snapshot().pending.at({223, 31}).params.size() == 71);
     }
@@ -226,4 +245,42 @@ TEST_CASE("snapshot rejects malformed discovery and preserves the last complete 
     CHECK(model.snapshot().info.build_id == "200");
     session.close(); CHECK_THROWS_AS(model.reload(), Error);
     CHECK(model.snapshot().info.build_id == "200");
+}
+TEST_CASE("model follows status flags and automatically replaces its snapshot after Boot") {
+    ModelPeer peer;Session session(peer.endpoint(),testOptions());Client client(session);DeviceModel model(client);
+    std::atomic<unsigned> status=0,arm=0;
+    model.onChange([&](auto change) {if(change==DeviceModel::Change::Status) {++status;}if(change==DeviceModel::Change::ArmState) {++arm;}});
+    peer.inject=1;(void)client.info();
+    const auto wait=[&](auto predicate) {
+        const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while(!predicate() && std::chrono::steady_clock::now()<until) {std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+        return predicate();
+    };
+    REQUIRE(wait([&]{return status>0 && arm>0;}));
+    auto before=model.snapshotShared();REQUIRE(before->status);CHECK(before->status->arm_state==1);
+    CHECK((before->info.flags&1)!=0);CHECK_FALSE(before->safeMode());
+    peer.revision=501;peer.inject=2;try {(void)client.info();}catch(const Error &) {}
+    REQUIRE(wait([&]{auto s=model.snapshotShared();return s->generation!=before->generation && !s->reloading && s->info.build_id=="501";}));
+    CHECK(before->info.build_id=="17");
+    session.close();REQUIRE(wait([&]{return !model.snapshotShared()->connected;}));
+    model.onChange({});
+}
+TEST_CASE("a delayed successful Boot reload cannot resurrect a disconnected model") {
+    using namespace drivelink_test;
+    ModelPeer peer;auto gate=std::make_shared<CopyGate>();auto entered=gate->entered.get_future();
+    auto options=testOptions();options.dispatcher=GatedDispatcher(gate);
+    Session session(peer.endpoint(),options);OpenGateOnExit cleanup{gate};Client client(session);DeviceModel model(client);
+    std::promise<std::thread::id> worker;auto worker_id=worker.get_future();
+    session.async<std::thread::id>([]{return std::this_thread::get_id();},[&](auto r){REQUIRE(r);worker.set_value(*r);});
+    REQUIRE(gate->output.run());gate->arm(worker_id.get());
+    peer.revision=777;peer.close_after_diag=true;peer.inject=2;
+    try {(void)client.info();}catch(const Error &) {}
+    REQUIRE(gate->output.run()); // Boot starts the reload on the service executor.
+    REQUIRE(entered.wait_for(std::chrono::seconds(3))==std::future_status::ready);
+    while(model.snapshotShared()->connected) {REQUIRE(gate->output.run());}
+    CHECK_FALSE(model.snapshotShared()->ready);
+    gate->open();
+    while(!model.snapshotShared()->ready) {REQUIRE(gate->output.run());}
+    const auto snapshot=model.snapshotShared();CHECK(snapshot->info.build_id=="777");CHECK_FALSE(snapshot->connected);
+    session.close();
 }

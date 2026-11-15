@@ -4,9 +4,9 @@
 `drivelink-cli` drives the ESP32 or `drivelink-vdev` with identical commands.
 The library has no Qt or ROS dependency. All service results and events are
 typed C++; JSON formatting belongs to the CLI, whose output stays unchanged.
-The library includes a discovered device snapshot with explicit reload, and CI
-builds the host on Windows and Linux. F8 supplies time pings and a
-reusable clock estimator; async calls, buffers and timestamp mapping are H1b.
+The library includes asynchronous services, a live discovered device model,
+pulled group buffers, managed command keepalives and timestamp mapping. CI builds
+and tests it on Windows and Linux.
 See [the library API](libdrivelink/README.md).
 
 ## Build
@@ -53,6 +53,17 @@ load/reload, safe mode and configured/pending layouts. `test/model_probe` (with
 bench verification: pass it one endpoint such as `serial://COM3`. It loads and
 reloads the complete snapshot and prints test TSV; it does not alter the CLI's
 output formats or change the device.
+
+Both host checks also run `host-concurrency` (dispatcher/order/cancel/close,
+peer-EOF races, saturated DISARM, buffers, managed queues and time) and
+`host-async` against vdev. `test/async_probe[.exe] ENDPOINT` exercises typed async
+model construction, 1 kHz pulled data, mappings, keepalives/watchdog and DISARM;
+a serial endpoint also exercises Boot and automatic complete model reload.
+Use only a clean loops-only bare bench device with idle groups/capture and a
+1 kHz loop. It restores groups and native test rates. On vdev, 1 kHz data is
+tested disarmed and arming is tested at 50 Hz to avoid desktop scheduling trips;
+the physical board retains 1 kHz for both. Linux ThreadSanitizer instructions
+are in [development.md](../docs/development.md#host-concurrency-and-time-checks).
 
 Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)
 include the integration test's stdout and PASS lines. Validation runs the

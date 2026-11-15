@@ -11,7 +11,8 @@ enum class ErrorKind
     Timeout,
     Protocol,
     Rejected,
-    Usage
+    Usage,
+    Cancelled
 };
 // Metadata lives in the base so copying Error (future async completions) keeps
 // the device refusal and uncertainty. A diagnostic query uses family zero.
@@ -32,6 +33,9 @@ class Error : public std::runtime_error
     // True when a submitted mutation may have taken effect. Includes queued
     // writes that can still reach the peer; false for local preflight failures.
     bool outcome_unknown = false;
+    // An observed Boot invalidated this request's device generation. Distinct
+    // from malformed protocol data; readiness polling can restart safely.
+    bool boot_changed = false;
 };
 class DeviceError : public Error
 {

@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "test_options.hpp"
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/core_codec.hpp"
@@ -47,7 +48,7 @@ TEST_CASE("OTA writes actually pipeline and correlate reversed and unrelated rep
         auto wrong=requests[0];wrong[2]=1;answer(s,wrong,99); // same seq, other family ignored
         for (size_t i=4;i>0;--i) { answer(s,requests[i-1],static_cast<uint32_t>(i)); }
     });
-    Session session(device.endpoint());std::array<Bytes,4> bodies{body(0),body(1),body(2),body(3)};
+    Session session(device.endpoint(),testOptions());std::array<Bytes,4> bodies{body(0),body(1),body(2),body(3)};
     const auto replies=session.otaWriteBatch(bodies);REQUIRE(replies.size()==4);
     for (size_t i=0;i<4;++i) { CHECK(replies[i].result==0);CHECK(replies[i].body==Bytes{static_cast<uint8_t>(i+1),0,0,0}); }
 }
@@ -58,7 +59,7 @@ TEST_CASE("OTA missing replies retire IDs and stale replies cannot complete late
         const auto fresh=readFrame(s);CHECK(fresh[1]!=first[1]);CHECK(fresh[1]!=second[1]);
         answer(s,first,99);answer(s,fresh,3);
     });
-    SessionOptions options;options.timeout=std::chrono::milliseconds(150);options.read_retries=0;
+    SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(150);options.read_retries=0;
     Session session(device.endpoint(),options);std::array<Bytes,2> bodies{body(0),body(1)};
     CHECK_THROWS_AS(session.otaWriteBatch(bodies),Error);
     const std::array<Bytes,1> fresh{body(2)};const auto replies=session.otaWriteBatch(fresh);
@@ -67,13 +68,13 @@ TEST_CASE("OTA missing replies retire IDs and stale replies cannot complete late
 TEST_CASE("OTA matching malformed response and explicit close wake all waiters") {
     SUBCASE("malformed") {
         Device device([](Socket &s) {const auto r=readFrame(s);send(s,{7,r[1],9,2,0,0});});
-        Session session(device.endpoint());const std::array<Bytes,1> bodies{body(0)};
+        Session session(device.endpoint(),testOptions());const std::array<Bytes,1> bodies{body(0)};
         try { session.otaWriteBatch(bodies);FAIL("accepted wrong version"); }catch (const Error &e) { CHECK(e.kind==ErrorKind::Protocol); }
     }
     SUBCASE("close") {
         std::promise<void> received;auto ready=received.get_future();
         Device device([&](Socket &s) {readFrame(s);received.set_value();std::this_thread::sleep_for(std::chrono::milliseconds(100));});
-        Session session(device.endpoint());auto pending=std::async(std::launch::async,[&] {
+        Session session(device.endpoint(),testOptions());auto pending=std::async(std::launch::async,[&] {
             try { const std::array<Bytes,1> bodies{body(0)};session.otaWriteBatch(bodies);return false; }
             catch (const Error &e) { return e.kind==ErrorKind::Connection; }
         });
@@ -90,7 +91,7 @@ TEST_CASE("OTA status parser rejects invalid states limits and truncated payload
             if (mode==4) { b.pop_back(); }out.insert(out.end(),b.begin(),b.end());send(s,out);
         }
     });
-    Session session(device.endpoint());Client client(session);CHECK(client.otaStatus().state==0);
+    Session session(device.endpoint(),testOptions());Client client(session);CHECK(client.otaStatus().state==0);
     for (unsigned i=0;i<4;++i) { CHECK_THROWS_AS(client.otaStatus(),Error); }
 }
 TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
@@ -104,7 +105,7 @@ TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
             send(s,Bytes(response.begin(),response.begin()+n));
         }
     });
-    SessionOptions options;options.timeout=std::chrono::milliseconds(150);options.read_retries=0;
+    SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(150);options.read_retries=0;
     Session session(device.endpoint(),options);Client client(session);const auto image=otaFixture();
     CHECK(client.otaUpload(image).state==2);CHECK(client.otaStatus().offset==image.size());
     CHECK(client.otaAbort().ok==true);CHECK(client.otaStatus().state==0);
@@ -115,7 +116,7 @@ TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         for (;;) { const auto req=readFrame(s);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
-    Session session(device.endpoint());Client client(session);const auto image=otaFixture();
+    Session session(device.endpoint(),testOptions());Client client(session);const auto image=otaFixture();
     CHECK_THROWS_AS(client.otaUpload(image,1,[](uint32_t,uint32_t){return false;}),Error);
     CHECK(client.otaStatus().state==0);
 }
@@ -129,7 +130,7 @@ TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
             else { send(s,Bytes(response.begin(),response.begin()+n)); }
         }
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     try { client.otaUpload(otaFixture());FAIL("accepted BEGIN refusal"); }
     catch(const DeviceError &e) {
         CHECK(e.kind==ErrorKind::Rejected);CHECK(e.result==1);CHECK(e.detail==10);
@@ -149,7 +150,7 @@ TEST_CASE("SDK OTA failed reconciliation retains the lost mutation's uncertainty
             send(s,Bytes(response.begin(),response.begin()+n));
         }
     });
-    SessionOptions options;options.timeout=std::chrono::milliseconds(60);options.read_retries=0;
+    SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(60);options.read_retries=0;
     Session session(device.endpoint(),options);Client client(session);
     try { client.otaUpload(otaFixture());FAIL("accepted missing reconciliation"); }
     catch(const Error &e) {
@@ -169,7 +170,7 @@ TEST_CASE("SDK pipelined OTA malformed WRITE bodies retain mutation context") {
             } else { send(s,Bytes(response.begin(),response.begin()+n)); }
         }
     });
-    Session session(device.endpoint());Client client(session);
+    Session session(device.endpoint(),testOptions());Client client(session);
     try { client.otaUpload(otaFixture());FAIL("accepted malformed WRITE"); }
     catch(const Error &e) {
         CHECK(e.kind==ErrorKind::Protocol);CHECK(e.has_request_context);
@@ -183,7 +184,7 @@ TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgement
         core::CommandService commands(core,{"native","native",512,false,4});std::array<uint8_t,1024> response{};
         for (;;) { const auto req=readFrame(s);CHECK(req.size()<=512);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
-    Session session(device.endpoint());Client client(session);client.info();
+    Session session(device.endpoint(),testOptions());Client client(session);client.info();
     CHECK(client.otaStatus().chunk_bytes==502);
     const auto image=otaFixture();CHECK(client.otaUpload(image).state==2);client.otaAbort();
 }

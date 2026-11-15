@@ -43,6 +43,11 @@ def run(args):
         assert len(samples)/(len(samples)+data['timeouts']) >= .95, data['timeouts']
         for s in samples:
             assert s['host_rx_us'] >= s['host_tx_us'] and s['esp_tx_us'] >= s['esp_rx_us']
+            assert s['mapping_valid'] and s['mapping_generation'] == s['boot_generation'], s
+            model = s['model']
+            expected = model['host_reference_us'] + model['slope']*(s['esp_rx_us']-model['device_reference_us'])
+            assert abs(s['mapped_host_us']-expected) <= 2, (s['mapped_host_us'], expected)
+            assert s['mapped_uncertainty_us'] >= model['min_rtt_us']/2, s
         residuals, changes = [], []
         for s in samples:
             m = s['model']

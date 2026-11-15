@@ -320,6 +320,8 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 const auto prediction=before.drift_valid?before.map(s.esp_rx_us):0.0;
                 const bool accepted=estimator.add(s);
                 const auto m=estimator.model(s.host_rx_us);
+                auto mapped=mapTime(session.clockModel(),s.esp_rx_us,s.boot_generation);
+                if(session.generation()!=s.boot_generation) {mapped.valid=false;}
                 samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
                     {"esp_tx_us",s.esp_tx_us},{"host_rx_us",s.host_rx_us},{"boot_generation",s.boot_generation},
                     {"accepted",accepted},{"rtt_us",valid?Json(rtt):Json(nullptr)},
@@ -329,6 +331,11 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                         {"slope",m.slope},{"drift_ppm",m.drift_ppm},{"samples",m.samples},
                         {"span_us",m.span_us},{"updated_us",m.updated_us},{"age_us",m.age_us},{"residual_us",m.residual_us},
                         {"min_rtt_us",m.min_rtt_us},{"max_rtt_us",m.max_rtt_us}}}});
+                if(json) {
+                    auto &sample=samples.back();sample["mapping_valid"]=mapped.valid;sample["mapping_generation"]=mapped.generation;
+                    sample["mapped_host_us"]=mapped.valid?Json(mapped.host_us):Json(nullptr);
+                    sample["mapped_uncertainty_us"]=mapped.valid?Json(mapped.uncertainty_us):Json(nullptr);
+                }
             } catch(const Error &e) { if(e.kind!=ErrorKind::Timeout || !duration) { throw; } ++timeouts; }
             if(!duration || interrupted) { break; }
             const auto elapsed=std::chrono::steady_clock::now()-start;
@@ -682,7 +689,7 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
     if (upload_only) { auto output=toJson(state);output["rebooted"]=false;output["confirmed"]=false;return output; }
     if (interrupted) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }
     try { client->system(static_cast<uint8_t>(protocol::defs::SystemOp::Reboot)); }
-    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection) { throw; } }
+    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection && !e.boot_changed) { throw; } }
     client.reset();session->close();session.reset();
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
     std::string failure="device did not reconnect";
@@ -715,7 +722,7 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
             }
             auto output=toJson(state);output["rebooted"]=true;output["confirmed"]=!state.pending_confirm;return output;
         } catch (const Error &e) {
-            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout) { throw; }
+            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout && !e.boot_changed) { throw; }
             failure=e.what();client.reset();if (session) { session->close();session.reset(); }
         }
     }
@@ -737,6 +744,9 @@ int main(int argc, char **argv)
     {
         std::string endpoint;
         SessionOptions options;
+        // Short CLI commands own their explicit time measurement; background
+        // pings would alter recorded/replayed wire conversations.
+        options.periodic_time=false;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i)
         {

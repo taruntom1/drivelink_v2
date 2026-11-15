@@ -53,7 +53,7 @@ OtaStatus Client::otaStatus() try
     p::Sha256Digest digest{},elf{};for (auto &b:digest) { b=r.readU8(); }for (auto &b:elf) { b=r.readU8(); }
     if (!r.done() || state>3 || running>1 || selected>1 || pending>1 || size>p::kOtaSlotBytes ||
         offset>size || capacity>p::kOtaSlotBytes || (!capacity && state!=3) || !chunk || chunk>p::kOtaChunkBytes ||
-        chunk+10U>m_max_payload ||
+        chunk+10U>m_session.maxPayload() ||
         !window || window>p::kOtaWindow || stage>8 || (state==3 && (!stage || !error)) ||
         (state!=3 && (stage || error))) { malformed(); }
     return {state,running,selected,bool(pending),size,offset,capacity,chunk,window,

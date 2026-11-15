@@ -120,6 +120,11 @@ build. `--upload-only` stops in Ready; `--no-confirm` leaves the booted candidat
 pending for a deliberate rollback check. Cancellation before reboot attempts
 ABORT; cancellation after reboot leaves the candidate unconfirmed. An uncertain
 cleanup reports recovery commands. It never confirms as an error-cleanup step.
+An observed Boot invalidating a request sets the host-only `Error::boot_changed`
+marker. If it interrupts REBOOT acceptance, the outcome is uncertain; if it
+interrupts readiness GET_INFO/STATUS, those reads may restart. The CLI then
+verifies the full image identity and slots before confirmation. It never repeats
+REBOOT, and other protocol/identity errors remain fatal. No wire format changes.
 
 ## Partition table and simulator
 
