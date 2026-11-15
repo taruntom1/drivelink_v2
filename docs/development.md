@@ -100,10 +100,10 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
-| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py` | The Python that runs the script |
+| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests) | The Python that runs the script |
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
-| `host-win` | The `windows-mingw` preset: build, ctest, `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH` |
-| `host-linux` | The `linux` preset: build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`) |
+| `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
+| `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 
 - **Modes.** `quick` is `gen`, `native` and the host check of this OS. `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
@@ -148,12 +148,30 @@ One script holds the list of checks and their commands. CI calls it with `--only
   while this field is false. Hardware and toolchain freshness are not certified;
   existing `--force` rules still apply. Reports are replaced atomically.
 
+## Linux packages (`tools/setup_linux.sh`)
+
+The one list of Ubuntu 26.04 packages, for the WSL distro and the CI containers.
+It installs only what is missing and never removes or upgrades anything.
+
+| Profile | Packages for | Used by |
+|---|---|---|
+| `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
+| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules and the offscreen platform plugin | `host-linux` (WSL and CI) |
+
+```bash
+wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host
+```
+
+`sh tools/setup_linux.sh --check host` only reports what is missing; `host-linux`
+runs it first. Later steps add profiles (ROS in H4a). `.gitattributes` keeps
+`*.sh` at LF, because WSL runs the scripts from the Windows checkout.
+
 ## CI (`.github/workflows/ci.yml`)
 
-Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script.
+Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script. The Ubuntu jobs install only git for the checkout; their packages come from `tools/setup_linux.sh` ("Linux packages" below), so `ci.yml` holds no package list.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
-- `gen` and `native` in an `ubuntu:26.04` container with build-essential, CMake, Ninja and PyYAML.
-- `host-linux` in an `ubuntu:26.04` container. It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
+- `gen` and `native` in an `ubuntu:26.04` container with `tools/setup_linux.sh base`.
+- `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
 - `host-windows` on `windows-2025` with Python 3.12. It caches Qt 6.12.0
   `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt`, verifies the
   SDK version and runs `validate.py --only host-win`. The validator and preset

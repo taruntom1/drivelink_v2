@@ -181,7 +181,7 @@ Each phase ends with a review by the user before the next one starts. Each phase
 | G6 Remote mode | Agent connect, the lease chip and its states, take and release the lease, lease revoked, the client list, the warning on param edits while another client drives, diag history on connect. | Screens – Remote | done |
 | G7 Custom panel | The `imu.bno055` calibration panel in its slot, as the reference for `gui/modules/<type>/`. Accepted with its G2 extensions on 2026-11-14. | Custom panels | done |
 | G7b Loops and sources rework | Parts A–G built and accepted 2026-11-14: G2 extensions, 17 Layout frames, shared trees/tables/Monitor browsers, two obsolete G4 frames deleted, Cover/flow updates and size/theme checks. Inherited G5 responsive issues remain open. | Design system, Screens – Local, Screens – Remote, Custom panels | done |
-| G8 Prototype and handoff | **Folded into host step H2a** (user decision 2026-11-14, [host-steps.md](host-steps.md)): no clickable prototype. H2a exports the Figma variables to `tokens.json` and the `Theme` singleton, and assigns each open issue below to the screen step that settles it in code. | `host/gui/theme/`, issue assignment in this file | moved to H2a |
+| G8 Prototype and handoff | **Folded into host step H2a** (user decision 2026-11-14, [host-steps.md](host-steps.md)): no clickable prototype. H2a-1 exported the Figma variables to `host/gui/theme/tokens.json` and the generated `Theme` singleton, and assigned each open issue to the step that settles it in code ("Open issues by host step" below). | `host/gui/theme/`, issue assignment in this file | done (H2a-1, 2026-11-15) |
 
 ## G1 wireframes
 
@@ -522,6 +522,27 @@ G5's fixed plot dimensions still clip traces/third plots during a simple 1080p r
 - **Firmware contract checked:** F4b limits and F4c sources are merged. The sample uses shipped `fusion.mock`; no firmware or protocol change is requested.
 - **Accepted 2026-11-14:** Parts A–G and the G2 extensions are done. No further G7b construction or acceptance is pending.
 - **G7 accepted:** its older F6 action/persistence assumptions still need reconciliation in the G8/H2 handoff. Remote calibration-action permissions were decided on 2026-11-14: actions need the lease (host-architecture.md, "Exclusive operations").
+
+## Open issues by host step
+
+Assigned in H2a-1 (G8 handoff, 2026-11-15). The step named settles the issue in
+code and records the outcome here; the notes below give the detail.
+
+| Issue | Step |
+|---|---|
+| Status bar faults badge: active faults only, or history too | H2b |
+| Reboot notice: which params changed since the last save (the GUI tracks them) | H2b |
+| Device loop table: budget computed on the host (run time over period), loops keyed by id | H2b |
+| Layout pending-changes list (GET_PENDING plus staged ops), refused op keeps the typed value | H2c |
+| LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | H2c |
+| Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | H2d |
+| G5 1080p: Monitor plot fitting and paused toolbar | H2d |
+| G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |
+| CheckItem has no warning state (plant identification caution) | H2e |
+| G7 calibration: F6 contract reconciliation, PC file format, provenance, Euler convention, cancel and reconnect | H2f |
+| Remote: live-edit warning opt-out per connection, lease-revoked cancels runs, agent device list | H3b |
+| Rename / `SET_NAME` applies live and sets Unsaved; device name and id in `GET_INFO` | closed by H1c (core v9) |
+| Tabular numerals cannot be set in Figma | closed by H2a-1: `Theme.fontBodyNumeric` and `Theme.fontDisplayValue` set `tnum` |
 
 ## Open issues
 
