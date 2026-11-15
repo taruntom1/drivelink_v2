@@ -229,7 +229,7 @@ TEST_CASE("a sync request queued across Boot receives its actual reply generatio
     Peer peer([&](Socket &s) {(void)read(s);first.set_value();allowed.wait();send(s,0xc0,boot());auto request=read(s);answer(s,request,{42});untilClosed(s);});
     Session session(peer.endpoint(),testOptions());const auto original=session.generation();
     auto first_call=std::async(std::launch::async,[&] {
-        try {(void)session.request(3,1);return false;}catch(const Error &e) {return e.kind==ErrorKind::Protocol;}
+        try {(void)session.request(3,1);return false;}catch(const Error &e) {return e.kind==ErrorKind::Protocol && e.boot_changed;}
     });
     REQUIRE(received.wait_for(std::chrono::seconds(2))==std::future_status::ready);
     auto second_call=std::async(std::launch::async,[&] {second_started.set_value();return session.request(3,1);});

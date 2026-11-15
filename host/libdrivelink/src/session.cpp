@@ -546,8 +546,11 @@ struct Session::Impl
             estimator.reset();started_us=monotonicUs();
             for(auto &[id,buffer]:buffers) {(void)id;buffer->invalidate();}buffers.clear();
             for(auto &[id,weak]:commands) {(void)id;if(auto command=weak.lock()) {command->stop();}}commands.clear();
-            if(ping) {finishPing(std::unexpected(Error(ErrorKind::Protocol,"device reboot during ping")),true);}
-            while(!pending.empty()) {auto r=pending.begin()->second;complete(r,std::unexpected(error(r,ErrorKind::Protocol,"device reboot during request")),true);}
+            if(ping) {Error e(ErrorKind::Protocol,"device reboot during ping");e.boot_changed=true;finishPing(std::unexpected(e),true);}
+            while(!pending.empty()) {
+                auto r=pending.begin()->second;auto e=error(r,ErrorKind::Protocol,"device reboot during request");e.boot_changed=true;
+                complete(r,std::unexpected(e),true);
+            }
         }
         if(f.msg_type==msg::kTimeResponse) {
             if(!ping || !ping->sent || f.len<3) {return;}

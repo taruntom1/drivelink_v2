@@ -146,7 +146,7 @@ def simulated(cli_path, endpoint):
         if endpoint.startswith('tcp://'):
             from ota_cli_failure import check, pipeline_reboot
             cli = Cli(cli_path, endpoint)
-            check(cli_path, endpoint, candidate)
+            check(cli_path, endpoint, candidate, boot_reconnect=True)
             cli('ota-upload', baseline)
             check(cli_path, endpoint, candidate, hold_commit=True)
             ready = cli('ota-status')

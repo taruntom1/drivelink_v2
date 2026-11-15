@@ -689,7 +689,7 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
     if (upload_only) { auto output=toJson(state);output["rebooted"]=false;output["confirmed"]=false;return output; }
     if (interrupted) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }
     try { client->system(static_cast<uint8_t>(protocol::defs::SystemOp::Reboot)); }
-    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection) { throw; } }
+    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection && !e.boot_changed) { throw; } }
     client.reset();session->close();session.reset();
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
     std::string failure="device did not reconnect";
@@ -722,7 +722,7 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
             }
             auto output=toJson(state);output["rebooted"]=true;output["confirmed"]=!state.pending_confirm;return output;
         } catch (const Error &e) {
-            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout) { throw; }
+            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout && !e.boot_changed) { throw; }
             failure=e.what();client.reset();if (session) { session->close();session.reset(); }
         }
     }
