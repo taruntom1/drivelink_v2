@@ -202,7 +202,7 @@ commands) in H3a. Python bindings are not planned.
 - **Style.** A custom DriveLink style built on the Basic style; each G2 component maps to one QML control (the mapping table in Figma).
 - **C++ backend:**
   - A device connection, either local (serial, or TCP to vdev) or remote (agent), behind one interface. Library completions and events reach QML through the session dispatcher (queued invokes onto the GUI thread).
-  - Its own command group, with every input it can command at hold values and keepalives, so `ARM` is never refused with `NoCommandGroup`. A direct connection sets it up at connect. A remote connection starts as an observer and sets it up only after receiving the control lease.
+  - Its own command groups cover running, discovered inputs, partitioned by loop and the device's capacities; with no inputs, an empty group supplies keepalives. H2a-2 creates prefix-only keepalive handles, leaving input values unchanged: descriptor defaults are not semantic holds. H2d adds explicit finite holds before value commands. A disarmed direct connection sets groups up at connect; an already-armed connection observes until explicit DISARM acknowledgement, even if its watchdog expires during discovery. It never adopts existing groups. A remote connection starts as an observer and sets groups up only after receiving the control lease. User decision 2026-11-15.
   - Models built from the device model:
     - an instance tree (type, label, loop, health), with loops as instances
     - a param table per instance (typed editors, units, ranges, enums, a pending-reboot marker, a dirty marker)

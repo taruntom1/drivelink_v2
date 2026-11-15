@@ -59,6 +59,17 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   only draw and emit requests, and contain nothing module-specific. Keep
   DISARM reachable: no Qt modal popups (they block the status bar). New icons
   come from the Figma G2 set, at the bundled Lucide version.
+- GUI completions/model notifications run on the GUI thread through a FIFO
+  session dispatcher. Keep its receiver alive through callback drain; stale
+  connection/session generations cannot publish or arm. Bound initial event
+  draining and preserve DISARM requested before link publication or behind an
+  earlier failed DISARM. Observer close waits for an admitted safety request;
+  an unconfirmed forced close must report an uncertain outcome.
+- GUI command groups initially send prefixes only. Never infer a semantic hold
+  from descriptor defaults. An already-armed direct connection observes until
+  explicit DISARM acknowledgement, including an armed state seen during
+  discovery followed by watchdog disarm. Never adopt other owners' groups;
+  reconcile uncertain setup and clear only matching owned generation/epoch/refs.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

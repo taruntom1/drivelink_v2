@@ -27,6 +27,11 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 2. **Not in Figma, by decision:** LP's `loop.core` enum (Core 0, Core 1, Any core; Any core is the Add loop default; factory control/sensor stay 1/0) is built in code by H2c; the user chose not to apply it to the frames (2026-11-15). The agent's device list (H3b) has no frame either.
 3. **Token changes:** edit the variables in Figma, then re-export and regenerate as [host/gui/README.md](../host/gui/README.md) ("Theme") says. Two variables share the QML name `Theme.borderFocus`; the Size one is `borderFocusWidth` in code.
 4. A Figma edit from now on is made by the H step that needs it, on that step's branch, following the `/gui-design-step` rules for the file.
+5. **H2a-2 built the shell/backend (2026-11-16).** The application event filter
+   owns Esc; the status bar stays above the page scrim. The drawer is a frame
+   and the four pages are placeholders for their H2 steps. Runtime contracts
+   and screenshot commands are in [host/gui/README.md](../host/gui/README.md).
+   No Figma mutation was needed.
 
 ## Handoff note
 

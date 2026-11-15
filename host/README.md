@@ -9,6 +9,13 @@ pulled group buffers, managed command keepalives and timestamp mapping. CI build
 and tests it on Windows and Linux.
 See [the library API](libdrivelink/README.md).
 
+`drivelink-gui` now provides the local Qt shell and backend: an endpoint field,
+the status bar, arm/disarm/acknowledge, four page placeholders and generic
+model foundations. Esc disarms through focused text fields and popups; the
+status bar remains above page scrims. GUI command groups send keepalives only,
+leaving input values unchanged. Full screen content starts in H2b.
+See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
+
 ## Device identity (H1c)
 
 Core v9 adds the immutable factory MAC and a user-set UTF-8 name. `info`
@@ -26,7 +33,7 @@ restores name/layout/settings.
 
 Requires CMake 3.24+, Ninja, a C++23 compiler (GCC 13.1 minimum) and Python 3. The first configure
 downloads SHA256-pinned standalone Asio 1.30.2 and nlohmann JSON 3.11.3.
-The `linux` and `windows-mingw` presets also build the GUI's style layer
+The `linux` and `windows-mingw` presets also build the GUI application and style
 ([gui/README.md](gui/README.md)), which needs Qt 6.10 or newer (Quick,
 QuickTemplates2, Svg, QuickTest); `linux-no-gui` leaves it out. On Ubuntu
 26.04 (WSL or CI) `sudo sh tools/setup_linux.sh host` installs every package.

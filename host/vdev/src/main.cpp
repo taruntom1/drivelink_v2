@@ -23,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #ifdef _WIN32
 #include <windows.h>
 #include <timeapi.h>
@@ -163,6 +164,7 @@ struct Peer : std::enable_shared_from_this<Peer>
     std::deque<Output> output;
     bool closed = false, reset_pending = false;
     uint64_t generation = 0;
+    unsigned delayed = 0;
     explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
     ~Peer()
     {
@@ -198,6 +200,16 @@ struct Server
     int64_t next_status = 0;
     p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
     bool crash_enabled = false, stopping = false;
+    // Opt-in, local test controls. No device wire operation is added.
+    std::filesystem::path scenario_file;
+    uint64_t scenario_sequence=0;
+    int64_t scenario_poll=0;
+    unsigned slow_ms=0;
+    unsigned drop_config_reply=0;
+    unsigned drop_disarm=0,drop_arm_reply=0;
+    uint64_t disarm_requests=0;
+    bool link_stalled=false;
+    uint64_t prefix_commands=0,value_commands=0;
     std::array<char,17> ota_build_id{};
     std::string ota_version;
     explicit Server(bool bench) : crash_enabled(bench) {}
@@ -253,8 +265,24 @@ struct Server
             peer->send(msg::kDiagEvent, reply.data(), n);
         }
     }
-    void receive(Peer &from, const p::Scanner::Frame &frame)
+    void receive(Peer &from, const p::Scanner::Frame &frame,bool delay=true)
     {
+        if(link_stalled) {return;}
+        if(delay && slow_ms && (frame.msg_type==msg::kCoreCommand || frame.msg_type==msg::kDiagQuery)) {
+            if(from.delayed>=4) {from.close();return;}
+            ++from.delayed;
+            auto owner=from.shared_from_this();auto timer=std::make_shared<asio::steady_timer>(io);
+            timer->expires_after(std::chrono::milliseconds(slow_ms));
+            Bytes payload(frame.payload,frame.payload+frame.len);const auto type=frame.msg_type;
+            const auto generation=from.generation;
+            timer->async_wait([this,owner,timer,payload=std::move(payload),type,generation](auto ec) {
+                --owner->delayed;
+                if(!ec && !owner->closed && owner->generation==generation && !stopping) {
+                    receive(*owner,{type,payload.size(),payload.data()},false);
+                }
+            });
+            return;
+        }
         if (frame.msg_type == msg::kTimeRequest) {
             const auto rx=static_cast<uint64_t>(core_os::nowUs());uint16_t id=0;
             if(!p::time_wire::decodeRequest(frame.payload,frame.len,id)) {
@@ -265,6 +293,8 @@ struct Server
         }
         else if (frame.msg_type == msg::kDisarm)
         {
+            if(!scenario_file.empty()) {++disarm_requests;}
+            if(drop_disarm) {--drop_disarm;return;}
             const auto n = core::fastDisarm(*core, {frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n);
         }
@@ -279,11 +309,20 @@ struct Server
                 from.send(msg::kCoreResponse,reply.data(),w.size());return;
             }
             const auto n = commands->handle({frame.payload, frame.len}, reply);
+            if(drop_arm_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
+               frame.payload[3]==static_cast<uint8_t>(p::defs::SystemOp::Arm) && --drop_arm_reply==0) {
+                (void)commands->takeAfterReply();return;
+            }
+            if(drop_config_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::Group) &&
+               frame.payload[3]==static_cast<uint8_t>(p::defs::GroupOp::CmdConfig) && --drop_config_reply==0) {
+                (void)commands->takeAfterReply();return;
+            }
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
         }
         else if (frame.msg_type >= p::defs::kCmdGroupChannelFirst &&
                  frame.msg_type < p::defs::kCmdGroupChannelFirst + p::defs::kCmdGroupChannelCount)
         {
+            if(!scenario_file.empty()) {if(frame.len==4) {++prefix_commands;}else {++value_commands;}}
             core->groups().receiveCommand(frame.msg_type - p::defs::kCmdGroupChannelFirst,
                 {frame.payload, frame.len}, core_os::nowUs());
         }
@@ -360,12 +399,47 @@ struct Server
         n = dp::encodeQueryResponse(h, result, bytes.data(), n, reply.data(), reply.size());
         from.send(msg::kDiagQueryResponse, reply.data(), n);
     }
+    void scenario()
+    {
+        const auto now=core_os::nowUs();
+        if(scenario_file.empty() || now<scenario_poll) {return;}
+        scenario_poll=now+100000;
+        std::ifstream input(scenario_file);std::array<char,129> line{};
+        input.getline(line.data(),line.size());
+        if(!input || input.gcount()>128) {return;}
+        std::istringstream command(line.data());uint64_t sequence=0;std::string action;
+        if(!(command>>sequence>>action) || sequence<=scenario_sequence) {return;}
+        scenario_sequence=sequence;
+        if(action=="fault") {core_os::raiseDiag(p::defs::diag::codes::core::kLoopStalled,0);}
+        else if(action=="fault-clear") {core_os::clearDiag(p::defs::diag::codes::core::kLoopStalled,0);}
+        else if(action=="stall") {link_stalled=true;}
+        else if(action=="resume") {link_stalled=false;}
+        else if(action=="slow") {unsigned ms=0;if(command>>ms && ms<=1000) {slow_ms=ms;}}
+        else if(action=="drop-config-reply") {unsigned n=0;if(command>>n && n<=32) {drop_config_reply=n;}}
+        else if(action=="drop-disarm") {unsigned n=0;if(command>>n && n<=32) {drop_disarm=n;}}
+        else if(action=="drop-arm-reply") {unsigned n=0;if(command>>n && n<=32) {drop_arm_reply=n;}}
+        else if(action=="stats") {
+            std::ofstream output(scenario_file.string()+".stats",std::ios::trunc);
+            output<<"prefix "<<prefix_commands<<"\nvalues "<<value_commands<<'\n';
+            output<<"disarms "<<disarm_requests<<'\n';
+            for(size_t i=0;i<core->groups().capacity(core::GroupKind::Command);++i) {
+                const auto &g=*core->groups().info(core::GroupKind::Command,uint8_t(i));
+                if(g.configured) {output<<"group "<<i<<' '<<unsigned(g.loop)<<' '<<unsigned(g.count)<<'\n';}
+            }
+        }
+        else if(action=="reboot") {
+            if(peer) {peer->recoverPty();}
+            boot();scenario_poll=0;
+        }
+        std::cout<<"SCENARIO "<<sequence<<' '<<action<<std::endl;
+    }
     void tick()
     {
         if (stopping)
         {
             return;
         }
+        scenario();
         if (!core_os::native::bootFileHealthy())
         {
             throw std::runtime_error("crash state persistence failed");
@@ -552,7 +626,7 @@ void Peer::close()
 }
 bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply after, bool stream)
 {
-    if (closed || !n)
+    if (closed || !n || server.link_stalled)
     {
         return false;
     }
@@ -785,6 +859,8 @@ int main(int argc, char **argv)
         unsigned port = 8765;
         p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
         bool pty = false, bench = false;
+        bool safe_mode=false;
+        std::filesystem::path scenario_file;
         int64_t fail_after = -1;
         for (int i = 1; i < argc; ++i)
         {
@@ -819,6 +895,8 @@ int main(int argc, char **argv)
             {
                 bench = true;
             }
+            else if(arg=="--scenario-file") {scenario_file=value();}
+            else if(arg=="--safe-mode") {safe_mode=true;}
             else if (arg == "--fail-writes-after")
             {
                 fail_after = drivelink::parseUnsigned(value());
@@ -826,7 +904,7 @@ int main(int argc, char **argv)
             else if (arg == "--help")
             {
                 std::cout << "drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] "
-                             "[--device-id HEX12] [--fail-writes-after N]\n";
+                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode]\n";
                 return 0;
             }
             else
@@ -845,6 +923,7 @@ int main(int argc, char **argv)
         TimerResolution timer_resolution;
 #endif
         Server s(bench);
+        s.scenario_file=scenario_file;
         s.device_id = device_id;
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)
@@ -855,6 +934,7 @@ int main(int argc, char **argv)
         {
             core_os::native::failWritesAfter(s.store, static_cast<uint32_t>(fail_after));
         }
+        if(safe_mode) {core_os::storeCrashCount(3);core_os::native::setResetWasCrash(true);}
         s.boot(true);
         if (pty)
         {

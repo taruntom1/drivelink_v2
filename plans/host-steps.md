@@ -153,6 +153,12 @@ builds the shell and backend. [H2a-1 plan and results](h2a-1-implementation.md).
 - **H2a-1** (self-review, no hardware): `host/gui/` in the superbuild, `setup_linux.sh` and CI, G8 tokens and the `Theme` generator, bundled fonts/icons, the shell controls (Button … Tooltip), a style gallery, Qt Quick Test in both host checks. Done; see the plan.
 - **H2a-2** (independent review, vdev): the application, the shell with Esc → DISARM, the scrim under the status bar, the faults drawer frame, toasts; the backend and item-model bases; vdev scenario hooks; the screenshot tool, grown from the gallery (`drivelink-style-gallery`).
 
+H2a-2's [approved plan and results](h2a-2-implementation.md) settle the direct
+connection behavior: prefix-only keepalives leave input values unchanged;
+descriptor defaults are not semantic holds. An already-armed device is
+observed until explicit DISARM acknowledgement, including watchdog expiry
+during discovery. Command groups are partitioned by owning loop and capacity.
+
 **Depends on** H1b, H1c. **Architecture:** "`drivelink-gui`", "Development environment". **Design:** [gui-design.md](gui-design.md) Decisions (G2, G3), [gui-design-status.md](gui-design-status.md).
 
 Scope:
@@ -160,7 +166,7 @@ Scope:
 - **G8, folded in:** export the Figma variables to `host/gui/theme/tokens.json`, and a script that writes the `Theme` singleton (dark and light). Record in the GUI design files which open handoff issues each screen step settles (the G5 1080p issues go to H2d and H2e; the faults badge to H2b). If cheap, apply LP's placement enum to the Figma frames in the same pass.
 - The DriveLink style on Basic: the controls the shell needs (Button, IconButton, ArmButton, StateChip, Badge, DeviceChip, NavRail, NavItem, StatusBar, Banner, Dialog, Toast, Tooltip); later steps add the rest. Inter, JetBrains Mono and the Lucide icons used, bundled.
 - The shell: nav rail, the three-zone status bar, DISARM always reachable with Esc (also inside text fields, cancelling the edit), the faults drawer frame, the banner area, the modal scrim under the status bar, toasts.
-- The backend: the connection interface (local now), Qt adapters over the device model through the session dispatcher, item-model bases, arm/disarm/acknowledge with refusal reasons, and the GUI's own command group (every commandable input at hold, keepalives) set up at connect.
+- The backend: the connection interface (local now), Qt adapters over the device model through the session dispatcher, item-model bases, arm/disarm/acknowledge with refusal reasons, and the GUI's own command groups (running discovered inputs by loop/capacity, prefix-only keepalives) set up on a disarmed direct connection; already-armed observation as above.
 - Test tooling: Qt Quick Test (offscreen) in both host checks; the backend tests against vdev; the scenario-screenshot tool (named screens to PNG at 2560×1440 and 1920×1080, dark and light, from vdev or a given endpoint); vdev scenario hooks (inject a fault, safe mode, a stalled link, a reboot, slow replies).
 
 Not in scope: the screens' content (H2b onward). Connect is a minimal endpoint field until H2b.

@@ -186,6 +186,26 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 
 ## Host concurrency and time checks
 
+### GUI shell checks (H2a-2)
+
+Both host checks include `gui-backend` (C++/Qt model and real-vdev lifecycle,
+arm/DISARM/ack, uncertain outcomes and key/popup/scrim flows) and
+`gui-screenshots` (Connect/Device at both sizes/themes), alongside the
+existing `gui-quick` and `gui-gallery`. Linux additionally checks an in-place
+Boot over the vdev PTY. They use offscreen/software rendering and the same
+CTest targets in CI; no new validator check/toolchain is needed.
+
+From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
+(or `linux`). The complete post-review vdev campaign and ten-scenario render
+command are in [host/gui/README.md](../host/gui/README.md#shell-screenshots).
+It can repeat the backend tests and writes 40 dimension-checked PNGs. All
+scenario provisioning and fault injection use fresh temporary vdev state.
+The GUI app's direct `--endpoint ... --out DIR` mode uses the supplied device
+without scenario injection. Native arming fixtures save slower loop rates
+and watchdog settings so they survive a simulated reboot.
+
+### Library checks
+
 H1c adds `host-identity` to both host checks: CLI Unicode/byte limits,
 SAVE/reboot/REVERT, immutable device id and armed rename with a mock actuator
 through `async_probe`. Run the same workflow on the bare board with
