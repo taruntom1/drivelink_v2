@@ -3,6 +3,7 @@
 #include "drivelink/command.hpp"
 #include "drivelink/protocol/gen/type_loop.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
 #include <atomic>
 #include <future>
 #include <iostream>
@@ -14,6 +15,20 @@ void require(bool condition,const char *message) {if(!condition) {throw Error(Er
 template<class F> void waitFor(F predicate,unsigned ms=5000) {
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(ms);
     while(!predicate()) {require(std::chrono::steady_clock::now()<deadline,"probe condition timed out");std::this_thread::sleep_for(std::chrono::milliseconds(2));}
+}
+// Existing bench/vdev policy: only these group rejections guarantee no effect.
+// Never retry a mutation timeout, uncertain outcome or another family's Busy.
+template<class F> auto groupRetry(F operation) {
+    for(unsigned attempt=0;;++attempt) {
+        try {return operation();}
+        catch(const Error &e) {
+            namespace d=protocol::defs;
+            if(attempt>=9 || e.outcome_unknown || e.kind!=ErrorKind::Rejected || !e.has_request_context || e.family!=static_cast<uint8_t>(d::Family::Group) ||
+               e.result!=static_cast<uint8_t>(d::Result::Busy) ||
+               (e.detail!=static_cast<uint8_t>(d::Detail::StagingBusy) && e.detail!=static_cast<uint8_t>(d::Detail::Withdrawn))) {throw;}
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
 }
 }
 int main(int argc,char **argv) {
@@ -44,7 +59,7 @@ int main(int argc,char **argv) {
         try {
             namespace l=protocol::defs::loop;
             const std::array<Ref,4> refs{{{5,loop,l::kTicks},{5,loop,l::kOverruns},{5,loop,l::kLastRunUs},{5,loop,l::kMaxRunUs}}};
-            const auto configured=client.subConfigure(0,loop,1,refs);
+            const auto configured=groupRetry([&]{return client.subConfigure(0,loop,1,refs);});
             auto buffer=session.subscribeBuffer(0,configured.epoch,4,128,configured.generation);
             uint64_t reads=0,mapped=0,last_time=0;uint32_t last_tick=0;GroupSample sample;
             const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(3);
@@ -63,7 +78,7 @@ int main(int argc,char **argv) {
             // three-period safety threshold is below normal Windows jitter.
             // Exercise arming independently at 50 Hz, then restore 1 kHz.
             if(native) {const uint32_t slow=50;client.set({&rate,1},{&slow,1});rate_changed=true;}
-            command=client.managedCommand(0,loop,{},{});client.arm();
+            command=groupRetry([&]{return client.managedCommand(0,loop,{},{});});client.arm();
             waitFor([&]{auto s=model.snapshotShared();return s->status && s->status->arm_state==1;});
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if(model.snapshotShared()->status->arm_state!=1) {
@@ -78,7 +93,7 @@ int main(int argc,char **argv) {
             std::promise<std::expected<SystemResult,Error>> disarmed;auto done=disarmed.get_future();
             client.disarmAsync([&](auto r){disarmed.set_value(std::move(r));});
             require(done.wait_for(std::chrono::seconds(5))==std::future_status::ready && bool(done.get()),"async DISARM failed");
-            client.groupClear(0,true);client.groupClear(0,false);
+            groupRetry([&]{return client.groupClear(0,true);});groupRetry([&]{return client.groupClear(0,false);});
             if(rate_changed) {const uint32_t restore=1000;client.set({&rate,1},{&restore,1});rate_changed=false;}
             if(std::string(argv[1]).starts_with("serial://")) {
                 const auto generation=session.generation();client.system(8);
@@ -93,7 +108,7 @@ int main(int argc,char **argv) {
                      <<" mapped="<<mapped<<" ring_dropped="<<buffer->dropped()<<"\n";
         } catch(...) {
             if(command) {command->stop();}
-            try {client.disarm();client.groupClear(0,true);client.groupClear(0,false);}catch(...) {}
+            try {client.disarm();groupRetry([&]{return client.groupClear(0,true);});groupRetry([&]{return client.groupClear(0,false);});}catch(...) {}
             if(rate_changed) {try {const uint32_t restore=1000;client.set({&rate,1},{&restore,1});}catch(...) {}}
             throw;
         }
