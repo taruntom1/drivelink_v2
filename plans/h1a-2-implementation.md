@@ -49,3 +49,35 @@ mapping stay H1b. Identity stays H1c. No firmware/wire change or CLI output chan
 
 Finish with the passing full gate, commit/push and one PR into host_overhaul,
 its link in the status file, and the next-step handoff.
+
+## Implementation choices and results (2026-11-15)
+
+- API: DeviceModel loads in its constructor and exposes a const DeviceSnapshot;
+  reload builds a temporary and swaps only on success. Value copies can outlive
+  a reload. System params are separate; layouts use (type, instance) keys and
+  items use their real IDs. No events are consumed and no mutation is sent.
+  These internal choices and the multi-request consistency rule are in the README.
+- Windows CI uses aqt upstream commit
+  `5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7`, since released 3.3.0 cannot
+  locate Qt 6.12's split Windows repository. All four installation dry runs
+  resolved successfully; the workflow verifies the actual SDK and compiler.
+- Full validation passed all seven checks on the implementation working tree
+  before commit 6dfb65f: generator/tooling tests (48 validator cases), native,
+  both host checks and all three zero-warning IDF builds. CLI golden/replay,
+  real-vdev model scenarios and installed typed model consumers passed on both
+  OSes. Final doc/PR revisions refresh the gate with unchanged checks reused.
+- Self-review and independent Codex review at high effort found no actionable
+  correctness issue. No rejected findings; no firmware, wire, safety or later-step
+  deviation. Hosted Windows installation/build verification follows PR creation.
+- COM3 was initially absent; the user reconnected it before any board check.
+  The read-only model probe passed for the normal layout, a pending mock and
+  the restored final layout. The scratch harness initially left nvs_dirty after
+  a pending SET/DISCARD, so the CLI smoke correctly refused its preflight; REVERT
+  restored the saved baseline and the rerun passed. No production change needed.
+- CLI hardware, motor/IMU mocks, capture (PSRAM), testgen and loop-placement
+  smokes passed. Capture longest ticks were 84/102 us with 1/16 refs at 1 kHz,
+  both regular. No flash or OTA upload was needed. Exact original LP ELF
+  b8ad3d153466c34d400e15757674e9cd937575b055f1307a658962d514449b94 remains
+  confirmed in ota_0; saved layout/params, disarmed idle state, unconfigured
+  capture/groups and normal bench refusal were verified. Evidence is in
+  build/h1a2-bench/; no new deferred hardware row is needed.

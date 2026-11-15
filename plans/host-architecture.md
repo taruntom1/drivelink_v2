@@ -4,8 +4,9 @@ Status: architecture target, re-planned 2026-11-14 after the firmware overhaul
 (F1–F10, LP) against the firmware as built. The first host slice exists:
 `libdrivelink` (transport, session, the core families, the F8 clock estimator
 and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
-H1a-1 adds typed services/errors and moves JSON formatting into the CLI.
-Still to build: the device snapshot (H1a-2), the asynchronous path and timestamp
+H1a-1 adds typed services/errors and moves JSON formatting into the CLI;
+H1a-2 adds the discovered device snapshot/reload API and Windows host CI.
+Still to build: the asynchronous path and timestamp
 mapping, device identity, the GUI, the agent and ROS.
 
 This file is the design record. The steps that build it (T0, H1a–H6, HW), with
@@ -106,13 +107,16 @@ then the agent and the GUI's remote mode, then ROS.
 
 ### `libdrivelink` (host core)
 
-**What exists (F3c–F9, LP, H1a-1).** `Session` is a thread-safe synchronous facade over
+**What exists (F3c–F9, LP, H1a-1/2).** `Session` is a thread-safe synchronous facade over
 one Asio I/O thread: it allocates `seq`, correlates responses, retries only
 idempotent reads, retires timed-out ids until reconnect, queues command-group
 frames without blocking, and hands every other frame to a bounded event queue
 that drops oldest. `Client` wraps the families (info, describe, layout,
 system, param, action, diag, group, capture, testgen, OTA) with typed results.
 The CLI owns JSON formatting and preserves its original output.
+`DeviceModel` loads a typed read-only snapshot and explicitly reloads it with
+all-or-nothing publication; safe mode and configured/pending layouts are readable.
+Its API/lifetime and multi-request consistency rules are in the library README.
 `ClockEstimator` fits offset and drift from pings with I/O-thread timestamps.
 The rules for this code are in [host/CLAUDE.md](../host/CLAUDE.md).
 
@@ -378,7 +382,7 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 | firmware | `espressif/idf:v5.5.2` | the main, nolog and HIL test-app builds, zero warnings | exists |
 | native-tests | `ubuntu:26.04` container (T0) | generator checks and tests, firmware native and protocol tests | exists; container in T0 |
 | host-linux | `ubuntu:26.04` + `setup_linux.sh` | superbuild, libdrivelink/CLI tests, vdev integration, installed-package smoke; GUI build and tests against Qt 6.10 from H2a | exists |
-| host-windows | Windows, Qt 6.12.0 `win64_mingw` + MinGW 13.1 via aqtinstall | superbuild, tests, the C++23/GCC 13.1 floor; GUI and Quick Tests from H2a; the Inno Setup installer as an artifact from H2g | H1a |
+| host-windows | Windows, Qt 6.12.0 `win64_mingw` + MinGW 13.1 via aqtinstall | superbuild, tests, the C++23/GCC 13.1 floor; GUI and Quick Tests from H2a; the Inno Setup installer as an artifact from H2g | exists (H1a-2) |
 | agent | `ubuntu:26.04` + `setup_linux.sh` | agent ↔ vdev integration tests | H3a |
 | ros | `ros:lyrical` + `setup_linux.sh` | `colcon build` + `colcon test`, including a launch test against vdev and the agent | H4a |
 | deb | arm64 Linux, `ubuntu:26.04` | the agent `.deb`, installed and removed in a container | H5 |
