@@ -23,7 +23,15 @@ struct ClockModel {
     size_t samples = 0;
     double slope = 1, drift_ppm = 0, residual_us = 0, min_rtt_us = 0, max_rtt_us = 0;
     double map(uint64_t device_us) const;
+    // Conservative transport/fit estimate, not a bound on unknown asymmetry.
+    double uncertainty(uint64_t device_us) const;
 };
+struct MappedTime {
+    uint64_t device_us=0, generation=0;
+    double host_us=0, uncertainty_us=0;
+    bool valid=false;
+};
+MappedTime mapTime(const ClockModel &model,uint64_t device_us,uint64_t generation);
 // One caller owns an estimator. Fixed capacity is allocated at construction.
 // add() rejects bad samples; Boot/generation or backwards device time resets it.
 class ClockEstimator {

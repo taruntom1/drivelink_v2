@@ -228,6 +228,7 @@ struct CaptureStatus
     uint64_t sample_period_us = 0;
     uint64_t trigger_timestamp_us = 0;
     std::vector<Ref> refs;
+    MappedTime time{};
 };
 struct CapturePage
 {
@@ -239,6 +240,7 @@ struct CaptureData
 {
     CaptureStatus status;
     std::vector<std::vector<uint32_t>> data;
+    std::vector<MappedTime> times{};
 };
 struct TestgenConfig
 {
@@ -307,6 +309,7 @@ struct StatusFrame
     std::array<uint8_t, 2> cpu_load{};
     std::vector<LoopOverruns> overruns;
     uint8_t last_disarm_reason = 0;
+    MappedTime time{};
 };
 struct CaptureDone
 {
@@ -332,6 +335,7 @@ struct DiagRecord
     int32_t error = 0;
     uint32_t arg0 = 0;
     uint32_t arg1 = 0;
+    MappedTime time{};
 };
 struct CounterDelta
 {
@@ -347,6 +351,7 @@ struct DiagCounters
     uint8_t flags = 0;
     uint64_t timestamp_us = 0;
     std::vector<CounterDelta> entries;
+    MappedTime time{};
 };
 struct DiagCleared
 {
@@ -356,6 +361,7 @@ struct DiagCleared
     uint8_t source = 0;
     uint8_t instance = 0;
     uint16_t code = 0;
+    MappedTime time{};
 };
 struct BootEvent
 {
@@ -366,6 +372,7 @@ struct BootEvent
     uint8_t instances_ok = 0;
     uint8_t instances_failed = 0;
     uint8_t safe_mode = 0;
+    MappedTime time{};
 };
 struct SubscriptionSample
 {
@@ -375,6 +382,7 @@ struct SubscriptionSample
     uint64_t timestamp_us = 0;
     std::vector<uint32_t> values;
     std::vector<Value> typed_values;
+    MappedTime time{};
 };
 using Event =
     std::variant<StatusFrame, CaptureDone, TestgenDone, DiagRecord, DiagCounters, DiagCleared, BootEvent, Frame>;

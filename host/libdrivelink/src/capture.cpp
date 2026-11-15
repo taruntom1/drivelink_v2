@@ -18,6 +18,16 @@ const char *triggerName(uint8_t k)
     return k < 4 ? kNames[k] : "unknown";
 }
 Ref readRef(Reader &r) { return {r.readU8(),r.readU8(),r.readU16Le()}; }
+CapturePage readPage(const Reply &reply,uint32_t first,uint16_t count,size_t width) {
+    if(reply.result!=0 && reply.result!=8) {throw DeviceError("capture READ refused",reply.result,reply.detail,6,5);}
+    Reader r(reply.body.data(),reply.body.size());
+    if(r.readU32Le()!=first || r.readU16Le()!=count || r.remaining()!=4U*count*width) {malformed();}
+    CapturePage result{first,count,{}};
+    for(unsigned i=0;i<count;++i) {
+        std::vector<uint32_t> row;for(size_t k=0;k<width;++k) {row.push_back(r.readU32Le());}
+        result.samples.push_back(std::move(row));
+    }exact(r);return result;
+}
 }
 
 uint8_t parseCaptureTrigger(const std::string &text)
@@ -91,6 +101,7 @@ try
         j.recorded > j.samples) { malformed(); }
     for (unsigned i = 0; i < n; ++i) { j.refs.push_back(readRef(r)); }
     exact(r);
+    j.time=mapTime(m_session.clockModel(),j.trigger_timestamp_us,m_session.generation());
     return j;
 } catch(Error &e) { contextualize(e,6,4,false);throw; }
 
@@ -102,21 +113,13 @@ try
     Writer w(body.data(), body.size());
     w.appendU32Le(first); w.appendU16Le(count);
     const auto reply = accepted(kFamily, op(defs::CaptureOp::Read), body);
-    Reader r(reply.body.data(), reply.body.size());
-    if (r.readU32Le() != first || r.readU16Le() != count || r.remaining() != 4U * count * width) { malformed(); }
-    std::vector<std::vector<uint32_t>> samples;
-    for (unsigned i = 0; i < count; ++i) {
-        std::vector<uint32_t> row;
-        for (size_t k = 0; k < width; ++k) { row.push_back(r.readU32Le()); }
-        samples.push_back(row);
-    }
-    exact(r);
-    return {first,count,std::move(samples)};
+    return readPage(reply,first,count,width);
 } catch(Error &e) { contextualize(e,6,5,false);throw; }
 
 CaptureData Client::captureData()
 try
 {
+    const auto capture_generation=m_session.generation();
     auto status = captureStatus();
     if (status.state != CaptureState::Done) { throw Error(ErrorKind::Usage, "capture is not done"); }
     const size_t width = status.refs.size();
@@ -128,11 +131,32 @@ try
     if (!page) { throw Error(ErrorKind::Protocol, "capture sample does not fit the device payload"); }
     std::vector<std::vector<uint32_t>> samples;
     for (uint32_t first = 0; first < recorded;) {
-        const auto count = static_cast<uint16_t>(std::min(page, recorded - first));
-        auto page_data = captureRead(first, count, width);
-        for (auto &row : page_data.samples) { samples.push_back(std::move(row)); }
-        first += count;
+        std::array<Bytes,4> bodies;
+        std::array<uint32_t,4> starts{};std::array<uint16_t,4> counts{};size_t n=0;
+        for(;n<4 && first<recorded;++n) {
+            starts[n]=first;counts[n]=static_cast<uint16_t>(std::min(page,recorded-first));
+            bodies[n].resize(6);Writer w(bodies[n].data(),bodies[n].size());w.appendU32Le(first);w.appendU16Le(counts[n]);first+=counts[n];
+        }
+        const auto replies=m_session.requestBatch(6,5,{bodies.data(),n});
+        for(size_t i=0;i<n;++i) {
+            auto page_data=readPage(replies[i],starts[i],counts[i],width);
+            for(auto &row:page_data.samples) {samples.push_back(std::move(row));}
+        }
     }
-    return {std::move(status), std::move(samples)};
+    if(m_session.generation()!=capture_generation) {throw Error(ErrorKind::Protocol,"boot changed during capture read");}
+    CaptureData result{std::move(status),std::move(samples),{}};
+    const auto clock=m_session.clockModel();const auto generation=m_session.generation();
+    if(result.status.trigger_index) {
+        const auto period=result.status.sample_period_us;
+        for(uint64_t i=0;i<result.data.size();++i) {
+            const auto trigger=static_cast<uint64_t>(*result.status.trigger_index);
+            const auto delta=(i>=trigger?i-trigger:trigger-i)*period;
+            const auto ts=result.status.trigger_timestamp_us;
+            auto mapped=mapTime(clock,i>=trigger?ts+delta:ts>=delta?ts-delta:0,generation);
+            if(result.status.irregular || (i<trigger && ts<delta)) {mapped.valid=false;}
+            result.times.push_back(mapped);
+        }
+    }
+    return result;
 } catch(Error &e) { contextualize(e,6,4,false);throw; }
 } // namespace drivelink

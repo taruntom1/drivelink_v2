@@ -9,7 +9,18 @@ namespace drivelink {
 class Client
 {
   public:
-    explicit Client(Session &session) : m_session(session) {}
+    explicit Client(Session &session) : m_session(session), m_max_payload(session.maxPayload()) {}
+    // Own all arguments in operation. A fresh Client on the session's serial
+    // service executor shares the same typed services and parsers as sync calls.
+    template<class F>
+    RequestHandle async(F operation, Completion<std::invoke_result_t<F, Client &>> completion)
+    {
+        using T=std::invoke_result_t<F,Client &>;
+        return m_session.async<T>([session=&m_session, operation=std::move(operation)]() mutable -> T {
+            Client client(*session);return operation(client);
+        }, std::move(completion));
+    }
+    Session &session() const { return m_session; }
     DeviceInfo info(); // validates the core protocol version, learns payload cap
     std::vector<TypeDescriptor> types();
     std::vector<ItemDescriptor> items(uint8_t type);
@@ -23,6 +34,8 @@ class Client
     SystemResult system(uint8_t op);
     SystemResult arm() { return system(2); }
     SystemResult disarm() { return system(3); }
+    // Bypasses the serial service executor and reserves emergency admission.
+    RequestHandle disarmAsync(Completion<SystemResult> completion);
     SystemResult acknowledgeFault() { return system(4); }
     OperationResult benchStall(uint8_t loop, uint16_t duration_ms);
     ParamResult get(std::span<const Ref> refs, bool pending = false);
@@ -32,6 +45,7 @@ class Client
     std::vector<DiagEntry> diagEntries();
     OperationResult diagClear(uint8_t what = 3);
     Event event(const Frame &frame) const;
+    static Event decodeEvent(const Frame &frame);
     ItemDescriptor item(Ref ref);
     GroupList groups();
     GroupMutation subConfigure(uint8_t group, uint8_t loop, uint16_t divider, std::span<const Ref> refs);
@@ -39,6 +53,8 @@ class Client
     GroupMutation subEnable(uint8_t group, bool enabled);
     GroupMutation groupClear(uint8_t group, bool command);
     bool command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values = {});
+    std::shared_ptr<CommandGroup> managedCommand(uint8_t group,uint8_t loop,std::span<const Ref> refs,
+                                                std::span<const uint32_t> hold);
     OperationResult captureConfig(uint8_t loop, uint16_t divider, uint32_t samples, uint32_t pre_trigger,
                        const CaptureTrigger &trigger, std::span<const Ref> refs);
     OperationResult captureArm();

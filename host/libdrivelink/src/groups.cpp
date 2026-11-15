@@ -1,6 +1,7 @@
 #include "drivelink/client.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/command.hpp"
 
 namespace drivelink {
 namespace {
@@ -79,13 +80,13 @@ try
     return {epoch,channel};
 } catch(Error &e) { contextualize(e,5,op,true);throw; }
 GroupMutation Client::subConfigure(uint8_t group, uint8_t loop, uint16_t divider, std::span<const Ref> refs)
-{ return groupMutation(static_cast<uint8_t>(defs::GroupOp::SubConfig), configBody(group, loop, divider, refs, true)); }
+{ auto result=groupMutation(static_cast<uint8_t>(defs::GroupOp::SubConfig), configBody(group, loop, divider, refs, true));m_session.removeBuffer(group);return result; }
 GroupMutation Client::cmdConfigure(uint8_t group, uint8_t loop, std::span<const Ref> refs)
-{ return groupMutation(static_cast<uint8_t>(defs::GroupOp::CmdConfig), configBody(group, loop, 1, refs, false)); }
+{ auto result=groupMutation(static_cast<uint8_t>(defs::GroupOp::CmdConfig), configBody(group, loop, 1, refs, false));m_session.stopCommand(group);return result; }
 GroupMutation Client::subEnable(uint8_t group, bool enabled)
 { return groupMutation(static_cast<uint8_t>(defs::GroupOp::SubEnable), {group, static_cast<uint8_t>(enabled)}); }
 GroupMutation Client::groupClear(uint8_t group, bool command)
-{ return groupMutation(static_cast<uint8_t>(command ? defs::GroupOp::CmdClear : defs::GroupOp::SubClear), {group}); }
+{ auto result=groupMutation(static_cast<uint8_t>(command ? defs::GroupOp::CmdClear : defs::GroupOp::SubClear), {group});if(command) {m_session.stopCommand(group);}else {m_session.removeBuffer(group);}return result; }
 Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> values)
 {
     if (values.size() > 64) { throw Error(ErrorKind::Usage, "too many command values"); }
@@ -96,6 +97,20 @@ Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> 
 }
 bool Client::command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values)
 { return m_session.sendCommandGroup(group, commandPayload(epoch, counter, values)); }
+std::shared_ptr<CommandGroup> Client::managedCommand(uint8_t group,uint8_t loop,std::span<const Ref> refs,
+                                                   std::span<const uint32_t> hold) {
+    if(refs.size()!=hold.size()) {throw Error(ErrorKind::Usage,"hold width mismatch");}
+    std::vector<ItemDescriptor> descriptors;
+    for(size_t i=0;i<refs.size();++i) {
+        auto descriptor=item(refs[i]);if(descriptor.kind!=ItemKind::Input) {throw Error(ErrorKind::Usage,"command ref is not an input");}
+        (void)decodeValue(descriptor.value_type,hold[i]);descriptors.push_back(std::move(descriptor));
+    }
+    const Ref watchdog{0,0,protocol::defs::system::kWatchdogMs};
+    const auto ms=get({&watchdog,1}).values.at(0);
+    if(ms<3 || ms>65535) {throw Error(ErrorKind::Usage,"watchdog must allow managed keepalives");}
+    const auto result=cmdConfigure(group,loop,refs);
+    return m_session.manageCommand(group,result.epoch,std::move(descriptors),hold,static_cast<uint16_t>(ms));
+}
 std::optional<SubscriptionSample> decodeSubscription(const Frame &frame,const Group &group,std::span<const ItemDescriptor> descriptors) {
     Reader r(frame.payload.data(),frame.payload.size());const auto version=r.readU8(),epoch=r.readU8();
     if(!r.ok() || version!=protocol::core_wire::kVersion) { malformed(); }
@@ -106,6 +121,7 @@ std::optional<SubscriptionSample> decodeSubscription(const Frame &frame,const Gr
     for(const auto &d:descriptors) {
         const auto bits=r.readU32Le();j.values.push_back(bits);j.typed_values.push_back(decodeValue(d.value_type,bits));
     }
+    j.time=mapTime(frame.clock,j.timestamp_us,frame.generation);
     exact(r);return j;
 }
 } // namespace drivelink

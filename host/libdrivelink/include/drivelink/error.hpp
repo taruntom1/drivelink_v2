@@ -11,7 +11,8 @@ enum class ErrorKind
     Timeout,
     Protocol,
     Rejected,
-    Usage
+    Usage,
+    Cancelled
 };
 // Metadata lives in the base so copying Error (future async completions) keeps
 // the device refusal and uncertainty. A diagnostic query uses family zero.

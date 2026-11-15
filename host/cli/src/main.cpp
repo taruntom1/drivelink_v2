@@ -737,6 +737,9 @@ int main(int argc, char **argv)
     {
         std::string endpoint;
         SessionOptions options;
+        // Short CLI commands own their explicit time measurement; background
+        // pings would alter recorded/replayed wire conversations.
+        options.periodic_time=false;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i)
         {

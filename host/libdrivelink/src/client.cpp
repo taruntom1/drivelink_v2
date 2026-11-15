@@ -317,6 +317,14 @@ try
     }
     return {true, r.result};
 } catch(Error &e) { contextualize(e,1,op,op != 1);throw; }
+RequestHandle Client::disarmAsync(Completion<SystemResult> completion) {
+    return m_session.asyncRequest(1,3,{},[completion=std::move(completion)](std::expected<Reply,Error> reply) mutable {
+        if(!reply) {completion(std::unexpected(reply.error()));return;}
+        if(reply->result!=0 && reply->result!=8) {completion(std::unexpected(DeviceError("DISARM refused",reply->result,reply->detail,1,3)));return;}
+        if(!reply->body.empty()) {Error e(ErrorKind::Protocol,"malformed DISARM response");contextualize(e,1,3,true);completion(std::unexpected(e));return;}
+        completion(SystemResult{true,reply->result});
+    });
+}
 ParamResult Client::get(std::span<const Ref> refs, bool pending)
 try
 {
@@ -456,7 +464,9 @@ try
     }
     return {};
 } catch(Error &e) { contextualize(e,0,3,true);throw; }
-Event Client::event(const Frame &frame) const {
+Event Client::event(const Frame &frame) const {return decodeEvent(frame);}
+Event Client::decodeEvent(const Frame &frame) {
+    auto decode=[&]() -> Event {
     Reader r(frame.payload.data(),frame.payload.size());
     const auto version=r.readU8();
     if (frame.type==protocol::defs::msg::kStatusStream) {
@@ -505,5 +515,13 @@ Event Client::event(const Frame &frame) const {
         malformed();
     }
     return frame;
+    };
+    auto result=decode();
+    std::visit([&](auto &item) {
+        if constexpr(requires {item.timestamp_us;item.time;}) {
+            item.time=mapTime(frame.clock,item.timestamp_us,frame.generation);
+        }
+    },result);
+    return result;
 }
 } // namespace drivelink

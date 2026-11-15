@@ -23,7 +23,7 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
     dropped = set()
     workers, sockets, errors = [], [], []
 
-    def pump(source, destination, incoming):
+    def pump(source, destination, incoming, connection_stopped):
         buffered = bytearray()
         try:
             while not stopped.is_set():
@@ -59,9 +59,10 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
         except (ConnectionResetError, BrokenPipeError):
             pass
         except OSError as error:
-            if not stopped.is_set():
+            if not stopped.is_set() and not connection_stopped.is_set():
                 errors.append(str(error))
         finally:
+            connection_stopped.set()
             # Close this connection only. The CLI reconnects through the same
             # listener after SYSTEM REBOOT, with no proxy-induced extra reboot.
             for current in (source, destination):
@@ -81,8 +82,9 @@ def check(cli_path, endpoint, image, mismatch=False, hold_commit=False):
             try:
                 device = socket.create_connection((remote.hostname, remote.port), timeout=3)
                 client.settimeout(.1); device.settimeout(.1); sockets.extend((client, device))
+                connection_stopped = threading.Event()
                 for source, destination, incoming in ((client, device, False), (device, client, True)):
-                    thread = threading.Thread(target=pump, args=(source, destination, incoming)); workers.append(thread); thread.start()
+                    thread = threading.Thread(target=pump, args=(source, destination, incoming, connection_stopped)); workers.append(thread); thread.start()
             except OSError as error:
                 errors.append(str(error)); client.close()
 
