@@ -58,6 +58,9 @@ def main():
             assert cli('info')['max_payload'] == 1024
             ping=cli('time-ping')['samples'][0]
             assert ping['accepted'] and ping['esp_tx_us'] >= ping['esp_rx_us']
+            human_time = subprocess.run([args.cli, '--endpoint', url, 'time-ping'],
+                                        capture_output=True, text=True, timeout=10, check=True)
+            assert 'samples' in human_time.stdout and 'mapped_' not in human_time.stdout and 'mapping_' not in human_time.stdout
             assert len(cli('time-sync','1')['samples']) >= 3
             sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'firmware/test/uart_comm'))
             from protocol import encode_frame, UartCommProto

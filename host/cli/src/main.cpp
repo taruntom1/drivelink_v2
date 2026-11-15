@@ -325,15 +325,17 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
                     {"esp_tx_us",s.esp_tx_us},{"host_rx_us",s.host_rx_us},{"boot_generation",s.boot_generation},
                     {"accepted",accepted},{"rtt_us",valid?Json(rtt):Json(nullptr)},
-                    {"mapping_valid",mapped.valid},{"mapping_generation",mapped.generation},
-                    {"mapped_host_us",mapped.valid?Json(mapped.host_us):Json(nullptr)},
-                    {"mapped_uncertainty_us",mapped.valid?Json(mapped.uncertainty_us):Json(nullptr)},
                     {"prior_prediction_us",before.drift_valid?Json(prediction):Json(nullptr)}, {"prior_slope",before.slope},
                     {"model",{{"offset_valid",m.offset_valid},{"drift_valid",m.drift_valid},
                         {"device_reference_us",m.device_reference_us},{"host_reference_us",m.host_reference_us},
                         {"slope",m.slope},{"drift_ppm",m.drift_ppm},{"samples",m.samples},
                         {"span_us",m.span_us},{"updated_us",m.updated_us},{"age_us",m.age_us},{"residual_us",m.residual_us},
                         {"min_rtt_us",m.min_rtt_us},{"max_rtt_us",m.max_rtt_us}}}});
+                if(json) {
+                    auto &sample=samples.back();sample["mapping_valid"]=mapped.valid;sample["mapping_generation"]=mapped.generation;
+                    sample["mapped_host_us"]=mapped.valid?Json(mapped.host_us):Json(nullptr);
+                    sample["mapped_uncertainty_us"]=mapped.valid?Json(mapped.uncertainty_us):Json(nullptr);
+                }
             } catch(const Error &e) { if(e.kind!=ErrorKind::Timeout || !duration) { throw; } ++timeouts; }
             if(!duration || interrupted) { break; }
             const auto elapsed=std::chrono::steady_clock::now()-start;
