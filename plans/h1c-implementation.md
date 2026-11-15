@@ -96,4 +96,6 @@ the reference.
 - [x] 3 Final validate.py full gate
 - [x] 4 Self-review and independent high-effort review; findings resolved
 - [x] 5 Hardware checks and restoration
-- [ ] 6 Status/docs, commit, push, PR
+- [x] 6 Status/docs, commit, push, PR
+
+PR: [#72](https://github.com/taruntom1/drivelink_v2/pull/72), targeting `host_overhaul`.

@@ -50,7 +50,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | H1a-1 | Typed values/descriptors, errors and synchronous services; CLI formatting with unchanged output. Depends on T0 | bare board: all planned CLI/mock/OTA smokes passed | high, independent | merged | [#69](https://github.com/taruntom1/drivelink_v2/pull/69) |
 | H1a-2 | Device snapshot and host-windows CI. Depends on H1a-1 | bare board: snapshot/pending and CLI/mock smokes passed | high, independent | merged | [#70](https://github.com/taruntom1/drivelink_v2/pull/70) |
 | H1b | Async path, events into the model, seqlock and sample-ring group buffers, command keepalives, periodic time and timestamp mapping. Depends on H1a-2 | bare board: time, 1 kHz groups, smokes | high, independent | merged | [#71](https://github.com/taruntom1/drivelink_v2/pull/71) |
-| H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | in review | |
+| H1c | Device identity, core v9 (firmware, host, vdev, docs). Depends on H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | high, independent | in review | [#72](https://github.com/taruntom1/drivelink_v2/pull/72) |
 | H2a | GUI foundation: app, Theme from Figma tokens (G8 folded in), style, shell, DISARM/Esc, Qt adapters, test and screenshot tooling, vdev scenario hooks, `setup_linux.sh`. Depends on H1b, H1c | vdev | high, independent | planned | |
 | H2b | Connect and Device screens (rename, OTA, link lost, reboot notice). Depends on H2a | bare board: GUI scenarios | high, independent | planned | |
 | H2c | Layout screen. Depends on H2b | vdev | high, self | planned | |
