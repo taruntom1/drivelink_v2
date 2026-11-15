@@ -94,6 +94,24 @@ Implementation is complete. All production code was written in this session.
   Production safety thresholds are unchanged; prior hardware results apply.
   The Windows check passed, followed by five consecutive runs each of
   `host-async` and `host-identity` (10/10 passes), then the full seven-check gate.
+  Those two scenarios also passed in CI run `43731947963`. That run exposed
+  a separate preexisting unit-fixture race: the timeout peer closed after a
+  90 ms sleep, which could beat delivery of the client's 40 ms timeout on a
+  delayed runner. The peer now waits for Session teardown, preserving the
+  timeout/context/uncertainty assertions. The focused case passed 30 consecutive
+  Windows runs; self-review and independent high-effort review cleared it.
+  The subsequent local full gate passed those tests and all other checks, but
+  exposed an intermittent missing raw OTA-pipeline reply. Inspection found an
+  admission race: vdev may reject a new socket until it processes the previous
+  CLI owner's EOF; that fixture had
+  sent REBOOT immediately after connect. It now proves GET_INFO admission on
+  the same socket before sending the mutation pipeline exactly once. Only the
+  read-only handshake reconnects. Post-send diagnostics retain response headers
+  and EOF/reset/deadline; both acknowledgement and closure are required, and
+  the Receiving reboot must reach Idle. Independent review caught a weakened
+  deadline assertion during this repair; it was fixed and cleared. Eight Windows
+  cycles with deliberately held competing owners passed (20–26 admission
+  attempts per cycle), including both FINISH/ABORT fences and rollback.
 
 Real motor/IMU/Pi checks remain in the existing deferred rows; identity adds no
 new hardware requirement. Time v1 is unchanged; protocol pings and production

@@ -100,7 +100,14 @@ TEST_CASE("device refusal metadata survives value-based error propagation") {
 TEST_CASE("submitted mutation failures report uncertainty while reads and preflight do not") {
     struct Request { uint8_t family,op;bool mutation; };
     for(const auto request:{Request{1,1,false},Request{1,5,true},Request{7,3,false}}) {
-        FakeDevice device([](Socket &socket) { readFrame(socket);std::this_thread::sleep_for(std::chrono::milliseconds(90)); });
+        FakeDevice device([](Socket &socket) {
+            readFrame(socket);
+            // Keep the peer alive until Session teardown. A fixed sleep races
+            // timeout delivery on a descheduled runner and can produce EOF first.
+            std::array<uint8_t,1> byte{};asio::error_code error;
+            CHECK(socket.read_some(asio::buffer(byte),error)==0);
+            CHECK((error==asio::error::eof || error==asio::error::connection_reset));
+        });
         SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(40);options.read_retries=0;
         Session session(device.endpoint(),options);
         try { session.request(request.family,request.op);FAIL("missing timeout"); }
