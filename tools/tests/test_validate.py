@@ -2,9 +2,12 @@
 from pathlib import Path
 import io
 import json
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -243,6 +246,24 @@ class RunTest(unittest.TestCase):
         self.assertFalse(caught.exception.warned)
         self.assertIn('exit 3', str(caught.exception))
         self.assertIn('boom', caught.exception.detail)
+
+    def test_exit_does_not_wait_for_a_descendant_holding_stdout(self):
+        code = ("import subprocess, sys; "
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)']); "
+                "print('CHILD', child.pid, flush=True); print('failed', end='', flush=True); sys.exit(3)")
+        started = time.monotonic()
+        try:
+            with self.assertRaises(validate.Failed) as caught:
+                self.run_python(code, {})
+            self.assertIn('failed', caught.exception.detail)
+            self.assertLess(time.monotonic() - started, 5)
+        finally:
+            for line in (self.out / 'demo.log').read_text().splitlines():
+                if line.startswith('CHILD '):
+                    try:
+                        os.kill(int(line.split()[1]), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
 
 
 class ReportTest(unittest.TestCase):

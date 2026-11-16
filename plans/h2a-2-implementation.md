@@ -171,6 +171,24 @@ required wire, safety-rule or later-step change returns to the user first.
 
 Validation observations to retain if they recur:
 
+- Windows CI hit `stats missing` in `existingInputAndUncertainPartialSetup`:
+  the fixture assumed the vdev's 100 ms poll would always finish within a fixed
+  150 ms sleep. It now waits up to eight seconds for the exact existing sequenced
+  `SCENARIO` acknowledgement, emitted after stats close, before reading the file
+  or issuing the next injection. Fixture failures throw so cleanup unwinds instead
+  of aborting. A dead-vdev regression checks that path.
+- That CI run printed CTest's final failure summary but stayed running for almost
+  six hours. The validator's pipe reader could wait forever when a descendant
+  retained stdout after CTest exited. A regression reproduces that condition;
+  output is now tailed from a temporary file until command exit, preserving the
+  nonzero status and final partial line. The original retaining process cannot
+  be identified: GitHub published no Windows archive or artifact after cancellation.
+  The Windows build/test/install step also has a 30-minute limit. These changes
+  affect test/validation infrastructure only; no production mutation is retried.
+  Independent high-effort Codex follow-up review found no actionable defect.
+  The 49 Python tooling tests, focused Windows backend suite, and full seven-check
+  gate passed after these fixes, including both host toolchains and all firmware
+  builds. The clean committed source is recorded by the updated PR summary.
 - One Windows OTA integration run got a TCP reset during the pipeline's
   restore-reboot call. The fresh-fixture focused integration rerun and later
   full checks passed. No automatic REBOOT/mutation retry was added.

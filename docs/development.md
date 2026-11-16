@@ -117,6 +117,10 @@ One script holds the list of checks and their commands. CI calls it with `--only
 - **Compiler crashes.** A step that fails with `internal compiler error` in its output runs once more (see "Build traps" in this guide). If it then passes, the result says `pass (after one retry of a compiler crash)`. Nothing else is retried: a failing test fails the check.
 - **Missing tools.** Every check's toolchain is looked up before anything runs. A check that can't run shows as `UNAVAILABLE` and fails the run.
 - **Results.** One line per check with its time. A failure prints the end of its output. The full output is `build/validate/<check>.log`, and `build/validate/summary.txt` is the text for the PR's validation section: it has the revision and says what was not run.
+- **Process output.** Commands write to a temporary file that the validator tails.
+  Completion follows the command's exit, so a crashed test's descendant retaining
+  stdout cannot leave validation waiting forever for pipe EOF. Partial final lines
+  and nonzero exit codes are retained; failed tests are not retried.
 - **Agent report.** Every completed validation invocation also writes
   `build/validate/summary.json` automatically; no extra flag is needed. Read this
   first to establish verification state, then open only the relevant log.
@@ -177,6 +181,8 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   SDK version and runs `validate.py --only host-win`. The validator and preset
   enforce the selected compiler; the runner's default compiler cannot replace it.
   Validation logs and JSON/text summaries are uploaded even on failure.
+  Its build/test/install step has a 30-minute limit, leaving the diagnostic
+  upload step able to run after a timeout.
 - The Windows installer uses aqtinstall pinned to upstream commit
   `5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7`: released 3.3.0 does not handle
   the split Windows Qt 6.11+ repositories. The workflow names the exact Qt

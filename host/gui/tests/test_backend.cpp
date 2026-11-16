@@ -15,6 +15,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <algorithm>
+#include <stdexcept>
 
 using namespace drivelink;
 using namespace drivelink::gui;
@@ -34,15 +35,16 @@ struct Fixture {
     QTemporaryDir directory;
     QProcess process;
     QString endpoint;
+    QByteArray output;
     uint64_t sequence=0;
     explicit Fixture(bool safe=false,bool pty=false) {
         QStringList args={"--port","0","--state",directory.path()+"/state","--scenario-file",directory.path()+"/control"};
         if(safe) {args<<"--safe-mode";}
         if(pty) {args<<"--pty";}
         process.start(QString::fromUtf8(VDEV_PATH),args);
-        if(!process.waitForStarted(10000) || !process.waitForReadyRead(10000)) {qFatal("vdev did not start");}
+        if(!process.waitForStarted(10000) || !process.waitForReadyRead(10000)) {throw std::runtime_error("vdev did not start");}
         endpoint=QString::fromUtf8(process.readLine()).trimmed().mid(6);
-        if(!endpoint.startsWith("tcp://") && !endpoint.startsWith("serial://")) {qFatal("bad vdev endpoint");}
+        if(!endpoint.startsWith("tcp://") && !endpoint.startsWith("serial://")) {throw std::runtime_error("bad vdev endpoint");}
         if(!safe) {
             Session s(endpoint.toStdString());Client c(s);auto info=c.info();
             std::vector<Ref> refs;std::vector<uint32_t> values;
@@ -57,14 +59,27 @@ struct Fixture {
     ~Fixture() {process.kill();process.waitForFinished(10000);}
     void command(const QString &action) {
         const auto temp=directory.path()+"/next";QFile file(temp);
-        if(!file.open(QIODevice::WriteOnly)) {qFatal("cannot write control");}
+        if(!file.open(QIODevice::WriteOnly)) {throw std::runtime_error("cannot write control");}
         file.write((QString::number(++sequence)+" "+action+"\n").toUtf8());file.close();
-        const auto path=directory.path()+"/control";QFile::remove(path);QFile::rename(temp,path);
-        QTest::qWait(150);
+        const auto path=directory.path()+"/control";
+        if(QFile::exists(path) && !QFile::remove(path)) {throw std::runtime_error("cannot replace control");}
+        if(!QFile::rename(temp,path)) {throw std::runtime_error("cannot publish control");}
+        const auto acknowledgement=(QString("SCENARIO %1 %2\n").arg(sequence).arg(action.section(' ',0,0))).toUtf8();
+        // The 100 ms poll is not a scheduling guarantee. Wait for this command's
+        // acknowledgement, emitted after its effect and stats-file close.
+        const auto acknowledged=waitFor([&]{
+            output+=process.readAllStandardOutput();output.replace("\r\n","\n");
+            return output.contains(acknowledgement) || process.state()==QProcess::NotRunning;
+        });
+        if(!acknowledged || !output.contains(acknowledgement)) {
+            throw std::runtime_error((QString("vdev did not acknowledge %1: %2 %3")
+                .arg(sequence).arg(QString::fromUtf8(output),QString::fromUtf8(process.readAllStandardError()))).toStdString());
+        }
+        output.clear();
     }
     QByteArray stats() {
         command("stats");QFile file(directory.path()+"/control.stats");
-        if(!file.open(QIODevice::ReadOnly)) {qFatal("stats missing");}
+        if(!file.open(QIODevice::ReadOnly)) {throw std::runtime_error("acknowledged stats file missing");}
         return file.readAll().replace("\r\n","\n");
     }
     void multiLoop() {
@@ -100,6 +115,12 @@ GroupList available() {
 class BackendTests final : public QObject {
     Q_OBJECT
 private slots:
+    void scenarioFailureUnwinds() {
+        Fixture fixture;
+        QVERIFY(fixture.stats().contains("disarms 0\n"));
+        fixture.process.kill();QVERIFY(fixture.process.waitForFinished(10000));
+        QVERIFY_EXCEPTION_THROWN(fixture.stats(),std::runtime_error);
+    }
     void planning() {
         auto s=sample();auto groups=available();
         auto plan=planCommands(s,groups);QCOMPARE(plan.size(),size_t(4));

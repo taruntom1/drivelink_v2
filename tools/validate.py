@@ -373,15 +373,35 @@ def warning_lines(output):
 
 def execute(program, step, env, log, verbose):
     lines = []
-    with subprocess.Popen([program, *step.argv[1:]], cwd=step.cwd, env=env,
-                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT) as process:
-        for raw in process.stdout:
-            line = raw.decode('utf-8', 'replace').rstrip('\r\n')
-            lines.append(line)
-            log.write(line + '\n')
-            if verbose:
-                print(line, flush=True)
+    # A timed-out/crashed test can leave a descendant holding stdout. A pipe's
+    # EOF then never arrives, even after CTest exits. Tail a regular file until
+    # the command exits instead. Independent handles keep the writer's offset
+    # untouched; O_TEMPORARY lets Windows delete it after the last child closes.
+    with tempfile.NamedTemporaryFile() as output:
+        reader_fd = os.open(output.name, os.O_RDONLY | getattr(os, 'O_TEMPORARY', 0)
+                            | getattr(os, 'O_BINARY', 0))
+        with os.fdopen(reader_fd, 'rb') as reader, \
+                subprocess.Popen([program, *step.argv[1:]], cwd=step.cwd, env=env,
+                                 stdin=subprocess.DEVNULL, stdout=output,
+                                 stderr=subprocess.STDOUT) as process:
+            pending = b''
+            while True:
+                exited = process.poll() is not None
+                pending += reader.read()
+                chunks = pending.split(b'\n')
+                pending = chunks.pop()
+                if exited and pending:
+                    chunks.append(pending)
+                for raw in chunks:
+                    line = raw.decode('utf-8', 'replace').rstrip('\r')
+                    lines.append(line)
+                    log.write(line + '\n')
+                    if verbose:
+                        print(line, flush=True)
+                log.flush()
+                if exited:
+                    break
+                time.sleep(0.05)
     log.flush()
     return process.returncode, lines
 
