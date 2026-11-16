@@ -18,6 +18,9 @@ T.Dialog {
     property string rejectText: qsTr("Cancel")
     property string confirmationText
     property alias confirmed: confirmation.checked
+    // Extra content between the body and the actions (a field, a list).
+    property alias extra: slot.data
+    property bool acceptEnabled: true
 
     anchors.centerIn: parent
     width: 480
@@ -44,8 +47,8 @@ T.Dialog {
     contentItem: Column {
         spacing: Theme.space16
         focus: true
-        Keys.onReturnPressed: if (!control.destructive) control.accept()
-        Keys.onEnterPressed: if (!control.destructive) control.accept()
+        Keys.onReturnPressed: if (!control.destructive && control.acceptEnabled) control.accept()
+        Keys.onEnterPressed: if (!control.destructive && control.acceptEnabled) control.accept()
 
         Text {
             objectName: "title"
@@ -67,6 +70,13 @@ T.Dialog {
             wrapMode: Text.Wrap
             lineHeightMode: Text.FixedHeight
             lineHeight: Theme.lineBodyDefault
+        }
+        Column {
+            id: slot
+            objectName: "extra"
+            width: parent.width
+            spacing: Theme.space8
+            visible: children.length > 0
         }
         T.CheckBox {
             id: confirmation
@@ -122,6 +132,7 @@ T.Dialog {
                 DLButton {
                     objectName: "acceptButton"
                     kind: control.destructive ? DLButton.Danger : DLButton.Primary
+                    enabled: control.acceptEnabled
                     text: control.acceptText
                     onClicked: control.accept()
                 }

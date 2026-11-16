@@ -30,7 +30,7 @@ logs its internal choices.
 | H1c | Device identity, core v9 (firmware, host, vdev, docs) | H1a-2; may run beside H1b | bare board: identity, name persistence, smokes | independent |
 | H2a-1 | GUI build and style: `setup_linux.sh` and CI, Theme from Figma tokens (G8 folded in), fonts and icons, the shell controls, style gallery, Qt Quick Test | H1b, H1c | none (no device code) | self |
 | H2a-2 | GUI shell and backend: app, shell, DISARM/Esc, Qt adapters, arm/ack, command groups, item-model bases, vdev scenario hooks, screenshot tool | H2a-1 | vdev | independent |
-| H2b | Connect and Device screens | H2a-2 | bare board: GUI scenarios | independent |
+| H2b | Connect and Device screens (H2b-1), OTA (H2b-2) | H2a-2 | bare board: GUI scenarios | independent |
 | H2c | Layout screen | H2b | vdev | self |
 | H2d | Monitor screen | H2c | vdev | independent |
 | H2e | Tune screen, run metrics and plant identification, session files | H2d | vdev; deferred: motor | independent |
@@ -178,6 +178,13 @@ Review: independent (DISARM and Esc, arming, command group keepalives, threading
 ## H2b Connect and Device
 
 **Depends on** H2a-2. **Design:** G3 frames and decisions, G7b Device loop table.
+
+User-approved split (2026-11-17): **H2b-1** builds everything below except OTA,
+with libdrivelink serial-port listing, the active-only faults badge and loop
+run time from GUI-owned free-slot subscriptions. **H2b-2** moves the CLI's OTA
+reboot, identity check and CONFIRM workflow into libdrivelink (CLI output
+unchanged), adds the OTA dialog and the firmware card's update action, and runs
+the OTA bare-board check. Both are independently reviewed.
 
 Scope:
 - Connect: serial ports and baud, a TCP address for vdev, loading progress, protocol mismatch, recent devices keyed by device id (`QSettings`). The Agent tab is a disabled placeholder until H3b.

@@ -36,6 +36,12 @@ class Error : public std::runtime_error
     // An observed Boot invalidated this request's device generation. Distinct
     // from malformed protocol data; readiness polling can restart safely.
     bool boot_changed = false;
+    // Nonzero when the peer answered with this incompatible wire version
+    // (core or diag), so a client can show both versions.
+    uint8_t peer_version = 0;
+    // The operating-system error code when opening the endpoint failed
+    // (Win32 ERROR_ACCESS_DENIED for a serial port another program holds).
+    int os_error = 0;
 };
 class DeviceError : public Error
 {

@@ -169,6 +169,26 @@ Window {
         }
 
         Section {
+            title: "INPUTS, CHECKS, PROGRESS"
+            DLTextField { width: 260; text: "bench-left" }
+            DLTextField { width: 260; placeholderText: "02:44:4c:00:00:01" }
+            DLTextField { width: 260; text: "name	with tab"; error: true }
+            DLComboBox { width: 180; model: [921600, 460800, 230400, 115200] }
+            Column {
+                spacing: Theme.space8
+                DLCheckItem { width: 320; status: DLCheckItem.Pass; label: "Device metadata and status are current" }
+                DLCheckItem { width: 320; status: DLCheckItem.Fail; label: "No fault latched"; detail: "Acknowledge the fault" }
+                DLCheckItem { width: 320; status: DLCheckItem.Active; label: "Load descriptors, layout and status" }
+                DLCheckItem { width: 320; status: DLCheckItem.Pending; label: "Command keepalives are ready" }
+            }
+            Column {
+                spacing: Theme.space16
+                DLProgressBar { width: 240; value: 0.4 }
+                DLProgressBar { width: 240; value: 0.9 }
+            }
+        }
+
+        Section {
             title: "TOAST, TOOLTIP"
             DLToast { tone: DLToast.Info; text: "Model reloaded: the descriptor hash changed."; timeout: 0 }
             DLToast { tone: DLToast.Ok; text: "Saved to flash."; timeout: 0 }

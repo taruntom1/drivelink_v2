@@ -291,7 +291,12 @@ struct Session::Impl
         }
         if (ec)
         {
-            throw Error(ErrorKind::Connection, "open: " + ec.message());
+            Error failure(ErrorKind::Connection, "open: " + ec.message());
+            if (ec.category() == asio::error::get_system_category())
+            {
+                failure.os_error = ec.value();
+            }
+            throw failure;
         }
 
         work.emplace(asio::make_work_guard(io));
@@ -571,7 +576,12 @@ struct Session::Impl
             const bool core=r->kind!=msg::kDiagQuery;
             if(f.msg_type!=(core?msg::kCoreResponse:msg::kDiagQueryResponse)) {return;}
             if(f.len<(core?6U:4U) || f.payload[0]!=(core?p::core_wire::kVersion:3)) {
-                complete(r,std::unexpected(error(r,ErrorKind::Protocol,"incompatible protocol version or truncated response header")),true);return;
+                auto failure=error(r,ErrorKind::Protocol,"incompatible protocol version or truncated response header");
+                const uint8_t expected=core?p::core_wire::kVersion:3;
+                if(f.len>=1 && f.payload[0]!=expected) {
+                    failure.peer_version=f.payload[0];
+                }
+                complete(r,std::unexpected(failure),true);return;
             }
             if(core?(f.payload[2]!=r->family || f.payload[3]!=r->op):f.payload[2]!=r->op) {return;}
             complete(r,Bytes(f.payload,f.payload+f.len));return;

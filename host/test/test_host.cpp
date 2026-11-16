@@ -97,6 +97,19 @@ TEST_CASE("device refusal metadata survives value-based error propagation") {
         CHECK(completion.error().family==1);CHECK(completion.error().op==5);
     }
 }
+TEST_CASE("an incompatible peer reports its wire version") {
+    FakeDevice device([](Socket &socket) {
+        const auto request=readFrame(socket);
+        sendFrame(socket,0x41,{uint8_t(protocol::core_wire::kVersion-1),request[1],request[2],request[3],0,0});
+    });
+    SessionOptions options=testOptions();options.read_retries=0;
+    Session session(device.endpoint(),options);Client client(session);
+    try { client.info();FAIL("accepted an incompatible reply"); }
+    catch(const Error &e) {
+        CHECK(e.kind==ErrorKind::Protocol);CHECK(e.peer_version==protocol::core_wire::kVersion-1);
+        CHECK(std::string(e.what())=="incompatible protocol version or truncated response header");
+    }
+}
 TEST_CASE("submitted mutation failures report uncertainty while reads and preflight do not") {
     struct Request { uint8_t family,op;bool mutation; };
     for(const auto request:{Request{1,1,false},Request{1,5,true},Request{7,3,false}}) {
