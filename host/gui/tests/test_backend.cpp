@@ -264,19 +264,27 @@ private slots:
         for(const auto &g:groups.groups) {if(g.kind==GroupKind::Command && g.id!=0) {QVERIFY(!g.configured);}}
     }
     void safeModeAndLostLink() {
+        qInfo("safeModeAndLostLink: safe-mode connection");
         {Fixture fixture(true);LocalConnection c;c.connectTo(fixture.endpoint);
          QVERIFY(waitFor([&]{return c.ready();}));QVERIFY(c.safeMode());QVERIFY(!c.armEnabled());
          c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));}
+        qInfo("safeModeAndLostLink: ordinary connection");
         Fixture fixture;LocalConnection c;c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled();}));
+        qInfo("safeModeAndLostLink: stall and await link-loss teardown");
         fixture.command("stall");QVERIFY(waitFor([&]{return !c.linked();},6000));QVERIFY(!c.armEnabled());
+        qInfo("safeModeAndLostLink: resume and reconnect");
         fixture.command("resume");c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled();}));
+        qInfo("safeModeAndLostLink: reboot and await link-loss teardown");
         fixture.command("reboot");QVERIFY(waitFor([&]{return !c.linked();}));
+        qInfo("safeModeAndLostLink: reconnect after reboot");
         c.connectTo(fixture.endpoint);
         QVERIFY2(waitFor([&]{return c.armEnabled();}),qPrintable(c.armBlockedReason()+": "+c.lastError()["message"].toString()+
             QString(" (%1/%2)").arg(c.lastError()["result"].toInt()).arg(c.lastError()["detail"].toInt())));
         QCOMPARE(c.armState(),0);
         for(const auto &loop:c.snapshot()->info.loops) {QCOMPARE(loop.rate_hz,uint32_t(10));}
+        qInfo("safeModeAndLostLink: explicit disconnect");
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+        qInfo("safeModeAndLostLink: final destruction");
     }
     void observeDuringSlowDiscovery() {
         Fixture fixture;

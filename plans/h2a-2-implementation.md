@@ -171,6 +171,26 @@ required wire, safety-rule or later-step change returns to the user first.
 
 Validation observations to retain if they recur:
 
+- A follow-up full gate exposed a Windows cleanup race in the stdout-descendant
+  regression: process termination returned before the child released its working
+  directory. The test now retains a waitable process handle through exit, including
+  a natural-exit race. Independent review cleared that cleanup fix; all 49 tooling
+  tests passed. The failed gate was stopped while this test-only fix was made.
+- The second Windows CI run passed the stats/uncertain-setup case but timed out
+  inside `safeModeAndLostLink`; the validator now exited with the failed status
+  and uploaded its diagnostics. Thirty focused local Windows repeats passed.
+  A teardown audit and independent review confirmed a three-thread lock cycle:
+  close holds the closing lock while joining I/O, I/O completion needs the
+  operation-owner lock, and the service worker could hold that owner lock while
+  cancelling a handle that needs the closing lock. Both single and batched
+  requests now sample cancellation under the owner lock and cancel after release.
+  Added 128 admission/close races, stage logging in the GUI loss test, and a
+  60-second QtTest function watchdog below the unchanged 180-second suite limit.
+  The CI process stack was unavailable, so attributing its timeout to this
+  confirmed cycle remains an inference until further evidence.
+  Independent follow-up review cleared the lock fix and stress-test lifetimes.
+  The focused backend/concurrency suites and the full seven-check gate passed
+  afterward on both host toolchains, with zero compiler warnings and no omissions.
 - Windows CI hit `stats missing` in `existingInputAndUncertainPartialSetup`:
   the fixture assumed the vdev's 100 ms poll would always finish within a fixed
   150 ms sleep. It now waits up to eight seconds for the exact existing sequenced

@@ -2,6 +2,7 @@
 from pathlib import Path
 import io
 import json
+import ctypes
 import os
 import signal
 import subprocess
@@ -260,8 +261,31 @@ class RunTest(unittest.TestCase):
         finally:
             for line in (self.out / 'demo.log').read_text().splitlines():
                 if line.startswith('CHILD '):
+                    child_pid = int(line.split()[1])
+                    if os.name == 'nt':
+                        # TerminateProcess is asynchronous. Retain a waitable
+                        # handle until the child releases its working directory.
+                        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                        kernel.OpenProcess.restype = ctypes.c_void_p
+                        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                        child = kernel.OpenProcess(0x100001, False, child_pid)
+                        if not child:
+                            if ctypes.get_last_error() == 87:  # already exited
+                                continue
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        try:
+                            if not kernel.TerminateProcess(child, 1):
+                                error = ctypes.get_last_error()
+                                if kernel.WaitForSingleObject(child, 0) != 0:
+                                    raise ctypes.WinError(error)
+                            self.assertEqual(kernel.WaitForSingleObject(child, 5000), 0)
+                        finally:
+                            kernel.CloseHandle(child)
+                        continue
                     try:
-                        os.kill(int(line.split()[1]), signal.SIGTERM)
+                        os.kill(child_pid, signal.SIGTERM)
                     except ProcessLookupError:
                         pass
 

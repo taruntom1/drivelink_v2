@@ -23,6 +23,8 @@ retries (2), event capacity (128), request/completion capacity (64), a FIFO
 dispatcher and periodic time ownership (enabled). TCP endpoints currently require a numeric
 IPv4 address. Serial endpoints are `serial://COM3` or `serial:///dev/ttyUSB0`.
 `close()` is idempotent, cancels pending calls and joins the I/O thread.
+It can overlap cancellation and admission of both single and batched typed
+requests; no application dispatcher progress is needed to finish closing.
 Windows keeps the adapter's DTR/RTS lines disabled: reopening the CLI must not
 reset the ESP32 and discard pending layout edits. Asio's Windows open already
 configures no flow control; its flow_control(none) setter is deliberately

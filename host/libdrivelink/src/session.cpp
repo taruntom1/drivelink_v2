@@ -453,16 +453,21 @@ struct Session::Impl
             }
             promise->set_value(std::move(result));
         },service_context);
+        bool cancel_after_binding=false;
         if(service_context) {
             std::lock_guard lock(service_context->mutex);
             service_context->interrupt=[handle]{handle.cancel();};
-            if(service_context->cancelled) { handle.cancel(); }
+            cancel_after_binding=service_context->cancelled;
             // Queued mutations can still reach the device; conservatively
             // retain uncertainty across the entire composite operation.
             if(!(kind==msg::kDiagQuery?(op==1 || op==2):retryable(family,op)) && !(family==7 && op==3)) {
                 service_context->mutation=true;
             }
         }
+        // cancel() may acquire close_mutex. Never call it with the owner lock:
+        // close holds close_mutex while joining I/O, whose completion needs the
+        // owner lock to reserve reply order.
+        if(cancel_after_binding) {handle.cancel();}
         auto result=future.get();
         if(service_context) { std::lock_guard lock(service_context->mutex);service_context->interrupt={}; }
         if(!result) { throw result.error(); }return std::move(*result);
@@ -735,12 +740,14 @@ std::vector<Reply> Session::requestBatch(uint8_t family,uint8_t op,std::span<con
         }
         for(const auto &r:requests) {d.begin(r);}
      });}
+    bool cancel_after_binding=false;
     if(service_context) {
         std::lock_guard lock(service_context->mutex);service_context->interrupt=[handles]{for(const auto &h:handles) {h.cancel();}};
         service_context->family=family;service_context->op=op;service_context->has_context=true;
         if(!retryable(family,op)) {service_context->mutation=true;}
-        if(service_context->cancelled) {for(const auto &h:handles) {h.cancel();}}
+        cancel_after_binding=service_context->cancelled;
     }
+    if(cancel_after_binding) {for(const auto &h:handles) {h.cancel();}}
     std::vector<Reply> replies;std::optional<Error> first;
     for(auto &future:futures) {
         auto data=future.get();if(!data) {if(!first) {first=data.error();}continue;}

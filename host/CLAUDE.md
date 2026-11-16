@@ -23,6 +23,8 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   explicit close. Serialize close with submission; a checked-but-not-yet-posted
   request must never land on a stopped context. Close must not depend on peer or
   application dispatcher progress. Bound event queues and expose drop counters.
+  Release operation-owner locks before cancelling transport request handles:
+  close joins I/O under its closing lock, and I/O completion needs the owner lock.
 - DeviceModel retains Session, not a temporary service Client. Publish immutable
   shared snapshots, tag generations, invalidate readiness on Boot and reload
   complete metadata. Reload publication preserves current link/runtime/loss

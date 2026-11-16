@@ -29,7 +29,8 @@ add_test(NAME gui-gallery
 set_tests_properties(gui-gallery PROPERTIES TIMEOUT 60 ENVIRONMENT_MODIFICATION "${gui_test_env}"
   PASS_REGULAR_EXPRESSION "gallery-light\\.png [0-9]+x[0-9]+")
 add_test(NAME gui-backend COMMAND gui_backend_tests)
-set_tests_properties(gui-backend PROPERTIES TIMEOUT 180 ENVIRONMENT_MODIFICATION "${gui_test_env}")
+set_tests_properties(gui-backend PROPERTIES TIMEOUT 180
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gui-screenshots COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scenarios.py
   --gui $<TARGET_FILE:drivelink-gui> --vdev $<TARGET_FILE:drivelink-vdev>

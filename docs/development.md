@@ -200,6 +200,9 @@ arm/DISARM/ack, uncertain outcomes and key/popup/scrim flows) and
 existing `gui-quick` and `gui-gallery`. Linux additionally checks an in-place
 Boot over the vdev PTY. They use offscreen/software rendering and the same
 CTest targets in CI; no new validator check/toolchain is needed.
+The backend's QtTest function watchdog is 60 seconds, below CTest's 180-second
+suite limit, so Qt can report a blocked function before the outer timeout.
+The safe-mode/link-loss test records its teardown/reconnect stages in failure logs.
 
 From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
 (or `linux`). The complete post-review vdev campaign and ten-scenario render
@@ -220,6 +223,9 @@ The script requires clean saved settings and idle groups and restores them.
 
 The host checks include `host-concurrency` and a separate real-vdev `host-async`
 consumer alongside unit, model, golden/replay, integration and install tests.
+Concurrency coverage includes single and batched typed admission racing close;
+transport cancellation runs outside operation-owner locks to avoid an I/O-join
+lock cycle. This is stress coverage, not a forced scheduling interleaving.
 `host/test/async_probe` takes one endpoint; on a bare loops-only serial device
 it also checks Boot invalidation/reload, restoring the original idle groups.
 See host/README.md for its preconditions and native scheduling distinction.
