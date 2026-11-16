@@ -2,9 +2,13 @@
 from pathlib import Path
 import io
 import json
+import ctypes
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -243,6 +247,47 @@ class RunTest(unittest.TestCase):
         self.assertFalse(caught.exception.warned)
         self.assertIn('exit 3', str(caught.exception))
         self.assertIn('boom', caught.exception.detail)
+
+    def test_exit_does_not_wait_for_a_descendant_holding_stdout(self):
+        code = ("import subprocess, sys; "
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)']); "
+                "print('CHILD', child.pid, flush=True); print('failed', end='', flush=True); sys.exit(3)")
+        started = time.monotonic()
+        try:
+            with self.assertRaises(validate.Failed) as caught:
+                self.run_python(code, {})
+            self.assertIn('failed', caught.exception.detail)
+            self.assertLess(time.monotonic() - started, 5)
+        finally:
+            for line in (self.out / 'demo.log').read_text().splitlines():
+                if line.startswith('CHILD '):
+                    child_pid = int(line.split()[1])
+                    if os.name == 'nt':
+                        # TerminateProcess is asynchronous. Retain a waitable
+                        # handle until the child releases its working directory.
+                        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+                        kernel.OpenProcess.restype = ctypes.c_void_p
+                        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+                        child = kernel.OpenProcess(0x100001, False, child_pid)
+                        if not child:
+                            if ctypes.get_last_error() == 87:  # already exited
+                                continue
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        try:
+                            if not kernel.TerminateProcess(child, 1):
+                                error = ctypes.get_last_error()
+                                if kernel.WaitForSingleObject(child, 0) != 0:
+                                    raise ctypes.WinError(error)
+                            self.assertEqual(kernel.WaitForSingleObject(child, 5000), 0)
+                        finally:
+                            kernel.CloseHandle(child)
+                        continue
+                    try:
+                        os.kill(child_pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
 
 
 class ReportTest(unittest.TestCase):

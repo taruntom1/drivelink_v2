@@ -33,6 +33,7 @@ Rectangle {
     property bool faultsActive: false
 
     property bool unsaved: false
+    property bool configActionsVisible: true
     property bool saveEnabled: true
     property bool revertEnabled: true
     property string saveBlockedReason
@@ -166,6 +167,7 @@ Rectangle {
                 text: qsTr("unsaved")
             }
             DLReasonHover {
+                visible: bar.configActionsVisible
                 anchors.verticalCenter: parent.verticalCenter
                 reason: bar.saveBlockedReason
 
@@ -179,6 +181,7 @@ Rectangle {
                 }
             }
             DLReasonHover {
+                visible: bar.configActionsVisible
                 anchors.verticalCenter: parent.verticalCenter
                 reason: bar.revertBlockedReason
 

@@ -4,6 +4,7 @@ One short row per hardware run, newest first: the date, the step, what was run (
 
 | Date | Step | What was run | Result |
 |---|---|---|---|
+| 2026-11-16 | H2a-2 | Post-review Windows vdev campaign: `host/gui/tests/scenarios.py --gui <drivelink-gui> --vdev <drivelink-vdev> --backend <gui_backend_tests> --out build/h2a-2/scenarios` | Pass: 18 backend/UI checks, including early/repeated DISARM, lost ARM reply and observer close; all ten scenarios rendered at both sizes/themes (40 PNGs, dimensions checked). Representative modal, fault/drawer, safe, Connect and lost-link views inspected; status bar remains outside the scrim. Isolated native state only; physical bench unchanged |
 | 2026-11-15 | H1c | Final read-only state and normal bench-command refusals | Pass: core v9, factory id 1cdbd446ff38, empty saved name; confirmed normal ELF af77763ae42b77ea in ota_0; all twelve original loop/system settings, factory layout, disarmed idle groups/capture, no pending/dirty flags; crash/stall refused |
 | 2026-11-15 | H1c | `ota_smoke.py` with guarded normal baseline and distinct candidate | Pass: duplicate/conflict/gap/hash, partial reset, FINISH/ABORT, confirmed boot, rollback and exact H1c baseline/NVS restoration |
 | 2026-11-15 | H1c | Console-enabled affinity rerun after the harness fix | Pass: enum/default/choices/refusals/staging/persistence/ticking and full cleanup; all ten task stacks >1 KiB (minimum diag 1752); temporary loop stacks 3168/3192 bytes |

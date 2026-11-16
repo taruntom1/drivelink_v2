@@ -184,6 +184,36 @@ TEST_CASE("requests submitted after close still dispatch one terminal completion
     session.async<int>([]{return 7;},[&](auto r){REQUIRE_FALSE(r);CHECK(r.error().kind==ErrorKind::Connection);++callbacks;});
     CHECK(callbacks==0);REQUIRE(dispatcher.run());REQUIRE(dispatcher.run());CHECK(callbacks==2);
 }
+TEST_CASE("close racing typed request admission completes single and batched calls") {
+    for(bool batch:{false,true}) {
+        for(unsigned iteration=0;iteration<64;++iteration) {
+            Peer peer([](Socket &s){untilClosed(s);});
+            auto options=testOptions();options.periodic_time=false;
+            std::promise<void> entered,release;
+            auto starting=entered.get_future();auto allowed=release.get_future().share();
+            std::promise<std::expected<int,Error>> completed;auto result=completed.get_future();
+            Session session(peer.endpoint(),options);
+            session.async<int>([&] {
+                entered.set_value();allowed.wait();
+                if(batch) {const std::array<Bytes,2> bodies{};(void)session.requestBatch(3,1,bodies);}
+                else {(void)session.request(3,1);}
+                return 1;
+            },[&](auto value){completed.set_value(std::move(value));});
+            const auto started=starting.wait_for(std::chrono::seconds(2));
+            if(started!=std::future_status::ready) {release.set_value();}
+            REQUIRE(started==std::future_status::ready);
+            std::thread closer([&] {
+                allowed.wait();
+                for(unsigned i=0;i<iteration%8;++i) {std::this_thread::yield();}
+                session.close();
+            });
+            release.set_value();closer.join();
+            REQUIRE(result.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+            const auto value=result.get();CHECK_FALSE(value);
+            if(!value) {CHECK((value.error().kind==ErrorKind::Connection || value.error().kind==ErrorKind::Cancelled));}
+        }
+    }
+}
 TEST_CASE("a default-dispatch completion can destroy the session") {
     Peer peer([](Socket &s) {auto request=read(s);answer(s,request);untilClosed(s);});
     auto session=std::make_unique<Session>(peer.endpoint(),testOptions());

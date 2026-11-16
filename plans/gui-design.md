@@ -236,7 +236,7 @@ Every variable has scopes set, and its description gives its QML name (`Theme.bg
 
 **QML mapping:** a table on the page maps each component to its `DL*` QML type and the Qt Quick Control it is built on. Points that matter for H2:
 - The Figma `SpinBox` becomes `DLNumberField` (a `TextField` with a validator), because QML `SpinBox` is integer-only.
-- `DLArmButton` owns the application-wide Esc shortcut that always sends DISARM.
+- The shell's application event filter (`SafetyKeys`, H2a-2) owns Esc → DISARM, including text edit cancellation and popup focus. `DLArmButton` only emits requests.
 - `DLParamRow` picks its editor with a `Loader` by item type.
 - `DLPlot`: a custom scene-graph item, as the host plan says; H2d measures it at 1 kHz and uses QtGraphs only if that proves better.
 

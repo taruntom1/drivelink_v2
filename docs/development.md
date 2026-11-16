@@ -117,6 +117,10 @@ One script holds the list of checks and their commands. CI calls it with `--only
 - **Compiler crashes.** A step that fails with `internal compiler error` in its output runs once more (see "Build traps" in this guide). If it then passes, the result says `pass (after one retry of a compiler crash)`. Nothing else is retried: a failing test fails the check.
 - **Missing tools.** Every check's toolchain is looked up before anything runs. A check that can't run shows as `UNAVAILABLE` and fails the run.
 - **Results.** One line per check with its time. A failure prints the end of its output. The full output is `build/validate/<check>.log`, and `build/validate/summary.txt` is the text for the PR's validation section: it has the revision and says what was not run.
+- **Process output.** Commands write to a temporary file that the validator tails.
+  Completion follows the command's exit, so a crashed test's descendant retaining
+  stdout cannot leave validation waiting forever for pipe EOF. Partial final lines
+  and nonzero exit codes are retained; failed tests are not retried.
 - **Agent report.** Every completed validation invocation also writes
   `build/validate/summary.json` automatically; no extra flag is needed. Read this
   first to establish verification state, then open only the relevant log.
@@ -177,6 +181,8 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   SDK version and runs `validate.py --only host-win`. The validator and preset
   enforce the selected compiler; the runner's default compiler cannot replace it.
   Validation logs and JSON/text summaries are uploaded even on failure.
+  Its build/test/install step has a 30-minute limit, leaving the diagnostic
+  upload step able to run after a timeout.
 - The Windows installer uses aqtinstall pinned to upstream commit
   `5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7`: released 3.3.0 does not handle
   the split Windows Qt 6.11+ repositories. The workflow names the exact Qt
@@ -186,6 +192,29 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 
 ## Host concurrency and time checks
 
+### GUI shell checks (H2a-2)
+
+Both host checks include `gui-backend` (C++/Qt model and real-vdev lifecycle,
+arm/DISARM/ack, uncertain outcomes and key/popup/scrim flows) and
+`gui-screenshots` (Connect/Device at both sizes/themes), alongside the
+existing `gui-quick` and `gui-gallery`. Linux additionally checks an in-place
+Boot over the vdev PTY. They use offscreen/software rendering and the same
+CTest targets in CI; no new validator check/toolchain is needed.
+The backend's QtTest function watchdog is 60 seconds, below CTest's 180-second
+suite limit, so Qt can report a blocked function before the outer timeout.
+The safe-mode/link-loss test records its teardown/reconnect stages in failure logs.
+
+From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
+(or `linux`). The complete post-review vdev campaign and ten-scenario render
+command are in [host/gui/README.md](../host/gui/README.md#shell-screenshots).
+It can repeat the backend tests and writes 40 dimension-checked PNGs. All
+scenario provisioning and fault injection use fresh temporary vdev state.
+The GUI app's direct `--endpoint ... --out DIR` mode uses the supplied device
+without scenario injection. Native arming fixtures save slower loop rates
+and watchdog settings so they survive a simulated reboot.
+
+### Library checks
+
 H1c adds `host-identity` to both host checks: CLI Unicode/byte limits,
 SAVE/reboot/REVERT, immutable device id and armed rename with a mock actuator
 through `async_probe`. Run the same workflow on the bare board with
@@ -194,6 +223,9 @@ The script requires clean saved settings and idle groups and restores them.
 
 The host checks include `host-concurrency` and a separate real-vdev `host-async`
 consumer alongside unit, model, golden/replay, integration and install tests.
+Concurrency coverage includes single and batched typed admission racing close;
+transport cancellation runs outside operation-owner locks to avoid an I/O-join
+lock cycle. This is stress coverage, not a forced scheduling interleaving.
 `host/test/async_probe` takes one endpoint; on a bare loops-only serial device
 it also checks Boot invalidation/reload, restoring the original idle groups.
 See host/README.md for its preconditions and native scheduling distinction.

@@ -23,6 +23,8 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   explicit close. Serialize close with submission; a checked-but-not-yet-posted
   request must never land on a stopped context. Close must not depend on peer or
   application dispatcher progress. Bound event queues and expose drop counters.
+  Release operation-owner locks before cancelling transport request handles:
+  close joins I/O under its closing lock, and I/O completion needs the owner lock.
 - DeviceModel retains Session, not a temporary service Client. Publish immutable
   shared snapshots, tag generations, invalidate readiness on Boot and reload
   complete metadata. Reload publication preserves current link/runtime/loss
@@ -59,6 +61,17 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   only draw and emit requests, and contain nothing module-specific. Keep
   DISARM reachable: no Qt modal popups (they block the status bar). New icons
   come from the Figma G2 set, at the bundled Lucide version.
+- GUI completions/model notifications run on the GUI thread through a FIFO
+  session dispatcher. Keep its receiver alive through callback drain; stale
+  connection/session generations cannot publish or arm. Bound initial event
+  draining and preserve DISARM requested before link publication or behind an
+  earlier failed DISARM. Observer close waits for an admitted safety request;
+  an unconfirmed forced close must report an uncertain outcome.
+- GUI command groups initially send prefixes only. Never infer a semantic hold
+  from descriptor defaults. An already-armed direct connection observes until
+  explicit DISARM acknowledgement, including an armed state seen during
+  discovery followed by watchdog disarm. Never adopt other owners' groups;
+  reconcile uncertain setup and clear only matching owned generation/epoch/refs.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

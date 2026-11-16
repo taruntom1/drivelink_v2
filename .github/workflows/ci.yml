@@ -47,6 +47,7 @@ jobs:
           python -m aqt install-tool windows desktop tools_cmake qt.tools.cmake -O C:/Qt
           python -m aqt install-tool windows desktop tools_ninja qt.tools.ninja -O C:/Qt
       - name: Build (warnings are errors), test (GUI offscreen) and check the installed packages
+        timeout-minutes: 30
         run: |
           $qtVersion = & 'C:/Qt/6.12.0/mingw_64/bin/qmake.exe' -query QT_VERSION
           if ($LASTEXITCODE -ne 0 -or $qtVersion -ne '6.12.0') { throw "Expected Qt 6.12.0, found $qtVersion" }

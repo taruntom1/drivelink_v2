@@ -25,6 +25,34 @@ definitions are served by the core.
 Device id defaults to `02444c000001`, stable across reboot and reset.
 `--device-id HEX12` simulates distinct boards. Names use real core storage.
 
+## GUI scenario controls
+
+These are explicit native test controls, not device wire operations. Without
+the options below the normal vdev behavior is unchanged.
+
+`--safe-mode` seeds the native crash counter before boot, using the real core
+safe-mode path. `--scenario-file PATH` polls a local control file. Replace it
+with one line, `<sequence> <action>`, using an increasing unsigned sequence;
+an already consumed sequence is ignored. For example, write `1 fault`, then
+replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
+
+| Action | Effect |
+|---|---|
+| `fault`, `fault-clear` | Raise/clear the real `core.LoopStalled` condition for loop 0; acknowledgement still uses the real core service |
+| `stall`, `resume` | Stop/resume transport RX/TX while the core keeps running |
+| `slow N` | Delay ordinary core/diag request dispatch by 0..1000 ms; fast DISARM and time/status keep running; at most four delayed requests per peer |
+| `reboot` | Rebuild the core, closing TCP or retaining the PTY and emitting Boot |
+| `drop-config-reply N` | Suppress the Nth following CMD_CONFIG reply after the real mutation, once (0 disables, maximum 32) |
+| `drop-disarm N` | Ignore the next N fast DISARM requests, including their replies (maximum 32) |
+| `drop-arm-reply N` | Suppress the Nth following ARM reply after applying the real operation, once (maximum 32) |
+| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM request count, configured command group IDs/loops/widths |
+
+Counters in the sidecar let GUI tests prove they sent no input value frames
+and did not adopt another owner's groups. The GUI scenario runner
+`host/gui/tests/scenarios.py` creates isolated temporary state/control files;
+see [GUI screenshots and backend checks](../gui/README.md). It never sends
+these injections to a supplied physical endpoint.
+
 ## Persistence and crashes
 
 Only one process can own a state directory (OS-level lock released on exit).
