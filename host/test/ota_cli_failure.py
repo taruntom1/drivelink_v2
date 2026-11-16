@@ -181,7 +181,9 @@ def pipeline_reboot(cli, endpoint, baseline, candidate):
                     connection.settimeout(max(.001, deadline - time.monotonic()))
                     chunk = connection.recv(4096)
                 except ConnectionResetError as error:
-                    closed, terminal = True, str(error)
+                    # vdev must close with FIN after the reply. An RST can
+                    # discard the unread reply on Windows, so it is a failure.
+                    terminal = str(error)
                     break
                 except TimeoutError as error:
                     terminal = str(error)
