@@ -152,7 +152,9 @@ struct Peer : std::enable_shared_from_this<Peer>
     p::Scanner scanner{1024};
     asio::steady_timer stale;
     asio::steady_timer write_deadline;
+    asio::steady_timer drain;
     std::array<uint8_t, 2048> input{};
+    std::array<uint8_t, 256> discard{};
     struct Output
     {
         std::shared_ptr<Bytes> bytes;
@@ -162,10 +164,10 @@ struct Peer : std::enable_shared_from_this<Peer>
         std::chrono::steady_clock::time_point expires;
     };
     std::deque<Output> output;
-    bool closed = false, reset_pending = false;
+    bool closed = false, reset_pending = false, draining = false;
     uint64_t generation = 0;
     unsigned delayed = 0;
-    explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
+    explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io), drain(io) {}
     ~Peer()
     {
 #ifndef _WIN32
@@ -180,6 +182,9 @@ struct Peer : std::enable_shared_from_this<Peer>
     void read();
     void write();
     void close();
+    void closeAfterReply();
+    void drainRead();
+    void finishDrain();
     void armDeadline();
     void recoverPty();
 };
@@ -610,6 +615,10 @@ void Peer::close()
 {
     if (closed)
     {
+        if (draining)
+        {
+            finishDrain();
+        }
         return;
     }
     closed = true;
@@ -623,6 +632,63 @@ void Peer::close()
         pty->close(ec);
     }
 #endif
+}
+// A device that reboots after its reply leaves that reply readable. Closing a
+// TCP socket with unread input (a frame pipelined behind REBOOT) makes the OS
+// send RST, and on Windows an RST discards the client's unread reply. So send
+// FIN after the reply, discard input like a rebooting device, and close once
+// the client closes or after a bound. The peer is closed for accept() at once.
+void Peer::closeAfterReply()
+{
+    if (closed)
+    {
+        return;
+    }
+    closed = true;
+    draining = true;
+    stale.cancel();
+    write_deadline.cancel();
+    asio::error_code ec;
+    socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec)
+    {
+        finishDrain();
+        return;
+    }
+    socket.cancel(ec); // the read loop's pending read completes as closed
+    auto self = shared_from_this();
+    drain.expires_after(std::chrono::seconds(1));
+    drain.async_wait([self](auto) { self->finishDrain(); });
+    drainRead();
+}
+void Peer::drainRead()
+{
+    auto self = shared_from_this();
+    socket.async_read_some(asio::buffer(discard),
+                           [self](auto ec, size_t)
+                           {
+                               if (!self->draining)
+                               {
+                                   return;
+                               }
+                               if (ec)
+                               {
+                                   self->finishDrain();
+                                   return;
+                               }
+                               self->drainRead();
+                           });
+}
+void Peer::finishDrain()
+{
+    if (!draining)
+    {
+        return;
+    }
+    draining = false;
+    drain.cancel();
+    asio::error_code ec;
+    socket.close(ec);
 }
 bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply after, bool stream)
 {
@@ -758,7 +824,7 @@ void Peer::write()
             else
 #endif
             {
-                self->close();
+                self->closeAfterReply();
                 self->server.boot();
                 return;
             }

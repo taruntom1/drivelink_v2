@@ -10,7 +10,11 @@ prints `READY serial:///dev/pts/N` and serves a raw PTY instead. It keeps the
 slave open across CLI invocations. One client owns configuration at a time;
 extra TCP connections are closed. Reboot replies are written before the core
 is rebuilt, loops/boot clock/diagnostics reset, and TCP is disconnected.
-PTY remains open across reboot. Command reply drains have a two-second deadline
+The TCP disconnect is graceful: vdev sends FIN after the reply, discards any
+input (frames pipelined behind REBOOT are lost, as on a rebooting device) and
+closes when the client closes or after one second. A plain close with unread
+input would send RST, which on Windows discards the client's unread reply.
+A new client can connect during that second. PTY remains open across reboot. Command reply drains have a two-second deadline
 from enqueue. A failed TCP drain closes the connection and cancels the reboot.
 A failed PTY drain cancels/drops queued replies and effects, retaining the master
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
