@@ -101,7 +101,11 @@ void LocalConnection::readOtaStatus() {
             }
             emit self->changed();
         });
-    } catch(const Error &e) {m_otaStatusPending=false;m_otaStatusSerial=0;report(e);}
+    } catch(const Error &e) {
+        m_otaStatusPending=false;m_otaStatusSerial=0;
+        if(!m_otaStatusFailed) {report(e);}
+        m_otaStatusFailed=true;
+    }
 }
 
 void LocalConnection::startUpdate(bool confirm) {
@@ -253,8 +257,10 @@ void LocalConnection::otaConfirm(bool explicitRequest) {
     emit changed();
     const QPointer<LocalConnection> self(this);const auto run=m_otaRun;
     try {
-        Client(*session).async([candidate,known,job,sendConfirm](Client &client) {
+        Client(*session).async([candidate,known,job,sendConfirm,explicitRequest](Client &client) {
             if(known || job) {return confirmOtaCandidate(client,candidate,sendConfirm);}
+            // Without a known candidate only the user may confirm.
+            if(!explicitRequest) {throw Error(ErrorKind::Usage,"No uploaded candidate to check; nothing was confirmed");}
             // A pending build this GUI did not install: the user's explicit
             // CONFIRM, without an identity to compare (like `ota-confirm`).
             OtaConfirmation out;out.info=client.info();(void)client.otaConfirm();
