@@ -50,7 +50,9 @@ replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
 | `drop-disarm N` | Ignore the next N fast DISARM requests, including their replies (maximum 32) |
 | `drop-arm-reply N` | Suppress the Nth following ARM reply after applying the real operation, once (maximum 32) |
 | `drop-reboot N` | Ignore the next N SYSTEM REBOOT requests: neither applied nor answered (maximum 32) |
-| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM and REBOOT request counts, configured command group IDs/loops/widths |
+| `drop-action-reply N` | Suppress the Nth following ACTION RUN reply after the action ran, once (maximum 32) |
+| `loop-stall LOOP MS` | Stall one tick of a running loop for 1..10000 ms (the bench stall, without its wire gate), so its sources age |
+| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM, REBOOT and ACTION RUN request counts, configured command group IDs/loops/widths |
 
 Counters in the sidecar let GUI tests prove they sent no input value frames
 and did not adopt another owner's groups. The GUI scenario runner

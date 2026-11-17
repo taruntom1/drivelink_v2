@@ -42,10 +42,20 @@ LAYOUT = {
     'layout': ('layout', '32:0', False),
     'layout-loop': ('layout', '5:2', True),
     'layout-sources': ('layout', '115:0', False),
+    # H2c-2: live signals, an action's outcome, a stale source.
+    'layout-signals': ('layout', '114:0', False),
+    'layout-action': ('layout', '113:0', False),
+    'layout-sources-stale': ('layout', '115:0', False),
     'layout-review': ('layout-review', '5:2', True),
     'layout-add-instance': ('layout-add-instance', '5:0', False),
     'layout-add-loop': ('layout-add-loop', '5:0', False),
 }
+
+
+# The action each scenario runs (left_enc's `sample`), and the loop stall
+# (control, 8 s) that leaves odom's feedback source stale during capture.
+ACTIONS = {'layout-action': '113:0:768'}
+STALLS = {'layout-sources-stale': 'loop-stall 0 8000'}
 
 
 def cli_run(cli, endpoint, args, attempts=1):
@@ -124,6 +134,8 @@ def render(gui, vdev, destination, scenario, cli=None):
                 command += ['--endpoint', endpoint]
             if select:
                 command += ['--select', select]
+            if scenario in ACTIONS:
+                command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):
                 # Large enough that the writing screen holds mid-transfer.
                 command += ['--image', str(write_image(Path(work) / 'drivelink_fw_2.1.0.bin', 77, '2.1.0', 1 << 20))]
@@ -140,9 +152,10 @@ def render(gui, vdev, destination, scenario, cli=None):
             try:
                 for line in app.stdout:
                     output.append(line)
-                    if line.strip() == 'GUI READY' and scenario in ('fault', 'lost'):
+                    if line.strip() == 'GUI READY' and scenario in ('fault', 'lost', *STALLS):
                         next_file = Path(work) / 'next'
-                        next_file.write_text('1 ' + ('fault' if scenario == 'fault' else 'stall') + '\n')
+                        injection = STALLS.get(scenario) or ('fault' if scenario == 'fault' else 'stall')
+                        next_file.write_text('1 ' + injection + '\n')
                         os.replace(next_file, control)
                 code = app.wait(timeout=5)
             finally:

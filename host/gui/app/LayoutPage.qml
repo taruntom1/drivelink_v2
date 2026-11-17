@@ -5,7 +5,9 @@ import DriveLink.Style
 // the device's limits) and the selected loop's or instance's detail (header
 // with Rename and Remove, Sources, Params, Wiring, the loop's instances).
 // Everything comes from the device's descriptors; refusals show next to what
-// was refused. Live signals, statistics and actions follow in H2c-2.
+// was refused. The live half (H2c-2): Signals (live) and Actions for an
+// instance, Statistics for a loop, each source's value, age and state, and a
+// module type's custom panel as a second tab when one is compiled in.
 Item {
     id: page
     objectName: "layoutPage"
@@ -20,6 +22,17 @@ Item {
     readonly property var wiring: info.wiring || []
     readonly property var sources: info.sources || []
     readonly property var members: info.members || []
+    readonly property int actionCount: actionsRepeater.count
+    readonly property var live: backend.live || ({})
+    readonly property var liveSignals: live.signals || []
+    readonly property var liveSources: live.sources || ({})
+    readonly property var statistics: live.statistics || ({})
+    readonly property string panelUrl: info.panel || ""
+    // 0 Params, 1 the custom panel.
+    property int tab: 0
+    readonly property string nodeKey: node.key || ""
+    onNodeKeyChanged: tab = 0
+    onPanelUrlChanged: if (panelUrl.length === 0) tab = 0
     readonly property real treeWidth: Math.max(340, Math.min(440, width * 0.24))
     readonly property real sideWidth: Math.max(360, Math.min(480, width * 0.25))
 
@@ -183,7 +196,14 @@ Item {
         Row {
             id: tabs
             y: header.height + Theme.space16
-            DLTabButton { text: qsTr("Params"); checked: true }
+            DLTabButton { objectName: "paramsTab"; text: qsTr("Params"); checked: page.tab === 0; onClicked: page.tab = 0 }
+            DLTabButton {
+                objectName: "panelTab"
+                visible: page.panelUrl.length > 0
+                text: panelLoader.item && panelLoader.item.title ? panelLoader.item.title : qsTr("Panel")
+                checked: page.tab === 1
+                onClicked: page.tab = 1
+            }
         }
         Rectangle {
             y: tabs.y + tabs.height
@@ -191,11 +211,29 @@ Item {
             color: Theme.borderDefault
         }
 
+        // A module type's own panel (DriveLink.Modules/<type name>/Panel.qml),
+        // given the backend and the selected node's key.
+        Loader {
+            id: panelLoader
+            objectName: "panelLoader"
+            y: tabs.y + tabs.height + Theme.space16
+            width: parent.width; height: parent.height - y
+            visible: page.tab === 1
+            active: page.panelUrl.length > 0
+            source: page.panelUrl
+            onLoaded: {
+                item.backend = Qt.binding(() => page.backend)
+                item.nodeKey = Qt.binding(() => page.nodeKey)
+            }
+        }
+
         Item {
             id: body
             y: tabs.y + tabs.height + Theme.space16
             width: parent.width; height: parent.height - y
-            readonly property bool hasSide: page.isLoop ? true : page.wiring.length > 0
+            visible: page.tab === 0
+            readonly property bool hasSide: page.isLoop || page.wiring.length > 0 || page.liveSignals.length > 0
+                                            || page.actionCount > 0
 
             Column {
                 id: mainColumn
@@ -216,7 +254,16 @@ Item {
                     }
                     Repeater {
                         model: page.sources
-                        delegate: TargetRow { width: sourcesCard.width - 2 * Theme.space24; backend: page.backend; source: true; blocked: page.info.blocked || "" }
+                        delegate: TargetRow {
+                            width: sourcesCard.width - 2 * Theme.space24; backend: page.backend; source: true
+                            blocked: page.info.blocked || ""
+                            live: page.liveSources[modelData.key] || ({})
+                        }
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: qsTr("Invalid sampled values are hidden. A stale value is the last sampled value; its age alone does not identify a paused or stalled loop.")
+                        font: Theme.fontCaption; color: Theme.textTertiary
                     }
                 }
 
@@ -337,10 +384,17 @@ Item {
                 }
             }
 
-            Column {
-                id: sideColumn
+            Flickable {
+                id: sideScroll
+                objectName: "sideScroll"
                 visible: body.hasSide
                 anchors.right: parent.right
+                width: page.sideWidth; height: body.height
+                contentHeight: sideColumn.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+            Column {
+                id: sideColumn
                 width: page.sideWidth
                 spacing: Theme.space24
 
@@ -358,6 +412,94 @@ Item {
                     Repeater {
                         model: page.wiring
                         delegate: TargetRow { width: wiringCard.width - 2 * Theme.space24; backend: page.backend; blocked: page.info.blocked || "" }
+                    }
+                }
+                Card {
+                    id: statisticsCard
+                    objectName: "statisticsCard"
+                    width: parent.width
+                    visible: page.isLoop
+                    title: qsTr("Statistics · live")
+                    Text {
+                        objectName: "statisticsNote"
+                        width: parent.width; wrapMode: Text.Wrap
+                        visible: text.length > 0
+                        text: page.live.note || ""
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                    InfoRow { objectName: "statTicks"; labelWidth: 140; label: qsTr("Ticks"); value: page.statistics.ticks || "—" }
+                    InfoRow { objectName: "statOverruns"; labelWidth: 140; label: qsTr("Overruns"); value: page.statistics.overruns || "—" }
+                    InfoRow { objectName: "statLastRun"; labelWidth: 140; label: qsTr("Last run"); value: page.statistics.lastRun || "—" }
+                    InfoRow { objectName: "statLongestRun"; labelWidth: 140; label: qsTr("Longest run"); value: page.statistics.longestRun || "—" }
+                    InfoRow { objectName: "statBudget"; labelWidth: 140; label: qsTr("Budget"); value: page.statistics.budget || "—" }
+                }
+                Card {
+                    id: signalsCard
+                    objectName: "signalsCard"
+                    width: parent.width
+                    visible: !page.isLoop && page.liveSignals.length > 0
+                    title: qsTr("Signals · live")
+                    contentSpacing: Theme.space8
+                    Text {
+                        objectName: "signalsNote"
+                        width: parent.width; wrapMode: Text.Wrap
+                        visible: text.length > 0
+                        text: page.live.note || ""
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                    Row {
+                        width: parent.width
+                        Text { width: parent.width * 0.5; text: qsTr("SIGNAL"); font: Theme.fontLabelCaps; color: Theme.textSecondary }
+                        Text { width: parent.width * 0.3; horizontalAlignment: Text.AlignRight; text: qsTr("VALUE"); font: Theme.fontLabelCaps; color: Theme.textSecondary }
+                        Text { width: parent.width * 0.2; leftPadding: Theme.space8; text: qsTr("UNIT"); font: Theme.fontLabelCaps; color: Theme.textSecondary }
+                    }
+                    Repeater {
+                        model: page.liveSignals
+                        delegate: Row {
+                            id: signalRow
+                            required property var modelData
+                            objectName: "signal_" + modelData.name
+                            width: signalsCard.width - 2 * Theme.space24
+                            Text {
+                                width: signalRow.width * 0.5; elide: Text.ElideRight
+                                text: signalRow.modelData.name
+                                font: Theme.fontMonoSmall
+                                color: signalRow.modelData.subscribed ? Theme.textPrimary : Theme.textTertiary
+                            }
+                            Text {
+                                objectName: "value"
+                                width: signalRow.width * 0.3; elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignRight
+                                text: signalRow.modelData.value || "—"
+                                font: Theme.fontBodyNumeric
+                                color: signalRow.modelData.value ? Theme.textPrimary : Theme.textTertiary
+                            }
+                            Text {
+                                width: signalRow.width * 0.2; elide: Text.ElideRight; leftPadding: Theme.space8
+                                text: signalRow.modelData.unit
+                                font: Theme.fontCaption; color: Theme.textSecondary
+                            }
+                        }
+                    }
+                    Text {
+                        objectName: "signalsHidden"
+                        width: parent.width; wrapMode: Text.Wrap
+                        visible: (page.live.hidden || 0) > 0
+                        text: qsTr("%n signal(s) not shown: one subscription group holds %1 entries", "", page.live.hidden || 0)
+                              .arg(page.live.entries || 0)
+                        font: Theme.fontCaption; color: Theme.textTertiary
+                    }
+                }
+                Card {
+                    id: actionsCard
+                    objectName: "actionsCard"
+                    width: parent.width
+                    visible: !page.isLoop && page.actionCount > 0
+                    title: qsTr("Actions")
+                    Repeater {
+                        id: actionsRepeater
+                        model: page.backend.actions
+                        delegate: ActionRow { width: actionsCard.width - 2 * Theme.space24; backend: page.backend }
                     }
                 }
                 Card {
@@ -393,6 +535,7 @@ Item {
                         font: Theme.fontCaption; color: Theme.textSecondary
                     }
                 }
+            }
             }
         }
     }

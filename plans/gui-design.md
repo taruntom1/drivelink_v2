@@ -535,6 +535,9 @@ code and records the outcome here; the notes below give the detail.
 | Device loop table: budget computed on the host (run time over period), loops keyed by id | closed by H2b-1: run time from GUI-owned free-slot subscriptions (user decision 2026-11-17) |
 | Layout pending-changes list (GET_PENDING plus staged ops), refused op keeps the typed value | closed by H2c-1: the list is the configured view against the pending view (every staged op is in the pending view); a refused value stays on its row with the reason until edited or Esc |
 | LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | closed by H2c-1: Add loop and loop detail use the discovered enum and its default (any); the device's choice names are shown as served |
+| Layout actions while armed; blob input and output format | closed by H2c-2: follow the device: loop actions stay enabled while armed, paused actions on a real-time loop are disabled with the reason; blobs are hex (at most 512 bytes in; size, hex and Copy out), no new native dialog (user decisions 2026-11-17) |
+| Layout source rows: stale threshold, missing producer, invalid samples | closed by H2c-2: stale above 3 producer-loop periods (no descriptor marks a consumer's own limit), missing when the producer is not running, age `0xFFFFFFFF` hides the value; a staged target is never shown live |
+| Layout Signals card "Plot in Monitor" | H2d |
 | Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | H2d |
 | G5 1080p: Monitor plot fitting and paused toolbar | H2d |
 | G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |

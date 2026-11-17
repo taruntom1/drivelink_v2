@@ -9,7 +9,7 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 
 H2a-1 provides the style layer; H2a-2 adds the application, local device
 backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update
-and H2c-1 Layout (below). Tune and Monitor are placeholders until their steps
+and H2c-1/H2c-2 Layout (below). Tune and Monitor are placeholders until their steps
 ([host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
@@ -158,14 +158,15 @@ dialogs and overlays; `backend/device_models.*` holds `LoopTable`,
   Reboot and Save and reboot are disabled while an image is prepared (REBOOT
   would install it unchecked) or the state could not be read.
 
-## Layout (H2c-1)
+## Layout (H2c-1, H2c-2)
 
 `backend/layout_model.*` holds the pure Layout rules (tested without a
 device), `LayoutTree` and `ParamTable`; `backend/connection_layout.cpp` the
 operations; `app/LayoutPage.qml`, `LayoutDialogs.qml` and `TargetRow.qml` the
 G4/G7b screen. Everything comes from the descriptors: loop masks, item flags,
-`ref:` categories and the generated `<source>.value` signals. Signals, loop
-statistics, actions and the custom panel slot follow in H2c-2.
+`ref:` categories and the generated `<source>.value` signals. The live half
+(H2c-2) is `backend/live_model.*` (pure rules, `ActionTable`),
+`backend/connection_live.cpp` and `app/ActionRow.qml`.
 
 - **Tree.** Loops by id (gaps allowed) from both layout views: name, rate, a
   neutral Real-time badge, budget (Device loop statistics), state; modules
@@ -200,6 +201,38 @@ statistics, actions and the custom panel slot follow in H2c-2.
   (a destructive confirm listing what is dropped). ARM is disabled while a
   reboot is pending. While armed the layout ops, reboot params, wiring and
   sources are disabled with the reason; locked-while-armed params show Locked.
+- **Live group (H2c-2).** One GUI-owned subscription group follows the
+  selected running node at about 10 Hz (divider `rate/10`): an instance's
+  source `.value`/`.age_us` pairs, then its own signals (beyond
+  `limits.group_entries` they are counted as not shown); a loop's ticks,
+  overruns, last and longest run under the loop's own id. It takes a free
+  slot only, after command setup and the Device loop-statistics groups;
+  intent is recorded before SUB_CONFIG and a slot is reused or cleared only
+  on an exact LIST match, as for loop statistics. One mutation at a time;
+  the latest selection wins. It is cleared when the node stops running and
+  on close; a setup that fails (no free slot, Busy three times) shows the
+  reason and is tried again on the next selection. No new sample for three
+  sample periods (at least 1 s) reads "Telemetry unavailable".
+- **Live rows.** Signals · live lists the instance's signals (not the
+  generated source signals) with value and unit; Statistics · live shows a
+  loop's ticks, overruns, runs and budget (last run over the period). Source
+  rows show value and age right of the picker and a state line: not
+  connected, pending (a staged target is never shown live), missing (the
+  producer is not running), no valid sample (age `0xFFFFFFFF` hides the
+  value), stale (age above 3 producer-loop periods) or valid.
+- **Actions.** Name, "runs in loop" or "paused action", Run. Arguments or a
+  blob input open an inline form in the card (no modal; DISARM stays
+  reachable), checked against the descriptors before anything is sent; blobs
+  are hex, at most 512 bytes. RUN is sent once, one action at a time; no
+  reply reads "may have run; not retried", and a configuration refresh
+  follows. Blocked with the reason: the instance not running, a pending add
+  or remove, a paused action on a real-time loop while armed (loop actions
+  stay enabled: user decision 2026-11-17), OTA or a reboot, another action
+  running. Results show typed values; a blob out shows size, hex and Copy.
+  An action in flight when the link drops raises a "may have run" notice.
+- **Custom panel slot.** A second tab, titled by the panel, when
+  `DriveLink/Modules/<type name>/Panel.qml` is in the resources; it is loaded
+  with `backend` and `nodeKey`. None ships until H2f.
 
 ## Theme
 
@@ -309,6 +342,13 @@ locally, labels, clamped/applied/pending params, Discard all, the armed lock
 and Save and reboot (`layoutOperations`), plus a DISARM click that keeps an
 open edit unsent; `tst_layout.qml` covers the param row's commit rules, the
 tree item and the picker.
+H2c-2 adds the pure live rules (`liveLogic`: plans, every source state,
+statistics, argument and hex parsing, block rules) and, against vdev
+(`liveDataAndActions`), selection values, slot reuse, a stale source (vdev
+`loop-stall`), typed and blob results, local refusals with nothing sent, the
+armed rule, a lost RUN reply sent once (vdev `drop-action-reply`), Boot
+notifying the live view, and clearing; `layoutLiveInShell` covers the cards,
+the panel tab and the action form in the shell.
 
 `benchOta` is the bare-board OTA check, skipped unless
 `DRIVELINK_GUI_BENCH_ENDPOINT` and `DRIVELINK_GUI_BENCH_OTA_IMAGE` are set: it

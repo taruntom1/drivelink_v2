@@ -6,6 +6,10 @@ set_target_properties(gui_backend_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_backend_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
 target_link_libraries(gui_backend_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test Qt6::Network)
 add_dependencies(gui_backend_tests drivelink-vdev)
+# One translation unit of many lambdas: past the default COFF section count.
+if(MINGW)
+  target_compile_options(gui_backend_tests PRIVATE -Wa,-mbig-obj)
+endif()
 
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)

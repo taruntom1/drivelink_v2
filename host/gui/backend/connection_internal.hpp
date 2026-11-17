@@ -36,10 +36,12 @@ inline bool matches(const Owned &o,const Group &g) {
     return g.kind==GroupKind::Command && g.id==o.plan.id && g.configured &&
         g.loop==o.plan.loop && g.epoch==o.epoch && g.refs==o.plan.refs;
 }
-// A GUI-owned subscription carrying one loop's statistic signals.
+// A GUI-owned subscription: one loop's statistic signals, or (live) the
+// Layout selection's signals.
 struct OwnedSub {
     uint8_t id,loop,epoch;uint64_t generation;std::vector<Ref> refs;
     std::shared_ptr<GroupBuffer> buffer;
+    bool live=false;
 };
 inline bool matchesSub(const OwnedSub &o,const Group &g) {
     return g.kind==GroupKind::Subscription && g.id==o.id && g.configured &&
@@ -64,6 +66,22 @@ struct LocalConnection::Context {
     std::shared_ptr<DeviceModel> getModel() {std::lock_guard lock(mutex);return model;}
     bool owns() {std::lock_guard lock(mutex);return !owned.empty();}
     bool ownsAny() {std::lock_guard lock(mutex);return !owned.empty() || !subs.empty();}
+    // SUB_CONFIG landed on a newer boot than its setup was for, so nothing
+    // tracks the slot: clear it on an exact LIST match, or record it under
+    // that boot so the next setup or close reconciles it.
+    void releaseStray(Client &client,const OwnedSub &o) {
+        try {
+            const auto list=client.groups();
+            if(std::any_of(list.groups.begin(),list.groups.end(),[&](const auto &g){return matchesSub(o,g);})) {client.groupClear(o.id,false);}
+            return;
+        } catch(const Error &) {}
+        std::lock_guard lock(mutex);subs.push_back(o);
+    }
+    std::vector<OwnedSub> liveSubs(uint64_t generation) {
+        std::lock_guard lock(mutex);std::vector<OwnedSub> result;
+        for(const auto &o:subs) {if(o.live && o.generation==generation) {result.push_back(o);}}
+        return result;
+    }
     void stopKeepers() {std::lock_guard lock(mutex);for(auto &o:owned) {if(o.keeper) {o.keeper->stop();}}}
     // Called only on the serial service executor. Never clears a slot without
     // matching its generation, epoch and complete configuration after a read.

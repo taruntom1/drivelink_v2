@@ -80,8 +80,11 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   and configuration actions; an unknown or Ready OTA state blocks reboots.
   The image picker is the one non-modal native dialog allowed: offered only
   while disarmed, and nothing arms while it is open.
-- GUI loop-statistics subscriptions use free slots only, after command setup,
-  and are cleared only on an exact owned match. A requested reboot is never
+- GUI loop-statistics subscriptions and the Layout live group use free slots
+  only, after command setup (live after loop statistics), record intent before
+  SUB_CONFIG, and are reused or cleared only on an exact owned LIST match; a
+  SUB_CONFIG that lands on a newer boot releases its slot or records it under
+  that boot. A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never
   opens one (DTR/RTS can reset an ESP).
@@ -92,6 +95,10 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   unsent. Layout ops and reboot params are locked while armed; ARM is disabled
   while a reboot is pending. Rules come from descriptors (loop masks, flags,
   `ref:` categories, generated source signals), never from type names.
+- GUI actions (RUN) are sent once, one at a time, after the input is checked
+  against the descriptors; no reply is "may have run", never retried, then
+  `refreshConfigAsync`. Paused actions on a real-time loop are blocked while
+  armed or arming; loop actions stay enabled. Forms are inline, never modal.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI
