@@ -736,6 +736,20 @@ private slots:
         QVERIFY(fixture.stats().contains("reboots 1\n"));
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
     }
+    // Stop and disconnect while the device has not come back: the update
+    // ends as failed instead of waiting for a link that will not open.
+    void firmwareUpdateDisconnectWhileReconnecting() {
+        Fixture fixture;QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        c.inspectImage(writeImage(dir,"r.bin",61,"6.0.0"));c.startUpdate(true);
+        QVERIFY2(waitFor([&]{return c.reconnecting();},15000),qPrintable(otaText(c)));
+        fixture.process.kill();fixture.process.waitForFinished(5000);
+        QVERIFY(waitFor([&]{return c.reconnecting() && !c.linked();}));
+        c.disconnectDevice();
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="failed" && !c.closing() && !c.reconnecting();}),qPrintable(otaText(c)));
+        QVERIFY(c.ota()["note"].toString().contains("unconfirmed"));QVERIFY(c.ota()["canClose"].toBool());
+        c.closeUpdate();QVERIFY(c.ota().isEmpty());
+    }
     // A prepared image and an unconfirmed build that another client left.
     void foreignOtaStates() {
         Fixture fixture;QTemporaryDir dir;

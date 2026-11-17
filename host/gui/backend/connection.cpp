@@ -543,6 +543,9 @@ void LocalConnection::disconnectDevice() {
     // Disconnect also ends a lost link's overlay and any reboot follow-up.
     m_reconnecting=false;m_afterLoss=false;clearRebootExpectation();
     if(!m_context) {
+        // Between reconnect attempts after an update's reboot: no link to
+        // close, but the update must not wait for one any more.
+        otaInterrupted(tr("Disconnected before the device came back."));
         m_linkLost=false;m_previous.reset();m_snapshot.reset();
         m_instances.reset({});m_loops.reset({});m_faults.reset({});
         emit changed();emit disconnected();return;

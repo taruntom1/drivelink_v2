@@ -176,7 +176,8 @@ QVariantMap firmwareView(const FirmwareFacts &f) {
     bool pending=false,canAbort=false;
     if (f.status) {
         const auto &s=*f.status;pending=s.pending_confirm;
-        running+=pending?tr(" · not confirmed"):tr(" · confirmed");
+        // An unconfirmed build is named exactly: confirm only the one meant.
+        running+=pending?tr(" · build %1 · not confirmed").arg(f.buildId):tr(" · confirmed");
         const int other=1-s.running_slot;
         slotText=tr("%1 (running) · %2").arg(slotName(s.running_slot),slotName(other));
         if (s.boot_slot!=s.running_slot) { slotText+=tr(" (boots next)"); }
