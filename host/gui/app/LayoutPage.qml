@@ -39,6 +39,8 @@ Item {
     signal addInstanceRequested()
     signal addLoopRequested()
     signal labelRequested(string key, string label)
+    // Plot the selected node's signals in Monitor.
+    signal plotRequested(string key)
 
     function rateText(hz) { return hz >= 1000 && hz % 100 === 0 ? (hz / 1000) + " kHz" : hz + " Hz" }
     function limitText(n, limit, what) { return limit > 0 ? qsTr("%1 of %2 %3").arg(n).arg(limit).arg(what) : qsTr("%1 %2").arg(n).arg(what) }
@@ -420,6 +422,13 @@ Item {
                     width: parent.width
                     visible: page.isLoop
                     title: qsTr("Statistics · live")
+                    actions: DLButton {
+                        objectName: "plotStatistics"
+                        kind: DLButton.Ghost; iconName: "chart-line"
+                        text: qsTr("Plot in Monitor")
+                        enabled: (page.live.note || "").length === 0
+                        onClicked: page.plotRequested(page.node.key)
+                    }
                     Text {
                         objectName: "statisticsNote"
                         width: parent.width; wrapMode: Text.Wrap
@@ -440,6 +449,13 @@ Item {
                     visible: !page.isLoop && page.liveSignals.length > 0
                     title: qsTr("Signals · live")
                     contentSpacing: Theme.space8
+                    actions: DLButton {
+                        objectName: "plotSignals"
+                        kind: DLButton.Ghost; iconName: "chart-line"
+                        text: qsTr("Plot in Monitor")
+                        enabled: page.live.telemetry === true
+                        onClicked: page.plotRequested(page.node.key)
+                    }
                     Text {
                         objectName: "signalsNote"
                         width: parent.width; wrapMode: Text.Wrap

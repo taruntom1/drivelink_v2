@@ -52,6 +52,20 @@ LAYOUT = {
 }
 
 
+# H2d Monitor on the sample device: loop statistics, the IMU and the
+# controller on three plots; paused with A-B cursors; and a refused add:
+# the sensor loop at 1 kHz (live), twelve controller signals at 1 kHz take
+# about 80 % of the link, the IMU's first signal at 1 kHz would open a
+# second 1 kHz group (over 100 %) and is refused; 500 Hz fits.
+CONTROL = ','.join('32:0:%d' % item for item in
+                   (0x100, 0x101, 0x102, 0x103, 0x110, 0x111, 0x112, 0x113, 0x114, 0x120, 0x121, 0x122))
+MONITOR = {
+    'monitor': ([], '5:0:258,5:0:259,114:0:256,114:0:272,32:0:257,115:0:260', '', '10'),
+    'monitor-paused': ([], '5:0:258,5:0:259,114:0:256,114:0:272,32:0:257,115:0:260', '', '10'),
+    'monitor-budget': ([['set', '5:1:1=1000']], CONTROL + ',114:0:256', '0:1,1:1', '5'),
+}
+
+
 # The action each scenario runs (left_enc's `sample`), and the loop stall
 # (control, 8 s) that leaves odom's feedback source stale during capture.
 ACTIONS = {'layout-action': '113:0:768'}
@@ -125,6 +139,10 @@ def render(gui, vdev, destination, scenario, cli=None):
             if scenario in LAYOUT:
                 screen, select, staged = LAYOUT[scenario]
                 provision(cli, endpoint, staged)
+            if scenario in MONITOR:
+                provision(cli, endpoint, False)
+                for command in MONITOR[scenario][0]:
+                    cli_run(cli, endpoint, command)
             out = destination / scenario
             # Isolated recent devices; let loop run time arrive before capture.
             command = [gui, '--screen', screen, '--out', str(out),
@@ -134,6 +152,11 @@ def render(gui, vdev, destination, scenario, cli=None):
                 command += ['--endpoint', endpoint]
             if select:
                 command += ['--select', select]
+            if scenario in MONITOR:
+                _, plots, rates, window = MONITOR[scenario]
+                command += ['--plot', plots, '--window', window]
+                if rates:
+                    command += ['--rate', rates]
             if scenario in ACTIONS:
                 command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):
@@ -168,7 +191,7 @@ def render(gui, vdev, destination, scenario, cli=None):
             if os.environ.get('DRIVELINK_SCENARIO_LOG'):
                 print(scenario, ''.join(errors), flush=True)
             images = sorted(out.glob('*.png'))
-            if scenario in LAYOUT:
+            if scenario in LAYOUT or scenario in MONITOR:
                 # The file names carry the screen, not the scenario.
                 assert all(image.name.startswith(screen) for image in images), images
             assert len(images) == 4, (scenario, images, output, errors)
@@ -205,7 +228,7 @@ def main():
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'device', *LAYOUT, 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                     ['connect', 'device', *LAYOUT, 'tune', *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
                       'rename', 'reset', 'unsaved', 'notice',
                       'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:

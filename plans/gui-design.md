@@ -238,7 +238,7 @@ Every variable has scopes set, and its description gives its QML name (`Theme.bg
 - The Figma `SpinBox` becomes `DLNumberField` (a `TextField` with a validator), because QML `SpinBox` is integer-only.
 - The shell's application event filter (`SafetyKeys`, H2a-2) owns Esc → DISARM, including text edit cancellation and popup focus. `DLArmButton` only emits requests.
 - `DLParamRow` picks its editor with a `Loader` by item type.
-- `DLPlot`: a custom scene-graph item, as the host plan says; H2d measures it at 1 kHz and uses QtGraphs only if that proves better.
+- `DLPlot`: a custom scene-graph item, as the host plan says; built in H2d-1 as `PlotItem` (no QtGraphs; measured there).
 
 ## G3 Shell, Connect and Device
 
@@ -537,9 +537,9 @@ code and records the outcome here; the notes below give the detail.
 | LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | closed by H2c-1: Add loop and loop detail use the discovered enum and its default (any); the device's choice names are shown as served |
 | Layout actions while armed; blob input and output format | closed by H2c-2: follow the device: loop actions stay enabled while armed, paused actions on a real-time loop are disabled with the reason; blobs are hex (at most 512 bytes in; size, hex and Copy out), no new native dialog (user decisions 2026-11-17) |
 | Layout source rows: stale threshold, missing producer, invalid samples | closed by H2c-2: stale above 3 producer-loop periods (no descriptor marks a consumer's own limit), missing when the producer is not running, age `0xFFFFFFFF` hides the value; a staged target is never shown live |
-| Layout Signals card "Plot in Monitor" | H2d |
-| Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | H2d |
-| G5 1080p: Monitor plot fitting and paused toolbar | H2d |
+| Layout Signals card "Plot in Monitor" | closed by H2d-1: on the Signals and Statistics cards; it adds the node's signals (not its inputs) and opens Monitor |
+| Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | closed by H2d-1: custom `PlotItem`, no QtGraphs (16 series × 10 k samples: decimation ≈ 7 ms, a software frame ≈ 20 ms; line strips on RHI); series colours appear only in plots, chips and browser checkboxes, never in the status bar |
+| G5 1080p: Monitor plot fitting and paused toolbar | closed by H2d-1: plot areas share the column's height, legends and the toolbar wrap (screenshots `monitor`, `monitor-paused`, `monitor-budget` at both sizes) |
 | G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |
 | CheckItem has no warning state (plant identification caution) | H2e |
 | G7 calibration: F6 contract reconciliation, PC file format, provenance, Euler convention, cancel and reconnect | H2f |

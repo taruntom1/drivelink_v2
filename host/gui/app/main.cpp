@@ -10,10 +10,15 @@
 #include <QQuickWindow>
 #include <cstdio>
 #include <functional>
+#include <memory>
+
+// The static DriveLink.Shell module's C++ types (PlotItem).
+void qml_register_types_DriveLink_Shell();
 
 int main(int argc,char **argv) {
     Q_INIT_RESOURCE(qmake_DriveLink_Shell);
     Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);
+    qml_register_types_DriveLink_Shell();
     bool render=false;
     for(int i=1;i<argc;++i) {if(qstrcmp(argv[i],"--out")==0 || qstrncmp(argv[i],"--out=",6)==0) {render=true;}}
     if(render) {
@@ -28,7 +33,10 @@ int main(int argc,char **argv) {
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
-                      "layout-review, layout-add-instance or layout-add-loop.","name","device"});
+                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused or monitor-budget.","name","device"});
+    parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
+    parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
+    parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
     parser.addOption({"select","Layout screens: select this node (type:instance, e.g. 5:0).","key"});
     parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
@@ -41,8 +49,9 @@ int main(int argc,char **argv) {
     // Pages first (their index is the nav index plus one), then shell states.
     const QStringList pages={"connect","device","layout","tune","monitor"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
-                              "layout-review","layout-add-instance","layout-add-loop"};
+                              "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget"};
     const bool layoutScreen=screen.startsWith("layout");
+    const bool monitorScreen=screen.startsWith("monitor");
     const bool update=screen.startsWith("update");
     if(update && !parser.isSet("image")) {std::fprintf(stderr,"--screen %s needs --image\n",qPrintable(screen));return 2;}
     if(!pages.contains(screen) && !states.contains(screen)) {std::fprintf(stderr,"Unknown screen\n");return 2;}
@@ -107,7 +116,18 @@ int main(int argc,char **argv) {
         if(expected=="safe" && !connection.safeMode()) {return false;}
         return true;
     },[&] {
-        window->setProperty("page",layoutScreen?1:std::max(0,int(pages.indexOf(screen))-1));
+        window->setProperty("page",layoutScreen?1:monitorScreen?3:std::max(0,int(pages.indexOf(screen))-1));
+        if(monitorScreen) {
+            // Like the user's clicks: rates first, then each signal (a
+            // refused one shows its refusal).
+            auto &monitor=connection.monitorView();
+            monitor.setWindowSeconds(parser.value("window").toInt());
+            for(const auto &rate:parser.value("rate").split(',',Qt::SkipEmptyParts)) {
+                const auto parts=rate.split(':');
+                if(parts.size()==2) {monitor.setRate(parts[0].toInt(),parts[1].toInt());}
+            }
+            for(const auto &key:parser.value("plot").split(',',Qt::SkipEmptyParts)) {monitor.toggleSignal(key);}
+        }
         if(layoutScreen && parser.isSet("select")) {connection.selectNode(parser.value("select"));}
         if(screen=="layout-review") {window->setProperty("reviewOpen",true);}
         if(screen=="layout-add-instance" || screen=="layout-add-loop") {
@@ -158,6 +178,18 @@ int main(int argc,char **argv) {
                           [&] {connection.runAction(action,{},{});}});
         stages.push_back({[&] {const auto state=row().value("result").toMap().value("state").toString();
                                 return !state.isEmpty() && state!="running";},[] {}});
+    }
+    // Monitor: data across most of the window, then (paused) freeze it and
+    // place the cursors.
+    if(monitorScreen) {
+        auto filled=std::make_shared<QElapsedTimer>();
+        stages.push_back({[&connection,filled,&parser] {
+            if(connection.monitorView().nowUs()<=0) {return false;}
+            if(!filled->isValid()) {filled->start();}
+            return filled->elapsed()>=qint64(parser.value("window").toInt())*900;
+        },[&connection,&screen] {
+            if(screen=="monitor-paused") {connection.monitorView().setPaused(true);connection.monitorView().setCursors(true);}
+        }});
     }
     QElapsedTimer settled;
     stages.push_back({[&] {

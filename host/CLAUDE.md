@@ -80,11 +80,22 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   and configuration actions; an unknown or Ready OTA state blocks reboots.
   The image picker is the one non-modal native dialog allowed: offered only
   while disarmed, and nothing arms while it is open.
-- GUI loop-statistics subscriptions and the Layout live group use free slots
-  only, after command setup (live after loop statistics), record intent before
+- GUI loop-statistics subscriptions, the Layout live group and Monitor's groups
+  (one per plotted loop) use free slots only, after command setup (live and
+  Monitor after loop statistics, one mutation at a time), record intent before
   SUB_CONFIG, and are reused or cleared only on an exact owned LIST match; a
-  SUB_CONFIG that lands on a newer boot releases its slot or records it under
-  that boot. A requested reboot is never
+  successful configure drops every other record for that slot; a SUB_CONFIG
+  that lands on a newer boot releases its slot or records it under that boot.
+  The Layout live group exists only while Layout is shown. Monitor refuses an
+  add without a free slot or over 100 % of the link, and caps a group at
+  1 kHz (the firmware drains each group once per 1 ms).
+- H2d-2 hold rule (user decision 2026-11-17): only numeric inputs whose
+  descriptor range is finite and includes 0 are commanded; each loop's inputs
+  split at connect into a value group (hold 0) and a keepalive-only group that
+  never carries values; every value sent is a shown slider value or 0; queued
+  values are discarded before this GUI writes a live param to an instance it
+  commands.
+- A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never
   opens one (DTR/RTS can reset an ESP).

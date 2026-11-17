@@ -32,7 +32,7 @@ logs its internal choices.
 | H2a-2 | GUI shell and backend: app, shell, DISARM/Esc, Qt adapters, arm/ack, command groups, item-model bases, vdev scenario hooks, screenshot tool | H2a-1 | vdev | independent |
 | H2b | Connect and Device screens (H2b-1), OTA (H2b-2) | H2a-2 | bare board: GUI scenarios | independent |
 | H2c | Layout screen | H2b | vdev | self |
-| H2d | Monitor screen | H2c | vdev | independent |
+| H2d | Monitor screen: plots (H2d-1), manual command (H2d-2) | H2c | vdev; H2d-1 also a short bare-board run | independent |
 | H2e | Tune screen, run metrics and plant identification, session files | H2d | vdev; deferred: motor | independent |
 | H2f | IMU calibration custom panel | H2c; may run beside H2d/H2e | vdev; deferred: IMU | self |
 | H2g | Inno Setup installer (unsigned), root `VERSION`, third-party notices, local GUI close-out | H2e, H2f | bare board: installed GUI | self |
@@ -54,8 +54,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | Where the device name is stored (its own NVS key or the A/B config); allowed characters; vdev's stable fake id | H1c |
 | Faults badge: active faults only, or history too | H2b |
 | What the reboot notice lists as lost (the GUI tracks params changed since the last save) | H2b |
-| G5 1080p layouts: Monitor plot fitting and paused toolbar; Tune plot column, A/B card, gain history placement | H2d, H2e |
-| The custom plot item's performance at 1 kHz on several plots (QtGraphs only if it proves better) | H2d |
+| G5 1080p layouts: Tune plot column, A/B card, gain history placement (Monitor's settled in H2d-1) | H2e |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | H2f |
 | Agent default port, history sizes, retry policy for an offline device | H3a |
 | mDNS library, service name and TXT records | H3b |
@@ -228,9 +227,13 @@ Scope:
 - Manual command: CommandControl per input through the GUI's command group, the slider (±limit, starting at 25 % of the descriptor max, remembered per input), dead-man ramp to 0 on release, Latch.
 - The G5 1080p issues for Monitor (fitted plot areas, the paused toolbar).
 
-Hardware check: vdev only.
+Split (user decision 2026-11-17), one session and PR each, both independently reviewed:
+- **H2d-1 plots:** everything above except manual command; its card shows a placeholder. The Layout live group is released while Layout is not shown, so Monitor can use its slot; Monitor uses free slots only and refuses an add when none is free. Layout's Signals card gains "Plot in Monitor". Done: [h2d-implementation.md](h2d-implementation.md).
+- **H2d-2 manual command**, with the **hold rule** (user decision 2026-11-17): only numeric inputs whose descriptor range is finite and includes 0 can be commanded. At connect each loop's inputs split into a value group (those inputs; hold 0, the value the firmware sets at ARM) and a keepalive-only group (inputs without such a range, such as `position_sp`) that never carries values. Every value sent is one shown on a slider, or 0. Non-commandable inputs are listed disabled with the reason. Before this GUI writes a live param to an instance it is commanding, it discards queued values.
 
-Review: independent (manual commands drive actuators: dead-man, Latch, keepalives).
+Hardware check: vdev; H2d-1 also ran a short bare-board check (1 kHz plotting near and below 100 % of the link, nothing flashed).
+
+Review: independent (H2d-1: the shared subscription slots and the render-thread data path; H2d-2: manual commands drive actuators: dead-man, Latch, keepalives).
 
 ## H2e Tune
 

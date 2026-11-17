@@ -36,12 +36,15 @@ inline bool matches(const Owned &o,const Group &g) {
     return g.kind==GroupKind::Command && g.id==o.plan.id && g.configured &&
         g.loop==o.plan.loop && g.epoch==o.epoch && g.refs==o.plan.refs;
 }
-// A GUI-owned subscription: one loop's statistic signals, or (live) the
-// Layout selection's signals.
+// A GUI-owned subscription: one loop's statistic signals, (live) the
+// Layout selection's signals, or (monitor) one plotted loop of Monitor.
 struct OwnedSub {
     uint8_t id,loop,epoch;uint64_t generation;std::vector<Ref> refs;
     std::shared_ptr<GroupBuffer> buffer;
     bool live=false;
+    bool monitor=false;
+    uint16_t divider=1;
+    bool statistics() const {return !live && !monitor;}
 };
 inline bool matchesSub(const OwnedSub &o,const Group &g) {
     return g.kind==GroupKind::Subscription && g.id==o.id && g.configured &&
@@ -80,6 +83,11 @@ struct LocalConnection::Context {
     std::vector<OwnedSub> liveSubs(uint64_t generation) {
         std::lock_guard lock(mutex);std::vector<OwnedSub> result;
         for(const auto &o:subs) {if(o.live && o.generation==generation) {result.push_back(o);}}
+        return result;
+    }
+    std::vector<OwnedSub> monitorSubs(uint64_t generation) {
+        std::lock_guard lock(mutex);std::vector<OwnedSub> result;
+        for(const auto &o:subs) {if(o.monitor && o.generation==generation) {result.push_back(o);}}
         return result;
     }
     void stopKeepers() {std::lock_guard lock(mutex);for(auto &o:owned) {if(o.keeper) {o.keeper->stop();}}}

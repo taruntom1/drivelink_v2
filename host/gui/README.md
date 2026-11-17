@@ -234,6 +234,59 @@ G4/G7b screen. Everything comes from the descriptors: loop masks, item flags,
   `DriveLink/Modules/<type name>/Panel.qml` is in the resources; it is loaded
   with `backend` and `nodeKey`. None ships until H2f.
 
+## Monitor (H2d-1)
+
+Live plots of any running signal (G5 frames). Pure rules in
+`backend/monitor_model.*`, the QML-facing state in `backend/monitor_view.*`
+(`connection.monitor`), the groups in `backend/connection_monitor.cpp`, the
+plot item in `app/plot_item.*` and the page in `app/MonitorPage.qml`.
+
+- **Signals card.** Per running loop (its statistics) and per running
+  instance (signals, and inputs marked "(input)"), from the descriptors; a
+  search box; plotted rows show the series colour and the latest value.
+  Plot rates per loop: the loop rate divided by 1, 2, 5, 10, … down to about
+  1 Hz, default the fastest at or below 100 Hz. The link bar adds every
+  subscription group (`9 + 12 + 4k` bytes per sample, this GUI's and other
+  clients', from the last LIST) and the status stream to 921 600 baud. An
+  add or a faster rate is refused, with the reason and nothing changed, over
+  100 %, without a free slot for a new loop, at `limits.group_entries`, at
+  16 signals or when a ninth plot would be needed; over budget it offers the
+  fastest rate of that loop that fits, applied in one click. A change that
+  lowers the load is always accepted. Groups in use and lost frames (counter
+  gaps) are shown. A group carries at most 1 kHz: the firmware's link task
+  sends each group's latest sample once per 1 ms, so faster loops start at
+  a divider that keeps 1 kHz, and a chosen rate follows a live loop-rate
+  change down to it.
+- **Groups.** One GUI-owned subscription group per plotted loop, refs in plot
+  order, with the loop-statistics and live-group rules: free slots only,
+  after command setup and loop statistics, intent before SUB_CONFIG, reuse or
+  clear only on an exact LIST match, Busy/Withdrawn retried twice, a
+  SUB_CONFIG landing on a newer boot releases its slot. One group mutation
+  at a time across Layout and Monitor; the latest plot set wins; a failed
+  pass retries three times, 2 s apart. Entering the page re-reads LIST.
+  Samples are popped every 50 ms into per-signal rings (60 s at the plot
+  rate) on device time. Boot clears the data and sets the groups up again;
+  a lost link keeps the plot set and rates for the same device; an explicit
+  close or another device resets them. The Layout live group exists only
+  while Layout is shown, so Monitor can use its slot.
+- **Plots.** Stacked, one per unit: a checked signal joins the plot of its
+  unit, else the first empty plot, else a new one (at most 8; Add plot and
+  remove). Legend chips with the live value and remove; Y axes with round
+  ticks; one shared time axis ending at the newest sample. `PlotItem`
+  decimates each series to min/max per pixel column on the GUI thread and
+  draws scene-graph line strips; Qt's software renderer draws no custom
+  geometry, so there it paints a cosmetic 1 px image (offscreen tests and
+  screenshots).
+- **Toolbar.** Pause/Resume (Space, except while typing or under a shell
+  dialog or overlay; Resume starts again from now), Window 2/5/10/30/60 s,
+  Cursors (while paused: A–B across every plot with a readout of A, B, Δ and
+  Δt), Snapshot CSV (the visible window to
+  `Documents/DriveLink/snapshots/<device id>-<time>.csv`, a toast with the
+  path, no dialog) and Add plot. Plots and rates are not saved.
+- **Plot in Monitor.** Layout's Signals and Statistics cards add the node's
+  signals (not its inputs) and open Monitor.
+- **Manual command** is a placeholder card until H2d-2.
+
 ## Theme
 
 Figma's variables are the source of truth. `tokens.json` holds every variable
@@ -350,6 +403,21 @@ armed rule, a lost RUN reply sent once (vdev `drop-action-reply`), Boot
 notifying the live view, and clearing; `layoutLiveInShell` covers the cards,
 the panel tab and the action form in the shell.
 
+H2d-1's `gui_monitor_tests` (ctest `gui-monitor`) cover the pure Monitor
+rules (`monitorLogic`, `plotLogic`: catalogue, rates and the 1 kHz cap,
+budget, refusals and suggestions, plans, rings, decimation, axes, cursors,
+loss, CSV), the view without a device (`monitorView`), groups on vdev
+(`monitorOperations`: free slots, reconfigure, a refused add without a free
+slot, the Layout live group released and restored, Boot, close clearing
+only what it owns), the page in the shell (`monitorInShell`: Plot in
+Monitor, drawing, Space, cursors, snapshot) and a 16-series plot frame
+(`plotPerformance`). Shared helpers are in `tests/test_support.hpp`.
+`benchMonitor` (skipped unless `DRIVELINK_GUI_BENCH_ENDPOINT` is set) plots
+the fastest loop's statistics at its full rate, then beside another 1 kHz
+group, then with the loop at 2 kHz live, and compares the measured rate,
+ticks per sample and lost frames with the prediction; it restores the
+board on every exit.
+
 `benchOta` is the bare-board OTA check, skipped unless
 `DRIVELINK_GUI_BENCH_ENDPOINT` and `DRIVELINK_GUI_BENCH_OTA_IMAGE` are set: it
 installs and confirms the image through the backend and, with
@@ -372,7 +440,9 @@ The app's `--out DIR` writes four PNGs (2560×1440 and 1920×1080, Dark and
 Light), waits for live state with a timeout, then disconnects. `--screen`
 accepts `connect`, `device`, `layout`, `tune`, `monitor`, `drawer`, `dialog`,
 `rename`, `reset`, `unsaved`, `notice`, `layout-review`, `layout-add-instance`,
-`layout-add-loop` (with `--select TYPE:INSTANCE` for the Layout screens) and, with `--image FILE`, `update` (the
+`layout-add-loop` (with `--select TYPE:INSTANCE` for the Layout screens),
+`monitor-paused`, `monitor-budget` (with `--plot KEY,...`, `--rate
+LOOP:DIVIDER,...` and `--window S` for the Monitor screens) and, with `--image FILE`, `update` (the
 image choice), `update-writing`, `update-confirmed`, `update-rolledback`;
 `--expect-state` accepts `ready`,
 `fault`, `safe`, `lost`. Except for Connect, pass an endpoint. `--settle MS`
@@ -390,9 +460,9 @@ python host/gui/tests/scenarios.py --gui host/superbuild/build/windows-mingw/gui
 ```
 
 The script defaults to offscreen/software rendering, runs the backend checks
-when `--backend` is supplied, and renders twenty-three scenarios, the last four the firmware update screens (it
-writes a non-executable vdev image for them), into separate folders (92 PNGs,
-dimensions checked). The six Layout scenarios first build the G7b three-loop
+when `--backend` is supplied, and renders twenty-eight scenarios, the last four the firmware update screens (it
+writes a non-executable vdev image for them), into separate folders (112 PNGs,
+dimensions checked). The Layout and Monitor scenarios first build the G7b three-loop
 sample on vdev with `drivelink-cli` (next to vdev, or `--cli`), save and
 reboot it, and stage changes for the pending ones; `--only NAME...` picks some. `--smoke`
 renders only Connect and Device;
