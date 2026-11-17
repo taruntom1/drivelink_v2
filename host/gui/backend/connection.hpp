@@ -3,6 +3,7 @@
 #include "layout_model.hpp"
 #include "live_model.hpp"
 #include "models.hpp"
+#include "monitor_view.hpp"
 #include "ota_model.hpp"
 #include <drivelink/buffers.hpp>
 #include <QElapsedTimer>
@@ -70,6 +71,8 @@ class Connection : public QObject {
     Q_PROPERTY(QVariantMap live READ live NOTIFY liveChanged)
     // The selected instance's actions (ActionTable roles).
     Q_PROPERTY(QAbstractItemModel* actions READ actions CONSTANT)
+    // The Monitor page (MonitorView): plots, rates, link budget.
+    Q_PROPERTY(QObject* monitor READ monitor CONSTANT)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -117,6 +120,10 @@ public:
     virtual QVariantMap layout() const=0;
     virtual QVariantMap live() const=0;
     virtual QAbstractItemModel *actions()=0;
+    virtual QObject *monitor()=0;
+    // The page the shell shows (device, layout, tune, monitor): the Layout
+    // live group is set up only while Layout is shown.
+    Q_INVOKABLE virtual void setPage(const QString &page)=0;
     // An action of the selected instance: arguments as text (one per
     // descriptor argument), a hex blob for blob-in actions. Refused locally
     // when blocked or when the input does not parse (nothing sent); else RUN
@@ -245,6 +252,11 @@ public:
     QVariantMap layout() const override;
     QVariantMap live() const override;
     QAbstractItemModel *actions() override {return &m_actions;}
+    QObject *monitor() override {return &m_monitor;}
+    MonitorView &monitorView() {return m_monitor;}
+    void setPage(const QString &page) override;
+    // Monitor's subscription groups, one per plotted loop (tests).
+    std::vector<uint8_t> monitorSubscriptions() const;
     const ActionTable &actionTable() const {return m_actions;}
     void runAction(const QString &itemKey,const QStringList &args,const QString &blobHex) override;
     QVariantMap checkAction(const QString &itemKey,const QStringList &args,const QString &blobHex) const override;
@@ -376,6 +388,23 @@ private:
     QHash<QString,QVariantMap> m_actionResults;
     ActionTable m_actions;
     void updateActions();
+    // Monitor (connection_monitor.cpp): one group per plotted loop, set up
+    // after the live group; one mutation at a time across both.
+    struct MonitorGroup {
+        MonitorPlan plan;uint64_t generation=0;uint8_t id=0;
+        std::shared_ptr<GroupBuffer> buffer;
+        std::optional<uint16_t> counter;
+    };
+    MonitorView m_monitor;
+    std::vector<MonitorGroup> m_monitorGroups;
+    // The page the shell shows; until it reports one (tests), Layout.
+    QString m_monitorAttempt,m_page=QStringLiteral("layout");
+    bool m_monitorPending=false,m_monitorListStale=true;
+    int m_monitorRetries=0;
+    QTimer m_monitorTimer;
+    void syncMonitor();
+    void pollMonitor();
+    void resetMonitorGroups();
     void syncLive();
     void pollLive();
     void resetLive();

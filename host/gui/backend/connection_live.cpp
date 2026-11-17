@@ -22,11 +22,7 @@ const ModelItem *findItem(const DeviceSnapshot &s,const Ref &r) {
     const auto t=s.types.find(r.type);if(t==s.types.end()) {return nullptr;}
     const auto i=t->second.items.find(r.item);return i==t->second.items.end()?nullptr:&i->second;
 }
-size_t entryLimit(const DeviceSnapshot &s) {
-    const auto it=s.system_params.find(defs::system::kLimitsGroupEntries);
-    const auto limit=it==s.system_params.end()?0:valueBits(it->second);
-    return limit?std::min<size_t>(limit,64):64;
-}
+size_t entryLimit(const DeviceSnapshot &s) {return groupEntryLimit(s);}
 bool withdrawn(const Error &e) {
     return e.kind==ErrorKind::Rejected && e.result==uint8_t(defs::Result::Busy) && e.detail==uint8_t(defs::Detail::Withdrawn);
 }
@@ -52,14 +48,15 @@ void LocalConnection::resetLive() {
 
 void LocalConnection::syncLive() {
     auto c=m_context;
-    if(!c || m_closing || m_livePending || !m_snapshot || !ready() || !m_snapshot->status) {return;}
+    if(!c || m_closing || m_livePending || m_monitorPending || !m_snapshot || !ready() || !m_snapshot->status) {return;}
     const auto generation=m_snapshot->generation;
     // After command setup and the statistics groups, so group mutations
     // never interleave and the Device page keeps its run-time columns.
     if(!m_subsAttempted || m_subsPending || m_subsGeneration!=generation || m_setupPending) {return;}
     const auto node=parseNodeKey(m_selected);
+    // Only while Layout is shown, so Monitor can use the slot.
     std::optional<LivePlan> want;
-    if(node) {want=livePlan(*m_snapshot,*node,entryLimit(*m_snapshot));}
+    if(node && m_page==QLatin1String("layout")) {want=livePlan(*m_snapshot,*node,entryLimit(*m_snapshot));}
     const auto attempt=signature(m_selected,want,generation);
     if(attempt==m_liveAttempt) {return;}
     m_liveAttempt=attempt;
@@ -135,16 +132,18 @@ void LocalConnection::syncLive() {
             });
             if(owned==c->subs.end()) {throw Error(ErrorKind::Cancelled,"Live ownership was invalidated");}
             owned->epoch=configured.epoch;owned->buffer=buffer;
-            // The reconfigured slot no longer holds the previous configuration.
+            // The slot now holds exactly this configuration: no earlier record
+            // for it, of any kind (a stale unanswered intent of statistics or
+            // Monitor included), can match it any more.
             std::erase_if(c->subs,[&](const OwnedSub &s) {
-                return s.live && s.id==id && !(s.epoch==configured.epoch && s.refs==intent.refs && s.buffer);
+                return s.id==id && s.generation==generation && !(s.live && s.epoch==configured.epoch && s.refs==intent.refs && s.buffer);
             });
             return LiveSetup{id,std::move(buffer),{}};
         },[self,c,generation,key,want](std::expected<LiveSetup,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_livePending=false;
             if(!self->m_snapshot || self->m_snapshot->generation!=generation) {
-                self->resetLive();self->syncLive();emit self->liveChanged();return;
+                self->resetLive();self->syncLive();self->syncMonitor();emit self->liveChanged();return;
             }
             self->m_liveValues={};self->m_liveCounter.reset();self->m_liveSeen.invalidate();
             if(!result) {
@@ -155,7 +154,8 @@ void LocalConnection::syncLive() {
             } else {
                 self->m_live.reset();self->m_liveNote=QString::fromStdString(result->note);
             }
-            self->syncLive();
+            self->m_monitorListStale=true;
+            self->syncLive();self->syncMonitor();
             emit self->liveChanged();
         });
     } catch(const Error &e) {m_livePending=false;m_liveNote=errorText(e);emit liveChanged();}

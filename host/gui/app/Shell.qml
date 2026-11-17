@@ -28,6 +28,10 @@ Basic.ApplicationWindow {
     property alias statusBar: status
     property alias dialog: dialog
     property alias scrim: scrim
+    // The connection sets up the Layout live group only while Layout is shown.
+    readonly property var pageNames: ["device", "layout", "tune", "monitor"]
+    onPageChanged: connection.setPage(pageNames[page])
+    Component.onCompleted: connection.setPage(pageNames[page])
     property alias toastCount: toasts.count
     property alias otaDialog: otaDialog
     // Opens the firmware image picker (G3 "Choose image…").
@@ -181,10 +185,17 @@ Basic.ApplicationWindow {
                     onAddInstanceRequested: layoutDialogs.openAddInstance()
                     onAddLoopRequested: layoutDialogs.openAddLoop()
                     onLabelRequested: function(key, label) { layoutDialogs.openLabel(key, label) }
+                    onPlotRequested: function(key) { connection.monitor.plotNode(key); shell.page = 3 }
+                }
+                MonitorPage {
+                    anchors.fill: parent
+                    visible: shell.page === 3
+                    backend: shell.backend
+                    blocked: shell.modalOpen || shell.drawerOpen || shell.armPopoverOpen || shell.reviewOpen
                 }
                 Column {
                     anchors.fill: parent; anchors.margins: Theme.space24
-                    visible: shell.page > 1
+                    visible: shell.page === 2
                     spacing: Theme.space24
                     Text {
                         text: [qsTr("Device"), qsTr("Layout"), qsTr("Tune"), qsTr("Monitor")][shell.page]

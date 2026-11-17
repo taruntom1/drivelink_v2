@@ -202,7 +202,7 @@ commands) in H3a. Python bindings are not planned.
 - **Style.** A custom DriveLink style built on the Basic style; each G2 component maps to one QML control (the mapping table in Figma).
 - **C++ backend:**
   - A device connection, either local (serial, or TCP to vdev) or remote (agent), behind one interface. Library completions and events reach QML through the session dispatcher (queued invokes onto the GUI thread).
-  - Its own command groups cover running, discovered inputs, partitioned by loop and the device's capacities; with no inputs, an empty group supplies keepalives. H2a-2 creates prefix-only keepalive handles, leaving input values unchanged: descriptor defaults are not semantic holds. H2d adds explicit finite holds before value commands. A disarmed direct connection sets groups up at connect; an already-armed connection observes until explicit DISARM acknowledgement, even if its watchdog expires during discovery. It never adopts existing groups. A remote connection starts as an observer and sets groups up only after receiving the control lease. User decision 2026-11-15.
+  - Its own command groups cover running, discovered inputs, partitioned by loop and the device's capacities; with no inputs, an empty group supplies keepalives. H2a-2 creates prefix-only keepalive handles, leaving input values unchanged: descriptor defaults are not semantic holds. H2d-2 adds explicit finite holds before value commands, by the hold rule (user decision 2026-11-17): only numeric inputs whose descriptor range is finite and includes 0 are commanded; each loop's inputs split at connect into a value group (those inputs, hold 0, the value the firmware sets at ARM) and a keepalive-only group that never carries values; every value sent is a shown slider value or 0; queued values are discarded before this GUI writes a live param to an instance it commands. A disarmed direct connection sets groups up at connect; an already-armed connection observes until explicit DISARM acknowledgement, even if its watchdog expires during discovery. It never adopts existing groups. A remote connection starts as an observer and sets groups up only after receiving the control lease. User decision 2026-11-15.
   - Models built from the device model:
     - an instance tree (type, label, loop, health), with loops as instances
     - a param table per instance (typed editors, units, ranges, enums, a pending-reboot marker, a dirty marker)
@@ -284,6 +284,7 @@ What follows from the tables:
 - The control rate itself never uses the link.
 - At high rates with many motors, consider 2–3 Mbaud, or a USB transport later. Neither is planned.
 - The GUI's signal browser uses the same arithmetic to show what a plot would add, and refuses an add over 100 % (G5).
+- A subscription group delivers at most 1 kHz whatever its loop rate: the firmware's link task sends each group's latest sample once per 1 ms, so faster samples overwrite each other and show as counter gaps. The GUI caps a group's rate there (measured on the bench in H2d-1: a 2 kHz loop at divider 1 gave 1000 frames/s, two ticks apart).
 
 ## Repository layout
 

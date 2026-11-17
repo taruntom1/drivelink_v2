@@ -1,7 +1,7 @@
 # Offscreen Qt Quick tests of the DriveLink style, and a gallery smoke test.
 find_package(Qt6 6.10 REQUIRED COMPONENTS QuickTest)
 find_package(Qt6 6.10 REQUIRED COMPONENTS Test Network)
-qt_add_executable(gui_backend_tests test_backend.cpp)
+qt_add_executable(gui_backend_tests test_backend.cpp test_support.hpp)
 set_target_properties(gui_backend_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_backend_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
 target_link_libraries(gui_backend_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test Qt6::Network)
@@ -10,6 +10,13 @@ add_dependencies(gui_backend_tests drivelink-vdev)
 if(MINGW)
   target_compile_options(gui_backend_tests PRIVATE -Wa,-mbig-obj)
 endif()
+
+# Monitor (H2d): pure rules, the view, groups on vdev, the page and the plot item.
+qt_add_executable(gui_monitor_tests test_monitor.cpp test_support.hpp)
+set_target_properties(gui_monitor_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+target_compile_definitions(gui_monitor_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
+target_link_libraries(gui_monitor_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
+add_dependencies(gui_monitor_tests drivelink-vdev)
 
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -34,6 +41,9 @@ set_tests_properties(gui-gallery PROPERTIES TIMEOUT 60 ENVIRONMENT_MODIFICATION 
   PASS_REGULAR_EXPRESSION "gallery-light\\.png [0-9]+x[0-9]+")
 add_test(NAME gui-backend COMMAND gui_backend_tests)
 set_tests_properties(gui-backend PROPERTIES TIMEOUT 300
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
+add_test(NAME gui-monitor COMMAND gui_monitor_tests)
+set_tests_properties(gui-monitor PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gui-screenshots COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scenarios.py

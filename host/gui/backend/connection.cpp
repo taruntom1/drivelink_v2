@@ -23,6 +23,13 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     // Action rows follow every state change (arm state, OTA, a configuration
     // action, outcomes); unchanged rows are left alone.
     connect(this,&Connection::changed,this,[this] {updateActions();});
+    connect(&m_monitor,&MonitorView::plansChanged,this,[this] {syncMonitor();});
+    connect(&m_monitor,&MonitorView::notification,this,&Connection::notification);
+    // Monitor's samples are popped at 20 Hz: plots move smoothly and a
+    // 1 kHz group stays far from its 2048-sample buffer.
+    m_monitorTimer.setInterval(50);
+    connect(&m_monitorTimer,&QTimer::timeout,this,[this] {pollMonitor();});
+    m_monitorTimer.start();
     m_timer.setInterval(100);
     connect(&m_timer,&QTimer::timeout,this,[this] {
         if(m_closing) {
@@ -214,7 +221,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         if(m_snapshot) {m_explicitDisarmAcknowledged=false;}
         // Row states belong to the previous boot's layout.
         m_edits.clear();
-        resetLive();
+        resetLive();resetMonitorGroups();
         for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
             if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
         }
@@ -282,7 +289,9 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
        (!m_subsAttempted || m_subsGeneration!=m_snapshot->generation)) {setupLoopStats();}
     otaRefresh();
     rebuildLayout(metadata);
-    syncLive();
+    // Monitor follows complete metadata only: a reload in progress never prunes its plots.
+    if(ready()) {m_monitor.setSnapshot(m_snapshot);}
+    syncLive();syncMonitor();
     // The live view follows every refresh: Boot, safe mode, reload, run
     // states and staged targets all change it, not only new samples.
     emit changed();emit liveChanged();
@@ -366,7 +375,7 @@ void LocalConnection::setupLoopStats() {
                         if(withdrawn && attempt<3 && !c->retired) {continue;}
                         if(!e.outcome_unknown) {
                             std::lock_guard lock(c->mutex);
-                            std::erase_if(c->subs,[&](const auto &o){return o.generation==snapshot->generation && o.id==id;});
+                            std::erase_if(c->subs,[&](const auto &o){return o.statistics() && o.generation==snapshot->generation && o.id==id;});
                         }
                         throw;
                     }
@@ -378,9 +387,12 @@ void LocalConnection::setupLoopStats() {
                 auto buffer=session->subscribeBuffer(id,configured.epoch,refs.size(),8,configured.generation);
                 {
                     std::lock_guard lock(c->mutex);
-                    const auto owned=std::find_if(c->subs.begin(),c->subs.end(),[&](const auto &o){return o.generation==snapshot->generation && o.id==id;});
+                    const auto owned=std::find_if(c->subs.begin(),c->subs.end(),[&](const auto &o){return o.statistics() && o.generation==snapshot->generation && o.id==id;});
                     if(owned==c->subs.end() || c->retired) {throw Error(ErrorKind::Cancelled,"Loop statistics ownership was invalidated");}
                     owned->epoch=configured.epoch;owned->buffer=std::move(buffer);
+                    // The free slot now holds exactly this configuration: a stale
+                    // record of another kind for it can no longer match it.
+                    std::erase_if(c->subs,[&](const auto &o){return !o.statistics() && o.generation==snapshot->generation && o.id==id;});
                 }
                 // CONFIG enables the group; another mutation would advance its epoch.
                 } catch(const Error &e) {
@@ -394,8 +406,9 @@ void LocalConnection::setupLoopStats() {
             if(!self || !self->current(c)) {return;}
             self->m_subsPending=false;
             if(self->m_snapshot && self->m_snapshot->generation!=self->m_subsGeneration) {self->refresh(c);return;}
-            // The selection's group takes a slot only after the statistics groups.
-            self->syncLive();
+            // The selection's and Monitor's groups take slots only after the statistics groups.
+            self->m_monitorListStale=true;
+            self->syncLive();self->syncMonitor();
             // Run time is informative: a setup failure leaves the column empty
             // with its reason and never blocks the connection.
             if(!result) {
@@ -403,7 +416,7 @@ void LocalConnection::setupLoopStats() {
                 std::vector<uint8_t> owned;
                 {
                     std::lock_guard lock(c->mutex);
-                    for(const auto &o:c->subs) {if(o.buffer && !o.live) {owned.push_back(o.loop);}}
+                    for(const auto &o:c->subs) {if(o.buffer && o.statistics()) {owned.push_back(o.loop);}}
                 }
                 for(const auto &loop:self->m_snapshot->info.loops) {
                     if(std::find(owned.begin(),owned.end(),loop.id)==owned.end()) {self->m_loops.setRunTime(loop.id,std::nullopt,self->m_subsNote);}
@@ -420,7 +433,7 @@ void LocalConnection::pollLoopStats() {
     std::vector<std::pair<uint8_t,std::shared_ptr<GroupBuffer>>> buffers;
     {
         std::lock_guard lock(m_context->mutex);
-        for(const auto &o:m_context->subs) {if(o.buffer && !o.live) {buffers.emplace_back(o.loop,o.buffer);}}
+        for(const auto &o:m_context->subs) {if(o.buffer && o.statistics()) {buffers.emplace_back(o.loop,o.buffer);}}
     }
     for(const auto &[loop,buffer]:buffers) {
         GroupSample sample;
@@ -453,7 +466,7 @@ std::vector<uint8_t> LocalConnection::ownedSubscriptions() const {
     std::vector<uint8_t> ids;
     if(!m_context) {return ids;}
     std::lock_guard lock(m_context->mutex);
-    for(const auto &o:m_context->subs) {if(!o.live) {ids.push_back(o.id);}}
+    for(const auto &o:m_context->subs) {if(o.statistics()) {ids.push_back(o.id);}}
     return ids;
 }
 void LocalConnection::setupGroups() {
@@ -553,7 +566,7 @@ void LocalConnection::disarm() {
             if(self->m_disarmAgain) {self->m_disarmAgain=false;self->disarm();return;}
             if(!result) {if(self->m_closing) {self->finishClose();}return;}
             if(self->m_closing) {
-                if(c->ownsAny() || self->m_setupPending || self->m_armPending || self->m_subsPending || self->m_livePending) {self->clearAndClose();}
+                if(c->ownsAny() || self->m_setupPending || self->m_armPending || self->m_subsPending || self->m_livePending || self->m_monitorPending) {self->clearAndClose();}
                 else {self->finishClose();}
             }
             else {self->refresh(c);}
@@ -580,6 +593,7 @@ void LocalConnection::disconnectDevice() {
         otaInterrupted(tr("Disconnected before the device came back."));
         m_linkLost=false;m_previous.reset();m_snapshot.reset();
         m_instances.reset({});m_loops.reset({});m_faults.reset({});
+        m_monitor.reset(); // a lost link kept it for the reconnect
         emit changed();emit disconnected();return;
     }
     if(m_closing) {return;}
@@ -589,7 +603,7 @@ void LocalConnection::disconnectDevice() {
     if(m_disarmPending) {return;}
     if(m_context->owns() || m_setupPending || m_armPending) {disarm();}
     // Loop statistics are released without a DISARM: they command nothing.
-    else if(m_context->ownsAny() || m_subsPending || m_livePending) {clearAndClose();}
+    else if(m_context->ownsAny() || m_subsPending || m_livePending || m_monitorPending) {clearAndClose();}
     else {finishClose();}
 }
 void LocalConnection::retry() {
@@ -632,6 +646,9 @@ void LocalConnection::finishClose(bool lost) {
     m_armPending=false;m_disarmPending=false;m_disarmAgain=false;m_ackPending=false;m_waitingDisarm=false;
     m_disarmWhenOpened=false;m_subsPending=false;m_configAction.clear();m_loadStep=0;
     resetLive();m_livePending=false;m_actionRunning.clear();m_actionResults.clear();
+    // A lost link keeps Monitor's plot set, as Layout keeps its selection.
+    resetMonitorGroups();m_monitorPending=false;
+    if(lost) {m_monitor.lose();} else {m_monitor.reset();}
     if(lost && c) {
         // Remember the device for the reboot notice after a reconnect.
         std::optional<uint64_t> uptime;
