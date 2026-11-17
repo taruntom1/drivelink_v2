@@ -212,6 +212,9 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         // Row states belong to the previous boot's layout.
         m_edits.clear();
         resetLive();
+        for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
+            if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
+        }
     }
     m_snapshot=std::move(snapshot);
     if(!m_snapshot->connected) {finishClose(true);return;}

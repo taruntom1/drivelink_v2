@@ -148,6 +148,38 @@ rules), `plans/gui-design.md` (open issues), the status file and handoff,
   `build/validate/summary.json` (`finished_at`, `source`,
   `full_gate_passed`).
 
+## Build progress (working record, second compaction point)
+
+- Built and committed: 41270fc (build), then the self-review fixes (outcomes
+  cleared on Boot, pollLive snapshot guard). `validate.py full` passed on
+  41270fc (all 7 checks); the self-review commit still needs the full gate
+  after the review fixes.
+- Code: `connection_live.cpp` (syncLive/pollLive/live/checkAction/runAction/
+  updateActions), `live_model.*` (pure rules + `ActionTable`), `ActionRow.qml`,
+  LayoutPage (Statistics, Signals · live, Actions cards in a scrolling side
+  column; panel tab via Loader), TargetRow (value/age/state), app `--action`.
+- vdev controls added: `drop-action-reply N`, `loop-stall LOOP MS`, stats
+  `actions N`. Scenarios added: layout-signals (114:0), layout-action
+  (113:0, runs 113:0:768), layout-sources-stale (loop-stall 0 8000);
+  layout-loop now shows Statistics. Rendered OK (scratchpad shots).
+- Tests: `liveLogic`, `liveDataAndActions`, `layoutLiveInShell` pass; the
+  gui-backend test target needs `-Wa,-mbig-obj` on MinGW (too many sections).
+- Found while building: a Repeater over a plain list recreated ActionRows on
+  any row's data change (lost form text; the test read a freed row and
+  crashed in a TLS destructor). Fixed with ActionTable (in-place
+  dataChanged); the arg fields use a count model. The H2c-1 Wiring/Sources
+  rows survive status frames (a probe showed no recreation without a data
+  change).
+- Deviations to log: QML form tests live in the backend shell test (the
+  quick-test runner loads only DriveLink.Style); "missing" has pure tests
+  only, no screenshot; a failed live setup (no free slot, Busy) retries on
+  reselect only; a paused action that sets Unsaved leaves no line in this
+  window's change list (the notice may say "made outside this window"); the
+  test-only vdev controls and app `--action`.
+- Next: independent Opus review (brief in the scratchpad: review_brief.md;
+  rewrite it from this record if lost), fix, full gate, final scenario run,
+  hardware-log row, docs, status, PR.
+
 ## Results
 
 Filled in after the build, review and vdev campaign.

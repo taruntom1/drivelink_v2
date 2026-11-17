@@ -157,7 +157,7 @@ void LocalConnection::syncLive() {
 }
 
 void LocalConnection::pollLive() {
-    if(!m_live || !m_live->buffer) {return;}
+    if(!m_live || !m_live->buffer || !m_snapshot) {return;}
     bool changed=false;
     GroupSample sample;
     if(m_live->buffer->latest(sample) && sample.generation==m_live->generation &&
