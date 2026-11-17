@@ -20,6 +20,9 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     // the destruction of one of its own posted events re-enters Qt's queue
     // mutex. The app deletes this receiver after its posted-event cleanup.
     m_dispatch(std::make_shared<GuiDispatch>()),m_instances(this),m_loops(this),m_faults(this) {
+    // Action rows follow every state change (arm state, OTA, a configuration
+    // action, outcomes); unchanged rows are left alone.
+    connect(this,&Connection::changed,this,[this] {updateActions();});
     m_timer.setInterval(100);
     connect(&m_timer,&QTimer::timeout,this,[this] {
         if(m_closing) {
@@ -48,6 +51,7 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
             finishClose(true);return;
         }
         if(++m_pollTick%3==0) {pollLoopStats();}
+        if(m_pollTick%2==0) {pollLive();}
     });
     m_timer.start();
 }
@@ -207,6 +211,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         if(m_snapshot) {m_explicitDisarmAcknowledged=false;}
         // Row states belong to the previous boot's layout.
         m_edits.clear();
+        resetLive();
     }
     m_snapshot=std::move(snapshot);
     if(!m_snapshot->connected) {finishClose(true);return;}
@@ -271,6 +276,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
        (!m_subsAttempted || m_subsGeneration!=m_snapshot->generation)) {setupLoopStats();}
     otaRefresh();
     rebuildLayout(metadata);
+    syncLive();
     emit changed();
 }
 void LocalConnection::showRebootNotice(std::optional<uint8_t> reason,bool dirty,const QString &id) {
@@ -377,6 +383,8 @@ void LocalConnection::setupLoopStats() {
             if(!self || !self->current(c)) {return;}
             self->m_subsPending=false;
             if(self->m_snapshot && self->m_snapshot->generation!=self->m_subsGeneration) {self->refresh(c);return;}
+            // The selection's group takes a slot only after the statistics groups.
+            self->syncLive();
             // Run time is informative: a setup failure leaves the column empty
             // with its reason and never blocks the connection.
             if(!result) {
@@ -384,7 +392,7 @@ void LocalConnection::setupLoopStats() {
                 std::vector<uint8_t> owned;
                 {
                     std::lock_guard lock(c->mutex);
-                    for(const auto &o:c->subs) {if(o.buffer) {owned.push_back(o.loop);}}
+                    for(const auto &o:c->subs) {if(o.buffer && !o.live) {owned.push_back(o.loop);}}
                 }
                 for(const auto &loop:self->m_snapshot->info.loops) {
                     if(std::find(owned.begin(),owned.end(),loop.id)==owned.end()) {self->m_loops.setRunTime(loop.id,std::nullopt,self->m_subsNote);}
@@ -401,7 +409,7 @@ void LocalConnection::pollLoopStats() {
     std::vector<std::pair<uint8_t,std::shared_ptr<GroupBuffer>>> buffers;
     {
         std::lock_guard lock(m_context->mutex);
-        for(const auto &o:m_context->subs) {if(o.buffer) {buffers.emplace_back(o.loop,o.buffer);}}
+        for(const auto &o:m_context->subs) {if(o.buffer && !o.live) {buffers.emplace_back(o.loop,o.buffer);}}
     }
     for(const auto &[loop,buffer]:buffers) {
         GroupSample sample;
@@ -434,7 +442,7 @@ std::vector<uint8_t> LocalConnection::ownedSubscriptions() const {
     std::vector<uint8_t> ids;
     if(!m_context) {return ids;}
     std::lock_guard lock(m_context->mutex);
-    for(const auto &o:m_context->subs) {ids.push_back(o.id);}
+    for(const auto &o:m_context->subs) {if(!o.live) {ids.push_back(o.id);}}
     return ids;
 }
 void LocalConnection::setupGroups() {
@@ -534,7 +542,7 @@ void LocalConnection::disarm() {
             if(self->m_disarmAgain) {self->m_disarmAgain=false;self->disarm();return;}
             if(!result) {if(self->m_closing) {self->finishClose();}return;}
             if(self->m_closing) {
-                if(c->ownsAny() || self->m_setupPending || self->m_armPending || self->m_subsPending) {self->clearAndClose();}
+                if(c->ownsAny() || self->m_setupPending || self->m_armPending || self->m_subsPending || self->m_livePending) {self->clearAndClose();}
                 else {self->finishClose();}
             }
             else {self->refresh(c);}
@@ -570,7 +578,7 @@ void LocalConnection::disconnectDevice() {
     if(m_disarmPending) {return;}
     if(m_context->owns() || m_setupPending || m_armPending) {disarm();}
     // Loop statistics are released without a DISARM: they command nothing.
-    else if(m_context->ownsAny() || m_subsPending) {clearAndClose();}
+    else if(m_context->ownsAny() || m_subsPending || m_livePending) {clearAndClose();}
     else {finishClose();}
 }
 void LocalConnection::retry() {
@@ -611,6 +619,7 @@ void LocalConnection::finishClose(bool lost) {
     m_loading=false;m_closing=false;m_groupsReady=false;m_setupPending=false;m_arming=false;
     m_armPending=false;m_disarmPending=false;m_disarmAgain=false;m_ackPending=false;m_waitingDisarm=false;
     m_disarmWhenOpened=false;m_subsPending=false;m_configAction.clear();m_loadStep=0;
+    resetLive();m_livePending=false;m_actionRunning.clear();m_actionResults.clear();
     if(lost && c) {
         // Remember the device for the reboot notice after a reconnect.
         std::optional<uint64_t> uptime;

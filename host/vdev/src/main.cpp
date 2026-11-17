@@ -211,8 +211,8 @@ struct Server
     int64_t scenario_poll=0;
     unsigned slow_ms=0;
     unsigned drop_config_reply=0;
-    unsigned drop_disarm=0,drop_arm_reply=0,drop_reboot=0;
-    uint64_t disarm_requests=0,reboot_requests=0;
+    unsigned drop_disarm=0,drop_arm_reply=0,drop_reboot=0,drop_action_reply=0;
+    uint64_t disarm_requests=0,reboot_requests=0,action_requests=0;
     bool link_stalled=false;
     uint64_t prefix_commands=0,value_commands=0;
     std::array<char,17> ota_build_id{};
@@ -319,7 +319,12 @@ struct Server
                 // A lost REBOOT: neither applied nor answered.
                 if(drop_reboot) {--drop_reboot;return;}
             }
+            const bool run=frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::Action) &&
+                frame.payload[3]==static_cast<uint8_t>(p::defs::ActionOp::Run);
+            if(run && !scenario_file.empty()) {++action_requests;}
             const auto n = commands->handle({frame.payload, frame.len}, reply);
+            // An action that ran, with its reply lost.
+            if(run && drop_action_reply && --drop_action_reply==0) {(void)commands->takeAfterReply();return;}
             if(drop_arm_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
                frame.payload[3]==static_cast<uint8_t>(p::defs::SystemOp::Arm) && --drop_arm_reply==0) {
                 (void)commands->takeAfterReply();return;
@@ -429,12 +434,20 @@ struct Server
         else if(action=="drop-config-reply") {unsigned n=0;if(command>>n && n<=32) {drop_config_reply=n;}}
         else if(action=="drop-disarm") {unsigned n=0;if(command>>n && n<=32) {drop_disarm=n;}}
         else if(action=="drop-arm-reply") {unsigned n=0;if(command>>n && n<=32) {drop_arm_reply=n;}}
+        else if(action=="loop-stall") {
+            // Busy-wait one tick of a running loop (the bench stall, without its
+            // wire gate): its sources age and its subscriptions pause.
+            unsigned loop=0,ms=0;
+            if(command>>loop>>ms && ms>=1 && ms<=10000) {if(auto *l=core->findLoop(uint8_t(loop))) {l->benchStall(ms*1000U);}}
+        }
+        else if(action=="drop-action-reply") {unsigned n=0;if(command>>n && n<=32) {drop_action_reply=n;}}
         else if(action=="drop-reboot") {unsigned n=0;if(command>>n && n<=32) {drop_reboot=n;}}
         else if(action=="stats") {
             std::ofstream output(scenario_file.string()+".stats",std::ios::trunc);
             output<<"prefix "<<prefix_commands<<"\nvalues "<<value_commands<<'\n';
             output<<"disarms "<<disarm_requests<<'\n';
             output<<"reboots "<<reboot_requests<<'\n';
+            output<<"actions "<<action_requests<<'\n';
             for(size_t i=0;i<core->groups().capacity(core::GroupKind::Command);++i) {
                 const auto &g=*core->groups().info(core::GroupKind::Command,uint8_t(i));
                 if(g.configured) {output<<"group "<<i<<' '<<unsigned(g.loop)<<' '<<unsigned(g.count)<<'\n';}

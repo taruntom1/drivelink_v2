@@ -33,6 +33,7 @@ int main(int argc,char **argv) {
     parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
     parser.addOption({"settle","Wait this long (ms) after the screen is ready before capturing.","ms","0"});
+    parser.addOption({"action","Layout screens: run this action of the selected instance once (an item key, no arguments).","key"});
     parser.process(app);
     const QString screen=parser.value("screen");
     const QString expected=parser.value("expect-state");
@@ -147,6 +148,16 @@ int main(int argc,char **argv) {
     }
     if(screen=="notice") {
         stages.push_back({[&] {return connection.ready() && connection.rebootNotice().value("visible").toBool();},[] {}});
+    }
+    // An action with its outcome under the row (sent once, like a click).
+    const QString action=parser.value("action");
+    if(layoutScreen && !action.isEmpty()) {
+        const auto row=[&] {return connection.actionTable().row(action);};
+        stages.push_back({[&] {return !row().isEmpty() && row().value("blocked").toString().isEmpty() &&
+                                      connection.live().value("telemetry").toBool();},
+                          [&] {connection.runAction(action,{},{});}});
+        stages.push_back({[&] {const auto state=row().value("result").toMap().value("state").toString();
+                                return !state.isEmpty() && state!="running";},[] {}});
     }
     QElapsedTimer settled;
     stages.push_back({[&] {

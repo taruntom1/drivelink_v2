@@ -6,7 +6,9 @@
 #include "connection_internal.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
 #include <drivelink/protocol/gen/type_loop.hpp>
+#include <QFile>
 #include <QPointer>
+#include <QUrl>
 
 namespace drivelink::gui {
 namespace {
@@ -65,7 +67,11 @@ void LocalConnection::selectNode(const QString &key) {
     for(auto it=m_edits.begin();it!=m_edits.end();) {
         if(it->state!="sending") {it=m_edits.erase(it);} else {++it;}
     }
-    updateParams();emit changed();
+    // So do action outcomes; the one in flight keeps its row.
+    for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
+        if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
+    }
+    updateParams();syncLive();emit changed();emit liveChanged();
 }
 void LocalConnection::setParamFilter(int filter,const QString &text) {
     if(filter==m_paramFilter && text==m_paramFilterText) {return;}
@@ -177,6 +183,13 @@ QVariantMap LocalConnection::layout() const {
         }
     }
     result["wiring"]=wiring;result["sources"]=sources;result["members"]=members;
+    // A custom panel for the module type (H2f ships them), next to Params.
+    if(!isLoop) {
+        const auto path=m_panelRoot+"/"+typeName(s,node->first)+"/Panel.qml";
+        if(QFile::exists(path)) {
+            result["panel"]=path.startsWith(":/")?QString("qrc"+path):QUrl::fromLocalFile(path).toString();
+        }
+    }
     return result;
 }
 

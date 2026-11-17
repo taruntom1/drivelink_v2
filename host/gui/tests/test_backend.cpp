@@ -1,5 +1,6 @@
 #include "connection.hpp"
 #include "layout_model.hpp"
+#include "live_model.hpp"
 #include "../../../protocol/test/ota_fixture.hpp"
 #include "safety_keys.hpp"
 #include "style.hpp"
@@ -9,7 +10,9 @@
 #include <drivelink/protocol/gen/type_loop.hpp>
 #include <drivelink/protocol/gen/type_system.hpp>
 #include <QAbstractItemModelTester>
+#include <QDir>
 #include <QFile>
+#include <QPointer>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -65,10 +68,11 @@ struct Fixture {
     QString endpoint;
     QByteArray output;
     uint64_t sequence=0;
-    explicit Fixture(bool safe=false,bool pty=false) {
+    explicit Fixture(bool safe=false,bool pty=false,bool bench=false) {
         QStringList args={"--port","0","--state",directory.path()+"/state","--scenario-file",directory.path()+"/control"};
         if(safe) {args<<"--safe-mode";}
         if(pty) {args<<"--pty";}
+        if(bench) {args<<"--allow-crash";} // BENCH_STALL
         process.start(QString::fromUtf8(VDEV_PATH),args);
         if(!process.waitForStarted(10000) || !process.waitForReadyRead(10000)) {throw std::runtime_error("vdev did not start");}
         endpoint=QString::fromUtf8(process.readLine()).trimmed().mid(6);
@@ -394,6 +398,260 @@ private slots:
     }
     // Layout ops against vdev: each sent once, refusals kept on their row and
     // not staged, the armed lock, Discard all and Save and reboot.
+    // The Layout's live rules without a device: what the selection subscribes,
+    // signal rows, loop statistics, every source state, action input and the
+    // action block rules.
+    void liveLogic() {
+        DeviceSnapshot s;
+        auto item=[](uint16_t id,const char *name,ItemKind kind,ValueType type,uint8_t flags=0) {
+            ModelItem i;i.descriptor.id=id;i.descriptor.name=name;i.descriptor.kind=kind;i.descriptor.value_type=type;
+            i.descriptor.flags=flags;return i;
+        };
+        auto &loop=s.types[5];loop.descriptor={5,0,"loop"};
+        loop.items[1]=item(1,"rate_hz",ItemKind::Param,ValueType::U16);
+        loop.items[2]=item(2,"realtime",ItemKind::Param,ValueType::Bool);
+        loop.items[defs::loop::kTicks]=item(defs::loop::kTicks,"ticks",ItemKind::Signal,ValueType::U32);
+        loop.items[defs::loop::kOverruns]=item(defs::loop::kOverruns,"overruns",ItemKind::Signal,ValueType::U32);
+        loop.items[defs::loop::kLastRunUs]=item(defs::loop::kLastRunUs,"last_run_us",ItemKind::Signal,ValueType::U32);
+        loop.items[defs::loop::kMaxRunUs]=item(defs::loop::kMaxRunUs,"max_run_us",ItemKind::Signal,ValueType::U32);
+        auto &act=s.types[112];act.descriptor={112,1,"actuator.mock"};
+        act.items[0x100]=item(0x100,"velocity",ItemKind::Signal,ValueType::F32);act.items[0x100].descriptor.unit="rad/s";
+        act.items[0x101]=item(0x101,"position",ItemKind::Signal,ValueType::F32);
+        act.items[0x200]=item(0x200,"duty",ItemKind::Input,ValueType::F32);
+        auto drive=item(0x300,"drive",ItemKind::Action,ValueType::None);drive.descriptor.runs_in=ActionPlacement::Loop;
+        drive.descriptor.args={{ValueType::F32,"duty",""}};
+        drive.descriptor.results={{ValueType::F32,"velocity","rad/s"},{ValueType::F32,"position","rad"}};
+        act.items[0x300]=drive;
+        auto reset=item(0x301,"reset",ItemKind::Action,ValueType::None);reset.descriptor.runs_in=ActionPlacement::Paused;
+        reset.descriptor.blob_direction=BlobDir::Both;act.items[0x301]=reset;
+        auto &imu=s.types[114];imu.descriptor={114,2,"imu.mock"};
+        imu.items[0x100]=item(0x100,"yaw",ItemKind::Signal,ValueType::F32);
+        auto setMode=item(0x305,"set_mode",ItemKind::Action,ValueType::None);setMode.descriptor.runs_in=ActionPlacement::Paused;
+        setMode.descriptor.args={{ValueType::U8,"mode",""}};imu.items[0x305]=setMode;
+        auto &fusion=s.types[115];fusion.descriptor={115,3,"fusion.mock"};
+        fusion.items[1]=item(1,"feedback",ItemKind::Param,ValueType::U32,uint8_t(defs::ItemFlag::Source));
+        fusion.items[0x100]=item(0x100,"feedback.value",ItemKind::Signal,ValueType::F32);
+        fusion.items[0x101]=item(0x101,"feedback.age_us",ItemKind::Signal,ValueType::U32);
+        fusion.items[0x104]=item(0x104,"combined",ItemKind::Signal,ValueType::F32);
+        s.info.loops={{0,"control",100,1},{1,"sensor",50,0}};
+        s.system_params[defs::system::kLimitsGroupEntries]=uint16_t(64);
+        auto add=[&](uint8_t t,uint8_t i,uint8_t l,const char *label,uint8_t state=0,std::map<uint16_t,Value> params={}) {
+            s.configured[{t,i}]={{t,i,uint8_t(t==5?255:l),state,label},std::move(params)};
+        };
+        add(5,0,0,"control",0,{{1,uint16_t(100)},{2,true}});add(5,1,0,"sensor",0,{{1,uint16_t(50)},{2,false}});
+        add(112,0,0,"left_pwm");add(112,1,0,"broken",1);add(114,0,1,"imu");
+        add(115,0,1,"fusion",0,{{1,defs::sourceRef(112,0,0x101)}});
+        s.pending=s.configured;
+        s.pending[{114,1}]={{114,1,1,0,"later"},{}};
+        // Running, failed, pending-only, safe mode.
+        QVERIFY(notRunning(s,{112,0}).isEmpty());QVERIFY(notRunning(s,{5,1}).isEmpty());
+        QVERIFY(notRunning(s,{112,1}).contains("failed"));QVERIFY(notRunning(s,{114,1}).contains("Save and reboot"));
+        auto safe=s;safe.info.flags|=8;QVERIFY(notRunning(safe,{112,0}).contains("safe mode"));
+        // Plans: a loop's statistics on its own id; an instance's source
+        // signals first, then its own signals; the entry limit hides the rest.
+        auto plan=livePlan(s,{5,0},64);QVERIFY(plan);QCOMPARE(plan->loop,uint8_t(0));QCOMPARE(plan->divider,uint16_t(10));
+        QCOMPARE(plan->refs.size(),size_t(4));QCOMPARE(plan->refs[0],(Ref{5,0,defs::loop::kTicks}));
+        plan=livePlan(s,{115,0},64);QVERIFY(plan);QCOMPARE(plan->loop,uint8_t(1));QCOMPARE(plan->divider,uint16_t(5));
+        QCOMPARE(plan->refs,(std::vector<Ref>{{115,0,0x100},{115,0,0x101},{115,0,0x104}}));QCOMPARE(plan->hidden,0);
+        plan=livePlan(s,{115,0},2);QVERIFY(plan);QCOMPARE(plan->refs.size(),size_t(2));QCOMPARE(plan->hidden,1);
+        plan=livePlan(s,{112,0},1);QVERIFY(plan);QCOMPARE(plan->refs.size(),size_t(1));QCOMPARE(plan->hidden,1);
+        QVERIFY(!livePlan(s,{112,1},64));QVERIFY(!livePlan(s,{114,1},64));QVERIFY(!livePlan(safe,{5,0},64));
+        // Signal rows (inputs and generated source signals excluded).
+        plan=livePlan(s,{115,0},64);
+        LiveValues values{{valueBits(Value(1.5f)),1000,valueBits(Value(2.25f))},true};
+        auto rows=signalRows(s,{115,0},&*plan,&values);QCOMPARE(rows.size(),1);
+        QCOMPARE(rows[0].toMap()["name"].toString(),QString("combined"));QCOMPARE(rows[0].toMap()["value"].toString(),QString("2.25"));
+        values.fresh=false;QVERIFY(signalRows(s,{115,0},&*plan,&values)[0].toMap()["value"].toString().isEmpty());
+        values.fresh=true;
+        rows=signalRows(s,{112,0},nullptr,nullptr);QCOMPARE(rows.size(),2);
+        QCOMPARE(rows[0].toMap()["unit"].toString(),QString("rad/s"));QVERIFY(!rows[0].toMap()["subscribed"].toBool());
+        // Statistics and budget: last run over the period.
+        const auto loopPlan=livePlan(s,{5,0},64);LiveValues stats{{500,2,410,900},true};
+        auto statistics=loopStatistics(s,0,&*loopPlan,&stats);
+        QVERIFY(statistics["has"].toBool());QCOMPARE(statistics["ticks"].toString(),QString("500"));
+        QCOMPARE(statistics["lastRun"].toString(),QString::fromUtf8("410 µs"));
+        QCOMPARE(statistics["budget"].toString(),QString::fromUtf8("4.1% of 10000 µs"));
+        QVERIFY(!loopStatistics(s,0,nullptr,nullptr)["has"].toBool());
+        // Sources. Three periods of the producer's loop (100 Hz): 30 ms.
+        const auto &feedback=fusion.items[1].descriptor;
+        QCOMPARE(staleThresholdUs(s,defs::sourceRef(112,0,0x101)),30000u);
+        auto state=sourceLive(s,{115,0},feedback,valueBits(Value(1.5f)),1200,true);
+        QCOMPARE(state.state,QString("valid"));QCOMPARE(state.valueText,QString("1.5"));QCOMPARE(state.ageText,QString("1.2 ms"));
+        state=sourceLive(s,{115,0},feedback,valueBits(Value(1.5f)),40000,true);
+        QCOMPARE(state.state,QString("stale"));QCOMPARE(state.valueText,QString("1.5"));
+        QVERIFY2(state.note.contains("No recent sample") && state.note.contains("30 ms") && state.note.contains("100 Hz"),qPrintable(state.note));
+        state=sourceLive(s,{115,0},feedback,valueBits(Value(1.5f)),30000,true);QCOMPARE(state.state,QString("valid"));
+        state=sourceLive(s,{115,0},feedback,valueBits(Value(1.5f)),kNoSample,true);
+        QCOMPARE(state.state,QString("waiting"));QVERIFY(state.valueText.isEmpty());
+        state=sourceLive(s,{115,0},feedback,std::nullopt,std::nullopt,false);QCOMPARE(state.state,QString("unavailable"));
+        auto missing=s;missing.configured.at({115,0}).params[1]=defs::sourceRef(112,1,0x101);missing.pending=missing.configured;
+        state=sourceLive(missing,{115,0},feedback,valueBits(Value(1.5f)),10,true);
+        QCOMPARE(state.state,QString("missing"));QCOMPARE(state.note,QString("Missing · broken is not running"));
+        auto unset=s;unset.configured.at({115,0}).params[1]=uint32_t(0);unset.pending=unset.configured;
+        QCOMPARE(sourceLive(unset,{115,0},feedback,0,0,true).state,QString("notConnected"));
+        // A staged target is never shown as live.
+        auto staged=s;staged.pending.at({115,0}).params[1]=defs::sourceRef(114,0,0x100);
+        state=sourceLive(staged,{115,0},feedback,valueBits(Value(1.5f)),10,true);
+        QCOMPARE(state.state,QString("pending"));QVERIFY(state.valueText.isEmpty());
+        QCOMPARE(sourceLive(s,{115,1},feedback,1,1,true).state,QString("pending"));
+        const auto states=sourceStates(s,{115,0},&*plan,&values);
+        QCOMPARE(states["115:0:1"].toMap()["state"].toString(),QString("valid"));
+        // Arguments with their descriptors; hex blobs.
+        auto parsed=parseActionArgs(drive.descriptor,{"0.5"});
+        QVERIFY(parsed.problem.isEmpty());QCOMPARE(parsed.bits[0],valueBits(Value(0.5f)));QCOMPARE(parsed.bits[1],0u);
+        parsed=parseActionArgs(drive.descriptor,{"fast"});QCOMPARE(parsed.field,0);QVERIFY(parsed.problem.startsWith("duty"));
+        QVERIFY(!parseActionArgs(drive.descriptor,{}).problem.isEmpty());
+        parsed=parseActionArgs(setMode.descriptor,{"300"});QCOMPARE(parsed.field,0);
+        QCOMPARE(parseActionArgs(setMode.descriptor,{"12"}).bits[0],12u);
+        auto blob=parseHexBlob("01 02\nff");QVERIFY(blob.bytes);QCOMPARE(*blob.bytes,QByteArray("\x01\x02\xff",3));
+        QVERIFY(parseHexBlob("").bytes);QCOMPARE(parseHexBlob("").bytes->size(),0);
+        QVERIFY(parseHexBlob("0g").problem.contains("hex"));QVERIFY(parseHexBlob("123").problem.contains("even"));
+        QVERIFY(parseHexBlob(QString("ab").repeated(513)).problem.contains("512"));QVERIFY(parseHexBlob(QString("ab").repeated(512)).bytes);
+        QCOMPARE(hexText(QByteArray("\x01\xab",2)),QString("01 ab"));
+        const auto results=actionResultRows(drive.descriptor,{valueBits(Value(0.25f)),valueBits(Value(-1.0f)),0,0});
+        QCOMPARE(results.size(),2);QCOMPARE(results[0].toMap()["text"].toString(),QString("0.25"));
+        QCOMPARE(results[1].toMap()["unit"].toString(),QString("rad"));
+        // Block rules: the device's armed rule for paused actions in a
+        // real-time loop; loop actions stay available while armed.
+        QVERIFY(actionBlock(s,{112,0},reset.descriptor,false,{},false).isEmpty());
+        QVERIFY(actionBlock(s,{112,0},reset.descriptor,true,{},false).contains("real-time"));
+        QVERIFY(actionBlock(s,{112,0},drive.descriptor,true,{},false).isEmpty());
+        QVERIFY(actionBlock(s,{114,0},setMode.descriptor,true,{},false).isEmpty());
+        QVERIFY(actionBlock(s,{112,0},drive.descriptor,false,{},true).contains("Another action"));
+        QCOMPARE(actionBlock(s,{112,0},drive.descriptor,false,"busy",false),QString("busy"));
+        QVERIFY(actionBlock(s,{112,1},drive.descriptor,false,{},false).contains("failed"));
+        QVERIFY(actionBlock(s,{114,1},setMode.descriptor,false,{},false).contains("Save and reboot"));
+        auto removing=s;removing.pending.erase({112,0});
+        QVERIFY(actionBlock(removing,{112,0},drive.descriptor,false,{},false).contains("Removed"));
+        const auto actions=actionRows(s,{112,0},true,{},false);QCOMPARE(actions.size(),2);
+        QCOMPARE(actions[0].toMap()["placement"].toString(),QString("loop"));QCOMPARE(actions[1].toMap()["blob"].toString(),QString("both"));
+        QVERIFY(actions[0].toMap()["blocked"].toString().isEmpty());QVERIFY(!actions[1].toMap()["blocked"].toString().isEmpty());
+        QCOMPARE(actions[0].toMap()["args"].toList()[0].toMap()["type"].toString(),QString("f32"));
+        QCOMPARE(ageText(999),QString::fromUtf8("999 µs"));QCOMPARE(ageText(45000),QString("45 ms"));QCOMPARE(ageText(2500000),QString("2.5 s"));
+    }
+    // The selection's subscription and actions against vdev: values, slot
+    // reuse, foreign and statistics groups untouched, clear when the node
+    // stops running and on close; sources valid, not connected, pending and
+    // stale; actions with results, blobs, local refusals and a lost reply.
+    void liveDataAndActions() {
+        Fixture fixture(false,false,true);
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            cl.add(112,"left_pwm",0);cl.add(113,"left_enc",0);cl.add(114,"imu",1);cl.add(115,"fusion",1);
+            const std::array<Ref,2> refs{{{113,0,1},{115,0,1}}};
+            const std::array<uint32_t,2> values{{112u<<8,defs::sourceRef(113,0,0x101)}};
+            cl.set(refs,values);cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QDir(dir.path()).mkpath("panels/fusion.mock");
+        {QFile panel(dir.filePath("panels/fusion.mock/Panel.qml"));QVERIFY(panel.open(QIODevice::WriteOnly));panel.write("import QtQuick\nItem {}\n");}
+        c.setPanelRoot(dir.filePath("panels"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.snapshot()->configured.contains({115,0});},15000));
+        QVERIFY(waitFor([&]{return c.ownedSubscriptions().size()==c.snapshot()->info.loops.size();}));
+        const auto statsGroups=c.ownedSubscriptions();
+        auto groupsNow=[&] {
+            GroupList list;bool done=false;QString error;
+            c.runOnDevice([&](Client &client){list=client.groups();},[&](QString e){error=e;done=true;});
+            if(!waitFor([&]{return done;}) || !error.isEmpty()) {throw std::runtime_error("LIST failed: "+error.toStdString());}
+            return list;
+        };
+        auto group=[&](uint8_t id) {
+            for(const auto &g:groupsNow().groups) {if(g.kind==GroupKind::Subscription && g.id==id) {return g;}}
+            return Group{};
+        };
+        auto live=[&]{return c.live();};
+        auto source=[&](const QString &key){return live()["sources"].toMap()[key].toMap();};
+        // An instance: its sources and signals.
+        c.selectNode("115:0");
+        QVERIFY2(waitFor([&]{return live()["telemetry"].toBool() && source("115:0:1")["state"]=="valid";}),qPrintable(live()["note"].toString()));
+        const auto slot=c.liveSubscription();QVERIFY(slot);
+        QVERIFY(std::find(statsGroups.begin(),statsGroups.end(),*slot)==statsGroups.end());
+        QCOMPARE(group(*slot).loop,uint8_t(1));QCOMPARE(group(*slot).refs.size(),size_t(5)); // 2 sources × 2 + combined
+        QVERIFY(!source("115:0:1")["valueText"].toString().isEmpty());QVERIFY(!source("115:0:1")["ageText"].toString().isEmpty());
+        QCOMPARE(source("115:0:2")["state"].toString(),QString("notConnected"));
+        const auto rows=live()["signals"].toList();QCOMPARE(rows.size(),1);
+        QVERIFY(waitFor([&]{return !live()["signals"].toList()[0].toMap()["value"].toString().isEmpty();}));
+        QVERIFY(c.layout()["panel"].toString().endsWith("fusion.mock/Panel.qml"));
+        // Stale: the producer's loop stalls (three 10 Hz periods = 300 ms);
+        // the consumer's loop keeps sampling an ageing snapshot.
+        c.runOnDevice([](Client &client){client.benchStall(0,1500);},[](QString){});
+        QVERIFY2(waitFor([&]{return source("115:0:1")["state"]=="stale";},5000),qPrintable(source("115:0:1")["note"].toString()));
+        QVERIFY(source("115:0:1")["note"].toString().contains("300 ms"));QVERIFY(!source("115:0:1")["valueText"].toString().isEmpty());
+        QVERIFY(waitFor([&]{return source("115:0:1")["state"]=="valid";},5000));
+        // A staged target is pending, never live.
+        c.setParamValue("115:0:2",defs::sourceRef(114,0,0x100));
+        QVERIFY(waitFor([&]{return source("115:0:2")["state"]=="pending";}));
+        QVERIFY(source("115:0:2")["valueText"].toString().isEmpty());
+        c.discardPending();QVERIFY(waitFor([&]{return source("115:0:2")["state"]=="notConnected" && !c.pendingReboot();}));
+        // A loop: its statistics, in the same slot (reconfigured after LIST).
+        c.selectNode("5:1");
+        QVERIFY(waitFor([&]{return live()["statistics"].toMap()["has"].toBool();}));
+        QCOMPARE(c.liveSubscription(),slot);QCOMPARE(group(*slot).refs.size(),size_t(4));
+        QVERIFY(live()["statistics"].toMap()["budget"].toString().contains("%"));
+        QVERIFY(c.layout()["panel"].toString().isEmpty());
+        // The statistics groups were never touched.
+        QCOMPARE(c.ownedSubscriptions(),statsGroups);
+        for(const auto id:statsGroups) {QVERIFY(group(id).configured);}
+        // Actions: typed results; blob out, then the same bytes in.
+        c.selectNode("113:0");QVERIFY(waitFor([&]{return live()["telemetry"].toBool();}));
+        auto action=[&](const QString &name) {
+            auto *model=c.actions();
+            for(int i=0;i<model->rowCount();++i) {
+                const auto key=model->index(i,0).data(ActionTable::Key).toString();
+                if(model->index(i,0).data(ActionTable::Name).toString()==name) {return c.actionTable().row(key);}
+            }
+            return QVariantMap{};
+        };
+        auto outcome=[&](const QString &name){return action(name)["result"].toMap();};
+        auto settled=[&](const QString &name){return waitFor([&]{const auto s=outcome(name)["state"].toString();return !s.isEmpty() && s!="running";},6000);};
+        auto actionsSent=[&]{const auto text=QString::fromUtf8(fixture.stats());return text.section("actions ",1,1).section('\n',0,0).toInt();};
+        c.runAction(action("sample")["key"].toString(),{},"");QVERIFY(settled("sample"));
+        QCOMPARE(outcome("sample")["state"].toString(),QString("ok"));QCOMPARE(outcome("sample")["values"].toList().size(),2);
+        c.selectNode("114:0");QVERIFY(waitFor([&]{return !action("calibration_read").isEmpty();}));
+        c.runAction(action("calibration_read")["key"].toString(),{},"");QVERIFY(settled("calibration_read"));
+        QCOMPARE(outcome("calibration_read")["state"].toString(),QString("ok"));
+        const auto hex=outcome("calibration_read")["blobHex"].toString();QVERIFY(outcome("calibration_read")["blobSize"].toInt()>0);
+        c.runAction(action("calibration_write")["key"].toString(),{},hex);QVERIFY(settled("calibration_write"));
+        QVERIFY2(outcome("calibration_write")["state"]=="ok",qPrintable(outcome("calibration_write")["text"].toString()));
+        // Refused locally, nothing sent: bad hex, bad arguments.
+        auto sent=actionsSent();
+        c.runAction(action("calibration_write")["key"].toString(),{},"zz");
+        QCOMPARE(outcome("calibration_write")["state"].toString(),QString("invalid"));QCOMPARE(outcome("calibration_write")["field"].toInt(),-2);
+        c.runAction(action("set_mode")["key"].toString(),{"300"},"");QCOMPARE(outcome("set_mode")["state"].toString(),QString("invalid"));
+        QCOMPARE(c.checkAction(action("set_mode")["key"].toString(),{"300"},"")["field"].toInt(),0);
+        QVERIFY(c.checkAction(action("set_mode")["key"].toString(),{"8"},"")["problem"].toString().isEmpty());
+        QCOMPARE(actionsSent(),sent);
+        // Armed: paused actions on a real-time loop are refused locally;
+        // loop actions and non-real-time paused actions stay available.
+        QVERIFY2(waitFor([&]{return c.armEnabled();}),qPrintable(c.armBlockedReason()+" / "+c.lastError()["message"].toString()));
+        c.arm();QVERIFY2(waitFor([&]{return c.armState()==1;}),qPrintable(c.armBlockedReason()+" / "+c.lastError()["message"].toString()));
+        c.selectNode("112:0");QVERIFY(waitFor([&]{return !action("reset").isEmpty();}));
+        QVERIFY(action("reset")["blocked"].toString().contains("real-time"));QVERIFY(action("drive")["blocked"].toString().isEmpty());
+        c.runAction(action("reset")["key"].toString(),{},"");QCOMPARE(outcome("reset")["state"].toString(),QString("refused"));
+        c.selectNode("114:0");QVERIFY(waitFor([&]{return !action("set_mode").isEmpty();}));
+        QVERIFY(action("set_mode")["blocked"].toString().isEmpty());
+        QCOMPARE(actionsSent(),sent);
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;}));
+        // A lost reply: uncertain, sent once, never repeated.
+        c.selectNode("113:0");QVERIFY(waitFor([&]{return !action("sample").isEmpty();}));
+        fixture.command("drop-action-reply 1");
+        c.runAction(action("sample")["key"].toString(),{},"");
+        QVERIFY(action("sample")["running"].toBool());QVERIFY(action("drive").isEmpty() || !action("drive")["blocked"].toString().isEmpty());
+        QVERIFY(settled("sample"));QCOMPARE(outcome("sample")["state"].toString(),QString("uncertain"));
+        QVERIFY(outcome("sample")["text"].toString().contains("not retried"));
+        QTest::qWait(300);QCOMPARE(actionsSent(),sent+1);
+        // A node that does not run: the group is cleared.
+        c.addInstance(112,"later",0);QVERIFY(waitFor([&]{return c.selectedNode()=="112:1";}));
+        QVERIFY(waitFor([&]{return !c.liveSubscription() && !c.live()["note"].toString().isEmpty();}));
+        QVERIFY(live()["note"].toString().contains("Save and reboot"));
+        QVERIFY(waitFor([&]{return !group(*slot).configured;}));
+        c.selectNode("5:0");QVERIFY(waitFor([&]{return c.liveSubscription().has_value();}));
+        // Close clears every group this GUI configured.
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+        Session after(fixture.endpoint.toStdString());Client check(after);check.info();
+        for(const auto &g:check.groups().groups) {QVERIFY2(!(g.kind==GroupKind::Subscription && g.configured),qPrintable(QString::number(g.id)));}
+    }
     void layoutOperations() {
         Fixture fixture;LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
         QSignalSpy results(&c,&Connection::layoutResult);
@@ -1198,6 +1456,99 @@ private slots:
         auto *notice=window->findChild<QQuickItem *>("rebootNotice");QVERIFY(notice);QVERIFY(!notice->isVisible());
         QVERIFY(click("otaClose"));
         QVERIFY(waitFor([&]{return !dialog->isVisible() && notice->isVisible();}));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
+    // The Layout page's live half in the shell: the cards, a source row's
+    // value and age, the inline action form (checked before sending) and a
+    // module type's panel tab with its slot properties.
+    void layoutLiveInShell() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);
+        Fixture fixture;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            cl.add(113,"left_enc",0);cl.add(114,"imu",1);cl.add(115,"fusion",1);
+            const std::array<Ref,1> refs{{{115,0,1}}};const std::array<uint32_t,1> values{{defs::sourceRef(113,0,0x101)}};
+            cl.set(refs,values);cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        QTemporaryDir dir;LocalConnection connection;connection.setSettingsPath(dir.filePath("gui.ini"));
+        QDir(dir.path()).mkpath("panels/fusion.mock");
+        {
+            QFile panel(dir.filePath("panels/fusion.mock/Panel.qml"));QVERIFY(panel.open(QIODevice::WriteOnly));
+            panel.write("import QtQuick\nItem {\n  objectName: 'testPanel'\n  property var backend\n  property string nodeKey\n"
+                        "  property string title: 'Calibration'\n}\n");
+        }
+        connection.setPanelRoot(dir.filePath("panels"));
+        SafetyKeys keys;
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(1600,1000);
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled() && connection.snapshot()->configured.contains({115,0});},15000));
+        window->setProperty("page",1);
+        auto shown=[&](const char *name)->QQuickItem * {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible()?item:nullptr;
+        };
+        auto text=[&](const char *name) {auto *item=shown(name);return item?item->property("text").toString():QString();};
+        connection.selectNode("115:0");
+        QVERIFY(waitFor([&]{return shown("signalsCard") && shown("sourcesCard") && shown("actionsCard")==nullptr;}));
+        QVERIFY(waitFor([&]{return text("sourceValue_feedback")!=QString::fromUtf8("—") && text("sourceAge_feedback").startsWith("age");}));
+        QVERIFY(shown("signal_combined"));
+        // The panel tab: the module's own title, given the backend and key.
+        auto *tab=shown("panelTab");QVERIFY(tab);QCOMPARE(tab->property("text").toString(),QString("Calibration"));
+        auto *panel=visualChild(window->contentItem(),"testPanel");QVERIFY(panel);QVERIFY(!panel->isVisible());
+        QCOMPARE(panel->property("nodeKey").toString(),QString("115:0"));
+        QCOMPARE(panel->property("backend").value<QObject *>(),&connection);
+        auto click=[&](QQuickItem *item) {
+            QTest::qWait(100); // positioners lay out on polish
+            // Scroll the side column so the control is on screen.
+            if(auto *scroll=shown("sideScroll");scroll && scroll->isAncestorOf(item)) {
+                auto *content=scroll->property("contentItem").value<QQuickItem *>();
+                const auto y=item->mapToItem(content,QPointF(0,0)).y();
+                scroll->setProperty("contentY",std::max(0.0,y-scroll->height()/2));
+            }
+            QTest::qWait(50);
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene({item->width()/2,item->height()/2}).toPoint());
+        };
+        click(tab);QVERIFY(waitFor([&]{return panel->isVisible() && !shown("paramsCard");}));
+        click(shown("paramsTab"));QVERIFY(waitFor([&]{return !panel->isVisible();}));
+        // A loop: statistics; no panel tab.
+        connection.selectNode("5:1");
+        QVERIFY(waitFor([&]{return shown("statisticsCard") && text("statTicks").isEmpty() && !shown("panelTab");}));
+        auto *ticks=visualChild(shown("statTicks"),"value");QVERIFY(ticks);
+        QVERIFY(waitFor([&]{return ticks->property("text").toString()!=QString::fromUtf8("—");}));
+        // The action form: one field per argument, checked before sending.
+        connection.selectNode("114:0");
+        QVERIFY(waitFor([&]{return shown("actionRun_set_mode") && shown("actionRun_set_mode")->isEnabled();}));
+        auto *row=shown("action_set_mode");QVERIFY(row);
+        click(shown("actionRun_set_mode"));
+        QVERIFY(waitFor([&]{return visualChild(row,"actionForm")->isVisible();}));
+        auto *field=visualChild(row,"actionArg_0");QVERIFY(field && field->isVisible());
+        auto *send=visualChild(row,"actionSend");QVERIFY(send);QVERIFY(!send->isEnabled());
+        field->setProperty("text","300");
+        auto *problem=visualChild(row,"actionProblem");
+        QVERIFY(waitFor([&]{return problem->isVisible() && problem->property("text").toString().startsWith("mode");}));
+        QVERIFY(!send->isEnabled());QVERIFY(field->property("error").toBool());
+        field->setProperty("text","12");QVERIFY(waitFor([&]{return send->isEnabled() && !problem->isVisible();}));
+        // A row update (another action runs, then finishes) keeps the open
+        // form and its text: rows update in place.
+        QPointer<QQuickItem> keptRow(row),keptField(field);
+        connection.runAction("114:0:770",{},"");
+        QVERIFY(waitFor([&]{return connection.actionTable().row("114:0:773")["blocked"].toString().contains("Another");}));
+        QVERIFY(waitFor([&]{return connection.actionTable().row("114:0:770")["result"].toMap()["state"]=="ok";},6000));
+        QVERIFY(keptRow && keptField);QCOMPARE(keptField->property("text").toString(),QString("12"));
+        QVERIFY(visualChild(row,"actionForm")->isVisible());
+        click(visualChild(row,"actionCancel"));QVERIFY(waitFor([&]{return !visualChild(row,"actionForm")->isVisible();}));
+        // A blob-out result: size, hex and Copy.
+        auto *read=shown("action_calibration_read");QVERIFY(read);
+        click(visualChild(read,"actionRun_calibration_read"));
+        QVERIFY(waitFor([&]{return visualChild(read,"actionBlobOut")->isVisible() && !visualChild(read,"actionBlobHex")->property("text").toString().isEmpty();},6000));
+        QVERIFY(visualChild(read,"actionCopy")->isVisible());
         connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
     }
     void keysAndShell() {

@@ -1,8 +1,10 @@
 #pragma once
 #include "device_models.hpp"
 #include "layout_model.hpp"
+#include "live_model.hpp"
 #include "models.hpp"
 #include "ota_model.hpp"
+#include <drivelink/buffers.hpp>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QTimer>
@@ -63,6 +65,11 @@ class Connection : public QObject {
     Q_PROPERTY(QAbstractItemModel* layoutTree READ layoutTree CONSTANT)
     Q_PROPERTY(QAbstractItemModel* params READ params CONSTANT)
     Q_PROPERTY(QVariantMap layout READ layout NOTIFY changed)
+    // The selected node's live data (its own signal, about 5 Hz): {note,
+    // telemetry, hidden, signals[], statistics{}, sources{key: state}}.
+    Q_PROPERTY(QVariantMap live READ live NOTIFY liveChanged)
+    // The selected instance's actions (ActionTable roles).
+    Q_PROPERTY(QAbstractItemModel* actions READ actions CONSTANT)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -108,6 +115,16 @@ public:
     virtual QAbstractItemModel *layoutTree()=0;
     virtual QAbstractItemModel *params()=0;
     virtual QVariantMap layout() const=0;
+    virtual QVariantMap live() const=0;
+    virtual QAbstractItemModel *actions()=0;
+    // An action of the selected instance: arguments as text (one per
+    // descriptor argument), a hex blob for blob-in actions. Refused locally
+    // when blocked or when the input does not parse (nothing sent); else RUN
+    // once. An unanswered one is reported as uncertain and never repeated.
+    Q_INVOKABLE virtual void runAction(const QString &itemKey,const QStringList &args,const QString &blobHex)=0;
+    // Why runAction would refuse this input now: {problem, field} (field -1:
+    // none, -2: the blob); empty problem when it would send.
+    Q_INVOKABLE virtual QVariantMap checkAction(const QString &itemKey,const QStringList &args,const QString &blobHex) const=0;
     // Layout. Every mutation is sent once and followed by a configuration
     // refresh; an unanswered one is reported as uncertain, never repeated.
     Q_INVOKABLE virtual void selectNode(const QString &key)=0;
@@ -175,6 +192,7 @@ signals:
     // A layout op finished (op: addInstance, addLoop, remove, label, discard).
     // Dialogs show a refusal next to their button and close on success.
     void layoutResult(QString op,bool ok,QString message);
+    void liveChanged();
 };
 
 class LocalConnection final : public Connection {
@@ -225,6 +243,17 @@ public:
     QAbstractItemModel *layoutTree() override {return &m_layoutTree;}
     QAbstractItemModel *params() override {return &m_params;}
     QVariantMap layout() const override;
+    QVariantMap live() const override;
+    QAbstractItemModel *actions() override {return &m_actions;}
+    const ActionTable &actionTable() const {return m_actions;}
+    void runAction(const QString &itemKey,const QStringList &args,const QString &blobHex) override;
+    QVariantMap checkAction(const QString &itemKey,const QStringList &args,const QString &blobHex) const override;
+    // The selected node's subscription group, when this GUI configured one (tests).
+    std::optional<uint8_t> liveSubscription() const {return m_live?std::optional<uint8_t>(m_live->id):std::nullopt;}
+    // Where custom panels are looked up: <root>/<type name>/Panel.qml. The
+    // default is the compiled-in DriveLink.Modules resources; tests point it
+    // at a directory.
+    void setPanelRoot(const QString &root) {m_panelRoot=root;emit changed();}
     void selectNode(const QString &key) override;
     void setParamFilter(int filter,const QString &text) override;
     void setParamText(const QString &itemKey,const QString &text) override;
@@ -328,6 +357,29 @@ private:
     QHash<QString,QStringList> m_stagedLines;
     void noteStaged(const QString &id,const QString &line) {m_changes[id]<<line;m_stagedLines[id]<<line;}
     void forgetChanges(const QString &id) {m_changes.remove(id);m_changedParams.remove(id);m_stagedLines.remove(id);}
+    // Live data of the selected node (connection_live.cpp): one GUI-owned
+    // subscription group, reconfigured or cleared as the selection changes;
+    // one mutation at a time, the latest selection wins.
+    struct LiveGroup {
+        QString key;LivePlan plan;uint64_t generation=0;uint8_t id=0;
+        std::shared_ptr<GroupBuffer> buffer;
+    };
+    std::optional<LiveGroup> m_live;
+    LiveValues m_liveValues;
+    std::optional<uint16_t> m_liveCounter;
+    QElapsedTimer m_liveSeen;
+    QString m_liveAttempt,m_liveNote,m_panelRoot=QStringLiteral(":/qt/qml/DriveLink/Modules");
+    bool m_livePending=false;
+    // Actions: the one in flight and each row's last outcome (state: running,
+    // ok, refused, invalid, uncertain).
+    QString m_actionRunning;
+    QHash<QString,QVariantMap> m_actionResults;
+    ActionTable m_actions;
+    void updateActions();
+    void syncLive();
+    void pollLive();
+    void resetLive();
+    QString actionCommon() const;
     std::shared_ptr<Context> m_context;
     std::thread m_opener;
     std::shared_ptr<GuiDispatch> m_dispatch;
