@@ -6,7 +6,10 @@
 
 namespace drivelink::gui {
 
-struct CommandPlan { uint8_t id, loop; std::vector<Ref> refs; };
+// A GUI command group: `values` groups hold only commandable inputs (the
+// hold rule, command_model.hpp) and carry value frames; the others carry
+// keepalives only.
+struct CommandPlan { uint8_t id, loop; std::vector<Ref> refs; bool values=false; };
 // Pure planning: no mutation, no module-specific semantics, no slot stealing.
 std::vector<CommandPlan> planCommands(const DeviceSnapshot &, const GroupList &);
 QVariantMap errorFields(const Error &);

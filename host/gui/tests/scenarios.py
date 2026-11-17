@@ -59,11 +59,23 @@ LAYOUT = {
 # second 1 kHz group (over 100 %) and is refused; 500 Hz fits.
 CONTROL = ','.join('32:0:%d' % item for item in
                    (0x100, 0x101, 0x102, 0x103, 0x110, 0x111, 0x112, 0x113, 0x114, 0x120, 0x121, 0x122))
+# H2d-2 Manual command (G5): armed with left_drive's velocity_sp held at
+# 1.5 rad/s (dragging, limit 2.5 as in G5) and duty_sp latched at 0.2; and
+# the same card disarmed.
+# Armed on a desktop vdev, the control loop runs at 100 Hz with a 1 s
+# watchdog (as the native arming fixtures do): a 1 kHz loop can miss its
+# stall deadline under load and latch a fault.
+ARMED = [['set', '5:0:1=100', '0:0:4=1000']]
+PLOTS = '5:0:258,5:0:259,114:0:256,114:0:272,32:0:257,115:0:260'
+COMMANDS = '32:0:512@2.5=1.5,32:0:514=0.2:latch'
 MONITOR = {
-    'monitor': ([], '5:0:258,5:0:259,114:0:256,114:0:272,32:0:257,115:0:260', '', '10'),
-    'monitor-paused': ([], '5:0:258,5:0:259,114:0:256,114:0:272,32:0:257,115:0:260', '', '10'),
-    'monitor-budget': ([['set', '5:1:1=1000']], CONTROL + ',114:0:256', '0:1,1:1', '5'),
+    'monitor': (ARMED, PLOTS, '', '10', COMMANDS),
+    'monitor-paused': ([], PLOTS, '', '10', ''),
+    'monitor-budget': ([['set', '5:1:1=1000']], CONTROL + ',114:0:256', '0:1,1:1', '5', ''),
+    'monitor-command-disarmed': ([], PLOTS, '', '10', '32:0:512,32:0:514'),
 }
+# Scenarios that render a screen of another name.
+SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor'}
 
 
 # The action each scenario runs (left_enc's `sample`), and the loop stall
@@ -134,7 +146,7 @@ def render(gui, vdev, destination, scenario, cli=None):
                     startup.cancel()
                 assert line.startswith('READY '), (line, device.poll())
                 endpoint = line[6:]
-            screen = {'safe': 'device', 'fault': 'drawer', 'lost': 'device'}.get(scenario, scenario)
+            screen = SCREENS.get(scenario, scenario)
             select = None
             if scenario in LAYOUT:
                 screen, select, staged = LAYOUT[scenario]
@@ -153,10 +165,12 @@ def render(gui, vdev, destination, scenario, cli=None):
             if select:
                 command += ['--select', select]
             if scenario in MONITOR:
-                _, plots, rates, window = MONITOR[scenario]
+                _, plots, rates, window, commands = MONITOR[scenario]
                 command += ['--plot', plots, '--window', window]
                 if rates:
                     command += ['--rate', rates]
+                if commands:
+                    command += ['--command', commands]
             if scenario in ACTIONS:
                 command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):

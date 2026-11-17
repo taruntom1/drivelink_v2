@@ -89,12 +89,15 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   The Layout live group exists only while Layout is shown. Monitor refuses an
   add without a free slot or over 100 % of the link, and caps a group at
   1 kHz (the firmware drains each group once per 1 ms).
-- H2d-2 hold rule (user decision 2026-11-17): only numeric inputs whose
-  descriptor range is finite and includes 0 are commanded; each loop's inputs
-  split at connect into a value group (hold 0) and a keepalive-only group that
-  never carries values; every value sent is a shown slider value or 0; queued
-  values are discarded before this GUI writes a live param to an instance it
-  commands.
+- Hold rule (user decision 2026-11-17, built in H2d-2): only numeric inputs
+  whose descriptor range is finite and includes 0 are commanded; each loop's
+  inputs split at connect into value groups (hold 0) and keepalive-only groups
+  that never carry values; every value sent is a shown slider value or 0.
+  Manual commands need this window's accepted ARM; DISARM, faults, Boot and
+  close return values to 0 locally. A held slider that loses its press ramps
+  to 0; Latch survives page changes. A live param write to a commanded
+  instance discards its queued values and holds it at 0 until the write ends,
+  then sends a fresh frame (user decisions 2026-11-18).
 - A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never

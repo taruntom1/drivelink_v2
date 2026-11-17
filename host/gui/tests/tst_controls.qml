@@ -50,6 +50,11 @@ TestCase {
             extra: DLTextField { objectName: "extraField"; width: 400 }
         }
     }
+    Component { id: sliderComponent; DLSlider { width: 320; from: -2.5; to: 2.5; stepSize: 0.01 } }
+    Component {
+        id: commandComponent
+        DLCommandControl { name: "velocity_sp"; owner: "left_drive"; unit: "rad/s"; from: -2.5; to: 2.5; limit: 2.5; bound: 1000 }
+    }
     Component { id: spyComponent; SignalSpy {} }
 
     function spy(target, signalName) {
@@ -428,5 +433,69 @@ TestCase {
         tryCompare(wrapper, "showing", true)
         button.enabled = true
         verify(!wrapper.showing, "an enabled control needs no reason")
+    }
+
+    // DLSlider / DLCommandControl (H2d-2) -------------------------------------
+
+    function test_slider_symmetric_format_and_zero() {
+        const slider = createTemporaryObject(sliderComponent, testCase)
+        compare(slider.zeroPosition, 0.5)
+        compare(slider.format(1.6), "+1.60")
+        compare(slider.format(-0.25), "−0.25")
+        compare(slider.format(0), "0.00")
+        slider.from = 0
+        compare(slider.zeroPosition, 0)
+    }
+
+    function test_command_control_emits_and_follows_value() {
+        const control = createTemporaryObject(commandComponent, testCase, { x: 20, y: 20 })
+        const slider = findChild(control, "commandSlider")
+        const field = findChild(control, "commandValue")
+        const note = findChild(control, "commandNote")
+        // Disabled: the slider takes nothing and the field is read-only.
+        verify(!slider.enabled)
+        verify(field.readOnly)
+        control.commandEnabled = true
+        const pressed = spy(control, "sliderPressed")
+        const moved = spy(control, "sliderMoved")
+        const released = spy(control, "sliderReleased")
+        mousePress(slider, slider.width / 2, 22)
+        mouseMove(slider, slider.width * 0.8, 22)
+        compare(pressed.count, 1)
+        verify(moved.count >= 1)
+        verify(moved.signalArguments[moved.count - 1][0] > 0)
+        mouseRelease(slider, slider.width * 0.8, 22)
+        compare(released.count, 1)
+        // The shown value follows the owner (a ramp) once released.
+        control.value = 0.4
+        compare(slider.value, 0.4)
+        compare(field.text, "+0.40")
+        // Latch: the field becomes editable; a non-zero latched value is amber.
+        verify(field.readOnly)
+        control.latched = true
+        verify(!field.readOnly)
+        compare(control.border.color, Theme.stateArmed)
+        verify(note.text.indexOf("+0.40 rad/s") >= 0)
+        const typed = spy(control, "valueTyped")
+        field.forceActiveFocus()
+        field.text = "1.2"
+        keyClick(Qt.Key_Return)
+        compare(typed.count, 1)
+        compare(typed.signalArguments[0][0], "1.2")
+        // Leaving the field without Enter sends nothing and shows the value.
+        field.forceActiveFocus()
+        field.text = "0.9"
+        field.focus = false
+        compare(typed.count, 1)
+        tryCompare(field, "text", "+0.40")
+        // A write in flight: held at 0, nothing to drag, latch or type.
+        control.writing = true
+        verify(!slider.enabled)
+        verify(field.readOnly)
+        verify(note.text.indexOf("written") >= 0)
+        control.writing = false
+        control.problem = "Not a number"
+        compare(note.text, "Not a number")
+        compare(field.status, DLNumberField.Rejected)
     }
 }

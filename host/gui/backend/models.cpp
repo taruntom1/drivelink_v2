@@ -1,4 +1,5 @@
 #include "models.hpp"
+#include "command_model.hpp"
 #include <drivelink/protocol/gen/type_system.hpp>
 #include <drivelink/protocol/gen/registry.hpp>
 #include <algorithm>
@@ -29,7 +30,11 @@ std::vector<CommandPlan> planCommands(const DeviceSnapshot &s,const GroupList &g
     const size_t width=std::min<size_t>({groups.entry_capacity,size_t(param(s,defs::system::kLimitsGroupEntries)),
         size_t(64),s.info.max_payload>7?size_t((s.info.max_payload-7)/4):0});
     if(!width) { fail("Device command group capacity is zero"); }
-    std::map<uint8_t,std::vector<Ref>> by_loop;
+    // The hold rule (H2d-2): per loop, the commandable inputs go to value
+    // groups and every other input to keepalive-only groups, which never
+    // carry values (a value frame must carry every entry of its group).
+    struct Split {std::vector<Ref> values,keepalive;};
+    std::map<uint8_t,Split> by_loop;
     for(const auto &[k,v]:s.configured) {
         if(k.first==defs::kLoopTypeId && v.instance.state==0) { loops.push_back(k.second); }
     }
@@ -41,19 +46,25 @@ std::vector<CommandPlan> planCommands(const DeviceSnapshot &s,const GroupList &g
             Ref ref{k.first,k.second,id};
             if(std::find(occupied.begin(),occupied.end(),ref)!=occupied.end()) { fail("An input belongs to an existing command group"); }
             if(std::find(loops.begin(),loops.end(),v.instance.loop)==loops.end()) { fail("Input has no running owning loop"); }
-            by_loop[v.instance.loop].push_back(ref);
+            auto &split=by_loop[v.instance.loop];
+            (commandable(item.descriptor)?split.values:split.keepalive).push_back(ref);
         }
     }
-    if(by_loop.empty()) { by_loop[loops.front()]={}; }
     std::vector<CommandPlan> result;
-    for(const auto &[loop,refs]:by_loop) {
+    auto add=[&](uint8_t loop,const std::vector<Ref> &refs,bool values) {
         size_t at=0;
         do {
             if(result.size()>=freeSlots.size()) { fail("Not enough free command group slots"); }
             const auto count=std::min(width,refs.size()-at);
-            result.push_back({freeSlots[result.size()],loop,{refs.begin()+at,refs.begin()+at+count}});
+            result.push_back({freeSlots[result.size()],loop,{refs.begin()+at,refs.begin()+at+count},values});
             at+=count;
         } while(at<refs.size());
+    };
+    // With no inputs at all, one empty group keeps the watchdog fed.
+    if(by_loop.empty()) { add(loops.front(),{},false); }
+    for(const auto &[loop,split]:by_loop) {
+        if(!split.values.empty()) { add(loop,split.values,true); }
+        if(!split.keepalive.empty()) { add(loop,split.keepalive,false); }
     }
     return result;
 }

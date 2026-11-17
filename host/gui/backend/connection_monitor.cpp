@@ -52,6 +52,9 @@ template<class C,class F> auto withRetry(const C &c,F &&f) {
 void LocalConnection::setPage(const QString &page) {
     if(page==m_page) {return;}
     m_page=page;
+    // A slider still pressed when Monitor is left counts as released
+    // (dead-man); latched values keep running (user decision 2026-11-18).
+    m_command.releaseHeld();
     // The Layout live group follows the page; Monitor re-reads the slots.
     if(page==QLatin1String("monitor")) {m_monitorListStale=true;}
     syncLive();syncMonitor();

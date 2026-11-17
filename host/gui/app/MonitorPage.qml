@@ -287,27 +287,144 @@ Item {
     }
 
     // ---- Manual command (H2d-2) -------------------------------------------
+    // Sets inputs through this window's value groups while it has armed the
+    // device. A released slider ramps to 0 (dead-man); Latch keeps the value;
+    // Remove and Hold all return inputs to 0. Esc and DISARM stay reachable.
+    readonly property var command: backend.command
+    property bool adding: false
+    property var problems: ({})
+    function setProblem(key, text) { const p = Object.assign({}, problems); p[key] = text; problems = p }
     Rectangle {
         id: commandCard
         objectName: "monitorCommand"
         anchors.right: parent.right; anchors.rightMargin: Theme.space24
         y: Theme.space24
-        width: Math.min(340, Math.max(260, page.width * 0.18))
-        height: commandColumn.implicitHeight + 2 * Theme.space16
+        width: 344 + 2 * Theme.space16
+        height: Math.min(commandColumn.implicitHeight + 2 * Theme.space16, page.height - 2 * Theme.space24)
         color: Theme.bgSurface
         radius: Theme.radiusLg
         border.width: Theme.borderWidth
         border.color: Theme.borderDefault
-        Column {
-            id: commandColumn
-            x: Theme.space16; y: Theme.space16
-            width: parent.width - 2 * Theme.space16
-            spacing: Theme.space8
-            Text { text: qsTr("Manual command"); font: Theme.fontTitleSection; color: Theme.textPrimary }
-            Text {
-                width: parent.width; wrapMode: Text.Wrap
-                text: qsTr("Commanding an input from Monitor follows in a later step. DISARM stays in the status bar.")
-                font: Theme.fontCaption; color: Theme.textSecondary
+        clip: true
+        Flickable {
+            anchors.fill: parent
+            anchors.margins: Theme.space16
+            contentHeight: commandColumn.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            Column {
+                id: commandColumn
+                width: parent.width
+                spacing: Theme.space16
+                Text { text: qsTr("Manual command"); font: Theme.fontTitleSection; color: Theme.textPrimary }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: qsTr("Sets inputs through this window's command groups while armed. A released slider ramps back to 0; Latch keeps the value. Remove returns an input to 0.")
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+                Text {
+                    objectName: "commandBlocked"
+                    width: parent.width; wrapMode: Text.Wrap
+                    visible: !page.command.enabled && text.length > 0
+                    text: page.command.blocked
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+                Repeater {
+                    model: page.command.rows
+                    // Role values through `model`: the control's own
+                    // properties carry the same names.
+                    delegate: DLCommandControl {
+                        id: commandControl
+                        readonly property string key: model.key
+                        objectName: "command:" + key
+                        width: commandColumn.width
+                        name: model.name
+                        owner: model.owner
+                        unit: model.unit
+                        from: model.from
+                        to: model.to
+                        limit: model.limit
+                        bound: model.bound
+                        value: model.value
+                        stepSize: model.step
+                        decimals: model.decimals
+                        latched: model.latched
+                        held: model.held
+                        ramping: model.ramping
+                        writing: model.writing
+                        commandEnabled: page.command.enabled
+                        problem: page.problems[key] || ""
+                        onSliderPressed: { page.setProblem(key, ""); page.command.press(key) }
+                        onSliderMoved: (v) => page.command.drag(key, v)
+                        onSliderReleased: page.command.release(key)
+                        onLatchToggled: (on) => page.command.setLatched(key, on)
+                        onValueTyped: (text) => page.setProblem(key, page.command.typeValue(key, text))
+                        onLimitTyped: (text) => page.setProblem(key, page.command.setLimitText(key, text))
+                        onRemoveRequested: { page.setProblem(key, ""); page.command.remove(key) }
+                    }
+                }
+                DLButton {
+                    objectName: "commandAdd"
+                    kind: DLButton.Ghost
+                    iconName: page.adding ? "chevron-up" : "plus"
+                    text: qsTr("Command another input")
+                    onClicked: page.adding = !page.adding
+                }
+                Column {
+                    objectName: "commandCandidates"
+                    visible: page.adding
+                    width: parent.width
+                    spacing: Theme.space4
+                    Text {
+                        visible: (page.command.candidates || []).length === 0
+                        text: qsTr("No running instance has inputs")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                    Repeater {
+                        model: page.command.candidates || []
+                        delegate: Rectangle {
+                            required property var modelData
+                            objectName: "candidate:" + modelData.key
+                            width: commandColumn.width
+                            height: candidateColumn.implicitHeight + 2 * Theme.space4
+                            radius: Theme.radiusSm
+                            color: candidateHover.hovered && modelData.enabled ? Theme.bgHover : "transparent"
+                            Column {
+                                id: candidateColumn
+                                x: Theme.space8; y: Theme.space4
+                                width: parent.width - 2 * Theme.space8
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: modelData.name + "  ·  " + modelData.owner + (modelData.unit ? "  (" + modelData.unit + ")" : "")
+                                    font: Theme.fontBodyDefault
+                                    color: modelData.enabled ? Theme.textPrimary : Theme.textDisabled
+                                }
+                                Text {
+                                    visible: !modelData.enabled
+                                    width: parent.width; wrapMode: Text.Wrap
+                                    text: modelData.reason
+                                    font: Theme.fontCaption; color: Theme.textSecondary
+                                }
+                            }
+                            HoverHandler { id: candidateHover }
+                            TapHandler {
+                                enabled: modelData.enabled
+                                // add() rebuilds this list (and this delegate): last.
+                                onTapped: { const key = modelData.key; page.adding = false; page.command.add(key) }
+                            }
+                        }
+                    }
+                }
+                DLReasonHover {
+                    reason: !page.command.enabled ? page.command.blocked : qsTr("Every input is at 0")
+                    DLButton {
+                        objectName: "commandHoldAll"
+                        iconName: "hand"
+                        text: qsTr("Hold all")
+                        enabled: page.command.enabled && page.command.commanding
+                        onClicked: page.command.holdAll()
+                    }
+                }
             }
         }
     }

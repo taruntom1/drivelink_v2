@@ -163,3 +163,69 @@ and Light; software, and once on RHI); bare board COM3 (`benchMonitor`):
 1000.00 Hz, 0 lost; loop at 2 kHz live, 82 % → 1000.00 Hz at divider 2,
 2.000 ticks/sample, 0 lost; board restored (rates 1000/100/10 Hz, idle
 groups, flags 0, bench op refused). See [hardware-log.md](hardware-log.md).
+
+## H2d-2 manual command
+
+Plan approved 2026-11-18 on `claude/overhaul-H2d-2`; independent Opus review
+at high effort (the command path drives actuators).
+
+### User decisions (2026-11-18)
+
+| Topic | Decision |
+|---|---|
+| A live param write to a commanded instance | Its queued values are discarded first; its inputs go to 0, unlatch and take no command **when the write starts** (review follow-up, chosen over zeroing at completion); when it ends (reply, refusal or uncertain outcome) its group sends a fresh frame with 0 for them. Other instances of the group keep their values. |
+| Value field | Editable only while Latch is on; a typed value is sent on Enter and moves the slider. |
+| Leaving Monitor, focus loss | A latched value keeps running on any page until Unlatch, Remove, Hold all or DISARM. A held (unlatched) slider that loses its press counts as a release and ramps to 0. |
+
+### Results
+
+Built as planned. Files: `backend/command_model.*` (pure: the hold rule,
+slider span, limit and step, ramp, Latch, typed values, write suspension,
+frames), `backend/command_view.*` (`CommandView`, QML `connection.command`:
+the in-place row model, candidates, 20 ms pump, limits in settings),
+`planCommands` split into value and keepalive-only plans (`CommandPlan::values`),
+`setupGroups` installs full descriptors and zero holds on value groups,
+`connection_layout.cpp` suspends and zeroes around live writes,
+`style/DLSlider.qml` (Symmetric), `style/DLCommandControl.qml`, the card in
+`app/MonitorPage.qml`, the app's `--command` option and two scenarios.
+
+**Internal choices** (decision log): ramp 12 × 20 ms; at most one frame per
+group per 20 ms; the step follows the limit (2 decimals below 10, 1 below
+100, whole numbers above, finer below 0.1) and values are quantized to it; a
+limit change re-quantizes toward zero; limits remembered per device id and
+input; card inputs kept for a reconnect of the same device, not saved;
+Remove is a small x beside Latch (G5 has no Remove control); the typed value
+is sent on Enter only (leaving the field drops it, so a click on Hold all
+never sends it first); keyboard steps disabled on the command slider.
+
+**Fixed while building.** (a) A Busy/Withdrawn `CMD_CONFIG` at setup (no
+change) is retried up to three times: the split adds groups and the
+screenshot campaign hit a withdraw. (b) `m_arming` stuck when the device
+faulted (vdev loop stall) before any status showed Armed, leaving ARM
+disabled until reconnect: the first status after an accepted ARM reply now
+ends "arming". (c) Commands need this window's accepted ARM (`m_ownArm`),
+not only an armed status.
+
+**Review.** Self-review, then an independent Opus review (high). No path
+sends a value other than a shown one or 0. Fixed: frames of other instances
+could carry a commanded instance's old value during a live write (now zeroed
+at the write's start, user decision above); a typed value was sent on focus
+loss, including a click on Hold all or Unlatch (now Enter only); the
+screenshot tool's `--command` armed any endpoint (now `tcp://` only); a range
+below 1e-4 inverted the limit clamp (refused by the hold rule); a limit change
+could raise a value by one step (toward zero now); the drag bubble showed the
+slider's own value (now the model's); another client's ARM enabled the card
+(now `m_ownArm`); DISARM now also discards queued values. Noted, not changed:
+a frozen GUI thread with a slider held keeps that value running (keepalives
+are on I/O); DISARM or the watchdog after the app dies stops it.
+
+**Verified.** `validate.py full` passed; `commandLogic`, `commandOperations`
+(vdev: the split on LIST, refusal while disarmed, read-back of the commanded
+input through a Monitor subscription, ramp, Latch past the 1 s watchdog, typed
+value, live write zeroing, Hold all, page release, DISARM, another client's
+ARM refused, close clears the command groups), `commandInShell` (mouse drag,
+Latch, typed value, Esc in the field disarms), Qt Quick control tests;
+screenshots `monitor` (held and latched) and `monitor-command-disarmed` at both
+sizes and themes, stable over five runs; `benchCommand` dry run on vdev
+(mock actuator: read-back, response ≈ 2 rad/s, ramp, Latch, Hold all, DISARM).
+Real motors: deferred row in the status file.
