@@ -68,14 +68,27 @@ ModelLayout layout(Client &client, const DeviceSnapshot &snapshot, const std::ve
     return result;
 }
 
+// The layout views and every parameter value, read with the descriptors the
+// snapshot already holds. GET request: four-byte core header, count, then
+// four bytes/ref; the reply has a six-byte header and count. Bound both by
+// the negotiated cap.
+void loadConfig(Client &client, DeviceSnapshot &snapshot)
+{
+    const size_t batch_size = std::min<size_t>(64, (snapshot.info.max_payload - 7) / 4);
+    const auto system = snapshot.types.find(protocol::defs::kSystemTypeId);
+    if (system == snapshot.types.end()) { invalid("system type is not described"); }
+    const auto configured = client.instances(false);
+    const auto pending = client.instances(true);
+    snapshot.configured = layout(client, snapshot, configured, false, batch_size);
+    snapshot.pending = layout(client, snapshot, pending, true, batch_size);
+    snapshot.system_params = params(client, system->second, 0, false, batch_size);
+}
+
 DeviceSnapshot load(Client &client)
 {
     DeviceSnapshot snapshot;
     snapshot.info = client.info(); // validates version and negotiates payload
-    // GET request: four-byte core header, count, then four bytes/ref. The reply
-    // has a six-byte header and count. Bound both by the negotiated cap.
     if (snapshot.info.max_payload < 11) { invalid("payload cap cannot fit one parameter"); }
-    const size_t batch_size = std::min<size_t>(64, (snapshot.info.max_payload - 7) / 4);
     for (const auto &descriptor : client.types())
     {
         ModelType type;
@@ -97,13 +110,7 @@ DeviceSnapshot load(Client &client)
         if (!snapshot.types.emplace(descriptor.type, std::move(type)).second) { invalid("duplicate type ID"); }
     }
     snapshot.codes = client.codes();
-    const auto system = snapshot.types.find(protocol::defs::kSystemTypeId);
-    if (system == snapshot.types.end()) { invalid("system type is not described"); }
-    const auto configured = client.instances(false);
-    const auto pending = client.instances(true);
-    snapshot.configured = layout(client, snapshot, configured, false, batch_size);
-    snapshot.pending = layout(client, snapshot, pending, true, batch_size);
-    snapshot.system_params = params(client, system->second, 0, false, batch_size);
+    loadConfig(client, snapshot);
     snapshot.diagnostics=client.diagEntries();
     return snapshot;
 }
@@ -287,6 +294,36 @@ RequestHandle DeviceModel::reloadAsync(Completion<OperationResult> completion) {
         return OperationResult{};
     },[weak=std::weak_ptr<State>(state),completion=std::move(completion)](auto result) mutable {
         if(auto s=weak.lock()) {s->changed(result?Change::Model:Change::ReloadFailed);}
+        if(completion) {completion(std::move(result));}
+    });
+}
+
+RequestHandle DeviceModel::refreshConfigAsync(Completion<OperationResult> completion) {
+    const auto generation=m_session.generation();auto state=m_state;
+    return m_session.async<OperationResult>([state,generation] {
+        std::lock_guard loading(state->load_mutex);
+        DeviceSnapshot next;
+        {std::lock_guard lock(state->mutex);
+         if(!state->snapshot->ready || state->snapshot->generation!=generation) {
+             throw Error(ErrorKind::Protocol,"model is not current for a configuration refresh");
+         }
+         next=*state->snapshot;}
+        Client client(*state->session);loadConfig(client,next);
+        if(state->session->generation()!=generation) {throw Error(ErrorKind::Protocol,"boot changed during configuration refresh");}
+        std::lock_guard lock(state->mutex);
+        if(!state->active) {return OperationResult{};}
+        if(state->snapshot->generation!=generation || !state->snapshot->ready) {
+            throw Error(ErrorKind::Protocol,"model advanced during configuration refresh");
+        }
+        // Status, diagnostics and the link stay as the latest snapshot has
+        // them; only the configuration is replaced.
+        auto latest=std::make_shared<DeviceSnapshot>(*state->snapshot);
+        latest->configured=std::move(next.configured);latest->pending=std::move(next.pending);
+        latest->system_params=std::move(next.system_params);
+        state->snapshot=std::move(latest);
+        return OperationResult{};
+    },[weak=std::weak_ptr<State>(state),completion=std::move(completion)](auto result) mutable {
+        if(auto s=weak.lock();s && result) {s->changed(Change::Model);}
         if(completion) {completion(std::move(result));}
     });
 }

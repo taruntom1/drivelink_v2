@@ -8,8 +8,8 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.
 
 H2a-1 provides the style layer; H2a-2 adds the application, local device
-backend and shell; H2b-1 adds Connect and Device and H2b-2 the firmware update
-(below). Layout, Tune and Monitor are placeholders until their steps
+backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update
+and H2c-1 Layout (below). Tune and Monitor are placeholders until their steps
 ([host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
@@ -158,6 +158,49 @@ dialogs and overlays; `backend/device_models.*` holds `LoopTable`,
   Reboot and Save and reboot are disabled while an image is prepared (REBOOT
   would install it unchecked) or the state could not be read.
 
+## Layout (H2c-1)
+
+`backend/layout_model.*` holds the pure Layout rules (tested without a
+device), `LayoutTree` and `ParamTable`; `backend/connection_layout.cpp` the
+operations; `app/LayoutPage.qml`, `LayoutDialogs.qml` and `TargetRow.qml` the
+G4/G7b screen. Everything comes from the descriptors: loop masks, item flags,
+`ref:` categories and the generated `<source>.value` signals. Signals, loop
+statistics, actions and the custom panel slot follow in H2c-2.
+
+- **Tree.** Loops by id (gaps allowed) from both layout views: name, rate, a
+  neutral Real-time badge, budget (Device loop statistics), state; modules
+  under their loop, indented under the instance wired to them. Pending add,
+  remove, label and change are marked. Counts against `limits.loops` and
+  `limits.instances`; the Add menu (Instance, Loop) is disabled at a limit.
+- **Detail.** Header with Rename (SET_LABEL) and Remove, disabled with the
+  reason when something refers to it (wiring, a source, instances in a loop),
+  as the device would refuse with `Referenced`. Params grouped by name prefix,
+  filters All / Changed / Pending and a name filter. Wiring rows pick instances
+  of the param's category; other-loop entries are listed disabled with the
+  reason. Source rows pick signals and inputs of the matching value type in
+  any loop. Loop detail lists the instances that run in it.
+- **Edits.** A typed value is sent on Enter or when the field loses focus,
+  only when it differs from the device value and from what was just sent
+  (user decision 2026-11-17). Enums, bools and targets send on selection. A
+  value that does not parse is refused locally; a device refusal keeps the
+  typed value with the reason until it is edited or Esc; clamped values show
+  what was applied; an unanswered SET is uncertain and shows the read-back
+  value. Every SET and layout op is sent once and followed by
+  `refreshConfigAsync`, never retried. Reboot params show current → pending.
+  Esc and a DISARM click cancel an open edit without sending (DISARM takes no
+  focus; `SafetyKeys.cancelEdit`).
+- **Add.** Add instance lists the types with their need (real-time, any,
+  not real-time), compatible loops by the pending `realtime` value, the
+  device default (lowest compatible id) preselected, and Add loop when none
+  fits. Add loop shows the loop type's params with their defaults (core: the
+  discovered enum, Any core) and sets only changed values after ADD_INSTANCE.
+  Refusals stay in the dialog; nothing is staged.
+- **Pending.** The pending banner has Review (every staged change, old → new,
+  configured view against pending view), Save and reboot, and Discard all
+  (a destructive confirm listing what is dropped). ARM is disabled while a
+  reboot is pending. While armed the layout ops, reboot params, wiring and
+  sources are disabled with the reason; locked-while-armed params show Locked.
+
 ## Theme
 
 Figma's variables are the source of truth. `tokens.json` holds every variable
@@ -206,10 +249,18 @@ it registers the bundled fonts and the `dlicon` image provider.
 | NavItem, NavRail | `DLNavItem`, `DLNavRail` | controlled: `activated(index)`, the shell sets `currentIndex` |
 | StatusBar | `DLStatusBar` | `mode` NoDevice … LinkLost; centre stays centred; DISARM enabled whenever there is a link |
 | Banner | `DLBanner` | 4 tones, up to 3 actions (Secondary, Primary, Secondary) |
-| Dialog | `DLDialog` | Default / `destructive`; optional confirmation checkbox; Enter accepts only a Default dialog |
+| Dialog | `DLDialog` | Default / `destructive`; optional confirmation checkbox; Enter accepts only a Default dialog; `closeOnAccept: false` emits `acceptRequested` and stays open until the owner closes it |
 | Toast | `DLToast` | Info and Ok dismiss after 4 s; Fault stays |
 | Tooltip | `DLToolTip` | 500 ms delay, wraps at 320 px |
 | Icon/* | `DLIcon` | a bundled Lucide icon by name, recoloured |
+| SpinBox | `DLNumberField` | a TextField (QML SpinBox is integer-only); `status` Normal, Edited, Pending, Clamped, Rejected, Locked; unit inside |
+| Switch | `DLSwitch` | optional label |
+| TabButton | `DLTabButton` | accent underline when checked |
+| Menu, MenuItem | `DLMenu`, `DLMenuItem` | not modal; MenuItem `detail` second line |
+| TreeItem | `DLTreeItem` | loop header (52 px, rate, Real-time badge, budget, state) or module row by `depth`; pending, failed, offline |
+| ParamRow | `DLParamRow` | editor by `editor` (number, gpio, enum, bool); commit rules above; Unsaved/Pending bar and note |
+| RefPicker, SourcePicker | `DLRefPicker` | `[chip] › target`; candidates with detail or disabled reason; `status` Pending, Rejected, Unset |
+| AddMenu, filter chips | `DLButton` + `DLMenu`, `DLFilterChip` | the Instances card's Add; All / Changed / Pending |
 
 Helpers: `DLShadow` draws the elevation styles without shader effects;
 `DLReasonHover` wraps a control and explains why it is disabled (a disabled
@@ -252,6 +303,12 @@ vdev, a confirmed update, install without confirming then Confirm, roll back,
 abort while writing (DISARM live), a lost REBOOT that is not repeated (vdev
 `drop-reboot`), states left by another client, disconnect while reconnecting,
 the dialog in the shell and (Linux PTY) an update with Boot in place.
+H2c-1 adds the pure Layout rules and models (`layoutLogic`) and, against vdev,
+Add loop/instance, refused adds, wiring, a source and a BadRef, Remove refused
+locally, labels, clamped/applied/pending params, Discard all, the armed lock
+and Save and reboot (`layoutOperations`), plus a DISARM click that keeps an
+open edit unsent; `tst_layout.qml` covers the param row's commit rules, the
+tree item and the picker.
 
 `benchOta` is the bare-board OTA check, skipped unless
 `DRIVELINK_GUI_BENCH_ENDPOINT` and `DRIVELINK_GUI_BENCH_OTA_IMAGE` are set: it
@@ -274,7 +331,8 @@ reboot retains the desktop scheduling allowance.
 The app's `--out DIR` writes four PNGs (2560×1440 and 1920×1080, Dark and
 Light), waits for live state with a timeout, then disconnects. `--screen`
 accepts `connect`, `device`, `layout`, `tune`, `monitor`, `drawer`, `dialog`,
-`rename`, `reset`, `unsaved`, `notice` and, with `--image FILE`, `update` (the
+`rename`, `reset`, `unsaved`, `notice`, `layout-review`, `layout-add-instance`,
+`layout-add-loop` (with `--select TYPE:INSTANCE` for the Layout screens) and, with `--image FILE`, `update` (the
 image choice), `update-writing`, `update-confirmed`, `update-rolledback`;
 `--expect-state` accepts `ready`,
 `fault`, `safe`, `lost`. Except for Connect, pass an endpoint. `--settle MS`
@@ -292,9 +350,11 @@ python host/gui/tests/scenarios.py --gui host/superbuild/build/windows-mingw/gui
 ```
 
 The script defaults to offscreen/software rendering, runs the backend checks
-when `--backend` is supplied, and renders eighteen scenarios, the last four the firmware update screens (it
-writes a non-executable vdev image for them), into separate folders (72 PNGs,
-dimensions checked); `--only NAME...` picks some. `--smoke`
+when `--backend` is supplied, and renders twenty-three scenarios, the last four the firmware update screens (it
+writes a non-executable vdev image for them), into separate folders (92 PNGs,
+dimensions checked). The six Layout scenarios first build the G7b three-loop
+sample on vdev with `drivelink-cli` (next to vdev, or `--cli`), save and
+reboot it, and stage changes for the pending ones; `--only NAME...` picks some. `--smoke`
 renders only Connect and Device;
 CTest uses that subset on both OSes. Use the CTest-resolved executable paths
 on Linux (`ctest --preset linux -N -V -R '^gui-'` from `host/superbuild`).

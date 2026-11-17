@@ -288,3 +288,33 @@ TEST_CASE("a delayed successful Boot reload cannot resurrect a disconnected mode
     const auto snapshot=model.snapshotShared();CHECK(snapshot->info.build_id=="777");CHECK_FALSE(snapshot->connected);
     session.close();
 }
+TEST_CASE("configuration refresh rereads layouts and params, keeping descriptors and identity") {
+    ModelPeer peer;Session session(peer.endpoint(),testOptions());Client client(session);DeviceModel model(client);
+    const auto before=model.snapshotShared();
+    std::atomic<unsigned> models=0;
+    model.onChange([&](auto change) {if(change==DeviceModel::Change::Model) {++models;}});
+    const auto refresh=[&] {
+        std::promise<std::expected<OperationResult,Error>> done;auto result=done.get_future();
+        model.refreshConfigAsync([&](auto r) {done.set_value(std::move(r));});
+        REQUIRE(result.wait_for(std::chrono::seconds(3))==std::future_status::ready);
+        return result.get();
+    };
+    peer.revision=100;
+    REQUIRE(refresh());
+    const auto after=model.snapshotShared();
+    CHECK(models==1);
+    CHECK(std::get<uint32_t>(after->pending.at({223,31}).params.at(169))==1300);
+    CHECK(after->info.build_id=="17"); // GET_INFO and descriptors were not reread
+    CHECK(after->info.name=="17");
+    CHECK(after->types.at(223).items.at(900).enums.at(0).name=="custom_mode");
+    CHECK(after->generation==before->generation);
+    CHECK(std::get<uint32_t>(before->pending.at({223,31}).params.at(169))!=1300);
+    // A failed read publishes nothing and keeps the last snapshot.
+    peer.mode=Mode::Refusal;peer.revision=300;
+    CHECK_FALSE(refresh());
+    CHECK(model.snapshotShared()==after);
+    peer.mode=Mode::Normal;session.close();
+    CHECK_FALSE(refresh());
+    CHECK(model.snapshotShared()->info.build_id=="17");
+    model.onChange({});
+}

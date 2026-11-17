@@ -20,7 +20,10 @@ Basic.ApplicationWindow {
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
     readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
-    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || overlayOpen
+    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || overlayOpen
+    property bool reviewOpen: false
+    property alias layoutDialogs: layoutDialogs
+    readonly property var pendingChanges: connection.layout.pendingChanges || []
     property alias endpointField: connectPage.tcpField
     property alias statusBar: status
     property alias dialog: dialog
@@ -31,8 +34,8 @@ Basic.ApplicationWindow {
     function chooseFirmware() { if (connection.firmware.updateBlocked === "") imagePicker.open() }
 
     function cancelOverlay() {
-        drawerOpen = false; armPopoverOpen = false
-        dialog.reject(); renameDialog.reject(); resetDialog.reject()
+        drawerOpen = false; armPopoverOpen = false; reviewOpen = false
+        dialog.reject(); renameDialog.reject(); resetDialog.reject(); layoutDialogs.cancel()
         // Esc closes the image choice; a running update is never aborted by Esc.
         if (otaDialog.choosing) otaDialog.cancel()
     }
@@ -92,7 +95,7 @@ Basic.ApplicationWindow {
         faultsActive: true
         faultsText: shell.backend.activeFaults === 1 ? qsTr("1 active fault")
                   : qsTr("%1 active faults").arg(shell.backend.activeFaults)
-        onDisarmRequested: shell.backend.disarm()
+        onDisarmRequested: { shell.backend.disarm(); safetyKeys.cancelEdit() }
         onArmRequested: shell.backend.arm()
         onAckFaultRequested: shell.backend.acknowledge()
         onSaveRequested: shell.backend.save()
@@ -125,10 +128,16 @@ Basic.ApplicationWindow {
                 title: connection.safeMode ? qsTr("Device is in safe mode") : qsTr("Changes require a reboot")
                 message: connection.safeMode
                     ? qsTr("It booted after repeated crashes: no loop runs and ARM is unavailable. Params and the layout can still be edited.")
-                    : connection.unsaved ? qsTr("Save first, or the changes are lost at the reboot.") : ""
+                    : (shell.pendingChanges.length > 0 ? (shell.pendingChanges.length === 1 ? qsTr("1 staged change. ")
+                                                         : qsTr("%1 staged changes. ").arg(shell.pendingChanges.length)) : "")
+                      + (connection.unsaved ? qsTr("Save first, or the changes are lost at the reboot.") : "")
+                action1Text: !connection.safeMode && shell.pendingChanges.length > 0 ? qsTr("Review") : ""
                 action2Text: connection.safeMode ? qsTr("Exit safe mode")
                            : connection.unsaved ? qsTr("Save and reboot") : qsTr("Reboot")
+                action3Text: !connection.safeMode && shell.pendingChanges.length > 0 ? qsTr("Discard all") : ""
                 onActionTriggered: function(index) {
+                    if (index === 0) { shell.reviewOpen = !shell.reviewOpen; return }
+                    if (index === 2) { shell.reviewOpen = false; layoutDialogs.openDiscard(); return }
                     if (connection.safeMode) connection.exitSafeMode()
                     else if (connection.unsaved) connection.saveAndReboot()
                     else connection.reboot()
@@ -161,21 +170,28 @@ Basic.ApplicationWindow {
                     onRenameRequested: renameDialog.open()
                     onFactoryResetRequested: resetDialog.open()
                     onFaultsRequested: shell.drawerOpen = true
-                    onLoopRequested: function(loopId) { shell.layoutLoop = loopId; shell.page = 1 }
+                    // A loop is an instance of the built-in loop type (0x05).
+                    onLoopRequested: function(loopId) { shell.layoutLoop = loopId; connection.selectNode("5:" + loopId); shell.page = 1 }
                     onUpdateRequested: shell.chooseFirmware()
+                }
+                LayoutPage {
+                    anchors.fill: parent
+                    visible: shell.page === 1
+                    backend: shell.backend
+                    onAddInstanceRequested: layoutDialogs.openAddInstance()
+                    onAddLoopRequested: layoutDialogs.openAddLoop()
+                    onLabelRequested: function(key, label) { layoutDialogs.openLabel(key, label) }
                 }
                 Column {
                     anchors.fill: parent; anchors.margins: Theme.space24
-                    visible: shell.page !== 0
+                    visible: shell.page > 1
                     spacing: Theme.space24
                     Text {
                         text: [qsTr("Device"), qsTr("Layout"), qsTr("Tune"), qsTr("Monitor")][shell.page]
                         font: Theme.fontTitlePage; color: Theme.textPrimary
                     }
                     Text {
-                        text: shell.page === 1 && shell.layoutLoop >= 0
-                            ? qsTr("Loop #%1 is selected; the Layout screen follows in the next step.").arg(shell.layoutLoop)
-                            : qsTr("This screen follows in a later step.")
+                        text: qsTr("This screen follows in a later step.")
                         font: Theme.fontBodyDefault; color: Theme.textSecondary
                     }
                 }
@@ -247,6 +263,49 @@ Basic.ApplicationWindow {
                         text: qsTr("Device page")
                         onClicked: { shell.armPopoverOpen = false; shell.page = 0 }
                     }
+                }
+            }
+        }
+        // G4 "Review pending changes": every staged change, old -> new.
+        Rectangle {
+            id: reviewPopover
+            objectName: "reviewPopover"
+            anchors.right: parent.right; anchors.rightMargin: Theme.space24
+            y: banner.height + Theme.space8; z: 5
+            width: 560
+            height: reviewColumn.implicitHeight + 2 * Theme.space16
+            visible: shell.reviewOpen && connection.ready && banner.visible && shell.pendingChanges.length > 0 && !shell.modalOpen
+            color: Theme.bgRaised
+            radius: Theme.radiusLg
+            border.width: Theme.borderWidth
+            border.color: Theme.statePending
+            DLShadow { radius: parent.radius }
+            Column {
+                id: reviewColumn
+                x: Theme.space16; y: Theme.space16
+                width: parent.width - 2 * Theme.space16
+                spacing: Theme.space8
+                Item {
+                    width: parent.width; height: Theme.sizeControlSm
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: qsTr("Pending changes")
+                        font: Theme.fontBodyStrong; color: Theme.textPrimary
+                    }
+                    DLIconButton {
+                        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                        size: DLIconButton.Sm; iconName: "x"; toolTipText: qsTr("Close")
+                        onClicked: shell.reviewOpen = false
+                    }
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: qsTr("Applied by Save and a reboot. Discard all drops every one; there is no per-change undo.")
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+                Repeater {
+                    model: shell.pendingChanges
+                    delegate: PendingChangeText { width: reviewColumn.width }
                 }
             }
         }
@@ -343,6 +402,11 @@ Basic.ApplicationWindow {
             modality: Qt.NonModal
             nameFilters: [qsTr("ESP32-S3 application (*.bin)"), qsTr("All files (*)")]
             onAccepted: otaDialog.choice = connection.inspectImage(selectedFile.toString())
+        }
+        LayoutDialogs {
+            id: layoutDialogs
+            backend: shell.backend
+            dialogParent: body
         }
         DLDialog {
             id: dialog

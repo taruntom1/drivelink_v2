@@ -53,6 +53,15 @@ qt_add_qml_module(drivelink_gui_style
     DLComboBox.qml
     DLCheckItem.qml
     DLProgressBar.qml
+    DLNumberField.qml
+    DLSwitch.qml
+    DLTabButton.qml
+    DLFilterChip.qml
+    DLMenu.qml
+    DLMenuItem.qml
+    DLTreeItem.qml
+    DLRefPicker.qml
+    DLParamRow.qml
 )
 
 qt_add_resources(drivelink_gui_style drivelink_gui_assets

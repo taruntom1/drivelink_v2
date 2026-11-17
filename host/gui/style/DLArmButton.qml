@@ -49,7 +49,9 @@ T.Button {
     font: Theme.fontTitleSection
     opacity: !enabled && mode !== DLArmButton.Arm ? 0.4 : 1
     hoverEnabled: true
-    focusPolicy: Qt.StrongFocus
+    // Tab reaches it; a click does not take focus, so clicking DISARM never
+    // ends (and so sends) an open param edit. The shell cancels that edit.
+    focusPolicy: Qt.TabFocus
     Accessible.name: mode === DLArmButton.Disarm ? text + qsTr(" (Esc)") : text
 
     onClicked: {

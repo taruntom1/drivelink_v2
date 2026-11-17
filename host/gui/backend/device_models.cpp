@@ -37,6 +37,18 @@ QString refusalText(uint8_t result,uint8_t detail) {
     case D::Withdrawn: return tr("The loop did not take the change in time; nothing changed. Try again");
     case D::Unsupported: return tr("Not supported by this device");
     case D::Capacity: return tr("The device has no capacity left for this");
+    case D::LoopMismatch: return tr("Not compatible with that loop: the type must suit the loop's real-time setting, and wiring stays within one loop");
+    case D::LabelInUse: return tr("Another instance already has this label");
+    case D::BadLabel: return tr("Labels are 1 to 16 bytes without control characters");
+    case D::GpioConflict: return tr("The pin is already used by another instance");
+    case D::GpioNotAllowed: return tr("This pin cannot be used on this device");
+    case D::BadRef: return tr("The target does not exist or has the wrong type");
+    case D::WiringCycle: return tr("This would make a wiring cycle within the loop");
+    case D::Referenced: return tr("Something still refers to it; rewire, move or remove that first");
+    case D::CrossLoopBatch: return tr("One change may touch only one loop");
+    case D::BadEnum: return tr("Not one of the listed values");
+    case D::NonFiniteFloat: return tr("The value must be a finite number");
+    case D::UnknownRef: return tr("The device does not know this item");
     default: break;
     }
     using R=defs::Result;

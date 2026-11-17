@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step:** H2c (Layout), after H2b-2 merges. H2b-1 (#76) is merged; H2b-2 (OTA in the GUI) is built, independently reviewed and checked on the bench board. HW runs as hardware arrives.
+- **Next step:** H2c-2 (Layout live data and actions), after H2c-1 merges. H2b-2 (#77) is merged; H2c-1 (Layout structure and configuration editing) is built, self-reviewed and checked on vdev. HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -32,13 +32,12 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for H2c / HW
+## Handoff for H2c-2 / HW
 
-- **Read first:** the H2c brief in [host-steps.md](host-steps.md), the G4/G7b decisions in [gui-design.md](gui-design.md), [host/gui/README.md](../host/gui/README.md) (backend, Connect and Device, Firmware update) and the "H2c" note below.
-- **What exists:** the shell, Connect, Device (identity, loops, faults, configuration, limits, Firmware update card) and the OTA dialog. The Layout page is a placeholder; Device loop rows already emit `loopRequested(id)` and the shell selects page 1 with `layoutLoop`. `DescriptorRows`/`InstanceTree` are the item-model bases for the param table and tree.
-- **Structure:** `LocalConnection` internals (`GuiDispatch`, `post`, `Context`, owned groups) are in `backend/connection_internal.hpp`, shared by `connection.cpp` and `connection_ota.cpp`; a large new backend area can get its own source the same way. `commonBlock()` gates configuration actions (loading, a running action, an active update); layout ops should use it too.
-- **Traps:** vdev serves one TCP client at a time. On Windows vdev the 1 kHz loop overruns and can miss the 3-period claim window (`Busy/Withdrawn`): command setup does not retry it, which shows as a toast in screenshot runs without the 10 Hz fixture. Windows tests force stderr logging/offscreen/software. `waitFor` in `test_backend.cpp` evaluates its condition once more after success, so never click inside it (see `otaDialogInShell`). `DLStatusBar.connection` still shadows the context property.
-- **Open edges:** whether Windows' native non-modal file dialog leaves the owner window usable was not checked interactively (it opens only while disarmed and nothing arms while it is open, so DISARM reachability does not depend on it). A CLI Ctrl-C during connect in `ota-upload` now exits 2 ("cancelled before upload; nothing changed") instead of killing the process. Command groups configured before a stalled link stay until reboot; ACK can stay locally blocked if a Cleared event is missed while another fault is active; the device serves no code descriptions; Linux port listing skips `ttyS*` (H3c); vdev reports reset reason 0.
+- **Read first:** the H2c brief in [host-steps.md](host-steps.md) (split note), [host/gui/README.md](../host/gui/README.md) "Layout (H2c-1)", the G7b Sources rules in [gui-design.md](gui-design.md) and the H2c-2 note below.
+- **What exists:** `LayoutPage` (tree, detail header, Sources rows with target pickers only, Params, Wiring, Instances in this loop), `LayoutDialogs` (Add instance, Add loop, Rename, Discard all) and the pending Review popover in the shell. The detail column has no Signals, Statistics or Actions card yet; H2c-2 adds them beside Wiring / Instances in this loop. Pure rules are in `backend/layout_model.*`; operations in `backend/connection_layout.cpp`. `refreshConfigAsync` (libdrivelink) re-reads layouts and params after every mutation.
+- **Traps:** `ParamTable` updates in place when its row keys are unchanged, so a focused editor survives a send and read-back; a key-set change resets the model. Delegates use `required <existing property>` because the role names equal the control properties. `DLParamRow` sends on Enter or focus loss (user decision); a send is guarded by `lastSent`/`typing`, so test commit paths in `tst_layout.qml` when changing it. DLArmButton takes no focus on click (`Qt.TabFocus`) and the shell calls `SafetyKeys.cancelEdit()` on DISARM. The Windows vdev 1 kHz command-setup toast (`Busy/Withdrawn`) also appears in the Layout scenario screenshots of the 1 kHz sample.
+- **Open edges:** the device's enum names are shown as served (`core_0`, `core_1`, `any`), not the Figma's "Core 0 / Any core" wording. Params changed by another client do not get the Unsaved marker (the GUI tracks its own changes). GPIO conflicts cannot be exercised on vdev (no GPIO types); the refusal text is unit-tested. Remaining from H2b: command groups configured before a stalled link stay until reboot; ACK can stay locally blocked if a Cleared event is missed while another fault is active; vdev reports reset reason 0.
 
 ## Steps
 
@@ -54,11 +53,12 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | H2a-1 | GUI build and style: `setup_linux.sh` and CI, Theme from Figma tokens (G8 done), fonts/icons, 13 shell controls, style gallery, Qt Quick Test. Depends on H1b, H1c | none (no device code); gallery checked against Figma | high, self | merged | [#73](https://github.com/taruntom1/drivelink_v2/pull/73) |
 | H2a-2 | GUI shell and backend: app, shell, DISARM/Esc, scrim, Qt adapters, arm/ack, command groups, item-model bases, vdev scenario hooks, screenshot tool. Depends on H2a-1 | vdev: backend and ten-scenario campaign passed | high, independent | merged | [#74](https://github.com/taruntom1/drivelink_v2/pull/74) |
 | H2b-1 | Connect and Device: ports, recents, mismatch, identity/Rename, loops/run time, faults drawer and badge, SAVE/REVERT/reboot/factory reset, safe-mode exit, link lost, reboot notice. Depends on H2a-2 | bare board: screenshots and `benchBoard` on COM3 passed | high, independent | merged | [#76](https://github.com/taruntom1/drivelink_v2/pull/76) |
-| H2b-2 | OTA in the GUI: OTA workflow into libdrivelink (CLI unchanged), OTA dialog, firmware card. Depends on H2b-1 | bare board: `benchOta` installed and confirmed an `ota-image` candidate, then restored the exact original, on COM3 | high, independent | in review | [#77](https://github.com/taruntom1/drivelink_v2/pull/77) |
-| H2c | Layout screen. Depends on H2b-2 | vdev | high, self | planned | |
-| H2d | Monitor screen. Depends on H2c | vdev | high, independent | planned | |
+| H2b-2 | OTA in the GUI: OTA workflow into libdrivelink (CLI unchanged), OTA dialog, firmware card. Depends on H2b-1 | bare board: `benchOta` installed and confirmed an `ota-image` candidate, then restored the exact original, on COM3 | high, independent | merged | [#77](https://github.com/taruntom1/drivelink_v2/pull/77) |
+| H2c-1 | Layout structure and configuration: tree, loop/instance detail, typed param editors, wiring and source targets, Add instance/loop, Remove, labels, limits, pending review, Discard all, `refreshConfigAsync`. Depends on H2b-2 | vdev: backend Layout tests and the 23-scenario screenshot campaign passed | high, self | in review | |
+| H2c-2 | Layout live data and actions: GUI-owned subscription for the selected node (Signals, source value/age/state, loop Statistics), Actions card (paused, blobs), custom panel slot. Depends on H2c-1 | vdev | high, independent | planned | |
+| H2d | Monitor screen. Depends on H2c-2 | vdev | high, independent | planned | |
 | H2e | Tune screen, run metrics, plant identification, session files. Depends on H2d | vdev; deferred: motor | high, independent | planned | |
-| H2f | IMU calibration custom panel. Depends on H2c | vdev; deferred: IMU | high, self | planned | |
+| H2f | IMU calibration custom panel. Depends on H2c-2 | vdev; deferred: IMU | high, self | planned | |
 | H2g | Inno Setup installer, local GUI close-out. Depends on H2e, H2f | bare board: installed GUI | high, self | planned | |
 | H3a | Agent: access, arbitration, lease, clock model, history, agent MSG_TYPEs; library agent client; agent check and CI. Depends on H1b (built after H2g) | vdev | high, independent | planned | |
 | H3b | GUI remote mode, mDNS, `wsl_serial.py`. Depends on H3a, H2g | PC: agent in WSL owns the bench board | high, independent | planned | |
@@ -73,7 +73,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 Each note is deleted by the step that uses it.
 
-- **H2c.** Build Add loop and loop detail from the discovered placement enum, with Any core as the Add loop default ([todo-loop-affinity.md](archive/todo-loop-affinity.md)). It is not in the Figma frames (user decision 2026-11-15).
+- **H2c-2.** Subscribe the selected node's signals on free slots only (Device loop statistics already use one group per running loop; 8 subscription groups in all), read a source's state from `<name>.value`/`<name>.age_us` (sentinel 0xFFFFFFFF; stale is the host rule in gui-design.md), and refuse paused actions while armed on real-time loops with the reason. Add the Signals/Statistics/Actions cards beside the existing right column.
 - **H2b–H3b.** Each settles the GUI design issues assigned to it in [gui-design.md](gui-design.md), "Open issues by host step", and records the outcome there.
 
 ## Deferred hardware checks
@@ -124,8 +124,8 @@ Choices that the plans don't cover or that change them, and that a later step mu
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-17 | H2b-2 | Native non-modal `FileDialog` (QtQuick.Dialogs) as the image picker, offered only while disarmed; automatic CONFIRM once after `classifyOtaBoot` matches the uploaded candidate, with "Install without confirming"; explicit Confirm (raw CONFIRM for a build this window did not install), Roll back (one REBOOT) and Abort on the Firmware card; reboots blocked while an image is Ready or the OTA state is unknown after a failed read | User decisions 2026-11-17 (picker, confirm, foreign states) | yes (host rules, GUI/library READMEs, ota.md) |
-| 2026-11-17 | H2b-2 | Internal: the reboot notice waits for the OTA dialog; "Last update" kept per device id in the GUI settings file; an uncertain CONFIRM (library marks it `outcome_unknown`, OTA/CONFIRM) leaves the job Unconfirmed, never retried; the frame's "image core version" is not shown (a .bin does not carry it); vdev `drop-reboot N` and a REBOOT counter for tests | Smallest change that matches the G3 frames and proves REBOOT is not repeated | yes (GUI and vdev READMEs) |
+| 2026-11-17 | H2c-1 | Split H2c into H2c-1 (self-review) and H2c-2 (independent review); a typed param value is sent on Enter or focus loss; the GUI disables ARM while a reboot is pending and locks reboot params, wiring and sources while armed (G7b frames), stricter than the device | User decisions 2026-11-17 (split, review, send rule); G7b frames | yes (host-steps.md, host rules, GUI README) |
+| 2026-11-17 | H2c-1 | Internal: `DeviceModel::refreshConfigAsync` (layouts and params only, no wire change) after each mutation; one `DLRefPicker` for the Figma RefPicker and SourcePicker sets; the Add menu is a `DLButton` with a `DLMenu`; pending changes are the configured view against the pending view; ungrouped params list first; the Layout screenshot fixture is built with `drivelink-cli` on vdev | Smallest change that matches the G4/G7b frames | yes (library and GUI READMEs) |
 | 2026-11-13 | F6, F10 | Test harnesses retry group-only Busy/StagingBusy rejections (in addition to Withdrawn), bounded to ten attempts; production SDK/CLI stays unchanged. F10 applies the same bounded retry to the native "autonomous loops" group test (`test_core_groups.cpp`) | CI's existing sub-enable scenario raced a loop's atomic slot claim (host-linux in F6; the native test on PR #60's CI, where the owning loop's `endTick` held the slot during `enable`). The rejection occurs before mutation; unit tests and independent review confirm timeouts/actions/expected refusals are not broadened | n/a |
 
 ## Hardware results

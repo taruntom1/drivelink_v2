@@ -198,6 +198,14 @@ Review: independent (OTA orchestration, arm and acknowledge flows).
 
 ## H2c Layout
 
+User-approved split (2026-11-17): **H2c-1** (self-review) builds the tree,
+loop and instance detail, typed param editors, wiring and source targets,
+Add instance/loop, Remove, labels, limits, the pending review, Discard all and
+refused ops. **H2c-2** (independent review: GUI-owned subscription groups and
+actions, including paused ones) adds live Signals, the source value/age/state
+rows, loop Statistics, the Actions card and the custom panel slot. A typed
+param value is sent on Enter or focus loss (user decision 2026-11-17).
+
 **Depends on** H2b. **Design:** G4 and G7b frames and decisions; [todo-loop-affinity.md](archive/todo-loop-affinity.md).
 
 Scope:

@@ -1,4 +1,5 @@
 #include "connection.hpp"
+#include "layout_model.hpp"
 #include "../../../protocol/test/ota_fixture.hpp"
 #include "safety_keys.hpp"
 #include "style.hpp"
@@ -259,6 +260,233 @@ private slots:
         QVERIFY(!c.nameProblem("seventeen-bytes-x").isEmpty());QVERIFY(!c.nameProblem(QString("a\tb")).isEmpty());
         QVERIFY(c.nameProblem(QString::fromUtf8("\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9")).isEmpty()); // 16 bytes
         QVERIFY(!c.nameProblem(QString::fromUtf8("\xc2\x85")).isEmpty()); // C1 control
+    }
+    // Pure Layout rules on a snapshot with gaps in loop ids, every loop mask,
+    // wiring, a source, GPIO pins and each kind of staged change.
+    void layoutLogic() {
+        using defs::ItemFlag;
+        auto s=std::make_shared<DeviceSnapshot>();
+        auto item=[](uint16_t id,const char *name,ItemKind kind,ValueType type,uint8_t flags=0) {
+            ModelItem i;i.descriptor.id=id;i.descriptor.name=name;i.descriptor.kind=kind;i.descriptor.value_type=type;
+            i.descriptor.flags=flags;return i;
+        };
+        const uint8_t reboot=uint8_t(ItemFlag::RebootRequired),gpio=uint8_t(ItemFlag::Gpio)|reboot;
+        auto &system=s->types[0];system.descriptor={0,0,"system"};
+        system.items[defs::system::kLimitsLoops]=item(defs::system::kLimitsLoops,"limits.loops",ItemKind::Param,ValueType::U8,4);
+        system.items[defs::system::kLimitsInstances]=item(defs::system::kLimitsInstances,"limits.instances",ItemKind::Param,ValueType::U8,4);
+        s->system_params[defs::system::kLimitsLoops]=uint8_t(4);s->system_params[defs::system::kLimitsInstances]=uint8_t(5);
+        auto &loop=s->types[5];loop.descriptor={5,0,"loop"};
+        loop.items[1]=item(1,"rate_hz",ItemKind::Param,ValueType::U16);
+        loop.items[2]=item(2,"realtime",ItemKind::Param,ValueType::Bool,reboot);
+        auto &ctrl=s->types[32];ctrl.descriptor={32,1,"controller.pid"};
+        ctrl.items[1]=item(1,"actuator",ItemKind::Param,ValueType::U32,reboot);ctrl.items[1].descriptor.ref="actuator";
+        ctrl.items[2]=item(2,"vel.kp",ItemKind::Param,ValueType::F32);
+        ctrl.items[2].descriptor.has_min=ctrl.items[2].descriptor.has_max=true;
+        ctrl.items[2].descriptor.max_bits=valueBits(Value(float(10)));
+        ctrl.items[3]=item(3,"mode",ItemKind::Param,ValueType::Enum);ctrl.items[3].enums={{0,"open"},{1,"velocity"}};
+        auto &act=s->types[112];act.descriptor={112,1,"actuator.m"};
+        act.items[1]=item(1,"pin",ItemKind::Param,ValueType::U8,gpio);act.items[1].descriptor.default_bits=255;
+        act.items[0x100]=item(0x100,"duty",ItemKind::Signal,ValueType::F32);
+        auto &imu=s->types[114];imu.descriptor={114,2,"imu.i"};
+        imu.items[0x100]=item(0x100,"yaw",ItemKind::Signal,ValueType::F32);
+        imu.items[0x101]=item(0x101,"count",ItemKind::Signal,ValueType::I32);
+        auto &fusion=s->types[115];fusion.descriptor={115,3,"fusion.f"};
+        fusion.items[1]=item(1,"feedback",ItemKind::Param,ValueType::U32,reboot|uint8_t(ItemFlag::Source));
+        fusion.items[0x100]=item(0x100,"feedback.value",ItemKind::Signal,ValueType::F32);
+        fusion.items[0x101]=item(0x101,"feedback.age_us",ItemKind::Signal,ValueType::U32);
+        auto add=[&](ModelLayout &l,uint8_t t,uint8_t i,uint8_t loopId,const char *label,std::map<uint16_t,Value> params) {
+            l[{t,i}]={{t,i,uint8_t(t==5?255:loopId),0,label},std::move(params)};
+        };
+        add(s->configured,5,0,0,"control",{{1,uint16_t(1000)},{2,true}});
+        add(s->configured,5,3,0,"slow",{{1,uint16_t(10)},{2,false}});
+        add(s->configured,32,0,0,"drive",{{1,uint32_t(defs::wiringRef(112,0))},{2,float(0.1f)},{3,EnumValue{1}}});
+        add(s->configured,112,0,0,"pwm",{{1,uint8_t(4)}});
+        add(s->configured,112,1,0,"old",{{1,uint8_t(255)}});
+        add(s->configured,114,0,3,"imu",{});
+        add(s->configured,115,0,3,"odom",{{1,uint32_t(defs::sourceRef(114,0,0x100))}});
+        s->pending=s->configured;
+        s->pending.erase({112,1});                                    // pending remove
+        s->pending.at({114,0}).instance.label="imu_main";              // label change
+        add(s->pending,112,2,0,"aux",{{1,uint8_t(5)}});                // pending add, pin 5
+        add(s->pending,112,3,3,"far",{{1,uint8_t(255)}});              // another loop
+        s->pending.at({5,3}).params[2]=true;                           // reboot param change
+
+        // Values and editors.
+        QCOMPARE(formatValue(ctrl.items[2],valueBits(Value(float(0.1f)))),QString("0.1"));
+        QCOMPARE(formatValue(act.items[1],255),QString("No pin"));
+        QCOMPARE(formatValue(ctrl.items[3],1),QString("velocity"));
+        QCOMPARE(*parseValueText(act.items[1],"").bits,255u);
+        QCOMPARE(*parseValueText(act.items[1],"12").bits,12u);
+        QVERIFY(!parseValueText(act.items[1],"300").bits);
+        QVERIFY(!parseValueText(ctrl.items[2],"abc").bits);QVERIFY(!parseValueText(ctrl.items[2],"abc").problem.isEmpty());
+        QCOMPARE(*parseValueText(ctrl.items[3],"velocity").bits,1u);
+        QVERIFY(rangeText(ctrl.items[2]).contains("10"));
+        // Loops by real-time compatibility; the default is the lowest compatible id.
+        QCOMPARE(int(*defaultLoop(*s,32)),0);
+        QVERIFY(!defaultLoop(*s,114)); // slow is real-time in the pending layout
+        QVERIFY(!loopChoices(*s,114)[0].compatible);QVERIFY(!loopChoices(*s,114)[1].compatible);
+        QCOMPARE(loopChoices(*s,115).size(),size_t(2));QVERIFY(loopChoices(*s,115)[1].compatible);
+        QCOMPARE(typeNeed(1),QString("needs a real-time loop"));QCOMPARE(typeNeed(2),QString("not in a real-time loop"));
+        QCOMPARE(typeNeed(3),QString("any loop"));
+        // Remove follows the firmware: wired, read as a source, loop in use.
+        QVERIFY(removeBlocker(*s,{112,0}).contains("drive is wired to it"));
+        QVERIFY(removeBlocker(*s,{114,0}).contains("odom reads it as a source"));
+        QVERIFY(removeBlocker(*s,{5,3}).contains("imu_main"));
+        QVERIFY(removeBlocker(*s,{112,2}).isEmpty());QVERIFY(removeBlocker(*s,{32,0}).isEmpty());
+        // Wiring: the category, same loop enabled, another loop disabled with the reason.
+        const auto wires=wiringCandidates(*s,{32,0},ctrl.items[1].descriptor);
+        QCOMPARE(wires.size(),size_t(4));QCOMPARE(wires[0].value,0u);
+        QVERIFY(std::none_of(wires.begin(),wires.end(),[](const Candidate &c){return c.text=="old";})); // removed
+        const auto far=std::find_if(wires.begin(),wires.end(),[](const Candidate &c){return c.text=="far";});
+        QVERIFY(!far->enabled);QCOMPARE(far->reason,QString("slow loop; drive runs in control"));
+        // Sources: matching value type in any loop, never the consumer itself.
+        const auto targets=sourceCandidates(*s,{115,0},fusion.items[1].descriptor);
+        QStringList names;for(const auto &c:targets) {names<<c.text;}
+        QVERIFY(names.contains("imu_main.yaw"));QVERIFY(names.contains("pwm.duty"));
+        QVERIFY(!names.contains("imu_main.count"));QVERIFY(!names.join(" ").contains("odom."));
+        QCOMPARE(sourceText(*s,defs::sourceRef(114,0,0x100)),QString("imu_main.yaw"));
+        QCOMPARE(wiringText(*s,0),QString("Not wired"));QCOMPARE(sourceText(*s,0),QString("Not connected"));
+        // Staged changes, configured against pending.
+        QStringList kinds;for(const auto &c:pendingChanges(*s)) {kinds<<c.kind+":"+c.subject;}
+        QVERIFY(kinds.contains("remove:old"));QVERIFY(kinds.contains("add:aux"));QVERIFY(kinds.contains("label:imu_main"));
+        QVERIFY(kinds.contains("param:slow.realtime"));QVERIFY(kinds.contains("param:aux.pin")); // differs from the default
+        QVERIFY(!kinds.contains("param:far.pin"));
+        const auto counts=layoutCounts(*s);
+        QCOMPARE(counts.loops,2);QCOMPARE(counts.loopLimit,4);QCOMPARE(counts.instances,6);QCOMPARE(counts.instanceLimit,5);
+        // A GpioConflict names the holder from the pending layout.
+        QCOMPARE(gpioOwner(*s,{112,2,1},4),QString("pwm (pin)"));QVERIFY(gpioOwner(*s,{112,0,1},4).isEmpty());
+        Error conflict(ErrorKind::Rejected,"gpio",uint8_t(defs::Result::InvalidArgument),uint8_t(defs::Detail::GpioConflict));
+        QCOMPARE(layoutRefusal(*s,conflict,Ref{112,2,1},4u),QString("GPIO 4 is already used by pwm (pin)"));
+        Error referenced(ErrorKind::Rejected,"ref",uint8_t(defs::Result::InvalidArgument),uint8_t(defs::Detail::Referenced));
+        QVERIFY(layoutRefusal(*s,referenced,{},{},InstanceKey{112,0}).contains("drive"));
+        QVERIFY(!refusalText(1,uint8_t(defs::Detail::LoopMismatch)).isEmpty());
+        // The tree: loops by id, modules indented under what is wired to them.
+        LayoutTree tree;QAbstractItemModelTester treeTester(&tree,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        tree.reset(s);
+        QCOMPARE(tree.keys(),(QStringList{"5:0","32:0","112:0","112:1","112:2","5:3","112:3","114:0","115:0"}));
+        QCOMPARE(tree.data(tree.index(2),LayoutTree::Depth).toInt(),2);
+        QCOMPARE(tree.data(tree.index(3),LayoutTree::Pending).toString(),QString("remove"));
+        QCOMPARE(tree.data(tree.index(4),LayoutTree::Pending).toString(),QString("add"));
+        QCOMPARE(tree.data(tree.index(4),LayoutTree::Health).toInt(),255);
+        QCOMPARE(tree.data(tree.index(5),LayoutTree::Pending).toString(),QString("change"));
+        QVERIFY(!tree.data(tree.index(5),LayoutTree::Realtime).toBool()); // the running value until the reboot
+        tree.setBudgets({{0,0.25}});QCOMPARE(tree.data(tree.index(0),LayoutTree::Budget).toDouble(),0.25);
+        QVERIFY(!tree.data(tree.index(5),LayoutTree::HasBudget).toBool());
+        // The param table: wiring/source params are listed by their cards.
+        ParamTable params;QAbstractItemModelTester paramTester(&params,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        QHash<QString,ParamEdit> edits{{"32:0:2",{"rejected","no","abc"}}};
+        params.reset(s,InstanceKey{32,0},false,edits,{"32:0:2"},0,{});
+        QCOMPARE(params.rowCount(),2);QCOMPARE(params.total(),2);QCOMPARE(params.changedCount(),1);
+        QCOMPARE(params.data(params.index(0),ParamTable::Editor).toString(),QString("enum"));
+        const auto kp=params.index(1);
+        QCOMPARE(params.data(kp,ParamTable::Group).toString(),QString("vel"));
+        QCOMPARE(params.data(kp,ParamTable::EditState).toString(),QString("rejected"));
+        QVERIFY(params.data(kp,ParamTable::Unsaved).toBool());
+        params.reset(s,InstanceKey{32,0},true,{},{},2,{});QCOMPARE(params.rowCount(),0); // nothing pending
+        params.reset(s,InstanceKey{5,3},true,{},{},2,{});QCOMPARE(params.rowCount(),1);
+        QCOMPARE(params.data(params.index(0),ParamTable::PendingText).toString(),QString("On"));
+        QCOMPARE(params.data(params.index(0),ParamTable::ValueText).toString(),QString("Off"));
+        params.reset(s,InstanceKey{112,2},false,{},{},0,"pi");QCOMPARE(params.rowCount(),1);
+        QVERIFY(params.data(params.index(0),ParamTable::IsPending).toBool()); // a pending add is all staged
+        QCOMPARE(params.data(params.index(0),ParamTable::Editor).toString(),QString("gpio"));
+        params.reset(s,InstanceKey{112,1},false,{},{},0,{});QVERIFY(params.data(params.index(0),ParamTable::ReadOnly).toBool());
+        params.reset(s,InstanceKey{32,0},true,{},{},0,"mode");QCOMPARE(params.rowCount(),1);
+    }
+    // Layout ops against vdev: each sent once, refusals kept on their row and
+    // not staged, the armed lock, Discard all and Save and reboot.
+    void layoutOperations() {
+        Fixture fixture;LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QSignalSpy results(&c,&Connection::layoutResult);
+        auto last=[&](const QString &op) {
+            return waitFor([&]{return !results.isEmpty() && results.last().at(0).toString()==op && !c.configBusy();});
+        };
+        auto row=[&](const QString &key)->QModelIndex {
+            for(int i=0;i<c.params()->rowCount();++i) {if(c.params()->index(i,0).data(ParamTable::Key).toString()==key) {return c.params()->index(i,0);}}
+            return {};
+        };
+        auto pendingCount=[&]{return c.layout()["pendingChanges"].toList().size();};
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled();}));
+        QCOMPARE(c.layout()["counts"].toMap()["loops"].toInt(),2);
+        QCOMPARE(c.selectedNode(),QString("5:0"));QCOMPARE(pendingCount(),0);
+        // Add loop: label, a non-default priority, the core default (any).
+        c.addLoop("fusion",{{"4","14"}});QVERIFY(last("addLoop"));
+        QVERIFY2(results.last().at(1).toBool(),qPrintable(results.last().at(2).toString()));
+        QVERIFY(waitFor([&]{return c.selectedNode()=="5:2" && c.layoutTree()->rowCount()==3;}));
+        auto pending=c.snapshot()->pending.at({5,2}).params;
+        QCOMPARE(valueBits(pending.at(4)),14u);QCOMPARE(valueBits(pending.at(defs::loop::kCore)),2u);
+        // Instances: the loop choice, and a type the loop does not suit (not staged).
+        c.addInstance(112,"left_pwm",0);QVERIFY(last("addInstance"));QVERIFY(results.last().at(1).toBool());
+        c.addInstance(113,"left_enc",0);QVERIFY(last("addInstance"));
+        c.addInstance(32,"left_drive",0);QVERIFY(last("addInstance"));
+        c.addInstance(115,"odom",2);QVERIFY(last("addInstance"));
+        QVERIFY(waitFor([&]{return c.snapshot()->pending.size()==7;}));
+        const auto before=pendingCount();
+        c.addInstance(114,"imu",0);QVERIFY(last("addInstance"));QVERIFY(!results.last().at(1).toBool());
+        QVERIFY(results.last().at(2).toString().contains("loop"));
+        c.addInstance(112,"left_pwm",0);QVERIFY(last("addInstance"));QVERIFY(!results.last().at(1).toBool()); // LabelInUse
+        QVERIFY(results.last().at(2).toString().contains("label"));
+        QTest::qWait(200);QCOMPARE(pendingCount(),before);
+        // Wiring and sources: accepted targets pending; BadRef kept on the row.
+        c.setParamValue("32:0:1",112u<<8);
+        QVERIFY(waitFor([&]{return valueBits(c.snapshot()->pending.at({32,0}).params.at(1))==(112u<<8);}));
+        c.selectNode("115:0");
+        c.setParamValue("115:0:1",defs::sourceRef(113,0,0x0101));
+        QVERIFY(waitFor([&]{return valueBits(c.snapshot()->pending.at({115,0}).params.at(1))==defs::sourceRef(113,0,0x0101);}));
+        const auto sources=c.layout()["sources"].toList();QCOMPARE(sources.size(),2);
+        QCOMPARE(sources[0].toMap()["valueText"].toString(),QString("left_enc.position"));
+        QCOMPARE(sources[0].toMap()["chip"].toString(),QString("f32"));
+        c.setParamValue("115:0:2",defs::sourceRef(113,0,0x0001)); // a param: BadRef
+        QVERIFY(waitFor([&]{return c.layout()["sources"].toList()[1].toMap()["editState"].toString()=="rejected";}));
+        QVERIFY(c.layout()["sources"].toList()[1].toMap()["editNote"].toString().contains("target"));
+        QCOMPARE(valueBits(c.snapshot()->pending.at({115,0}).params.at(2)),0u);
+        // Remove follows the firmware: refused locally with the reason, nothing sent.
+        c.removeNode("112:0");QVERIFY(last("remove"));QVERIFY(!results.last().at(1).toBool());
+        QVERIFY(results.last().at(2).toString().contains("left_drive"));
+        c.selectNode("5:2");QVERIFY(c.layout()["node"].toMap()["removeBlocked"].toString().contains("odom"));
+        // Labels.
+        c.setNodeLabel("113:0","left_pwm");QVERIFY(last("label"));QVERIFY(!results.last().at(1).toBool());
+        c.setNodeLabel("113:0","left_enc2");QVERIFY(last("label"));QVERIFY(results.last().at(1).toBool());
+        // Live and reboot params on a running loop: clamped, applied, pending.
+        c.selectNode("5:1");QVERIFY(waitFor([&]{return row("5:1:1").isValid();}));
+        c.setParamText("5:1:1","0");
+        QVERIFY(waitFor([&]{return row("5:1:1").data(ParamTable::EditState).toString()=="clamped";}));
+        QVERIFY(row("5:1:1").data(ParamTable::EditNote).toString().contains("1"));
+        c.setParamText("5:1:1","10");
+        QVERIFY(waitFor([&]{return row("5:1:1").data(ParamTable::EditState).toString()=="applied" && row("5:1:1").data(ParamTable::ValueText).toString()=="10";}));
+        QVERIFY(row("5:1:1").data(ParamTable::Unsaved).toBool());QVERIFY(c.unsavedChanges().size()>=2);
+        c.setParamText("5:1:1","fast");QCOMPARE(row("5:1:1").data(ParamTable::EditState).toString(),QString("rejected")); // not sent
+        c.clearParamEdit("5:1:1");QVERIFY(row("5:1:1").data(ParamTable::EditState).toString().isEmpty());
+        c.setParamText("5:1:4","12");
+        QVERIFY(waitFor([&]{return row("5:1:4").data(ParamTable::IsPending).toBool();}));
+        QCOMPARE(row("5:1:4").data(ParamTable::PendingText).toString(),QString("12"));
+        // Discard all drops every staged change; live changes stay.
+        QVERIFY(pendingCount()>=8);QVERIFY(!c.armEnabled()); // a pending reboot blocks ARM
+        c.discardPending();QVERIFY(last("discard"));QVERIFY(results.last().at(1).toBool());
+        QVERIFY(waitFor([&]{return pendingCount()==0 && c.layoutTree()->rowCount()==2;}));
+        QCOMPARE(c.selectedNode(),QString("5:1"));QCOMPARE(row("5:1:1").data(ParamTable::ValueText).toString(),QString("10"));
+        // The reboot notice no longer lists the discarded staged changes.
+        QVERIFY(!c.unsavedChanges().isEmpty());
+        for(const auto &line:c.unsavedChanges()) {QVERIFY2(line.contains("sensor.rate_hz"),qPrintable(line));}
+        // Armed: the layout and reboot params are locked; locked live params refused.
+        QVERIFY(waitFor([&]{return c.armEnabled();}));
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1;}));
+        QVERIFY(waitFor([&]{return row("5:1:1").data(ParamTable::Locked).toBool();}));
+        QVERIFY(c.layoutBlocked().contains("armed"));QVERIFY(c.layout()["addLoopBlocked"].toString().contains("armed"));
+        c.addInstance(112,"later",0);QVERIFY(last("addInstance"));QVERIFY(results.last().at(2).toString().contains("armed"));
+        c.setParamText("5:1:4","13");QVERIFY(row("5:1:4").data(ParamTable::EditNote).toString().contains("armed"));
+        c.setParamText("5:1:1","20");QVERIFY(row("5:1:1").data(ParamTable::EditNote).toString().contains("armed"));
+        QTest::qWait(200);QCOMPARE(pendingCount(),0);QCOMPARE(c.armState(),1);
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0 && c.layoutBlocked().isEmpty();}));
+        // Save and reboot applies a staged add; the reboot is never repeated.
+        c.addInstance(112,"left_pwm",0);QVERIFY(last("addInstance"));QVERIFY(results.last().at(1).toBool());
+        c.saveAndReboot();
+        QVERIFY(waitFor([&]{return c.ready() && !c.reconnecting() && c.rebootNotice()["visible"].toBool();},15000));
+        QVERIFY(c.snapshot()->configured.contains({112,0}));QCOMPARE(c.snapshot()->configured.at({112,0}).instance.state,uint8_t(0));
+        QCOMPARE(pendingCount(),0);QVERIFY(c.layoutTree()->rowCount()==3);
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.dismissRebootNotice();
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
+        QCOMPARE(c.layoutTree()->rowCount(),0);
     }
     void recentDevices() {
         QTemporaryDir dir;RecentDevices recent(dir.filePath("gui.ini"));
@@ -991,6 +1219,14 @@ private slots:
         QVERIFY(waitFor([&]{return item->hasActiveFocus();}));field->setProperty("text","changed");
         QTest::keyClick(window,Qt::Key_Escape);QCOMPARE(escapes.count(),1);QCOMPARE(field->property("text").toString(),"before");
         QVERIFY(waitFor([&]{return connection.armState()==0 && connection.armEnabled();}));
+        // A DISARM click takes no focus, so it never ends (and sends) an open
+        // edit; the shell restores the text last committed, like Esc.
+        connection.arm();QVERIFY(waitFor([&]{return connection.armState()==1;}));
+        item->forceActiveFocus();field->setProperty("text","typed");keys.editCommitted();field->setProperty("text","more");
+        auto *disarmButton=window->findChild<QQuickItem *>("disarmButton");QVERIFY(disarmButton);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,disarmButton->mapToScene({disarmButton->width()/2,disarmButton->height()/2}).toPoint());
+        QVERIFY(waitFor([&]{return connection.armState()==0 && connection.armEnabled();}));
+        QVERIFY(item->hasActiveFocus());QCOMPARE(field->property("text").toString(),"typed");
         QTest::keyClick(window,Qt::Key_4,Qt::ControlModifier);QCOMPARE(window->property("page").toInt(),3);
         QQmlComponent popupComponent(&engine);
         popupComponent.setData("import QtQuick\nimport QtQuick.Controls.Basic\nPopup {width: 320; height: 100; focus: true; contentItem: TextField {objectName: 'popupEdit'; text: 'original'; property int changedCommits: 0; onEditingFinished: if (text !== 'original') ++changedCommits}}",QUrl());

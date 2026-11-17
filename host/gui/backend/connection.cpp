@@ -77,7 +77,8 @@ bool LocalConnection::armEnabled() const {
     return ready() && m_groupsReady && !m_arming && !m_armPending && !m_disarmPending && !m_waitingDisarm && !m_expectReboot &&
         !(m_ota && m_ota->active()) &&
         (!m_observingArmed || m_explicitDisarmAcknowledged) &&
-        !safeMode() && m_snapshot->status && armState()==0 && !(m_snapshot->status->flags&2);
+        !safeMode() && m_snapshot->status && armState()==0 && !(m_snapshot->status->flags&2) &&
+        !(m_snapshot->status->flags&4);
 }
 QString LocalConnection::armBlockedReason() const {
     if(!ready()) {return tr("Wait for current device metadata and status");}
@@ -89,6 +90,9 @@ QString LocalConnection::armBlockedReason() const {
     if(!m_groupsReady) {return m_blocked.isEmpty()?tr("Preparing command keepalives"):m_blocked;}
     if(!m_snapshot->status) {return tr("Waiting for device status");}
     if(m_snapshot->status->flags&2) {return tr("Device reports an ARM blocking condition");}
+    // The device refuses ARM with a reboot pending (G7b: pending layouts
+    // disable ARM).
+    if(m_snapshot->status->flags&4) {return tr("A reboot is pending: save and reboot, or discard the pending changes");}
     return {};
 }
 void LocalConnection::report(const Error &e) {
@@ -201,6 +205,8 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         m_groupsReady=false;m_setupAttempted=false;m_subsAttempted=false;m_statusCounter.reset();++c->safety;
         m_arming=false;m_waitingDisarm=false;
         if(m_snapshot) {m_explicitDisarmAcknowledged=false;}
+        // Row states belong to the previous boot's layout.
+        m_edits.clear();
     }
     m_snapshot=std::move(snapshot);
     if(!m_snapshot->connected) {finishClose(true);return;}
@@ -264,6 +270,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     if(ready() && m_snapshot->status && !safeMode() && !m_subsPending && commandsSettled &&
        (!m_subsAttempted || m_subsGeneration!=m_snapshot->generation)) {setupLoopStats();}
     otaRefresh();
+    rebuildLayout(metadata);
     emit changed();
 }
 void LocalConnection::showRebootNotice(std::optional<uint8_t> reason,bool dirty,const QString &id) {
@@ -274,7 +281,7 @@ void LocalConnection::showRebootNotice(std::optional<uint8_t> reason,bool dirty,
     }
     // STATUS lags the SAVE reply, so a save just before the reboot wins.
     if(m_savedBeforeReboot) {lost.clear();}
-    m_changes.remove(id);
+    forgetChanges(id);
     m_notice={{"visible",true},{"expected",m_expectReboot},{"cause",m_rebootCause},
         {"reason",reason?resetReasonText(*reason):tr("Unknown")},{"reasonCode",reason?QVariant(*reason):QVariant()},
         {"lost",lost}};
@@ -402,6 +409,12 @@ void LocalConnection::pollLoopStats() {
             m_loops.setRunTime(loop,LoopRunTime{sample.values[0],sample.values[1],sample.counter});
         }
     }
+    QHash<int,double> budgets;
+    for(int i=0;i<m_loops.rowCount();++i) {
+        const auto row=m_loops.index(i);
+        if(row.data(LoopTable::HasRunTime).toBool()) {budgets.insert(row.data(LoopTable::LoopId).toInt(),row.data(LoopTable::Budget).toDouble());}
+    }
+    m_layoutTree.setBudgets(budgets);
 }
 bool LocalConnection::runOnDevice(std::function<void(Client &)> operation,std::function<void(QString)> done) {
     auto c=m_context;if(!c) {return false;}
@@ -603,14 +616,17 @@ void LocalConnection::finishClose(bool lost) {
         std::optional<uint64_t> uptime;
         if(m_diag && m_diagElapsed.isValid()) {uptime=m_diag->uptime_us+uint64_t(m_diagElapsed.elapsed())*1000;}
         m_previous=Previous{deviceId(),deviceName(),unsaved(),uptime};m_lossElapsed.start();
-        if(c->savedBeforeReboot) {m_savedBeforeReboot=true;m_changes.remove(deviceId());}
+        if(c->savedBeforeReboot) {m_savedBeforeReboot=true;forgetChanges(deviceId());}
         // A link that stalled could not release this GUI's statistics groups.
         std::lock_guard lock(c->mutex);
         m_staleSubs.clear();m_staleId=deviceId();
         for(const auto &o:c->subs) {m_staleSubs.push_back({o.id,o.loop,o.epoch,o.refs});}
     }
     m_linkLost=lost;
-    if(!lost) {m_snapshot.reset();m_instances.reset({});m_loops.reset({});m_faults.reset({});}
+    if(!lost) {
+        m_snapshot.reset();m_instances.reset({});m_loops.reset({});m_faults.reset({});
+        m_edits.clear();m_selected.clear();rebuildLayout(true);
+    }
     if(c && m_reconnecting) {
         // A reconnect attempt after a requested reboot failed: retry within
         // the window. Only the link is reopened; REBOOT is never repeated.
@@ -730,6 +746,7 @@ QVariantList LocalConnection::armChecks() const {
     checks<<check(tr("Not in safe mode"),safeMode()?"fail":"pass",safeMode()?tr("Exit safe mode on the Device page"):QString());
     checks<<check(tr("No fault latched"),(flags&1)?"fail":"pass",(flags&1)?tr("Acknowledge the fault"):QString());
     checks<<check(tr("No active condition blocks arming"),(flags&2)?"fail":"pass",(flags&2)?tr("See the faults drawer"):QString());
+    checks<<check(tr("No reboot pending"),(flags&4)?"fail":"pass",(flags&4)?tr("Save and reboot, or Discard all on Layout"):QString());
     const bool gated=m_observingArmed && !m_explicitDisarmAcknowledged;
     checks<<check(tr("This window owns command keepalives"),gated?"fail":"pass",gated?tr("Another owner armed the device; press DISARM first"):QString());
     checks<<check(tr("Command keepalives are ready"),m_groupsReady?"pass":(m_blocked.isEmpty()?"pending":"fail"),m_blocked);
@@ -812,7 +829,7 @@ void LocalConnection::runOp(Op op,const QString &name) {
                 const bool rebootSent=reboots && e.outcome_unknown &&
                     !(op==Op::SaveAndReboot && e.op==uint8_t(SystemOp::Save));
                 // SAVE succeeded when only the REBOOT of Save and reboot failed.
-                if(op==Op::SaveAndReboot && e.op==uint8_t(SystemOp::Reboot)) {self->m_changes.remove(id);self->m_savedBeforeReboot=true;}
+                if(op==Op::SaveAndReboot && e.op==uint8_t(SystemOp::Reboot)) {self->forgetChanges(id);self->m_savedBeforeReboot=true;}
                 if(reboots && !rebootSent) {self->clearRebootExpectation();}
                 if(rebootSent) {self->m_rebootElapsed.start();}
                 self->report(e);
@@ -831,12 +848,12 @@ void LocalConnection::runOp(Op op,const QString &name) {
                 emit self->notification(tr("Device renamed"),1);
                 break;
             case Op::Save:
-                self->m_changes.remove(id);emit self->notification(tr("Configuration saved"),1);break;
+                self->forgetChanges(id);emit self->notification(tr("Configuration saved"),1);break;
             case Op::Revert:
-                self->m_changes.remove(id);if(model) {model->reloadAsync();}
+                self->forgetChanges(id);if(model) {model->reloadAsync();}
                 emit self->notification(tr("Unsaved changes reverted"),1);break;
             case Op::SaveAndReboot:
-                self->m_changes.remove(id);self->m_savedBeforeReboot=true;[[fallthrough]];
+                self->forgetChanges(id);self->m_savedBeforeReboot=true;[[fallthrough]];
             default:
                 self->m_rebootElapsed.start();
                 emit self->notification(tr("The device is rebooting"),0);break;

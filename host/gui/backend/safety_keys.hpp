@@ -11,6 +11,11 @@ class SafetyKeys final : public QObject {
 public:
     explicit SafetyKeys(QObject *parent=nullptr);
     bool eventFilter(QObject *,QEvent *) override;
+    // DISARM by mouse cancels an open text edit like Esc does: the focused
+    // editor gets its text back, so a later focus loss sends nothing.
+    Q_INVOKABLE void cancelEdit();
+    // A committed edit (Enter) becomes the text Esc and DISARM restore.
+    Q_INVOKABLE void editCommitted();
 signals:
     void escapeRequested();
     void pageRequested(int page);
