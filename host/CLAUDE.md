@@ -72,6 +72,14 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   explicit DISARM acknowledgement, including an armed state seen during
   discovery followed by watchdog disarm. Never adopt other owners' groups;
   reconcile uncertain setup and clear only matching owned generation/epoch/refs.
+- GUI OTA uses the library workflow (`drivelink/ota.hpp`) and the reboot
+  expectation every reboot uses: REBOOT once, never repeated; CONFIRM only after
+  `classifyOtaBoot` matches the candidate this GUI uploaded, at most once
+  automatically, never after a roll back or cancel. Without a known candidate
+  only the user's explicit Confirm sends CONFIRM. An active update blocks ARM
+  and configuration actions; an unknown or Ready OTA state blocks reboots.
+  The image picker is the one non-modal native dialog allowed: offered only
+  while disarmed, and nothing arms while it is open.
 - GUI loop-statistics subscriptions use free slots only, after command setup,
   and are cleared only on an exact owned match. A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
