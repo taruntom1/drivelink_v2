@@ -328,6 +328,12 @@ void LocalConnection::runLayoutOp(const QString &op,std::function<int(Client &)>
             [self,c,op,done=std::move(done),snapshot,removed](std::expected<int,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_configAction.clear();
+            // A Boot between request and reply (a link that stays open) drops
+            // the staged layout: never report it as staged.
+            if(!self->m_snapshot || self->m_snapshot->generation!=snapshot->generation) {
+                const auto message=tr("The device rebooted; the layout change was not kept");
+                emit self->layoutResult(op,false,message);emit self->notification(message,2);emit self->changed();return;
+            }
             if(!result) {
                 const auto &e=result.error();
                 const auto message=e.outcome_unknown?tr("No reply in time; the device may have applied it. The layout is read back.")

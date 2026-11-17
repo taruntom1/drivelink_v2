@@ -850,7 +850,12 @@ void LocalConnection::runOp(Op op,const QString &name) {
             case Op::Save:
                 self->forgetChanges(id);emit self->notification(tr("Configuration saved"),1);break;
             case Op::Revert:
-                self->forgetChanges(id);if(model) {model->reloadAsync();}
+                // REVERT restores live params only; staged layout changes stay
+                // pending and would still be lost at a reboot without SAVE.
+                self->m_changedParams.remove(id);
+                if(const auto staged=self->m_stagedLines.value(id);staged.isEmpty()) {self->m_changes.remove(id);}
+                else {self->m_changes[id]=staged;}
+                if(model) {model->reloadAsync();}
                 emit self->notification(tr("Unsaved changes reverted"),1);break;
             case Op::SaveAndReboot:
                 self->forgetChanges(id);self->m_savedBeforeReboot=true;[[fallthrough]];
