@@ -60,7 +60,8 @@ std::vector<CommandPlan> planCommands(const DeviceSnapshot &s,const GroupList &g
 QVariantMap errorFields(const Error &e) {
     return {{"message",QString::fromUtf8(e.what())},{"kind",int(e.kind)},{"result",e.result},
         {"detail",e.detail},{"family",e.family},{"op",e.op},{"hasContext",e.has_request_context},
-        {"outcomeUnknown",e.outcome_unknown},{"bootChanged",e.boot_changed}};
+        {"outcomeUnknown",e.outcome_unknown},{"bootChanged",e.boot_changed},
+        {"peerVersion",e.peer_version},{"osError",e.os_error}};
 }
 QHash<int,QByteArray> InstanceTree::roleNames() const {
     return {{Key,"key"},{Type,"typeId"},{InstanceId,"instanceId"},{Label,"label"},

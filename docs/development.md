@@ -205,9 +205,11 @@ suite limit, so Qt can report a blocked function before the outer timeout.
 The safe-mode/link-loss test records its teardown/reconnect stages in failure logs.
 
 From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
-(or `linux`). The complete post-review vdev campaign and ten-scenario render
+(or `linux`). The complete post-review vdev campaign and fourteen-scenario render
 command are in [host/gui/README.md](../host/gui/README.md#shell-screenshots).
-It can repeat the backend tests and writes 40 dimension-checked PNGs. All
+It can repeat the backend tests and writes 56 dimension-checked PNGs.
+The bare-board GUI check is `gui_backend_tests benchBoard` with
+`DRIVELINK_GUI_BENCH_ENDPOINT=serial://COM3` (see the GUI README). All
 scenario provisioning and fault injection use fresh temporary vdev state.
 The GUI app's direct `--endpoint ... --out DIR` mode uses the supplied device
 without scenario injection. Native arming fixtures save slower loop rates

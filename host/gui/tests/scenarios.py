@@ -35,7 +35,10 @@ def render(gui, vdev, destination, scenario):
                 endpoint = line[6:]
             screen = {'safe': 'device', 'fault': 'drawer', 'lost': 'device'}.get(scenario, scenario)
             out = destination / scenario
-            command = [gui, '--screen', screen, '--out', str(out)]
+            # Isolated recent devices; let loop run time arrive before capture.
+            command = [gui, '--screen', screen, '--out', str(out),
+                       '--settings', str(Path(work) / 'gui.ini'),
+                       '--settle', '0' if scenario in ('connect', 'lost') else '1500']
             if endpoint:
                 command += ['--endpoint', endpoint]
             if scenario in ('safe', 'fault', 'lost'):
@@ -63,6 +66,8 @@ def render(gui, vdev, destination, scenario):
                     app.wait(timeout=5)
                 thread.join(timeout=5)
             assert code == 0, (scenario, output, errors)
+            if os.environ.get('DRIVELINK_SCENARIO_LOG'):
+                print(scenario, ''.join(errors), flush=True)
             images = sorted(out.glob('*.png'))
             assert len(images) == 4, (scenario, images, output, errors)
             dimensions = []
@@ -85,6 +90,7 @@ def main():
     parser.add_argument('--backend', help='Repeat backend/safety tests before rendering')
     parser.add_argument('--out', required=True)
     parser.add_argument('--smoke', action='store_true', help='Only Connect and device shell')
+    parser.add_argument('--only', nargs='+', help='Render only these scenarios')
     args = parser.parse_args()
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     os.environ.setdefault('QT_QUICK_BACKEND', 'software')
@@ -94,8 +100,10 @@ def main():
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'device', 'layout', 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost']):
-        render(args.gui, args.vdev, destination, scenario)
+                     ['connect', 'device', 'layout', 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                      'rename', 'reset', 'unsaved', 'notice']):
+        if not args.only or scenario in args.only:
+            render(args.gui, args.vdev, destination, scenario)
 
 
 if __name__ == '__main__':

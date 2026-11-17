@@ -9,11 +9,14 @@ pulled group buffers, managed command keepalives and timestamp mapping. CI build
 and tests it on Windows and Linux.
 See [the library API](libdrivelink/README.md).
 
-`drivelink-gui` now provides the local Qt shell and backend: an endpoint field,
-the status bar, arm/disarm/acknowledge, four page placeholders and generic
-model foundations. Esc disarms through focused text fields and popups; the
-status bar remains above page scrims. GUI command groups send keepalives only,
-leaving input values unchanged. Full screen content starts in H2b.
+`drivelink-gui` provides the local Qt shell and backend: Connect (serial ports,
+baud, a TCP address for vdev, recent devices by id, loading steps, protocol
+mismatch) and Device (identity and Rename, loops with run time and budget, CPU,
+limits, ARM checks, faults, SAVE/REVERT, reboot, factory reset, safe-mode exit),
+the faults drawer, link-lost and reboot-notice overlays. Esc disarms through
+focused text fields and popups; the status bar remains above page scrims. GUI
+command groups send keepalives only, leaving input values unchanged. OTA
+arrives in H2b-2; Layout, Tune and Monitor follow.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
 ## Device identity (H1c)

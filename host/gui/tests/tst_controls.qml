@@ -38,6 +38,18 @@ TestCase {
             DLButton { text: "Save"; enabled: false }
         }
     }
+    Component { id: textFieldComponent; DLTextField { width: 300 } }
+    Component { id: comboComponent; DLComboBox { width: 200; model: [921600, 460800, 115200] } }
+    Component { id: checkComponent; DLCheckItem { width: 300; label: "Command keepalives are ready" } }
+    Component { id: progressComponent; DLProgressBar { width: 200 } }
+    Component {
+        id: extraDialogComponent
+        DLDialog {
+            title: "Rename device"
+            acceptText: "Rename"
+            extra: DLTextField { objectName: "extraField"; width: 400 }
+        }
+    }
     Component { id: spyComponent; SignalSpy {} }
 
     function spy(target, signalName) {
@@ -345,6 +357,63 @@ TestCase {
         verify(dialog.confirmed)
         compare(dialog.width, 480)
         dialog.close()
+    }
+
+    function test_dialog_extra_content_and_accept_gate() {
+        const dialog = createTemporaryObject(extraDialogComponent, testCase, { acceptEnabled: false })
+        const accepted = spy(dialog, "accepted")
+        dialog.open()
+        tryCompare(dialog, "opened", true)
+        const field = findChild(dialog.contentItem, "extraField")
+        verify(field !== null, "extra content sits inside the dialog")
+        verify(findChild(dialog.contentItem, "extra").visible)
+        verify(!findChild(dialog.contentItem, "acceptButton").enabled)
+        keyClick(Qt.Key_Return)
+        compare(accepted.count, 0, "Enter cannot bypass a disabled accept")
+        dialog.acceptEnabled = true
+        verify(findChild(dialog.contentItem, "acceptButton").enabled)
+        keyClick(Qt.Key_Return)
+        compare(accepted.count, 1)
+    }
+
+    // Inputs and feedback (H2b) -----------------------------------------------
+
+    function test_text_field_states() {
+        const field = createTemporaryObject(textFieldComponent, testCase)
+        compare(field.height, Theme.sizeControl)
+        compare(field.background.border.color, Theme.borderDefault)
+        field.forceActiveFocus()
+        compare(field.background.border.color, Theme.borderFocus)
+        field.error = true
+        compare(field.background.border.color, Theme.stateFault)
+        field.enabled = false
+        compare(field.opacity, 0.4)
+    }
+
+    function test_combo_box_is_not_modal() {
+        const box = createTemporaryObject(comboComponent, testCase, { x: 20, y: 20 })
+        compare(box.displayText, "921600")
+        verify(!box.popup.modal, "a modal popup would block DISARM")
+        box.currentIndex = 2
+        compare(box.displayText, "115200")
+    }
+
+    function test_check_item_states() {
+        const item = createTemporaryObject(checkComponent, testCase)
+        compare(item.status, DLCheckItem.Pending)
+        item.status = DLCheckItem.Fail
+        item.detail = "Press DISARM first"
+        compare(findChild(item, "detail").color, Theme.stateFault)
+        verify(findChild(item, "detail").visible)
+        item.status = DLCheckItem.Pass
+        compare(item.colors[item.status], Theme.stateOk)
+    }
+
+    function test_progress_bar_value() {
+        const bar = createTemporaryObject(progressComponent, testCase, { value: 0.25 })
+        compare(bar.visualPosition, 0.25)
+        bar.indeterminate = true
+        verify(bar.indeterminate)
     }
 
     // DLReasonHover -----------------------------------------------------------

@@ -530,9 +530,9 @@ code and records the outcome here; the notes below give the detail.
 
 | Issue | Step |
 |---|---|
-| Status bar faults badge: active faults only, or history too | H2b |
-| Reboot notice: which params changed since the last save (the GUI tracks them) | H2b |
-| Device loop table: budget computed on the host (run time over period), loops keyed by id | H2b |
+| Status bar faults badge: active faults only, or history too | closed by H2b-1: active only (STATUS active count); history stays in the drawer (user decision 2026-11-17) |
+| Reboot notice: which params changed since the last save (the GUI tracks them) | closed by H2b-1: the GUI keeps its changes since SAVE per device id; changes made elsewhere show as one generic line |
+| Device loop table: budget computed on the host (run time over period), loops keyed by id | closed by H2b-1: run time from GUI-owned free-slot subscriptions (user decision 2026-11-17) |
 | Layout pending-changes list (GET_PENDING plus staged ops), refused op keeps the typed value | H2c |
 | LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | H2c |
 | Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | H2d |
@@ -555,7 +555,7 @@ code and records the outcome here; the notes below give the detail.
 - **Layout ops:** closed. The firmware has the loop argument on `ADD_INSTANCE` and refuses a remove with dependents (`Referenced`); G7b brings the G4 frames in line. [todo-layout-ops.md](archive/todo-layout-ops.md) records the outcome.
 - **G7b notes for H2 (so far):** a loop's run time, longest run and overruns are signals of its loop instance; the status stream carries only the overrun counts, each with its loop id. "Budget" stays a host calculation (run time over the period). Loop ids can have gaps, so key everything by id, not by position.
 - **G4 notes for H2:** the GUI keeps the pending changes list (GET_PENDING plus the layout ops it staged) to fill the Review popover; a layout op refused by the device is not staged, so the row keeps the typed value with the reason until the user edits it or presses Esc (which also disarms). `color/text/tertiary` is 3.8:1 on surface in Light, so small caps group headers use `color/text/secondary`.
-- **Status bar faults badge:** the G3 Device frames show "2 faults" (history) next to a Faults card with "0 active"; decide in G8 whether the badge counts active faults only.
+- **Status bar faults badge:** closed by H2b-1: the badge counts active faults only.
 - Tabular numerals can't be set through Figma's plugin API, so the numeric styles only say so in their descriptions; QML sets `font.features: { "tnum": 1 }`.
 - **G5 at 1920×1080:** the Tune plot gets the narrowest column (the 2×2 gains grid stays 756 px), the A/B compare card overflows (stack the gain differences above the table) and Monitor's paused toolbar overflows. G7b verification also confirms that a simple resize leaves G5 Monitor's plot areas fixed, clipping traces and the third plot; G6 already has the fitting/wrapping reference. The new loop browser entries fit with compact module groups. Settle the remaining responsive work in G8/H2 (for example gain history as a tab, or one column of gains with scrolling).
 - **G5 notes for H2:** slider ticks in the Figma frames are only approximate (marker positions inside an instance can't be moved); in QML each tick sits at its value on the log scale. CheckItem has no warning state; Plant identification shows its open-loop caution with a neutral icon and "warning".

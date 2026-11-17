@@ -56,6 +56,22 @@ counter, cleared and Boot events; unknown message types retain a raw `Frame`.
 `DeviceModel` provides the discovered snapshot, explicit reload and event-driven
 runtime state described below.
 
+## Serial ports
+
+```cpp
+#include <drivelink/ports.hpp>
+for (const auto &port : drivelink::listSerialPorts())
+    std::cout << port.endpoint << ' ' << port.description << '\n';
+```
+
+`listSerialPorts()` lists present ports in natural order (COM3 before COM10)
+with the USB VID/PID, product text and serial number when known: SetupAPI on
+Windows, `/sys/class/tty` on Linux (legacy platform `ttyS*` placeholders are
+skipped). It never opens a port, because opening an ESP auto-reset adapter can
+pulse DTR/RTS and reset the board; whether a port is busy shows when opening
+it fails (`Error::os_error`). The sysfs parser is pure and tested
+(`ports_detail::listSysfs`).
+
 ## Device identity
 
 File helper `readOtaImage(path)` takes a UTF-8 path and opens the native
@@ -150,7 +166,11 @@ Sync calls throw `Error` (usage, connection, timeout, rejection or protocol).
 `DeviceError` represents a device refusal, retaining result/detail and request
 family/op. Request context and `outcome_unknown` live in the base `Error`, so
 copying into `std::expected<T, Error>` preserves them. Diagnostic
-queries use family zero. `boot_changed` marks an observed Boot invalidation,
+queries use family zero. `peer_version` is set when the peer answered with an
+incompatible core/diag wire version (the message is unchanged), so a client
+can show both versions. `os_error` carries the operating-system code of a
+failed open (Win32 `ERROR_ACCESS_DENIED` for a serial port another program
+holds). `boot_changed` marks an observed Boot invalidation,
 distinct from malformed protocol input. OTA readiness may restart its reads
 after that marker; it never repeats REBOOT. A submitted mutation that times out, disconnects or
 gets a malformed response is uncertain; query the device before deciding to

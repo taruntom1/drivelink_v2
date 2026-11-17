@@ -49,6 +49,10 @@ qt_add_qml_module(drivelink_gui_style
     DLToast.qml
     DLToolTip.qml
     DLReasonHover.qml
+    DLTextField.qml
+    DLComboBox.qml
+    DLCheckItem.qml
+    DLProgressBar.qml
 )
 
 qt_add_resources(drivelink_gui_style drivelink_gui_assets

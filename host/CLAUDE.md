@@ -72,6 +72,11 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   explicit DISARM acknowledgement, including an armed state seen during
   discovery followed by watchdog disarm. Never adopt other owners' groups;
   reconcile uncertain setup and clear only matching owned generation/epoch/refs.
+- GUI loop-statistics subscriptions use free slots only, after command setup,
+  and are cleared only on an exact owned match. A requested reboot is never
+  re-sent: the GUI waits for Boot or reopens the link within a bounded window;
+  an unrequested loss waits for the user's Retry. Listing serial ports never
+  opens one (DTR/RTS can reset an ESP).
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

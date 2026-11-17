@@ -116,8 +116,10 @@ try
     j.protocol_version = r.readU8();
     if (j.protocol_version != protocol::core_wire::kVersion)
     {
-        throw Error(ErrorKind::Protocol,
-                    "incompatible core protocol; expected v" + std::to_string(protocol::core_wire::kVersion));
+        Error e(ErrorKind::Protocol,
+                "incompatible core protocol; expected v" + std::to_string(protocol::core_wire::kVersion));
+        e.peer_version = j.protocol_version;
+        throw e;
     }
     j.firmware_version = string(r);
     j.build_id = string(r);

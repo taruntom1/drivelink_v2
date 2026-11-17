@@ -8,8 +8,8 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.
 
 H2a-1 provides the style layer; H2a-2 adds the application, local device
-backend and shell. Connect currently takes an endpoint; Device, Layout, Tune
-and Monitor contain shell placeholders. Their content follows in H2b onward
+backend and shell; H2b-1 adds Connect and Device (below). OTA follows in
+H2b-2; Layout, Tune and Monitor are placeholders until their steps
 ([host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
@@ -76,10 +76,55 @@ fabricated live values. Editing and subscriptions belong to the screen steps.
 focused text fields and popups. It restores the edit before native popup
 cancellation, also handling a lost preceding key release. Ctrl+1..4 selects
 Device/Layout/Tune/Monitor. Modal scrims begin below the status bar, disable
-the underlying page and keep DISARM live. The faults drawer is a frame for
-H2b. Toasts stack to four; Info/Ok expire and Fault remains dismissible.
-Dirty/pending flags are bound; `DLStatusBar.configActionsVisible` stays false
-until H2b supplies SAVE/REVERT workflows and the faults-badge policy.
+the underlying page and keep DISARM live. Toasts stack to four; Info/Ok
+expire and Fault remains dismissible.
+
+## Connect and Device (H2b-1)
+
+`app/` holds `ConnectPage`, `DevicePage`, `FaultsDrawer` and the shell's
+dialogs and overlays; `backend/device_models.*` holds `LoopTable`,
+`FaultList`, `RecentDevices` and the readable refusal and reset-reason text.
+
+- **Connect.** Serial ports come from `drivelink::listSerialPorts()`, which
+  never opens a port; each row names the device last seen on it. A port held
+  by another program shows from the failed open (`lastError.osError`). Baud
+  921600/460800/230400/115200; the TCP tab takes any endpoint. Recent devices
+  (newest first, eight, keyed by device id) live in `drivelink-gui.ini` in the
+  application's config directory (`--settings FILE` elsewhere). Loading shows
+  three steps; an incompatible core version shows both versions
+  (`Connection::mismatch`) and changes nothing.
+- **Device.** Identity and versions, Rename (16 UTF-8 bytes, no control
+  characters, `nameProblem()`; it applies live and sets Unsaved, also while
+  armed), ARM checks, the faults card, limits (`limits.*` system params) and
+  the loop table keyed by loop id. A loop's run time and longest run come from
+  one GUI-owned subscription group per running loop (~10 Hz, its two
+  statistic signals), configured only on free slots after command setup and
+  released by exact match on close; budget is last run time over the period,
+  computed on the host. Overruns and CPU per core come from STATUS. A
+  `Busy/Withdrawn` SUB_CONFIG (no change by protocol) is retried twice; any
+  other refusal leaves that loop's run time empty with the reason as a tooltip.
+  After a stalled link, Retry to the same device first clears its own exact
+  previous subscription groups.
+- **Configuration.** SAVE/REVERT (status bar and Device page), Reboot, Save and
+  reboot, Factory reset (destructive dialog with a confirmation box) and
+  EXIT_SAFE_MODE (safe-mode banner). The firmware refuses all but Rename while
+  armed, so they are disabled with that reason; they are also disabled while a
+  requested reboot is in progress. The GUI keeps the changes it made since the
+  last SAVE per device id (`unsavedChanges`).
+- **Reboots.** A requested reboot never repeats REBOOT. On a link that stays
+  open (serial) the GUI waits for Boot and reloads; when the link drops (vdev
+  TCP) it reopens the link for up to 30 s. A reboot that never happens ends
+  the expectation after the same window. The reboot notice names the cause, the
+  reset reason (`esp_reset_reason_t`) and the tracked unsaved changes that were
+  lost (none after Save and reboot). An unrequested link loss shows the
+  link-lost overlay; Retry reconnects and shows the notice only when the
+  device's uptime went back.
+- **Faults.** The drawer lists the device's diag entries with the code names,
+  severities and `disarms`/`blocks_arm` flags it serves, active first. The
+  status-bar badge counts active faults only (STATUS `active_error_count`);
+  history stays in the drawer. ACK is disabled with its reason while a
+  disarming condition is still active. A refused ARM opens a popover under the
+  status bar with the failed checks.
 
 ## Theme
 
@@ -167,6 +212,18 @@ delivery, multi-loop keepalives without value frames, arming/refusals, fault
 acknowledgement, delayed/lost replies, early and repeated DISARM, uncertain
 ARM close, observer ownership, Boot, link loss, edit/popup cancellation, scrim
 access, keys and toasts. Linux also exercises Boot in place over a PTY.
+H2b-1 adds device text/models, recent devices, protocol mismatch (a fake
+older-version TCP device), rename/SAVE/REVERT/reboot and the notice, Save and
+reboot, factory reset, safe-mode exit, free-slot subscriptions, the reconnect
+window and Retry after a stall.
+
+`benchBoard` is the bare-board check, skipped unless
+`DRIVELINK_GUI_BENCH_ENDPOINT` names a device (`serial://COM3`, or a provisioned
+vdev for a dry run). On the normal firmware it renames, saves and reboots,
+arms and disarms, raises and clears a real disarming fault through a temporary
+`actuator.mock` (`diagnostic` action) and acknowledges it, then restores the
+layout and the original name. It refuses to start with unsaved or pending
+changes.
 Native arming fixtures SAVE their 10 Hz loop rates and 1 s watchdog so a
 reboot retains the desktop scheduling allowance.
 
@@ -174,9 +231,13 @@ reboot retains the desktop scheduling allowance.
 
 The app's `--out DIR` writes four PNGs (2560×1440 and 1920×1080, Dark and
 Light), waits for live state with a timeout, then disconnects. `--screen`
-accepts `connect`, `device`, `layout`, `tune`, `monitor`, `drawer`, `dialog`;
-`--expect-state` accepts `ready`, `fault`, `safe`, `lost`. Except for Connect,
-pass an endpoint. It does not inject faults or provision a supplied device.
+accepts `connect`, `device`, `layout`, `tune`, `monitor`, `drawer`, `dialog`,
+`rename`, `reset`, `unsaved`, `notice`; `--expect-state` accepts `ready`,
+`fault`, `safe`, `lost`. Except for Connect, pass an endpoint. `--settle MS`
+waits before capturing (loop run time needs about a second); `--settings FILE`
+isolates recent devices. It does not inject faults or provision a supplied
+device; `unsaved` and `notice` rename (and reboot) the device, so they accept
+only a `tcp://` vdev endpoint.
 
 From the repo root, the isolated Windows vdev campaign is:
 
@@ -186,7 +247,8 @@ python host/gui/tests/scenarios.py --gui host/superbuild/build/windows-mingw/gui
 ```
 
 The script defaults to offscreen/software rendering, runs the backend checks
-when `--backend` is supplied, and renders ten scenarios into separate folders
-(40 PNGs, dimensions checked). `--smoke` renders only Connect and Device;
+when `--backend` is supplied, and renders fourteen scenarios into separate
+folders (56 PNGs, dimensions checked); `--only NAME...` picks some. `--smoke`
+renders only Connect and Device;
 CTest uses that subset on both OSes. Use the CTest-resolved executable paths
 on Linux (`ctest --preset linux -N -V -R '^gui-'` from `host/superbuild`).
