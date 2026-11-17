@@ -304,8 +304,10 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
             return client.set(refs,values);
         },[self,c,key,ref,bits,text,id,generation,snapshot,modelItem,subject,before,after,commanded](std::expected<ParamResult,Error> result) {
             if(!self || !self->current(c)) {return;}
-            if(commanded) {self->m_command.endWrite(ref.type,ref.instance);}
             const bool sameBoot=self->m_snapshot && self->m_snapshot->generation==generation;
+            // After a Boot the card was set up again: this write began on the
+            // old groups and must not end a newer write's hold.
+            if(commanded && sameBoot) {self->m_command.endWrite(ref.type,ref.instance);}
             if(!result) {
                 const auto &e=result.error();
                 if(sameBoot) {

@@ -217,7 +217,11 @@ could raise a value by one step (toward zero now); the drag bubble showed the
 slider's own value (now the model's); another client's ARM enabled the card
 (now `m_ownArm`); DISARM now also discards queued values. Noted, not changed:
 a frozen GUI thread with a slider held keeps that value running (keepalives
-are on I/O); DISARM or the watchdog after the app dies stops it.
+are on I/O); DISARM or the watchdog after the app dies stops it. Follow-up
+review: the fixes are correct; a write's hold now ends only on the same boot
+(a write crossing a Boot cannot end a newer write's hold); a status built
+before ARM but received after its reply would block the card until DISARM and
+ARM (fails safe, not changed).
 
 **Verified.** `validate.py full` passed; `commandLogic`, `commandOperations`
 (vdev: the split on LIST, refusal while disarmed, read-back of the commanded
