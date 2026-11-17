@@ -30,7 +30,11 @@ Column {
     property var texts: []
     property string blobText
     // The backend's verdict on the form's input: {problem, field}.
-    readonly property var check: formOpen ? backend.checkAction(key, texts, blobText) : ({})
+    // Re-checked when the row's state changes too (armed, another action).
+    readonly property var check: {
+        row.blocked; row.running
+        return formOpen ? backend.checkAction(key, texts, blobText) : ({})
+    }
     readonly property string problem: check.problem || ""
 
     objectName: "action_" + name
@@ -45,7 +49,8 @@ Column {
     function send() {
         if (problem.length > 0) return
         backend.runAction(key, texts, blobText)
-        formOpen = false
+        // Closed only once sent; a local refusal keeps the typed input.
+        if (row.running) formOpen = false
     }
 
     Item {

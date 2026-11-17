@@ -185,7 +185,8 @@ SourceLive sourceLive(const DeviceSnapshot &s, InstanceKey consumer, const ItemD
         const auto name=e?str(e->instance.label):sourceText(s,*now);
         return {"missing",{},{},tr("Missing · %1 is not running").arg(name)};
     }
-    if(!telemetry || !value || !age) {return {"unavailable",{},{},tr("Telemetry unavailable")};}
+    if(!telemetry) {return {"unavailable",{},{},tr("Telemetry unavailable")};}
+    if(!value || !age) {return {"unavailable",{},{},tr("Not shown: the subscription group is full")};}
     if(*age==kNoSample) {return {"waiting",{},{},tr("No valid sample")};}
     QString valueText;
     if(const auto *type=typeOf(s,consumer.first)) {

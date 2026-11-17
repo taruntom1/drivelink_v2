@@ -484,6 +484,8 @@ private slots:
         state=sourceLive(s,{115,0},feedback,valueBits(Value(1.5f)),kNoSample,true);
         QCOMPARE(state.state,QString("waiting"));QVERIFY(state.valueText.isEmpty());
         state=sourceLive(s,{115,0},feedback,std::nullopt,std::nullopt,false);QCOMPARE(state.state,QString("unavailable"));
+        // Telemetry flows but the pair did not fit the group: said so, not "unavailable".
+        state=sourceLive(s,{115,0},feedback,std::nullopt,std::nullopt,true);QVERIFY(state.note.startsWith("Not shown"));
         auto missing=s;missing.configured.at({115,0}).params[1]=defs::sourceRef(112,1,0x101);missing.pending=missing.configured;
         state=sourceLive(missing,{115,0},feedback,valueBits(Value(1.5f)),10,true);
         QCOMPARE(state.state,QString("missing"));QCOMPARE(state.note,QString("Missing · broken is not running"));
@@ -647,6 +649,19 @@ private slots:
         QVERIFY(live()["note"].toString().contains("Save and reboot"));
         QVERIFY(waitFor([&]{return !group(*slot).configured;}));
         c.selectNode("5:0");QVERIFY(waitFor([&]{return c.liveSubscription().has_value();}));
+        // Boot: the live view is notified at once, before the new boot's
+        // group exists, so pre-boot values never stay on screen.
+        QVERIFY(waitFor([&]{return c.live()["telemetry"].toBool();}));
+        {
+            const auto before=c.snapshot()->generation;bool seen=false,withoutGroup=false;
+            const auto hook=connect(&c,&Connection::liveChanged,&c,[&] {
+                if(seen || !c.snapshot() || c.snapshot()->generation==before) {return;}
+                seen=true;withoutGroup=!c.liveSubscription() && !c.live()["telemetry"].toBool();
+            });
+            c.reboot();
+            QVERIFY(waitFor([&]{return c.ready() && c.snapshot()->generation!=before && c.live()["telemetry"].toBool();},15000));
+            disconnect(hook);QVERIFY(seen);QVERIFY(withoutGroup);
+        }
         // Close clears every group this GUI configured.
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
         Session after(fixture.endpoint.toStdString());Client check(after);check.info();
@@ -1535,14 +1550,22 @@ private slots:
         QVERIFY(waitFor([&]{return problem->isVisible() && problem->property("text").toString().startsWith("mode");}));
         QVERIFY(!send->isEnabled());QVERIFY(field->property("error").toBool());
         field->setProperty("text","12");QVERIFY(waitFor([&]{return send->isEnabled() && !problem->isVisible();}));
-        // A row update (another action runs, then finishes) keeps the open
-        // form and its text: rows update in place.
+        // A row update (another action runs, then ends) keeps the open form
+        // and its text: rows update in place. Its reply is dropped so it runs
+        // long enough to see the form follow: Send disabled with the reason,
+        // and a send while blocked does nothing and keeps the typed input.
         QPointer<QQuickItem> keptRow(row),keptField(field);
+        fixture.command("drop-action-reply 1");
         connection.runAction("114:0:770",{},"");
         QVERIFY(waitFor([&]{return connection.actionTable().row("114:0:773")["blocked"].toString().contains("Another");}));
-        QVERIFY(waitFor([&]{return connection.actionTable().row("114:0:770")["result"].toMap()["state"]=="ok";},6000));
+        QVERIFY(waitFor([&]{return !send->isEnabled() && problem->property("text").toString().contains("Another");}));
+        QVERIFY(QMetaObject::invokeMethod(row,"send"));
+        QVERIFY(connection.actionTable().row("114:0:773")["result"].toMap().isEmpty()); // nothing sent
+        QVERIFY(visualChild(row,"actionForm")->isVisible());
+        QVERIFY(waitFor([&]{return connection.actionTable().row("114:0:770")["result"].toMap()["state"]=="uncertain";},6000));
         QVERIFY(keptRow && keptField);QCOMPARE(keptField->property("text").toString(),QString("12"));
         QVERIFY(visualChild(row,"actionForm")->isVisible());
+        QVERIFY(waitFor([&]{return send->isEnabled() && !problem->isVisible();}));
         click(visualChild(row,"actionCancel"));QVERIFY(waitFor([&]{return !visualChild(row,"actionForm")->isVisible();}));
         // A blob-out result: size, hex and Copy.
         auto *read=shown("action_calibration_read");QVERIFY(read);

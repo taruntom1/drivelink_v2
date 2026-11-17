@@ -29,9 +29,9 @@ inline constexpr uint32_t kLiveRateHz=10;
 QString notRunning(const DeviceSnapshot &, InstanceKey);
 
 // The selected node's subscription. An instance: its sources' generated
-// `.value` / `.age_us` signals first (so source rows always fit), then its own
-// signals in id order; signals beyond `entryLimit` are left out and counted in
-// `hidden`. A loop: ticks, overruns, last_run_us and max_run_us of its own id.
+// `.value` / `.age_us` signals first, then its own signals in id order;
+// signals beyond `entryLimit` are left out and counted in `hidden` (a source
+// pair that does not fit shows "Not shown" on its row). A loop: ticks, overruns, last_run_us and max_run_us of its own id.
 struct LivePlan {
     uint8_t loop=0;
     uint16_t divider=1;

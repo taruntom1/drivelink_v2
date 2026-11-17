@@ -66,6 +66,17 @@ struct LocalConnection::Context {
     std::shared_ptr<DeviceModel> getModel() {std::lock_guard lock(mutex);return model;}
     bool owns() {std::lock_guard lock(mutex);return !owned.empty();}
     bool ownsAny() {std::lock_guard lock(mutex);return !owned.empty() || !subs.empty();}
+    // SUB_CONFIG landed on a newer boot than its setup was for, so nothing
+    // tracks the slot: clear it on an exact LIST match, or record it under
+    // that boot so the next setup or close reconciles it.
+    void releaseStray(Client &client,const OwnedSub &o) {
+        try {
+            const auto list=client.groups();
+            if(std::any_of(list.groups.begin(),list.groups.end(),[&](const auto &g){return matchesSub(o,g);})) {client.groupClear(o.id,false);}
+            return;
+        } catch(const Error &) {}
+        std::lock_guard lock(mutex);subs.push_back(o);
+    }
     std::vector<OwnedSub> liveSubs(uint64_t generation) {
         std::lock_guard lock(mutex);std::vector<OwnedSub> result;
         for(const auto &o:subs) {if(o.live && o.generation==generation) {result.push_back(o);}}

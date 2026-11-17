@@ -185,8 +185,10 @@ QVariantMap LocalConnection::layout() const {
     result["wiring"]=wiring;result["sources"]=sources;result["members"]=members;
     // A custom panel for the module type (H2f ships them), next to Params.
     if(!isLoop) {
-        const auto path=m_panelRoot+"/"+typeName(s,node->first)+"/Panel.qml";
-        if(QFile::exists(path)) {
+        // The type name comes from the device: never a path.
+        const auto type=typeName(s,node->first);
+        const auto path=m_panelRoot+"/"+type+"/Panel.qml";
+        if(!type.isEmpty() && !type.contains('/') && !type.contains('\\') && !type.contains("..") && QFile::exists(path)) {
             result["panel"]=path.startsWith(":/")?QString("qrc"+path):QUrl::fromLocalFile(path).toString();
         }
     }

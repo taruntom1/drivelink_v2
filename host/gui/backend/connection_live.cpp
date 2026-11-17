@@ -123,7 +123,10 @@ void LocalConnection::syncLive() {
                     throw;
                 }
             }
-            if(configured.generation!=generation) {throw Error(ErrorKind::Cancelled,"Device rebooted during live setup");}
+            if(configured.generation!=generation) {
+                c->releaseStray(client,{id,want->loop,configured.epoch,configured.generation,want->refs,{},true});
+                throw Error(ErrorKind::Cancelled,"Device rebooted during live setup");
+            }
             auto buffer=session->subscribeBuffer(id,configured.epoch,want->refs.size(),8,configured.generation);
             std::lock_guard lock(c->mutex);
             if(c->retired) {throw Error(ErrorKind::Cancelled,"Live ownership was invalidated");}
@@ -140,7 +143,9 @@ void LocalConnection::syncLive() {
         },[self,c,generation,key,want](std::expected<LiveSetup,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_livePending=false;
-            if(!self->m_snapshot || self->m_snapshot->generation!=generation) {self->resetLive();self->syncLive();return;}
+            if(!self->m_snapshot || self->m_snapshot->generation!=generation) {
+                self->resetLive();self->syncLive();emit self->liveChanged();return;
+            }
             self->m_liveValues={};self->m_liveCounter.reset();self->m_liveSeen.invalidate();
             if(!result) {
                 self->m_live.reset();self->m_liveNote=errorText(result.error());
@@ -189,7 +194,7 @@ QVariantMap LocalConnection::live() const {
     QString note;
     if(const auto why=notRunning(*m_snapshot,*node);!why.isEmpty()) {note=why;}
     else if(!mine) {note=m_liveNote.isEmpty()?tr("Waiting for telemetry"):tr("Telemetry unavailable: %1").arg(m_liveNote);}
-    else if(!telemetry) {note=m_liveValues.values.empty()?tr("Waiting for the first sample"):tr("Telemetry unavailable: no new sample for over a second");}
+    else if(!telemetry) {note=m_liveValues.values.empty()?tr("Waiting for the first sample"):tr("Telemetry unavailable: samples stopped arriving");}
     result["note"]=note;result["telemetry"]=telemetry;result["hidden"]=mine?m_live->plan.hidden:0;
     result["entries"]=int(entryLimit(*m_snapshot));
     if(node->first==defs::kLoopTypeId) {
@@ -274,7 +279,8 @@ void LocalConnection::runAction(const QString &key,const QStringList &args,const
                     self->m_actionResults[key]={{"state","refused"},{"text",errorText(e)}};
                 }
             } else if(!sameBoot) {
-                self->m_actionResults[key]={{"state","uncertain"},{"text",tr("The device rebooted after the action ran")}};
+                // The reply proves it ran; its results belong to the previous boot.
+                self->m_actionResults[key]={{"state","ok"},{"text",tr("Ran; the device has since rebooted")}};
             } else {
                 const auto blobOut=descriptor.blob_direction==BlobDir::Out || descriptor.blob_direction==BlobDir::Both;
                 const QByteArray bytes(reinterpret_cast<const char *>(result->blob.data()),qsizetype(result->blob.size()));

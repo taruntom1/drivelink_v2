@@ -205,7 +205,10 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     const bool booted=before && before->generation!=snapshot->generation;
     if(!m_snapshot || m_snapshot->generation!=snapshot->generation) {
         // Boot released every group on the device, including loop statistics.
-        c->stopKeepers();{std::lock_guard lock(c->mutex);c->owned.clear();c->subs.clear();}
+        // A subscription record already under the new boot is a stray slot
+        // from a setup that crossed the Boot (releaseStray); keep it.
+        c->stopKeepers();
+        {std::lock_guard lock(c->mutex);c->owned.clear();std::erase_if(c->subs,[&](const OwnedSub &o){return o.generation!=snapshot->generation;});}
         m_groupsReady=false;m_setupAttempted=false;m_subsAttempted=false;m_statusCounter.reset();++c->safety;
         m_arming=false;m_waitingDisarm=false;
         if(m_snapshot) {m_explicitDisarmAcknowledged=false;}
@@ -280,7 +283,9 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     otaRefresh();
     rebuildLayout(metadata);
     syncLive();
-    emit changed();
+    // The live view follows every refresh: Boot, safe mode, reload, run
+    // states and staged targets all change it, not only new samples.
+    emit changed();emit liveChanged();
 }
 void LocalConnection::showRebootNotice(std::optional<uint8_t> reason,bool dirty,const QString &id) {
     QStringList lost;
@@ -366,7 +371,10 @@ void LocalConnection::setupLoopStats() {
                         throw;
                     }
                 }
-                if(configured.generation!=snapshot->generation) {throw Error(ErrorKind::Cancelled,"Device rebooted during loop statistics setup");}
+                if(configured.generation!=snapshot->generation) {
+                    c->releaseStray(client,{id,loop.id,configured.epoch,configured.generation,refs,{}});
+                    throw Error(ErrorKind::Cancelled,"Device rebooted during loop statistics setup");
+                }
                 auto buffer=session->subscribeBuffer(id,configured.epoch,refs.size(),8,configured.generation);
                 {
                     std::lock_guard lock(c->mutex);
@@ -606,6 +614,7 @@ void LocalConnection::clearAndClose() {
 void LocalConnection::finishClose(bool lost) {
     const bool unsentDisarm=m_disarmWhenOpened;
     const bool unconfirmedDisarm=m_disarmPending;
+    const bool actionInFlight=!m_actionRunning.isEmpty();
     auto c=std::move(m_context);
     if(c) {
         c->retired=true;++c->safety;c->stopKeepers();
@@ -669,7 +678,9 @@ void LocalConnection::finishClose(bool lost) {
         Error error(ErrorKind::Connection,"Connection closed before DISARM was confirmed");
         error.family=1;error.op=3;error.has_request_context=true;error.outcome_unknown=true;report(error);
     }
-    emit changed();if(c) {emit disconnected();}
+    // An action in flight may have run; its reply will never arrive.
+    if(actionInFlight && c) {emit notification(tr("The connection closed while an action was running; it may have run. It was not retried."),2);}
+    emit changed();emit liveChanged();if(c) {emit disconnected();}
 }
 QString Connection::nameProblem(const QString &name) const {
     const auto bytes=name.toUtf8();
