@@ -106,7 +106,7 @@ void LocalConnection::connectTo(const QString &endpoint,int baud) {
         clearRebootExpectation();m_previous.reset();m_notice.clear();m_staleSubs.clear();
         if(m_ota && m_ota->terminal()) {m_ota.reset();}
     }
-    ++m_connectionSerial;m_otaStatus.reset();m_otaStatusPending=false;
+    ++m_connectionSerial;m_otaStatus.reset();m_otaStatusPending=false;m_otaStatusFailed=false;
     auto c=std::make_shared<Context>();m_context=c;m_endpoint=endpoint.trimmed();m_baud=baud;m_loading=true;m_linkLost=false;
     m_error.clear();m_mismatch.clear();m_blocked.clear();m_subsNote.clear();m_snapshot.reset();m_statusCounter.reset();
     m_setupAttempted=false;m_subsAttempted=false;m_recorded=false;m_diag.reset();m_loadStep=0;
@@ -623,6 +623,7 @@ void LocalConnection::finishClose(bool lost) {
         }
     } else if(c && lost && m_expectReboot) {
         m_reconnecting=true;m_linkLost=false;m_reconnectElapsed.start();
+        if(m_ota && m_ota->phase==OtaJob::Phase::Rebooting) {m_ota->phase=OtaJob::Phase::Reconnecting;}
         QTimer::singleShot(300,this,[this] {reconnectAfterReboot();});
     } else if(c && !lost && m_afterLoss) {
         // Retry failed: keep the link-lost overlay with its error.
@@ -749,7 +750,8 @@ QVariantMap LocalConnection::actionBlocked() const {
     // A requested reboot is in progress: no second reboot request.
     // REBOOT commits a prepared image, which would then run unchecked.
     const QString prepared=m_otaStatus && m_otaStatus->state==2 && m_otaStatus->boot_slot==m_otaStatus->running_slot
-        ?tr("A prepared firmware update would be installed unchecked; abort it in the Firmware card first"):QString();
+        ?tr("A prepared firmware update would be installed unchecked; abort it in the Firmware card first")
+        :!m_otaStatus && m_otaStatusFailed?tr("The firmware update state could not be read; a prepared image could be installed unchecked"):QString();
     const QString rebooting=m_expectReboot?tr("The device is rebooting"):!armed.isEmpty()?armed:prepared;
     return {{"rename",pick({})},{"save",pick(armed.isEmpty()?nothing:armed)},{"revert",pick(armed.isEmpty()?nothing:armed)},
         {"reboot",pick(rebooting)},{"saveAndReboot",pick(rebooting)},

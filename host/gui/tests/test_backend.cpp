@@ -613,6 +613,19 @@ private slots:
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
     }
 #ifndef Q_OS_WIN
+    // Same-link update (as on a serial port): the link stays open, the GUI
+    // waits for Boot, then checks and confirms on the reloaded model.
+    void firmwareUpdateBootInPlace() {
+        Fixture fixture(false,true);QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        const auto start=c.otaStatus()->running_slot;
+        c.inspectImage(writeImage(dir,"p.bin",71,"7.0.0"));c.startUpdate(true);
+        bool reconnected=false;
+        QVERIFY2(waitFor([&]{reconnected|=c.reconnecting();return c.ota()["phase"]=="confirmed";},30000),qPrintable(otaText(c)));
+        QVERIFY(!reconnected);QVERIFY(c.otaStatus()->running_slot!=start);QVERIFY(!c.otaStatus()->pending_confirm);
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.closeUpdate();c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
     void bootDuringCommandSetup() {
         Fixture fixture(false,true);fixture.command("drop-config-reply 1");
         LocalConnection c;c.connectTo(fixture.endpoint);

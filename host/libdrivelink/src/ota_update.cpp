@@ -84,7 +84,12 @@ OtaConfirmation confirmOtaCandidate(Client &client,const OtaCandidate &candidate
         catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; } }
         // CONFIRM is idempotent; STATUS settles a lost reply without resending.
         out.status=client.otaStatus();
-        if (out.status.pending_confirm) { throw Error(ErrorKind::Timeout,"confirmation uncertain; inspect ota-status and use ota-confirm"); }
+        if (out.status.pending_confirm) {
+            // CONFIRM was sent and its outcome is unknown (marked for callers).
+            Error error(ErrorKind::Timeout,"confirmation uncertain; inspect ota-status and use ota-confirm");
+            error.family=static_cast<uint8_t>(p::defs::Family::Ota);error.op=static_cast<uint8_t>(p::defs::OtaOp::Confirm);
+            error.has_request_context=true;error.outcome_unknown=true;throw error;
+        }
         if (!sameImage(candidate,out.status)) { throw Error(ErrorKind::Protocol,"running image changed during confirmation; inspect ota-status"); }
         out.verdict=OtaBoot::Confirmed;
     }
@@ -98,6 +103,7 @@ OtaUpdateResult otaUpdate(const std::string &endpoint,const SessionOptions &opti
     auto session=std::make_unique<Session>(endpoint,options);
     auto client=std::make_unique<Client>(*session);client->info();
     const auto before=client->otaStatus();
+    if (stop()) { throw Error(ErrorKind::Usage,"OTA cancelled before upload; nothing changed"); }
     auto state=client->otaUpload(image.bytes,update.window,progress);
     if (update.upload_only) { return {state,false,false}; }
     if (stop()) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }

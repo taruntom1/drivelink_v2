@@ -87,11 +87,21 @@ void LocalConnection::readOtaStatus() {
         Client(*session).async([](Client &client){return client.otaStatus();},[self,c](std::expected<OtaStatus,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_otaStatusPending=false;
-            if(result) {self->m_otaStatus=*result;}
-            else {self->m_otaStatus.reset();self->report(result.error());}
+            if(result) {self->m_otaStatus=*result;self->m_otaStatusFailed=false;}
+            else {
+                // Unknown state: reboots stay blocked (a Ready image would be
+                // committed unchecked). Report once; read again in 2 s.
+                self->m_otaStatus.reset();
+                if(!self->m_otaStatusFailed) {self->report(result.error());}
+                self->m_otaStatusFailed=true;
+                const auto serial=self->m_connectionSerial;
+                QTimer::singleShot(2000,self,[self,serial] {
+                    if(self && self->m_connectionSerial==serial && !self->m_otaStatus) {self->m_otaStatusSerial=0;self->otaRefresh();emit self->changed();}
+                });
+            }
             emit self->changed();
         });
-    } catch(const Error &e) {m_otaStatusPending=false;report(e);}
+    } catch(const Error &e) {m_otaStatusPending=false;m_otaStatusSerial=0;report(e);}
 }
 
 void LocalConnection::startUpdate(bool confirm) {
@@ -228,8 +238,9 @@ void LocalConnection::otaConfirm(bool explicitRequest) {
     auto c=m_context;auto session=c->getSession();
     const auto id=deviceId();
     const bool known=m_candidates.contains(id);
-    const bool job=m_ota && m_ota->deviceId==id;
-    const OtaCandidate candidate=job && m_ota->started?m_ota->candidate:m_candidates.value(id);
+    const bool job=m_ota && m_ota->deviceId==id && m_ota->started &&
+        (m_ota->phase==Phase::Unconfirmed || (!explicitRequest && m_ota->active()));
+    const OtaCandidate candidate=job?m_ota->candidate:m_candidates.value(id);
     const bool sendConfirm=explicitRequest || (job && m_ota->confirm);
     if(job) {
         m_ota->confirmSent=true;m_ota->phase=Phase::Confirming;m_ota->message.clear();
@@ -250,18 +261,19 @@ void LocalConnection::otaConfirm(bool explicitRequest) {
             out.status=client.otaStatus();out.confirmed=!out.status.pending_confirm;
             out.verdict=out.confirmed?OtaBoot::Confirmed:OtaBoot::Confirmable;
             return out;
-        },[self,c,run,id,explicitRequest](std::expected<OtaConfirmation,Error> result) {
+        },[self,c,run,id,explicitRequest,job=job](std::expected<OtaConfirmation,Error> result) {
             if(!self || !self->current(c)) {return;}
             if(explicitRequest) {self->m_configAction.clear();}
-            const bool job=self->m_ota && self->m_otaRun==run && self->m_ota->deviceId==id;
+            const bool owned=job && self->m_ota && self->m_otaRun==run && self->m_ota->deviceId==id;
             if(!result) {
                 const auto &e=result.error();
-                if(job) {
-                    if(e.kind==ErrorKind::Timeout) {
+                if(owned) {
+                    if(e.kind==ErrorKind::Timeout && e.outcome_unknown && e.family==9 && e.op==5) {
                         // STATUS still shows pending after an unanswered CONFIRM; not sent again.
                         self->otaStop(Phase::Unconfirmed,tr("No reply confirmed the image and the device still reports it pending. CONFIRM was not sent again: confirm it yourself once you are sure, or roll back."));
                     } else {
-                        self->otaStop(Phase::Failed,errorText(e)+QStringLiteral(" ")+tr("The new build may still be unconfirmed: check the Firmware card."));
+                        // The identity check (or the read after CONFIRM) did not complete.
+                        self->otaStop(Phase::Failed,errorText(e)+QStringLiteral(" ")+tr("Nothing more is sent automatically; check the Firmware card."));
                     }
                 } else {self->report(e);}
                 self->readOtaStatus();emit self->changed();return;
@@ -270,7 +282,7 @@ void LocalConnection::otaConfirm(bool explicitRequest) {
             self->m_otaStatusSerial=self->m_connectionSerial;self->m_otaStatusGeneration=self->m_snapshot?self->m_snapshot->generation:0;
             const auto verdict=result->verdict;
             if(verdict==OtaBoot::Confirmed || verdict==OtaBoot::RolledBack) {self->m_candidates.remove(id);}
-            if(!job) {
+            if(!owned) {
                 if(result->confirmed) {emit self->notification(tr("Firmware confirmed"),1);}
                 else if(verdict!=OtaBoot::Confirmable) {self->report(Error(ErrorKind::Protocol,otaBootProblem(verdict)));}
                 emit self->changed();return;
@@ -343,7 +355,11 @@ void LocalConnection::abortPreparedUpdate() {
     if(!afterCancel) {
         if(const auto why=firmwareActionBlocked();!why.isEmpty()) {report(Error(ErrorKind::Usage,why.toStdString()));return;}
     }
-    auto c=m_context;auto session=c?c->getSession():nullptr;if(!session) {return;}
+    auto c=m_context;auto session=c?c->getSession():nullptr;
+    if(!session) {
+        if(afterCancel) {otaStop(Phase::Failed,tr("The link closed before the prepared image was released; abort it in the Firmware card before any reboot."));}
+        return;
+    }
     m_configAction=QStringLiteral("abortUpdate");emit changed();
     const QPointer<LocalConnection> self(this);const auto run=m_otaRun;const auto id=deviceId();
     try {

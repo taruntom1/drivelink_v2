@@ -236,7 +236,7 @@ private:
     std::optional<OtaStatus> m_otaStatus;
     uint64_t m_otaStatusSerial=0,m_otaStatusGeneration=0,m_otaRun=0,m_connectionSerial=0;
     uint64_t m_otaRebootSerial=0,m_otaRebootGeneration=0;
-    bool m_otaStatusPending=false;
+    bool m_otaStatusPending=false,m_otaStatusFailed=false;
     std::shared_ptr<std::atomic<bool>> m_otaCancel=std::make_shared<std::atomic<bool>>(false);
     std::shared_ptr<std::atomic<int>> m_otaPause=std::make_shared<std::atomic<int>>(-1);
     // Candidates this GUI uploaded, per device id, for confirmation with the

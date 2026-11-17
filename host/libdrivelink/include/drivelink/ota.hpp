@@ -50,7 +50,8 @@ OtaReboot requestOtaReboot(Client &client);
 // Reads GET_INFO (core version check) and STATUS, classifies them and, only
 // for Confirmable with `confirm`, sends CONFIRM once and rechecks the identity.
 // A timed-out CONFIRM is reconciled through STATUS: still pending throws
-// Timeout ("confirmation uncertain"); a changed identity throws Protocol.
+// Timeout ("confirmation uncertain", with outcome_unknown and family/op of
+// CONFIRM); a changed identity throws Protocol.
 // `cancelled` is asked just before CONFIRM and throws Usage when true.
 struct OtaConfirmation
 {
@@ -64,7 +65,9 @@ OtaConfirmation confirmOtaCandidate(Client &client, const OtaCandidate &candidat
 
 // The whole synchronous workflow on its own sessions (the CLI's ota-upload):
 // upload and FINISH, REBOOT once, reconnect for `reconnect_window`, identity
-// check, CONFIRM. Throws with the CLI's recovery messages.
+// check, CONFIRM. Throws with the CLI's recovery messages. As the CLI always
+// did, an uncertain CONFIRM is reconciled within the window by reconnecting
+// and checking again; CONFIRM is idempotent. REBOOT is never repeated.
 struct OtaUpdateOptions
 {
     bool upload_only = false;
