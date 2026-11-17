@@ -63,6 +63,11 @@ class DeviceModel
     using Handler=std::function<void(Change)>;
     void onChange(Handler handler);
     RequestHandle reloadAsync(Completion<OperationResult> completion={});
+    // Re-reads only the configured and pending layouts and every parameter
+    // (instances and system) with the descriptors already loaded, after a SET
+    // or a layout op. Requires a ready snapshot of the current boot; a Boot in
+    // between fails it without publishing. Status and diagnostics are kept.
+    RequestHandle refreshConfigAsync(Completion<OperationResult> completion={});
     // Explicit reload preserves complete metadata on error. Retained shared
     // snapshots stay valid. Boot marks ready=false until its automatic reload
     // succeeds; runtime events may keep updating while a reload is in progress.

@@ -1,0 +1,399 @@
+import QtQuick
+import DriveLink.Style
+
+// G4/G7b Layout: the Instances card (tree by loop, Add menu, counts against
+// the device's limits) and the selected loop's or instance's detail (header
+// with Rename and Remove, Sources, Params, Wiring, the loop's instances).
+// Everything comes from the device's descriptors; refusals show next to what
+// was refused. Live signals, statistics and actions follow in H2c-2.
+Item {
+    id: page
+    objectName: "layoutPage"
+
+    property var backend
+    readonly property var info: backend.layout
+    readonly property var node: info.node || ({})
+    readonly property bool hasNode: node.key !== undefined
+    readonly property bool isLoop: node.isLoop === true
+    readonly property var counts: info.counts || ({})
+    readonly property var paramCounts: info.paramCounts || ({})
+    readonly property var wiring: info.wiring || []
+    readonly property var sources: info.sources || []
+    readonly property var members: info.members || []
+    readonly property real treeWidth: Math.max(340, Math.min(440, width * 0.24))
+    readonly property real sideWidth: Math.max(360, Math.min(480, width * 0.25))
+
+    signal addInstanceRequested()
+    signal addLoopRequested()
+    signal labelRequested(string key, string label)
+
+    function rateText(hz) { return hz >= 1000 && hz % 100 === 0 ? (hz / 1000) + " kHz" : hz + " Hz" }
+    function limitText(n, limit, what) { return limit > 0 ? qsTr("%1 of %2 %3").arg(n).arg(limit).arg(what) : qsTr("%1 %2").arg(n).arg(what) }
+
+    // Instances card.
+    Rectangle {
+        id: tree
+        x: Theme.space24; y: Theme.space24
+        width: page.treeWidth; height: page.height - 2 * Theme.space24
+        color: Theme.bgSurface
+        radius: Theme.radiusLg
+        border.width: Theme.borderWidth
+        border.color: Theme.borderDefault
+
+        Text {
+            x: Theme.space24; y: Theme.space24
+            text: qsTr("Instances")
+            font: Theme.fontTitleSection; color: Theme.textPrimary
+        }
+        DLButton {
+            id: addButton
+            objectName: "addButton"
+            anchors.right: parent.right; anchors.rightMargin: Theme.space24; y: Theme.space16
+            text: qsTr("Add")
+            iconName: "plus"
+            onClicked: addMenu.open()
+            DLMenu {
+                id: addMenu
+                y: addButton.height + Theme.space4
+                DLMenuItem {
+                    objectName: "addInstanceItem"
+                    text: qsTr("Instance")
+                    detail: page.info.addInstanceBlocked || page.limitText(page.counts.instances, page.counts.instanceLimit, qsTr("instances"))
+                    enabled: !page.info.addInstanceBlocked
+                    onTriggered: page.addInstanceRequested()
+                }
+                DLMenuItem {
+                    objectName: "addLoopItem"
+                    text: qsTr("Loop")
+                    detail: page.info.addLoopBlocked || page.limitText(page.counts.loops, page.counts.loopLimit, qsTr("loops"))
+                    enabled: !page.info.addLoopBlocked
+                    onTriggered: page.addLoopRequested()
+                }
+            }
+        }
+        Text {
+            id: countText
+            objectName: "layoutCounts"
+            x: Theme.space24; y: addButton.y + addButton.height + Theme.space8
+            width: parent.width - 2 * Theme.space24
+            text: page.limitText(page.counts.loops, page.counts.loopLimit, qsTr("loops")) + " · "
+                + page.limitText(page.counts.instances, page.counts.instanceLimit, qsTr("module instances"))
+            font: Theme.fontCaption; color: Theme.textSecondary
+            elide: Text.ElideRight
+        }
+        ListView {
+            id: treeView
+            objectName: "layoutTree"
+            x: Theme.space16; y: countText.y + countText.height + Theme.space16
+            width: parent.width - 2 * Theme.space16; height: parent.height - y - Theme.space16
+            clip: true
+            spacing: Theme.space2
+            model: page.backend.layoutTree
+            delegate: DLTreeItem {
+                required property string key
+                required isLoop
+                required depth
+                required label
+                required typeName
+                required health
+                required healthText
+                required pending
+                required rateHz
+                required realtime
+                required budget
+                required hasBudget
+                objectName: "tree_" + key
+                width: treeView.width
+                selected: key === page.info.selected
+                onClicked: page.backend.selectNode(key)
+            }
+        }
+        Text {
+            anchors.centerIn: treeView
+            width: treeView.width - 2 * Theme.space16
+            visible: treeView.count === 0
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: qsTr("No loops. Add a loop, then the instances that run in it.")
+            font: Theme.fontBodyDefault; color: Theme.textSecondary
+        }
+    }
+
+    // The selected node's detail.
+    Item {
+        id: detail
+        anchors.left: tree.right; anchors.leftMargin: Theme.space24
+        anchors.right: parent.right; anchors.rightMargin: Theme.space24
+        y: Theme.space24; height: page.height - 2 * Theme.space24
+        visible: page.hasNode
+
+        Column {
+            id: header
+            width: parent.width - actions.width - Theme.space16
+            spacing: Theme.space4
+            Row {
+                spacing: Theme.space8
+                Text {
+                    objectName: "nodeLabel"
+                    text: page.node.label || ""
+                    font: Theme.fontTitlePage; color: Theme.textPrimary
+                }
+                DLBadge {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: (page.node.pending || "").length > 0
+                    size: DLBadge.Sm; tone: DLBadge.Pending
+                    text: page.node.pending === "add" ? qsTr("pending add") : page.node.pending === "remove" ? qsTr("pending remove")
+                        : page.node.pending === "label" ? qsTr("label pending") : qsTr("pending change")
+                }
+            }
+            Text {
+                objectName: "nodeSubtitle"
+                width: parent.width; elide: Text.ElideRight
+                text: page.isLoop
+                    ? [qsTr("loop"), page.node.realtime ? qsTr("real-time") : qsTr("non-real-time"), page.rateText(page.node.rateHz || 0), page.node.healthText || ""].join(" · ")
+                    : [page.node.typeName || "", qsTr("%1 loop").arg(page.node.loopName || ""), page.node.healthText || ""].join(" · ")
+                font: Theme.fontMonoSmall; color: Theme.textSecondary
+            }
+        }
+        Row {
+            id: actions
+            anchors.right: parent.right
+            spacing: Theme.space8
+            DLReasonHover {
+                reason: page.node.renameBlocked || ""
+                DLButton {
+                    objectName: "renameNode"
+                    text: qsTr("Rename"); iconName: "pencil"
+                    enabled: !page.node.renameBlocked
+                    onClicked: page.labelRequested(page.node.key, page.node.label)
+                }
+            }
+            DLReasonHover {
+                reason: page.node.removeBlocked || ""
+                DLButton {
+                    objectName: "removeNode"
+                    kind: DLButton.Danger
+                    text: page.isLoop ? qsTr("Remove loop") : qsTr("Remove instance")
+                    iconName: "trash-2"
+                    enabled: !page.node.removeBlocked
+                    onClicked: page.backend.removeNode(page.node.key)
+                }
+            }
+        }
+        Row {
+            id: tabs
+            y: header.height + Theme.space16
+            DLTabButton { text: qsTr("Params"); checked: true }
+        }
+        Rectangle {
+            y: tabs.y + tabs.height
+            width: parent.width; height: Theme.borderWidth
+            color: Theme.borderDefault
+        }
+
+        Item {
+            id: body
+            y: tabs.y + tabs.height + Theme.space16
+            width: parent.width; height: parent.height - y
+            readonly property bool hasSide: page.isLoop ? true : page.wiring.length > 0
+
+            Column {
+                id: mainColumn
+                width: body.hasSide ? body.width - page.sideWidth - Theme.space24 : body.width
+                height: body.height
+                spacing: Theme.space24
+
+                Card {
+                    id: sourcesCard
+                    objectName: "sourcesCard"
+                    width: parent.width
+                    visible: page.sources.length > 0
+                    title: qsTr("Sources")
+                    Text {
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: qsTr("Each source reads a signal or input of another instance, in any loop. A new target applies after Save and a reboot.")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                    Repeater {
+                        model: page.sources
+                        delegate: TargetRow { width: sourcesCard.width - 2 * Theme.space24; backend: page.backend; source: true; blocked: page.info.blocked || "" }
+                    }
+                }
+
+                Rectangle {
+                    id: paramsCard
+                    objectName: "paramsCard"
+                    width: parent.width
+                    height: Math.max(160, mainColumn.height - (sourcesCard.visible ? sourcesCard.height + mainColumn.spacing : 0))
+                    visible: (page.paramCounts.total || 0) > 0
+                    color: Theme.bgSurface
+                    radius: Theme.radiusLg
+                    border.width: Theme.borderWidth
+                    border.color: Theme.borderDefault
+
+                    Row {
+                        id: paramsTitle
+                        x: Theme.space24; y: Theme.space24
+                        spacing: Theme.space8
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: page.isLoop ? qsTr("Loop parameters") : qsTr("Params")
+                            font: Theme.fontTitleSection; color: Theme.textPrimary
+                        }
+                        DLFilterChip {
+                            objectName: "filterAll"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("All")
+                            checked: page.info.paramFilter === 0
+                            onClicked: page.backend.setParamFilter(0, filterField.text)
+                        }
+                        DLFilterChip {
+                            objectName: "filterChanged"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Changed %1").arg(page.paramCounts.changed || 0)
+                            tone: (page.paramCounts.changed || 0) > 0 ? DLBadge.Unsaved : DLBadge.Neutral
+                            checked: page.info.paramFilter === 1
+                            onClicked: page.backend.setParamFilter(1, filterField.text)
+                        }
+                        DLFilterChip {
+                            objectName: "filterPending"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Pending %1").arg(page.paramCounts.pending || 0)
+                            tone: (page.paramCounts.pending || 0) > 0 ? DLBadge.Pending : DLBadge.Neutral
+                            checked: page.info.paramFilter === 2
+                            onClicked: page.backend.setParamFilter(2, filterField.text)
+                        }
+                    }
+                    DLTextField {
+                        id: filterField
+                        objectName: "paramFilter"
+                        anchors.right: parent.right; anchors.rightMargin: Theme.space24; y: Theme.space16
+                        width: Math.min(280, parent.width / 3)
+                        placeholderText: qsTr("Filter params")
+                        onTextChanged: page.backend.setParamFilter(page.info.paramFilter || 0, text)
+                    }
+                    Text {
+                        id: paramsHint
+                        x: Theme.space24; y: paramsTitle.y + paramsTitle.height + Theme.space8
+                        width: parent.width - 2 * Theme.space24
+                        visible: page.isLoop
+                        text: qsTr("rate_hz applies live while disarmed. The other fields take effect after Save and a reboot.")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                        wrapMode: Text.Wrap
+                    }
+                    ListView {
+                        id: paramList
+                        objectName: "paramList"
+                        x: Theme.space24
+                        y: (paramsHint.visible ? paramsHint.y + paramsHint.height : paramsTitle.y + paramsTitle.height) + Theme.space16
+                        width: parent.width - 2 * Theme.space24; height: parent.height - y - Theme.space16
+                        clip: true
+                        spacing: Theme.space8
+                        model: page.backend.params
+                        section.property: "group"
+                        section.delegate: Text {
+                            required property string section
+                            height: section.length > 0 ? 28 : 0
+                            visible: section.length > 0
+                            verticalAlignment: Text.AlignBottom
+                            text: section.toUpperCase()
+                            font: Theme.fontLabelCaps; color: Theme.textSecondary
+                        }
+                        delegate: DLParamRow {
+                            id: paramRow
+                            required property string key
+                            required name
+                            required unit
+                            required description
+                            required editor
+                            required valueText
+                            required pendingText
+                            required isPending
+                            required unsaved
+                            required locked
+                            required readOnly
+                            required rebootRequired
+                            required rangeText
+                            required enums
+                            required valueBits
+                            required editState
+                            required editNote
+                            required editText
+                            objectName: "param_" + name
+                            width: paramList.width
+                            nameWidth: Math.min(220, width * 0.25)
+                            editorWidth: Math.min(240, width * 0.3)
+                            blockedReason: rebootRequired ? (page.info.blocked || "") : (page.info.paramBlocked || "")
+                            onCommitText: function(text) { page.backend.setParamText(key, text) }
+                            onCommitValue: function(bits) { page.backend.setParamValue(key, bits) }
+                            onClearEdit: page.backend.clearParamEdit(key)
+                            onCommittedByEnter: safetyKeys.editCommitted()
+                            Connections {
+                                target: safetyKeys
+                                function onEscapeRequested() { if (paramRow.editing) paramRow.cancel() }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Column {
+                id: sideColumn
+                visible: body.hasSide
+                anchors.right: parent.right
+                width: page.sideWidth
+                spacing: Theme.space24
+
+                Card {
+                    id: wiringCard
+                    objectName: "wiringCard"
+                    width: parent.width
+                    visible: !page.isLoop && page.wiring.length > 0
+                    title: qsTr("Wiring")
+                    Text {
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: qsTr("Reboot required: changes go to the pending layout. Only instances in the same loop can be wired.")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                    Repeater {
+                        model: page.wiring
+                        delegate: TargetRow { width: wiringCard.width - 2 * Theme.space24; backend: page.backend; blocked: page.info.blocked || "" }
+                    }
+                }
+                Card {
+                    id: membersCard
+                    objectName: "membersCard"
+                    width: parent.width
+                    visible: page.isLoop
+                    title: qsTr("Instances in this loop")
+                    Text {
+                        visible: page.members.length === 0
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: qsTr("No instance runs in this loop.")
+                        font: Theme.fontBodyDefault; color: Theme.textSecondary
+                    }
+                    Repeater {
+                        model: page.members
+                        delegate: DLTreeItem {
+                            required property var modelData
+                            width: membersCard.width - 2 * Theme.space24
+                            depth: 1
+                            label: modelData.label
+                            typeName: modelData.typeName
+                            healthText: modelData.healthText
+                            health: modelData.health
+                            pending: modelData.pending
+                            onClicked: page.backend.selectNode(modelData.key)
+                        }
+                    }
+                    Text {
+                        visible: page.members.length > 0
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: page.node.removeBlocked || ""
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                }
+            }
+        }
+    }
+}

@@ -11,6 +11,61 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
+
+# Layout scenarios: the G7b three-loop sample device on vdev, built with the
+# CLI through the real layout ops, then saved and rebooted. Type ids are the
+# shipped mock and controller types; wiring is type<<8|instance and a source
+# is type<<24|instance<<16|item (docs/protocol/core.md).
+SAMPLE = [
+    ['add', '5', 'fusion'],                      # loop 2, non-real-time
+    ['set', '5:2:1=200'],
+    ['add', '32', 'left_drive', '0'],            # controller.cascade_pid
+    ['add', '112', 'left_pwm', '0'],             # actuator.mock
+    ['add', '113', 'left_enc', '0'],             # feedback.mock
+    ['add', '114', 'imu', '1'],                  # imu.mock in sensor
+    ['add', '115', 'odom', '2'],                 # fusion.mock in fusion
+    ['set', '32:0:1=%d' % (112 << 8), '32:0:2=%d' % (113 << 8)],
+    ['set', '113:0:1=%d' % (112 << 8)],
+    ['set', '115:0:1=%d' % ((113 << 24) | 0x0101), '115:0:2=%d' % ((114 << 24) | 0x0100)],
+    ['save'],
+]
+# Staged after the reboot: a pending loop change, a live rate (unsaved),
+# a pending add and a label change, for the pending and review screens.
+STAGED = [
+    ['set', '5:2:4=14'],
+    ['set', '5:2:1=250'],
+    ['add', '112', 'aux_pwm', '0'],
+    ['label', '114', '0', 'imu_main'],
+]
+LAYOUT = {
+    'layout': ('layout', '32:0', False),
+    'layout-loop': ('layout', '5:2', True),
+    'layout-sources': ('layout', '115:0', False),
+    'layout-review': ('layout-review', '5:2', True),
+    'layout-add-instance': ('layout-add-instance', '5:0', False),
+    'layout-add-loop': ('layout-add-loop', '5:0', False),
+}
+
+
+def cli_run(cli, endpoint, args, attempts=1):
+    for attempt in range(attempts):
+        result = subprocess.run([cli, '--endpoint', endpoint, *args], capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return
+        time.sleep(0.5)
+    raise AssertionError((args, result.returncode, result.stdout, result.stderr))
+
+
+def provision(cli, endpoint, staged):
+    for command in SAMPLE:
+        cli_run(cli, endpoint, command)
+    # vdev closes TCP after the reboot reply; the next command waits for it.
+    subprocess.run([cli, '--endpoint', endpoint, 'reboot'], capture_output=True, text=True, timeout=30)
+    cli_run(cli, endpoint, ['info'], attempts=20)
+    if staged:
+        for command in STAGED:
+            cli_run(cli, endpoint, command)
 
 
 def write_image(path, seed, version, data_bytes):
@@ -34,7 +89,7 @@ def write_image(path, seed, version, data_bytes):
     return path
 
 
-def render(gui, vdev, destination, scenario):
+def render(gui, vdev, destination, scenario, cli=None):
     with tempfile.TemporaryDirectory(prefix='drivelink-gui-') as work:
         control = Path(work) / 'control'
         device = None
@@ -56,6 +111,10 @@ def render(gui, vdev, destination, scenario):
                 assert line.startswith('READY '), (line, device.poll())
                 endpoint = line[6:]
             screen = {'safe': 'device', 'fault': 'drawer', 'lost': 'device'}.get(scenario, scenario)
+            select = None
+            if scenario in LAYOUT:
+                screen, select, staged = LAYOUT[scenario]
+                provision(cli, endpoint, staged)
             out = destination / scenario
             # Isolated recent devices; let loop run time arrive before capture.
             command = [gui, '--screen', screen, '--out', str(out),
@@ -63,6 +122,8 @@ def render(gui, vdev, destination, scenario):
                        '--settle', '0' if scenario in ('connect', 'lost') else '1500']
             if endpoint:
                 command += ['--endpoint', endpoint]
+            if select:
+                command += ['--select', select]
             if scenario.startswith('update'):
                 # Large enough that the writing screen holds mid-transfer.
                 command += ['--image', str(write_image(Path(work) / 'drivelink_fw_2.1.0.bin', 77, '2.1.0', 1 << 20))]
@@ -94,6 +155,9 @@ def render(gui, vdev, destination, scenario):
             if os.environ.get('DRIVELINK_SCENARIO_LOG'):
                 print(scenario, ''.join(errors), flush=True)
             images = sorted(out.glob('*.png'))
+            if scenario in LAYOUT:
+                # The file names carry the screen, not the scenario.
+                assert all(image.name.startswith(screen) for image in images), images
             assert len(images) == 4, (scenario, images, output, errors)
             dimensions = []
             for image in images:
@@ -113,6 +177,7 @@ def main():
     parser.add_argument('--gui', required=True)
     parser.add_argument('--vdev', required=True)
     parser.add_argument('--backend', help='Repeat backend/safety tests before rendering')
+    parser.add_argument('--cli', help='drivelink-cli for the Layout fixtures (default: next to vdev)')
     parser.add_argument('--out', required=True)
     parser.add_argument('--smoke', action='store_true', help='Only Connect and device shell')
     parser.add_argument('--only', nargs='+', help='Render only these scenarios')
@@ -122,14 +187,16 @@ def main():
     os.environ.setdefault('QT_FORCE_STDERR_LOGGING', '1')
     if args.backend:
         subprocess.run([args.backend], check=True, timeout=300)
+    vdev = Path(args.vdev)
+    cli = args.cli or str(vdev.parent.parent / 'cli' / ('drivelink-cli' + vdev.suffix))
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'device', 'layout', 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                     ['connect', 'device', *LAYOUT, 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost',
                       'rename', 'reset', 'unsaved', 'notice',
                       'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:
-            render(args.gui, args.vdev, destination, scenario)
+            render(args.gui, args.vdev, destination, scenario, cli)
 
 
 if __name__ == '__main__':

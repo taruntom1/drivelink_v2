@@ -533,8 +533,8 @@ code and records the outcome here; the notes below give the detail.
 | Status bar faults badge: active faults only, or history too | closed by H2b-1: active only (STATUS active count); history stays in the drawer (user decision 2026-11-17) |
 | Reboot notice: which params changed since the last save (the GUI tracks them) | closed by H2b-1: the GUI keeps its changes since SAVE per device id; changes made elsewhere show as one generic line |
 | Device loop table: budget computed on the host (run time over period), loops keyed by id | closed by H2b-1: run time from GUI-owned free-slot subscriptions (user decision 2026-11-17) |
-| Layout pending-changes list (GET_PENDING plus staged ops), refused op keeps the typed value | H2c |
-| LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | H2c |
+| Layout pending-changes list (GET_PENDING plus staged ops), refused op keeps the typed value | closed by H2c-1: the list is the configured view against the pending view (every staged op is in the pending view); a refused value stays on its row with the reason until edited or Esc |
+| LP's placement enum (Core 0, Core 1, Any core; Any core is the Add loop default) in Add loop, loop detail and the Device table; not applied to the Figma frames (user decision 2026-11-15) | closed by H2c-1: Add loop and loop detail use the discovered enum and its default (any); the device's choice names are shown as served |
 | Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | H2d |
 | G5 1080p: Monitor plot fitting and paused toolbar | H2d |
 | G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |

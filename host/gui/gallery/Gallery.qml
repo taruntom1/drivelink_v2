@@ -189,6 +189,73 @@ Window {
         }
 
         Section {
+            title: "LAYOUT: NUMBER FIELD, SWITCH, TABS, FILTER CHIPS, MENU"
+            DLNumberField { width: 180; text: "0.85"; unit: "1/(rad/s)" }
+            DLNumberField { width: 180; text: "4.0"; unit: "1/rad"; status: DLNumberField.Edited }
+            DLNumberField { width: 180; text: "5000"; unit: "Hz"; status: DLNumberField.Clamped }
+            DLNumberField { width: 180; text: "abc"; status: DLNumberField.Rejected }
+            DLNumberField { width: 180; text: "14"; status: DLNumberField.Pending }
+            DLNumberField { width: 180; text: "1000"; unit: "Hz"; status: DLNumberField.Locked; enabled: false }
+            DLSwitch { checked: true; text: "realtime" }
+            DLSwitch { checked: false; text: "realtime" }
+            Row {
+                DLTabButton { text: "Params"; checked: true }
+                DLTabButton { text: "Calibration" }
+            }
+            Row {
+                spacing: Theme.space8
+                DLFilterChip { text: "All"; checked: true }
+                DLFilterChip { text: "Changed 2"; tone: DLBadge.Unsaved }
+                DLFilterChip { text: "Pending 1"; tone: DLBadge.Pending }
+            }
+            Rectangle {
+                width: 260; height: 140
+                color: Theme.bgRaised; radius: Theme.radiusMd
+                border.width: Theme.borderWidth; border.color: Theme.borderDefault
+                Column {
+                    x: Theme.space4; y: Theme.space4; width: parent.width - 2 * Theme.space4
+                    DLMenuItem { width: parent.width; text: "Instance"; detail: "8 of 16 instances" }
+                    DLMenuItem { width: parent.width; text: "Loop"; detail: "4 of 4 loops: remove a loop first"; enabled: false }
+                    DLMenuItem { width: parent.width; text: "Discard all" }
+                }
+            }
+        }
+
+        Section {
+            title: "LAYOUT: TREE ITEM, PARAM ROW, REF PICKER"
+            Column {
+                width: 400
+                spacing: Theme.space2
+                DLTreeItem { width: 400; isLoop: true; label: "control"; rateHz: 1000; realtime: true; budget: 0.041; hasBudget: true; selected: true }
+                DLTreeItem { width: 400; label: "left_drive"; typeName: "controller.cascade_pid"; depth: 1 }
+                DLTreeItem { width: 400; label: "left_pwm"; typeName: "actuator.mock"; depth: 2 }
+                DLTreeItem { width: 400; label: "aux_pwm"; typeName: "actuator.mock"; depth: 1; pending: "add"; health: 255 }
+                DLTreeItem { width: 400; label: "right_enc"; typeName: "feedback.quadrature"; depth: 1; health: 1; healthText: "failed" }
+                DLTreeItem { width: 400; isLoop: true; label: "fusion"; rateHz: 250; budget: 0.0075; hasBudget: true; pending: "change" }
+                DLTreeItem { width: 400; isLoop: true; label: "sensor"; rateHz: 100; health: 4; healthText: "offline" }
+            }
+            Column {
+                width: 900
+                spacing: Theme.space8
+                DLParamRow { width: 900; name: "vel.kp"; unit: "1/(rad/s)"; valueText: "0.85"; rangeText: "0 … 1000" }
+                DLParamRow { width: 900; name: "vel.ki"; unit: "1/rad"; valueText: "4.0"; unsaved: true }
+                DLParamRow { width: 900; name: "vel.d_cutoff"; unit: "Hz"; valueText: "5000"; editState: "clamped"; editNote: "Clamped by the device to 5000 (max)" }
+                DLParamRow { width: 900; name: "pwm_gpio"; editor: "gpio"; valueText: "17"; editState: "rejected"; editText: "18"; editNote: "GPIO 18 is already used by right_enc (pin_a)"; rebootRequired: true }
+                DLParamRow { width: 900; name: "priority"; valueText: "12"; pendingText: "14"; isPending: true; rebootRequired: true }
+                DLParamRow { width: 900; name: "rate_hz"; unit: "Hz"; valueText: "1000"; locked: true }
+                DLParamRow { width: 900; name: "mode"; editor: "enum"; enums: [{ value: 0, name: "open_loop" }, { value: 1, name: "velocity" }]; valueBits: 1 }
+                DLParamRow { width: 900; name: "realtime"; editor: "bool"; valueBits: 1; rebootRequired: true }
+            }
+            Column {
+                spacing: Theme.space8
+                DLRefPicker { width: 360; chipText: "actuator"; valueText: "left_pwm" }
+                DLRefPicker { width: 360; chipText: "feedback"; valueText: "Not wired"; status: DLRefPicker.Unset }
+                DLRefPicker { width: 360; chipText: "f32"; valueText: "right_enc.position"; status: DLRefPicker.Pending }
+                DLRefPicker { width: 360; chipText: "f32"; valueText: "imu.calibration_read"; status: DLRefPicker.Rejected }
+            }
+        }
+
+        Section {
             title: "TOAST, TOOLTIP"
             DLToast { tone: DLToast.Info; text: "Model reloaded: the descriptor hash changed."; timeout: 0 }
             DLToast { tone: DLToast.Ok; text: "Saved to flash."; timeout: 0 }

@@ -16,8 +16,10 @@ limits, ARM checks, faults, SAVE/REVERT, reboot, factory reset, safe-mode exit),
 the faults drawer, link-lost and reboot-notice overlays. Esc disarms through
 focused text fields and popups; the status bar remains above page scrims. GUI
 command groups send keepalives only, leaving input values unchanged. H2b-2
-adds the firmware update dialog and the Device page's Firmware update card;
-Layout, Tune and Monitor follow.
+adds the firmware update dialog and the Device page's Firmware update card.
+H2c-1 adds Layout: the instance tree by loop, loop and instance detail with
+typed param editors, wiring and source targets, Add instance/loop, Remove,
+labels, limits and the pending review with Discard all. Tune and Monitor follow.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
 ## Device identity (H1c)

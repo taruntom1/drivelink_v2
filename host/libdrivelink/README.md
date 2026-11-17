@@ -128,6 +128,11 @@ keep the Session alive longer than the model. Never load synchronously on I/O.
 the previous complete metadata. Reads span several device requests, not one
 device transaction: coordinate other writers when a stable view is required.
 Call an explicit reload after service mutations; the library never replays them.
+After a SET or a layout op, `refreshConfigAsync()` re-reads only the configured
+and pending layouts and every parameter (instances and system) with the
+descriptors already loaded; status and diagnostics are kept. It needs a ready
+snapshot of the current boot: a Boot or a full reload in between fails it
+without publishing, and the Boot reload replaces it.
 
 Status, core and diagnostic events update runtime fields: `status`, diagnostic
 entries, capture/testgen completion, `connected`, `generation`, `ready` and

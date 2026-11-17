@@ -85,6 +85,13 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never
   opens one (DTR/RTS can reset an ESP).
+- GUI Layout sends each SET and layout op once, then `refreshConfigAsync`; an
+  unanswered one is uncertain and read back, never retried. A param field sends
+  on Enter or focus loss only when its text differs from the device value and
+  the text last sent. Esc and DISARM (which takes no focus) cancel an open edit
+  unsent. Layout ops and reboot params are locked while armed; ARM is disabled
+  while a reboot is pending. Rules come from descriptors (loop masks, flags,
+  `ref:` categories, generated source signals), never from type names.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

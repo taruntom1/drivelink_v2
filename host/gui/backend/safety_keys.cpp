@@ -14,6 +14,14 @@ void SafetyKeys::remember(QObject *object) {
         m_editor=object;m_before=object->property("text");
     } else {m_editor.clear();m_before.clear();}
 }
+void SafetyKeys::cancelEdit() {
+    // Only the editor that still has focus: a field that already committed on
+    // focus loss keeps its value.
+    if(m_editor && m_editor->property("activeFocus").toBool()) {m_editor->setProperty("text",m_before);}
+}
+void SafetyKeys::editCommitted() {
+    if(m_editor && m_editor->property("activeFocus").toBool()) {m_before=m_editor->property("text");}
+}
 bool SafetyKeys::eventFilter(QObject *object,QEvent *event) {
     if(event->type()==QEvent::FocusIn) {remember(object);}
     if(event->type()==QEvent::KeyRelease && static_cast<QKeyEvent *>(event)->key()==Qt::Key_Escape) {m_escapeDown=false;}
@@ -31,7 +39,7 @@ bool SafetyKeys::eventFilter(QObject *object,QEvent *event) {
             m_escapeDown=true;
             // Restore before anything closes a popup or changes focus. Keep
             // the native Esc event for editor/popup cancellation as well.
-            if(m_editor) {m_editor->setProperty("text",m_before);}
+            cancelEdit();
             emit escapeRequested();
         }
         return false;

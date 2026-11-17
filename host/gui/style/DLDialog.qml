@@ -21,6 +21,11 @@ T.Dialog {
     // Extra content between the body and the actions (a field, a list).
     property alias extra: slot.data
     property bool acceptEnabled: true
+    // false: the accept button only emits acceptRequested and the dialog stays
+    // open (a device request answers first; the owner closes it on success).
+    property bool closeOnAccept: true
+    signal acceptRequested()
+    function requestAccept() { if (closeOnAccept) accept(); else acceptRequested() }
 
     anchors.centerIn: parent
     width: 480
@@ -47,8 +52,8 @@ T.Dialog {
     contentItem: Column {
         spacing: Theme.space16
         focus: true
-        Keys.onReturnPressed: if (!control.destructive && control.acceptEnabled) control.accept()
-        Keys.onEnterPressed: if (!control.destructive && control.acceptEnabled) control.accept()
+        Keys.onReturnPressed: if (!control.destructive && control.acceptEnabled) control.requestAccept()
+        Keys.onEnterPressed: if (!control.destructive && control.acceptEnabled) control.requestAccept()
 
         Text {
             objectName: "title"
@@ -134,7 +139,7 @@ T.Dialog {
                     kind: control.destructive ? DLButton.Danger : DLButton.Primary
                     enabled: control.acceptEnabled
                     text: control.acceptText
-                    onClicked: control.accept()
+                    onClicked: control.requestAccept()
                 }
             }
         }

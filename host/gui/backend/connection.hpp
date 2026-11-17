@@ -1,5 +1,6 @@
 #pragma once
 #include "device_models.hpp"
+#include "layout_model.hpp"
 #include "models.hpp"
 #include "ota_model.hpp"
 #include <QElapsedTimer>
@@ -55,6 +56,13 @@ class Connection : public QObject {
     Q_PROPERTY(QAbstractItemModel* instances READ instances CONSTANT)
     Q_PROPERTY(QAbstractItemModel* loops READ loops CONSTANT)
     Q_PROPERTY(QAbstractItemModel* faults READ faults CONSTANT)
+    // Layout: the tree (pending and configured views), the selected node's
+    // params, and everything else the page shows (counts, the selected node's
+    // header, wiring and source rows, loop members, pending changes, why ops
+    // are blocked).
+    Q_PROPERTY(QAbstractItemModel* layoutTree READ layoutTree CONSTANT)
+    Q_PROPERTY(QAbstractItemModel* params READ params CONSTANT)
+    Q_PROPERTY(QVariantMap layout READ layout NOTIFY changed)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -97,6 +105,33 @@ public:
     virtual QAbstractItemModel *instances()=0;
     virtual QAbstractItemModel *loops()=0;
     virtual QAbstractItemModel *faults()=0;
+    virtual QAbstractItemModel *layoutTree()=0;
+    virtual QAbstractItemModel *params()=0;
+    virtual QVariantMap layout() const=0;
+    // Layout. Every mutation is sent once and followed by a configuration
+    // refresh; an unanswered one is reported as uncertain, never repeated.
+    Q_INVOKABLE virtual void selectNode(const QString &key)=0;
+    // filter: 0 All, 1 Changed, 2 Pending; text matches param names.
+    Q_INVOKABLE virtual void setParamFilter(int filter,const QString &text)=0;
+    // A typed value: parsed with the descriptor, refused locally when it does
+    // not parse (nothing sent), else SET once.
+    Q_INVOKABLE virtual void setParamText(const QString &itemKey,const QString &text)=0;
+    // An enum, bool, wiring or source choice by its value bits.
+    Q_INVOKABLE virtual void setParamValue(const QString &itemKey,quint32 bits)=0;
+    // Drops a refused or edited row's kept value (Esc, or a new edit).
+    Q_INVOKABLE virtual void clearParamEdit(const QString &itemKey)=0;
+    // Wiring or source targets for a param: {value, text, detail, enabled, reason}.
+    Q_INVOKABLE virtual QVariantList layoutCandidates(const QString &itemKey) const=0;
+    // Module types for Add instance: {type, name, need, loops[], defaultLoop}.
+    Q_INVOKABLE virtual QVariantList addInstanceTypes() const=0;
+    // The loop type's params for Add loop: {id, name, editor, value, ...}.
+    Q_INVOKABLE virtual QVariantList addLoopFields() const=0;
+    Q_INVOKABLE virtual void addInstance(int type,const QString &label,int loop)=0;
+    // fields: item id (as text) → value text.
+    Q_INVOKABLE virtual void addLoop(const QString &label,const QVariantMap &fields)=0;
+    Q_INVOKABLE virtual void removeNode(const QString &key)=0;
+    Q_INVOKABLE virtual void setNodeLabel(const QString &key,const QString &label)=0;
+    Q_INVOKABLE virtual void discardPending()=0;
     Q_INVOKABLE virtual void connectTo(const QString &endpoint,int baud=921600)=0;
     Q_INVOKABLE virtual void retry()=0;
     Q_INVOKABLE virtual void disconnectDevice()=0;
@@ -137,6 +172,9 @@ signals:
     void armRefused(QString reason);
     // Separate from changed(): the list only changes on connect/rename/forget.
     void recentDevicesChanged();
+    // A layout op finished (op: addInstance, addLoop, remove, label, discard).
+    // Dialogs show a refusal next to their button and close on success.
+    void layoutResult(QString op,bool ok,QString message);
 };
 
 class LocalConnection final : public Connection {
@@ -184,6 +222,26 @@ public:
     QAbstractItemModel *instances() override {return &m_instances;}
     QAbstractItemModel *loops() override {return &m_loops;}
     QAbstractItemModel *faults() override {return &m_faults;}
+    QAbstractItemModel *layoutTree() override {return &m_layoutTree;}
+    QAbstractItemModel *params() override {return &m_params;}
+    QVariantMap layout() const override;
+    void selectNode(const QString &key) override;
+    void setParamFilter(int filter,const QString &text) override;
+    void setParamText(const QString &itemKey,const QString &text) override;
+    void setParamValue(const QString &itemKey,quint32 bits) override;
+    void clearParamEdit(const QString &itemKey) override;
+    QVariantList layoutCandidates(const QString &itemKey) const override;
+    QVariantList addInstanceTypes() const override;
+    QVariantList addLoopFields() const override;
+    void addInstance(int type,const QString &label,int loop) override;
+    void addLoop(const QString &label,const QVariantMap &fields) override;
+    void removeNode(const QString &key) override;
+    void setNodeLabel(const QString &key,const QString &label) override;
+    void discardPending() override;
+    // Why layout ops (add, remove, label, discard, reboot params) are refused
+    // now; empty when they are allowed.
+    QString layoutBlocked() const;
+    QString selectedNode() const {return m_selected;}
     void connectTo(const QString &,int baud=921600) override;
     void retry() override;
     void disconnectDevice() override;
@@ -249,6 +307,27 @@ private:
     void otaStop(OtaJob::Phase phase,const QString &message);
     void otaInterrupted(const QString &why);
     QString firmwareActionBlocked() const;
+    // Layout (connection_layout.cpp).
+    LayoutTree m_layoutTree;
+    ParamTable m_params;
+    QString m_selected,m_paramFilterText;
+    int m_paramFilter=0;
+    bool m_paramsArmed=false,m_layoutReady=false;
+    // Per item key: sending, applied, clamped, rejected, uncertain.
+    QHash<QString,ParamEdit> m_edits;
+    // Params this GUI changed since the last SAVE, per device id.
+    QHash<QString,QSet<QString>> m_changedParams;
+    void rebuildLayout(bool metadata);
+    void updateParams();
+    void sendParam(const Ref &,uint32_t bits,const QString &text);
+    void refreshConfig();
+    void runLayoutOp(const QString &op,std::function<int(Client &)> work,std::function<QString(int)> done,
+                     std::optional<InstanceKey> removed={});
+    // Staged (pending) changes this GUI made, per device id: their lines in
+    // m_changes go when Discard all drops them.
+    QHash<QString,QStringList> m_stagedLines;
+    void noteStaged(const QString &id,const QString &line) {m_changes[id]<<line;m_stagedLines[id]<<line;}
+    void forgetChanges(const QString &id) {m_changes.remove(id);m_changedParams.remove(id);m_stagedLines.remove(id);}
     std::shared_ptr<Context> m_context;
     std::thread m_opener;
     std::shared_ptr<GuiDispatch> m_dispatch;
