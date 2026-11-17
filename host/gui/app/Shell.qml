@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic as Basic
+import QtQuick.Dialogs
 import DriveLink.Style
 
 Basic.ApplicationWindow {
@@ -18,17 +19,22 @@ Basic.ApplicationWindow {
     readonly property var backend: connection
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
-    readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible
+    readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
     readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || overlayOpen
     property alias endpointField: connectPage.tcpField
     property alias statusBar: status
     property alias dialog: dialog
     property alias scrim: scrim
     property alias toastCount: toasts.count
+    property alias otaDialog: otaDialog
+    // Opens the firmware image picker (G3 "Choose image…").
+    function chooseFirmware() { if (connection.firmware.updateBlocked === "") imagePicker.open() }
 
     function cancelOverlay() {
         drawerOpen = false; armPopoverOpen = false
         dialog.reject(); renameDialog.reject(); resetDialog.reject()
+        // Esc closes the image choice; a running update is never aborted by Esc.
+        if (otaDialog.choosing) otaDialog.cancel()
     }
     function notify(message, tone) {
         if (toasts.count >= 4) toasts.remove(0)
@@ -67,7 +73,9 @@ Basic.ApplicationWindow {
         deviceName: shell.backend.deviceName
         deviceId: shell.backend.deviceId
         connection: shell.backend.endpoint
-        reason: shell.backend.reason
+        // While an update runs the centre names its step (G3 frames).
+        reason: shell.backend.ota.active === true ? qsTr("Firmware update · %1").arg(shell.backend.ota.phase)
+                                                  : shell.backend.reason
         armEnabled: shell.backend.armEnabled
         armBlockedReason: shell.backend.armBlockedReason
         ackEnabled: shell.backend.ackEnabled
@@ -154,6 +162,7 @@ Basic.ApplicationWindow {
                     onFactoryResetRequested: resetDialog.open()
                     onFaultsRequested: shell.drawerOpen = true
                     onLoopRequested: function(loopId) { shell.layoutLoop = loopId; shell.page = 1 }
+                    onUpdateRequested: shell.chooseFirmware()
                 }
                 Column {
                     anchors.fill: parent; anchors.margins: Theme.space24
@@ -255,7 +264,7 @@ Basic.ApplicationWindow {
             objectName: "linkLostOverlay"
             anchors.centerIn: parent
             width: 520
-            visible: connection.linkLost && !connection.linked && !connection.loading && !connection.reconnecting
+            visible: connection.linkLost && !connection.linked && !connection.loading && !connection.reconnecting && !otaDialog.visible
             title: qsTr("Link lost")
             Text {
                 width: parent.width; wrapMode: Text.Wrap
@@ -280,7 +289,7 @@ Basic.ApplicationWindow {
             objectName: "reconnectOverlay"
             anchors.centerIn: parent
             width: 520
-            visible: connection.reconnecting
+            visible: connection.reconnecting && !otaDialog.visible
             title: qsTr("Device is rebooting")
             DLCheckItem {
                 width: parent.width
@@ -296,7 +305,8 @@ Basic.ApplicationWindow {
             objectName: "rebootNotice"
             anchors.centerIn: parent
             width: 560
-            visible: connection.ready && connection.rebootNotice.visible === true
+            // After an update the dialog reports first; the notice follows it.
+            visible: connection.ready && connection.rebootNotice.visible === true && !otaDialog.visible
             title: connection.rebootNotice.expected ? qsTr("Device rebooted") : qsTr("Device rebooted unexpectedly")
             InfoRow { label: qsTr("Requested"); value: connection.rebootNotice.cause || qsTr("No") }
             InfoRow { label: qsTr("Reset reason"); value: connection.rebootNotice.reason || "" }
@@ -316,6 +326,23 @@ Basic.ApplicationWindow {
                 }
             }
             DLButton { objectName: "noticeOk"; kind: DLButton.Primary; text: qsTr("OK"); onClicked: connection.dismissRebootNotice() }
+        }
+        OtaDialog {
+            id: otaDialog
+            anchors.centerIn: parent
+            backend: shell.backend
+            onChooseAnother: imagePicker.open()
+        }
+        // Non-modal and offered only while disarmed: an update needs a
+        // disarmed device and blocks ARM, so DISARM stays the only live
+        // safety action and remains reachable in the status bar.
+        FileDialog {
+            id: imagePicker
+            title: qsTr("Choose a firmware image")
+            fileMode: FileDialog.OpenFile
+            modality: Qt.NonModal
+            nameFilters: [qsTr("ESP32-S3 application (*.bin)"), qsTr("All files (*)")]
+            onAccepted: otaDialog.choice = connection.inspectImage(selectedFile.toString())
         }
         DLDialog {
             id: dialog

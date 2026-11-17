@@ -80,7 +80,7 @@ OperationResult Client::otaAbort() try
 { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Abort));checkReply(r,4);empty(r);return {}; } catch(Error &e) { contextualize(e,9,4,true);throw; }
 OperationResult Client::otaConfirm() try
 { const auto r=m_session.request(kFamily,op(p::defs::OtaOp::Confirm));checkReply(r,5);empty(r);return {}; } catch(Error &e) { contextualize(e,9,5,true);throw; }
-OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::function<bool(uint32_t,uint32_t)> &progress) {
+OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const std::function<bool(const OtaProgress &)> &progress) {
     p::Sha256Digest identity;
     if (!window || window>p::kOtaWindow || !p::otaImageIdentity(image,identity)) { throw Error(ErrorKind::Usage,"invalid OTA image/window"); }
     const auto digest=p::sha256(image);const auto size=static_cast<uint32_t>(image.size());
@@ -108,10 +108,10 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
             if (e.kind!=ErrorKind::Timeout) { throw; }
             unresolved=e.outcome_unknown;status=otaStatus();offset=verify(status,0,size);unresolved=false;
         }
-        unsigned retries=0;
+        unsigned retries=0;uint32_t resent=0;
         while (offset<size) {
             if (std::chrono::steady_clock::now()>deadline) { throw Error(ErrorKind::Timeout,"OTA upload deadline exceeded"); }
-            if (progress && !progress(offset,size)) { throw Error(ErrorKind::Usage,"OTA upload cancelled"); }
+            if (progress && !progress({offset,size,resent})) { throw Error(ErrorKind::Usage,"OTA upload cancelled"); }
             std::array<Bytes,p::kOtaWindow> bodies;uint32_t end=offset;size_t count=0;
             for (;count<window && end<size;++count) {
                 const auto n=std::min<size_t>(chunk_bytes,size-end);bodies[count]=writeBody(end,image.subspan(end,n));end+=static_cast<uint32_t>(n);
@@ -139,10 +139,13 @@ OtaStatus Client::otaUpload(std::span<const uint8_t> image,uint8_t window,const 
             const auto current=reconcile ? verify(otaStatus(),offset,end) : end;
             unresolved=false;
             if (current==offset && ++retries>5) { throw Error(ErrorKind::Timeout,"OTA upload made no progress"); }
-            if (current!=offset) { retries=0; }offset=current;
+            if (current!=offset) { retries=0; }
+            // Chunks past the acknowledged offset go out again with identical data.
+            if (current<end) { resent+=(end-current+chunk_bytes-1U)/chunk_bytes; }
+            offset=current;
             if (reconcile) { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
         }
-        if (progress && !progress(size,size)) { throw Error(ErrorKind::Usage,"OTA upload cancelled"); }
+        if (progress && !progress({size,size,resent})) { throw Error(ErrorKind::Usage,"OTA upload cancelled"); }
         try { (void)otaFinish(); }
         catch (const Error &e) {
             if (e.kind!=ErrorKind::Timeout) { throw; }

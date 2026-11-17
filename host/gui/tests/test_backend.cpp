@@ -1,4 +1,5 @@
 #include "connection.hpp"
+#include "../../../protocol/test/ota_fixture.hpp"
 #include "safety_keys.hpp"
 #include "style.hpp"
 #include <drivelink/protocol/core_codec.hpp>
@@ -18,8 +19,10 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QtTest>
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 
 using namespace drivelink;
@@ -30,6 +33,25 @@ bool waitFor(const std::function<bool()> &condition,int timeout=8000) {
     QElapsedTimer elapsed;elapsed.start();
     while(!condition() && elapsed.elapsed()<timeout) {QCoreApplication::processEvents();QTest::qWait(10);}
     return condition();
+}
+// A structurally valid, non-executable app image for vdev with this version
+// string in its app descriptor (the fixture's checksum and SHA re-sealed).
+QString writeImage(const QTemporaryDir &dir,const QString &name,uint8_t seed,const char *version,size_t bytes=4096) {
+    auto image=otaFixture(bytes,seed);
+    const size_t data=std::max<size_t>(256,(bytes+3)&~size_t(3)),end=image.size()-32;
+    std::fill_n(image.begin()+48,32,uint8_t(0));std::copy_n(version,std::strlen(version),image.begin()+48);
+    uint8_t checksum=0xef;for(size_t i=32;i<32+data;++i) {checksum^=image[i];}
+    image[end-1]=checksum;
+    const auto digest=protocol::sha256(std::span(image).first(end));std::copy(digest.begin(),digest.end(),image.begin()+end);
+    QFile file(dir.filePath(name));
+    if(!file.open(QIODevice::WriteOnly) || file.write(reinterpret_cast<const char *>(image.data()),qint64(image.size()))!=qint64(image.size())) {
+        throw std::runtime_error("cannot write image");
+    }
+    return file.fileName();
+}
+QString otaText(LocalConnection &c) {
+    const auto ota=c.ota();
+    return QString("phase %1: %2 / %3").arg(ota["phase"].toString(),ota["note"].toString(),c.lastError()["message"].toString());
 }
 QQuickItem *visualChild(QQuickItem *parent,const QString &name) {
     if(parent->objectName()==name) {return parent;}
@@ -591,6 +613,19 @@ private slots:
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
     }
 #ifndef Q_OS_WIN
+    // Same-link update (as on a serial port): the link stays open, the GUI
+    // waits for Boot, then checks and confirms on the reloaded model.
+    void firmwareUpdateBootInPlace() {
+        Fixture fixture(false,true);QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        const auto start=c.otaStatus()->running_slot;
+        c.inspectImage(writeImage(dir,"p.bin",71,"7.0.0"));c.startUpdate(true);
+        bool reconnected=false;
+        QVERIFY2(waitFor([&]{reconnected|=c.reconnecting();return c.ota()["phase"]=="confirmed";},30000),qPrintable(otaText(c)));
+        QVERIFY(!reconnected);QVERIFY(c.otaStatus()->running_slot!=start);QVERIFY(!c.otaStatus()->pending_confirm);
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.closeUpdate();c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
     void bootDuringCommandSetup() {
         Fixture fixture(false,true);fixture.command("drop-config-reply 1");
         LocalConnection c;c.connectTo(fixture.endpoint);
@@ -602,6 +637,206 @@ private slots:
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
     }
 #endif
+    void otaViewModel() {
+        OtaJob job;job.image=std::make_shared<const OtaImage>(describeOtaImage(otaFixture(4096,3)));
+        job.fileName="a.bin";job.previousVersion="1.0.0";job.deviceId="02444c000001";
+        job.phase=OtaJob::Phase::Writing;job.offset=2048;job.retries=2;
+        auto view=otaView(job,"1.0.0");auto steps=view["steps"].toList();
+        QCOMPARE(view["phase"].toString(),QString("writing"));QCOMPARE(steps.size(),6);
+        QCOMPARE(steps[1].toMap()["state"].toString(),QString("active"));
+        QVERIFY(steps[1].toMap()["detail"].toString().contains("2 chunks retried"));
+        QVERIFY(view["canAbort"].toBool());QVERIFY(!view["canClose"].toBool());QCOMPARE(view["percent"].toInt(),49);
+        job.phase=OtaJob::Phase::Unconfirmed;view=otaView(job,{});steps=view["steps"].toList();
+        QVERIFY(view["canConfirm"].toBool() && view["canRollBack"].toBool() && view["canClose"].toBool());
+        QCOMPARE(steps[4].toMap()["state"].toString(),QString("pass"));QCOMPARE(steps[5].toMap()["state"].toString(),QString("pending"));
+        job.phase=OtaJob::Phase::RolledBack;job.resetReason="Task watchdog";view=otaView(job,{});steps=view["steps"].toList();
+        QCOMPARE(steps[3].toMap()["state"].toString(),QString("pass"));
+        QCOMPARE(steps[4].toMap()["state"].toString(),QString("fail"));QCOMPARE(steps[5].toMap()["state"].toString(),QString("fail"));
+        QCOMPARE(view["tone"].toString(),QString("fault"));QVERIFY(view["canCopy"].toBool());
+        QVERIFY(view["explanation"].toString().contains("Task watchdog"));
+        job.rollback=true;view=otaView(job,{});steps=view["steps"].toList();   // the user's roll back
+        QCOMPARE(steps[4].toMap()["state"].toString(),QString("pass"));QCOMPARE(steps[5].toMap()["state"].toString(),QString("pending"));
+        QCOMPARE(view["tone"].toString(),QString("pending"));QVERIFY(view["explanation"].toString().isEmpty());job.rollback=false;
+        job.phase=OtaJob::Phase::Writing;job.failedAt=OtaJob::Phase::Writing;
+        job.phase=OtaJob::Phase::Failed;job.failedAt=OtaJob::Phase::Rebooting;job.message="refused";
+        view=otaView(job,{});steps=view["steps"].toList();
+        QCOMPARE(steps[2].toMap()["state"].toString(),QString("pass"));QCOMPARE(steps[3].toMap()["state"].toString(),QString("fail"));
+        QCOMPARE(view["note"].toString(),QString("refused"));
+        FirmwareFacts facts;facts.version="1.0.0";OtaStatus status;status.running_slot=1;status.boot_slot=1;
+        status.pending_confirm=true;status.capacity=0x400000;facts.status=status;
+        auto card=firmwareView(facts);
+        QVERIFY(card["canConfirm"].toBool());QVERIFY(!card["canAbort"].toBool());
+        QVERIFY(card["note"].toString().contains("did not install"));QVERIFY(card["running"].toString().contains("not confirmed"));
+        facts.knownCandidate=true;QVERIFY(!firmwareView(facts)["note"].toString().contains("did not install"));
+        status.pending_confirm=false;status.state=2;status.size=4096;facts.status=status;card=firmwareView(facts);
+        QVERIFY(card["canAbort"].toBool());QVERIFY(card["state"].toString().contains("prepared"));
+        status.boot_slot=0;facts.status=status;QVERIFY(!firmwareView(facts)["canAbort"].toBool()); // already committed
+    }
+    // Upload, one REBOOT, reconnect, identity check and one CONFIRM; then an
+    // unconfirmed install confirmed explicitly, and one rolled back.
+    void firmwareUpdate() {
+        Fixture fixture;QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        const auto start=*c.otaStatus();QCOMPARE(start.state,uint8_t(0));QVERIFY(!start.pending_confirm);
+        QVERIFY(!c.inspectImage(dir.filePath("missing.bin"))["ok"].toBool());
+        const auto a=writeImage(dir,"a.bin",21,"2.1.0");
+        const auto info=c.inspectImage(QUrl::fromLocalFile(a).toString());
+        QVERIFY2(info["ok"].toBool(),qPrintable(info["problem"].toString()));QCOMPARE(info["version"].toString(),QString("2.1.0"));
+        c.startUpdate(true);
+        QVERIFY(c.ota()["active"].toBool());QVERIFY(!c.armEnabled());QVERIFY(c.armBlockedReason().contains("firmware update"));
+        QVERIFY(c.actionBlocked()["save"].toString().contains("firmware update"));
+        QVERIFY(!c.updateBlocked().isEmpty());
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="confirmed";},30000),qPrintable(otaText(c)));
+        QVERIFY(c.ready());QVERIFY(!c.otaStatus()->pending_confirm);QVERIFY(c.otaStatus()->running_slot!=start.running_slot);
+        QCOMPARE(QString::fromStdString(c.snapshot()->info.build_id),info["buildId"].toString());
+        QCOMPARE(c.rebootNotice()["cause"].toString(),QString("Firmware update"));
+        QVERIFY(c.firmware()["lastUpdate"].toString().contains("2.1.0"));
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.closeUpdate();QVERIFY(c.ota().isEmpty());c.dismissRebootNotice();
+        QVERIFY2(waitFor([&]{return c.armEnabled();}),qPrintable(c.armBlockedReason()));
+        // Installed without confirming: pending, ARM refused by the device;
+        // the user's Confirm sends it once after the identity check.
+        const auto confirmedSlot=c.otaStatus()->running_slot;
+        c.inspectImage(writeImage(dir,"b.bin",22,"2.2.0"));c.startUpdate(false);
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="unconfirmed";},30000),qPrintable(otaText(c)));
+        QVERIFY(c.otaStatus()->pending_confirm);QVERIFY(c.firmware()["canConfirm"].toBool());
+        QVERIFY(waitFor([&]{return !c.armEnabled();}));QVERIFY(fixture.stats().contains("reboots 2\n"));
+        QVERIFY(!c.updateBlocked().isEmpty());
+        c.confirmFirmware();
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="confirmed";},10000),qPrintable(otaText(c)));
+        QVERIFY(!c.otaStatus()->pending_confirm);QVERIFY(c.otaStatus()->running_slot!=confirmedSlot);
+        c.closeUpdate();c.dismissRebootNotice();QVERIFY(waitFor([&]{return c.armEnabled();}));
+        // Installed without confirming, then rolled back with one REBOOT.
+        const auto keptSlot=c.otaStatus()->running_slot;const auto keptBuild=c.snapshot()->info.build_id;
+        c.inspectImage(writeImage(dir,"c.bin",23,"9.9.9"));c.startUpdate(false);
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="unconfirmed";},30000),qPrintable(otaText(c)));
+        c.rollBackFirmware();
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="rolledBack";},30000),qPrintable(otaText(c)));
+        QCOMPARE(c.otaStatus()->running_slot,keptSlot);QVERIFY(!c.otaStatus()->pending_confirm);
+        QCOMPARE(c.snapshot()->info.build_id,keptBuild);
+        QCOMPARE(c.rebootNotice()["cause"].toString(),QString("Roll back firmware update"));
+        QVERIFY(c.firmware()["lastUpdate"].toString().contains("rolled back"));
+        QVERIFY(fixture.stats().contains("reboots 4\n"));
+        c.closeUpdate();c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
+    // Abort while writing (DISARM stays live), and a lost REBOOT that is
+    // never repeated: the prepared image waits and blocks plain reboots.
+    void firmwareUpdateAbortAndLostReboot() {
+        Fixture fixture;QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        c.inspectImage(writeImage(dir,"big.bin",31,"3.0.0",256*1024));c.setOtaPauseAt(40);c.startUpdate(true);
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="writing" && c.ota()["percent"].toInt()>=40;},15000),qPrintable(otaText(c)));
+        QVERIFY(c.ota()["active"].toBool());QVERIFY(!c.reason().startsWith("Firmware update"));
+        const auto disarms=fixture.stats();c.disarm();
+        QVERIFY(waitFor([&]{return fixture.stats()!=disarms;}));     // fast DISARM bypasses the busy service queue
+        c.abortUpdate();QVERIFY(!c.ota()["canAbort"].toBool());
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="aborted";},10000),qPrintable(otaText(c)));
+        QVERIFY(waitFor([&]{return c.otaStatus() && c.otaStatus()->state==0;}));
+        c.setOtaPauseAt(-1);c.closeUpdate();
+        QVERIFY(fixture.stats().contains("reboots 0\n"));
+        // No reply and no reboot: wait out the window; REBOOT is not sent again.
+        c.setReconnectWindow(3000);fixture.command("drop-reboot 1");
+        c.inspectImage(writeImage(dir,"small.bin",32,"3.0.1"));c.startUpdate(true);
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="failed";},20000),qPrintable(otaText(c)));
+        QVERIFY(c.ota()["note"].toString().contains("did not reboot"));
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        QVERIFY(waitFor([&]{return c.otaStatus() && c.otaStatus()->state==2;}));
+        QVERIFY(c.actionBlocked()["reboot"].toString().contains("prepared"));
+        QVERIFY(c.firmware()["canAbort"].toBool());
+        c.closeUpdate();c.abortPreparedUpdate();
+        QVERIFY(waitFor([&]{return c.otaStatus() && c.otaStatus()->state==0 && !c.configBusy();}));
+        QVERIFY(c.actionBlocked()["reboot"].toString().isEmpty());
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
+    // Stop and disconnect while the device has not come back: the update
+    // ends as failed instead of waiting for a link that will not open.
+    void firmwareUpdateDisconnectWhileReconnecting() {
+        Fixture fixture;QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled() && c.firmware()["known"].toBool();}));
+        c.inspectImage(writeImage(dir,"r.bin",61,"6.0.0"));c.startUpdate(true);
+        QVERIFY2(waitFor([&]{return c.reconnecting();},15000),qPrintable(otaText(c)));
+        fixture.process.kill();fixture.process.waitForFinished(5000);
+        QVERIFY(waitFor([&]{return c.reconnecting() && !c.linked();}));
+        c.disconnectDevice();
+        QVERIFY2(waitFor([&]{return c.ota()["phase"]=="failed" && !c.closing() && !c.reconnecting();}),qPrintable(otaText(c)));
+        QVERIFY(c.ota()["note"].toString().contains("unconfirmed"));QVERIFY(c.ota()["canClose"].toBool());
+        c.closeUpdate();QVERIFY(c.ota().isEmpty());
+    }
+    // A prepared image and an unconfirmed build that another client left.
+    void foreignOtaStates() {
+        Fixture fixture;QTemporaryDir dir;
+        const auto image=loadOtaImage(writeImage(dir,"x.bin",41,"4.0.0").toStdString());
+        {Session s(fixture.endpoint.toStdString());Client client(s);client.info();QCOMPARE(client.otaUpload(image.bytes).state,uint8_t(2));}
+        LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.ready() && c.firmware()["known"].toBool();}));
+        QCOMPARE(c.otaStatus()->state,uint8_t(2));QVERIFY(c.firmware()["canAbort"].toBool());
+        QVERIFY(c.actionBlocked()["reboot"].toString().contains("prepared"));
+        QVERIFY(c.actionBlocked()["saveAndReboot"].toString().contains("prepared"));
+        QVERIFY(c.updateBlocked().contains("unfinished"));
+        c.abortPreparedUpdate();QVERIFY(waitFor([&]{return c.otaStatus() && c.otaStatus()->state==0 && !c.configBusy();}));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
+        OtaUpdateOptions options;options.confirm=false;
+        const auto installed=otaUpdate(fixture.endpoint.toStdString(),SessionOptions{},image,options);
+        QVERIFY(installed.rebooted);QVERIFY(!installed.confirmed);
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.ready() && c.firmware()["known"].toBool();}));
+        QVERIFY(c.otaStatus()->pending_confirm);QVERIFY(c.firmware()["note"].toString().contains("did not install"));
+        QVERIFY(waitFor([&]{return !c.armEnabled();}));
+        c.confirmFirmware();
+        QVERIFY(waitFor([&]{return c.otaStatus() && !c.otaStatus()->pending_confirm && !c.configBusy();},10000));
+        QVERIFY(c.ota().isEmpty());QVERIFY(waitFor([&]{return c.armEnabled();}));
+        QVERIFY(fixture.stats().contains("reboots 1\n"));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
+    // The H2b-2 bare-board OTA check, skipped unless both
+    // DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_OTA_IMAGE are set.
+    // Installs the image through the GUI backend and confirms it; with
+    // DRIVELINK_GUI_BENCH_OTA_RESTORE it then installs that image (the
+    // board's original application) the same way.
+    void benchOta() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        const auto candidate=qEnvironmentVariable("DRIVELINK_GUI_BENCH_OTA_IMAGE");
+        if(endpoint.isEmpty() || candidate.isEmpty()) {QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_OTA_IMAGE");}
+        const auto restore=qEnvironmentVariable("DRIVELINK_GUI_BENCH_OTA_RESTORE");
+        QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(endpoint);
+        QVERIFY2(waitFor([&]{return c.ready() && c.firmware()["known"].toBool();},30000),qPrintable(c.lastError()["message"].toString()));
+        QVERIFY2(!c.unsaved() && !c.pendingReboot(),"refusing to run with unsaved or pending changes");
+        QVERIFY2(c.updateBlocked().isEmpty(),qPrintable(c.updateBlocked()));
+        const auto name=c.deviceName();const auto layout=c.snapshot()->configured.size();
+        auto install=[&](const QString &path) {
+            const auto before=*c.otaStatus();
+            const auto info=c.inspectImage(path);
+            QVERIFY2(info["ok"].toBool(),qPrintable(info["problem"].toString()));
+            qInfo("bench OTA: %s %s build %s from slot %d",qPrintable(info["fileName"].toString()),qPrintable(info["version"].toString()),
+                  qPrintable(info["buildId"].toString()),before.running_slot);
+            QElapsedTimer timer;timer.start();c.startUpdate(true);
+            QVERIFY2(waitFor([&]{return c.ota()["active"].toBool() && c.ota()["phase"]=="writing";},10000),qPrintable(otaText(c)));
+            QVERIFY(!c.armEnabled());
+            QVERIFY2(waitFor([&]{return !c.ota()["active"].toBool();},240000),qPrintable(otaText(c)));
+            const auto ota=c.ota();
+            for(const auto &step:ota["steps"].toList()) {
+                qInfo("bench OTA:   %s [%s] %s",qPrintable(step.toMap()["label"].toString()),qPrintable(step.toMap()["state"].toString()),
+                      qPrintable(step.toMap()["detail"].toString()));
+            }
+            QVERIFY2(ota["phase"]=="confirmed",qPrintable(otaText(c)));
+            QVERIFY(waitFor([&]{return c.otaStatus().has_value();}));
+            const auto after=*c.otaStatus();
+            qInfo("bench OTA: confirmed in %.1f s, slot %d -> %d, build %s, reset reason '%s'",timer.elapsed()/1000.0,before.running_slot,
+                  after.running_slot,c.snapshot()->info.build_id.c_str(),qPrintable(c.rebootNotice()["reason"].toString()));
+            QVERIFY(after.running_slot!=before.running_slot);QVERIFY(!after.pending_confirm);QCOMPARE(after.state,uint8_t(0));
+            QCOMPARE(QString::fromStdString(c.snapshot()->info.build_id),info["buildId"].toString());
+            QCOMPARE(c.rebootNotice()["cause"].toString(),QString("Firmware update"));
+            QVERIFY(c.rebootNotice()["lost"].toStringList().isEmpty());
+            c.closeUpdate();c.dismissRebootNotice();
+            QCOMPARE(c.deviceName(),name);QCOMPARE(c.snapshot()->configured.size(),layout);
+            QVERIFY2(waitFor([&]{return c.armEnabled();},15000),qPrintable(c.armBlockedReason()));
+        };
+        install(candidate);
+        if(QTest::currentTestFailed()) {return;}
+        if(!restore.isEmpty()) {install(restore);}
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
+    }
     // The H2b bare-board check, skipped unless DRIVELINK_GUI_BENCH_ENDPOINT
     // names a device (serial://COM3, or a vdev tcp:// endpoint for a dry run).
     // Runs on the normal firmware: a temporary mock actuator raises the fault,
@@ -688,6 +923,54 @@ private slots:
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
         Session s(endpoint.toStdString());Client raw(s);QCOMPARE(QString::fromStdString(raw.info().name),original);
         for(const auto &g:raw.groups().groups) {QVERIFY(!g.configured);}
+    }
+    // The OTA dialog in the real shell: it blocks the page like a dialog,
+    // Install starts the update, DISARM in the status bar stays clickable.
+    void otaDialogInShell() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);
+        Fixture fixture;QTemporaryDir dir;LocalConnection connection;connection.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;connect(&keys,&SafetyKeys::escapeRequested,&connection,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled() && connection.firmware()["known"].toBool();}));
+        auto *card=window->findChild<QQuickItem *>("chooseImageButton");QVERIFY(card);QVERIFY(card->isEnabled());
+        auto *dialog=window->property("otaDialog").value<QQuickItem *>();QVERIFY(dialog);QVERIFY(!dialog->isVisible());
+        dialog->setProperty("choice",connection.inspectImage(writeImage(dir,"s.bin",51,"5.0.0")));
+        QVERIFY(waitFor([&]{return dialog->isVisible() && window->property("modalOpen").toBool();}));
+        auto *scrim=window->findChild<QQuickItem *>("pageScrim");auto *bar=window->findChild<QQuickItem *>("statusBar");
+        QVERIFY(scrim && bar && scrim->isVisible());QCOMPARE(scrim->mapToScene({0,0}).y(),bar->height());
+        // Esc closes the choice (and disarms); nothing was started.
+        QTest::keyClick(window,Qt::Key_Escape);QVERIFY(waitFor([&]{return !dialog->isVisible();}));
+        QVERIFY(connection.ota().isEmpty());
+        dialog->setProperty("choice",connection.inspectImage(writeImage(dir,"s.bin",51,"5.0.0")));
+        QVERIFY(waitFor([&]{return dialog->isVisible();}));
+        // Wait until the control can be clicked, then click it once.
+        auto clickable=[&](const char *name) {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible() && item->isEnabled()?item:nullptr;
+        };
+        auto click=[&](const char *name) {
+            if(!waitFor([&]{return clickable(name)!=nullptr;})) {return false;}
+            auto *item=clickable(name);QTest::qWait(50); // positioners lay out on polish
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene({item->width()/2,item->height()/2}).toPoint());
+            return true;
+        };
+        QVERIFY(click("otaInstall"));
+        QVERIFY(waitFor([&]{return connection.ota()["active"].toBool();}));
+        const auto before=fixture.stats();
+        QVERIFY(click("disarmButton"));QVERIFY(waitFor([&]{return fixture.stats()!=before;}));
+        QVERIFY2(waitFor([&]{return connection.ota()["phase"]=="confirmed";},30000),qPrintable(otaText(connection)));
+        QVERIFY(dialog->isVisible());
+        // The reboot notice waits for the dialog, then shows.
+        auto *notice=window->findChild<QQuickItem *>("rebootNotice");QVERIFY(notice);QVERIFY(!notice->isVisible());
+        QVERIFY(click("otaClose"));
+        QVERIFY(waitFor([&]{return !dialog->isVisible() && notice->isVisible();}));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
     }
     void keysAndShell() {
         Q_INIT_RESOURCE(qmake_DriveLink_Shell);

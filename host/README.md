@@ -15,8 +15,9 @@ mismatch) and Device (identity and Rename, loops with run time and budget, CPU,
 limits, ARM checks, faults, SAVE/REVERT, reboot, factory reset, safe-mode exit),
 the faults drawer, link-lost and reboot-notice overlays. Esc disarms through
 focused text fields and popups; the status bar remains above page scrims. GUI
-command groups send keepalives only, leaving input values unchanged. OTA
-arrives in H2b-2; Layout, Tune and Monitor follow.
+command groups send keepalives only, leaving input values unchanged. H2b-2
+adds the firmware update dialog and the Device page's Firmware update card;
+Layout, Tune and Monitor follow.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
 ## Device identity (H1c)
@@ -280,7 +281,10 @@ cancels it. `--no-confirm` boots the candidate but leaves it pending; a reset
 without `ota-confirm` rolls back. ABORT refuses an already selected/pending
 image. An accepted-but-uncommitted reboot is reported for STATUS-based recovery,
 never automatically repeated. SDK `Client::otaUpload` only uploads/prepares;
-its caller owns reboot/reconnect/verification/confirmation. Low-level
+`drivelink/ota.hpp` holds the rest of the workflow (`requestOtaReboot`,
+`classifyOtaBoot`, `confirmOtaCandidate`) and `otaUpdate`, the synchronous
+whole workflow that `ota-upload` runs. The GUI uses the same pieces on its own
+connection ([GUI firmware update](gui/README.md#firmware-update-h2b-2)). Low-level
 `ota-begin SIZE SHA256_HEX`, `ota-write OFFSET CHUNK_HEX` and `ota-finish` expose
 the same contract for diagnostics. See [OTA wire/recovery](../docs/protocol/ota.md).
 

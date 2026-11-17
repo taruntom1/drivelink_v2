@@ -26,7 +26,9 @@ int main(int argc,char **argv) {
     parser.addOption({"baud","Serial baud rate (default 921600).","rate","921600"});
     parser.addOption({"settings","Keep recent devices in this INI file instead of the user's.","file"});
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
-    parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved or notice (the last two rename/reboot a tcp:// vdev).","name","device"});
+    parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
+                      "update-writing, update-confirmed or update-rolledback (unsaved, notice and update-* change a tcp:// vdev).","name","device"});
+    parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
     parser.addOption({"settle","Wait this long (ms) after the screen is ready before capturing.","ms","0"});
     parser.process(app);
@@ -35,7 +37,9 @@ int main(int argc,char **argv) {
     if(!QStringList{"ready","fault","safe","lost"}.contains(expected)) {return 2;}
     // Pages first (their index is the nav index plus one), then shell states.
     const QStringList pages={"connect","device","layout","tune","monitor"};
-    const QStringList states={"drawer","dialog","rename","reset","unsaved","notice"};
+    const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback"};
+    const bool update=screen.startsWith("update");
+    if(update && !parser.isSet("image")) {std::fprintf(stderr,"--screen %s needs --image\n",qPrintable(screen));return 2;}
     if(!pages.contains(screen) && !states.contains(screen)) {std::fprintf(stderr,"Unknown screen\n");return 2;}
     bool numeric=false;const int baud=parser.value("baud").toInt(&numeric);
     const int settle=parser.value("settle").toInt();
@@ -58,7 +62,7 @@ int main(int argc,char **argv) {
         std::fprintf(stderr,"This screen needs --endpoint; use host/gui/tests/scenarios.py for isolated vdev fixtures\n");return 2;
     }
     // These screens rename (and reboot) the device: vdev only, never a board.
-    if((screen=="unsaved" || screen=="notice") && !parser.value("endpoint").startsWith("tcp://")) {
+    if((screen=="unsaved" || screen=="notice" || (update && screen!="update")) && !parser.value("endpoint").startsWith("tcp://")) {
         std::fprintf(stderr,"--screen %s changes the device; use a vdev tcp:// endpoint\n",qPrintable(screen));return 2;
     }
     QDir directory(parser.value("out"));if(!directory.mkpath(".")) {return 2;}
@@ -104,7 +108,29 @@ int main(int argc,char **argv) {
         if(screen=="rename") {openDialog("renameDialog");}
         if(screen=="reset") {openDialog("resetDialog");}
         if(screen=="unsaved" || screen=="notice") {connection.rename(QStringLiteral("bench-left"));}
+        if(update) {
+            const auto choice=connection.inspectImage(parser.value("image"));
+            if(screen=="update") {window->property("otaDialog").value<QObject *>()->setProperty("choice",choice);}
+            else {
+                if(screen=="update-writing") {connection.setOtaPauseAt(62);}
+                connection.startUpdate(screen!="update-rolledback");
+            }
+        }
     }});
+    // The update screens wait for the firmware state, then for their phase.
+    if(update) {
+        stages.insert(stages.begin(),{[&] {return connection.ready() && connection.firmware().value("known").toBool();},[] {}});
+    }
+    if(screen=="update-writing") {
+        stages.push_back({[&] {return connection.ota().value("percent").toInt()>=62;},[] {}});
+    }
+    if(screen=="update-confirmed") {
+        stages.push_back({[&] {return connection.ota().value("phase").toString()=="confirmed";},[] {}});
+    }
+    if(screen=="update-rolledback") {
+        stages.push_back({[&] {return connection.ota().value("phase").toString()=="unconfirmed";},[&] {connection.rollBackFirmware();}});
+        stages.push_back({[&] {return connection.ota().value("phase").toString()=="rolledBack";},[] {}});
+    }
     if(screen=="unsaved" || screen=="notice") {
         stages.push_back({[&] {return connection.unsaved() && connection.deviceName()=="bench-left" && !connection.configBusy();},
                           [&] {if(screen=="notice") {connection.reboot();}}});

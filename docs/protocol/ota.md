@@ -126,6 +126,12 @@ interrupts readiness GET_INFO/STATUS, those reads may restart. The CLI then
 verifies the full image identity and slots before confirmation. It never repeats
 REBOOT, and other protocol/identity errors remain fatal. No wire format changes.
 
+The library holds this workflow (`drivelink/ota.hpp`): the CLI runs it through
+`otaUpdate`, and the GUI runs the same steps on its connection. The GUI sends
+CONFIRM automatically only after the identity check of the image it uploaded
+("Install without confirming" skips it); an unconfirmed build it did not
+install is confirmed only by the user, and a roll back is one explicit REBOOT.
+
 ## Partition table and simulator
 
 `firmware/partitions.csv` retains NVS at 0x9000/0x6000. Otadata is at

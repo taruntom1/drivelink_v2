@@ -76,10 +76,11 @@ class Client
     OperationResult otaFinish();
     OperationResult otaAbort();
     OperationResult otaConfirm();
-    // Upload/FINISH only. Caller owns reboot, reconnect and confirmation.
-    // Progress returns false to cancel; cancellation/error attempts ABORT.
+    // Upload/FINISH only. The reboot, reconnect and confirmation follow in
+    // drivelink/ota.hpp. Progress returns false to cancel; cancellation or an
+    // error attempts ABORT.
     OtaStatus otaUpload(std::span<const uint8_t> image,uint8_t window=4,
-                   const std::function<bool(uint32_t,uint32_t)> &progress={});
+                   const std::function<bool(const OtaProgress &)> &progress={});
 
   private:
     static void contextualize(Error &error, uint8_t family, uint8_t op, bool mutation);

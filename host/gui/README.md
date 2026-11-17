@@ -8,8 +8,8 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.
 
 H2a-1 provides the style layer; H2a-2 adds the application, local device
-backend and shell; H2b-1 adds Connect and Device (below). OTA follows in
-H2b-2; Layout, Tune and Monitor are placeholders until their steps
+backend and shell; H2b-1 adds Connect and Device and H2b-2 the firmware update
+(below). Layout, Tune and Monitor are placeholders until their steps
 ([host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
@@ -126,6 +126,38 @@ dialogs and overlays; `backend/device_models.*` holds `LoopTable`,
   disarming condition is still active. A refused ARM opens a popover under the
   status bar with the failed checks.
 
+## Firmware update (H2b-2)
+
+`backend/connection_ota.cpp` runs the update on the connection;
+`backend/ota_model.*` turns it into the dialog and card data (pure, tested);
+`app/OtaDialog.qml` is the G3 "Update firmware" dialog.
+
+- **Choose image.** The Device page's Firmware update card opens a
+  QtQuick.Dialogs `FileDialog` (`modality: Qt.NonModal`) only while disarmed;
+  the image is checked with `inspectImage` (a complete unsigned ESP32-S3 app
+  that fits the slot) and shown with its version, size and SHA-256 before
+  Install. "Install without confirming" matches the CLI's `--no-confirm`.
+- **Update.** Writing (progress, retried chunks), Verify SHA-256 (FINISH),
+  Reboot, Reconnect and check the version, Confirm. REBOOT is sent once
+  through the reboot expectation and reconnect window every reboot uses; a
+  serial link stays open and waits for Boot, vdev TCP reconnects. After the
+  device is back, `confirmOtaCandidate` checks the running build against the
+  uploaded image and sends CONFIRM at most once. ARM, Save/Revert, Rename and
+  the reboot actions are disabled while it runs; DISARM stays live. Abort is
+  offered while writing and verifying (the library ABORTs).
+- **Outcomes.** Confirmed; Unconfirmed (deliberately, or no reply settled
+  CONFIRM: Confirm or Roll back, never retried automatically); Rolled back
+  (the previous build runs again; reset reason when the device knows it);
+  Aborted; Failed with recovery text. The reboot notice (cause "Firmware
+  update") follows when the dialog closes. "Last update" is kept per device id
+  in the settings file.
+- **States left by another tool.** The card reads OTA STATUS once per
+  connection and boot (again after a failed read). An unconfirmed build shows
+  its build id with Confirm (identity-checked only when this window uploaded it)
+  and Roll back (one REBOOT); an unfinished or prepared image offers Abort.
+  Reboot and Save and reboot are disabled while an image is prepared (REBOOT
+  would install it unchecked) or the state could not be read.
+
 ## Theme
 
 Figma's variables are the source of truth. `tokens.json` holds every variable
@@ -215,7 +247,17 @@ access, keys and toasts. Linux also exercises Boot in place over a PTY.
 H2b-1 adds device text/models, recent devices, protocol mismatch (a fake
 older-version TCP device), rename/SAVE/REVERT/reboot and the notice, Save and
 reboot, factory reset, safe-mode exit, free-slot subscriptions, the reconnect
-window and Retry after a stall.
+window and Retry after a stall. H2b-2 adds the OTA view models and, against
+vdev, a confirmed update, install without confirming then Confirm, roll back,
+abort while writing (DISARM live), a lost REBOOT that is not repeated (vdev
+`drop-reboot`), states left by another client, disconnect while reconnecting,
+the dialog in the shell and (Linux PTY) an update with Boot in place.
+
+`benchOta` is the bare-board OTA check, skipped unless
+`DRIVELINK_GUI_BENCH_ENDPOINT` and `DRIVELINK_GUI_BENCH_OTA_IMAGE` are set: it
+installs and confirms the image through the backend and, with
+`DRIVELINK_GUI_BENCH_OTA_RESTORE`, installs that image (the board's original
+app) afterwards. It refuses to start with unsaved or pending changes.
 
 `benchBoard` is the bare-board check, skipped unless
 `DRIVELINK_GUI_BENCH_ENDPOINT` names a device (`serial://COM3`, or a provisioned
@@ -232,12 +274,15 @@ reboot retains the desktop scheduling allowance.
 The app's `--out DIR` writes four PNGs (2560×1440 and 1920×1080, Dark and
 Light), waits for live state with a timeout, then disconnects. `--screen`
 accepts `connect`, `device`, `layout`, `tune`, `monitor`, `drawer`, `dialog`,
-`rename`, `reset`, `unsaved`, `notice`; `--expect-state` accepts `ready`,
+`rename`, `reset`, `unsaved`, `notice` and, with `--image FILE`, `update` (the
+image choice), `update-writing`, `update-confirmed`, `update-rolledback`;
+`--expect-state` accepts `ready`,
 `fault`, `safe`, `lost`. Except for Connect, pass an endpoint. `--settle MS`
 waits before capturing (loop run time needs about a second); `--settings FILE`
 isolates recent devices. It does not inject faults or provision a supplied
 device; `unsaved` and `notice` rename (and reboot) the device, so they accept
-only a `tcp://` vdev endpoint.
+only a `tcp://` vdev endpoint, as do the `update-*` screens (they install
+firmware).
 
 From the repo root, the isolated Windows vdev campaign is:
 
@@ -247,8 +292,9 @@ python host/gui/tests/scenarios.py --gui host/superbuild/build/windows-mingw/gui
 ```
 
 The script defaults to offscreen/software rendering, runs the backend checks
-when `--backend` is supplied, and renders fourteen scenarios into separate
-folders (56 PNGs, dimensions checked); `--only NAME...` picks some. `--smoke`
+when `--backend` is supplied, and renders eighteen scenarios, the last four the firmware update screens (it
+writes a non-executable vdev image for them), into separate folders (72 PNGs,
+dimensions checked); `--only NAME...` picks some. `--smoke`
 renders only Connect and Device;
 CTest uses that subset on both OSes. Use the CTest-resolved executable paths
 on Linux (`ctest --preset linux -N -V -R '^gui-'` from `host/superbuild`).

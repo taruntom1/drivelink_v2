@@ -1,4 +1,4 @@
-#include "connection.hpp"
+#include "connection_internal.hpp"
 #include <drivelink/buffers.hpp>
 #include <drivelink/command.hpp>
 #include <drivelink/protocol/core_codec.hpp>
@@ -11,97 +11,9 @@
 #include <mutex>
 
 namespace drivelink::gui {
-struct GuiDispatch {
-    QObject *receiver=new QObject(qApp);
-    std::atomic<size_t> pending{0};
-    size_t running=0; // GUI thread only, including nested close-time delivery.
-};
 namespace {
 namespace defs=protocol::defs;
-// Each queued functor retains its target until consumed, including after close.
-// Session bounds outstanding requests and event deliveries before this queue.
-void post(const std::shared_ptr<GuiDispatch> &queue,Task task) {
-    ++queue->pending;
-    QMetaObject::invokeMethod(queue->receiver,[queue,task=std::move(task)]() mutable {
-        struct Delivery {
-            std::shared_ptr<GuiDispatch> queue;
-            ~Delivery() {--queue->running;--queue->pending;}
-        } delivery{queue};
-        ++queue->running;task();
-    },Qt::QueuedConnection);
 }
-struct Owned {
-    CommandPlan plan;uint8_t epoch;uint64_t generation;
-    std::shared_ptr<CommandGroup> keeper;
-};
-bool matches(const Owned &o,const Group &g) {
-    return g.kind==GroupKind::Command && g.id==o.plan.id && g.configured &&
-        g.loop==o.plan.loop && g.epoch==o.epoch && g.refs==o.plan.refs;
-}
-// A GUI-owned subscription carrying one loop's statistic signals.
-struct OwnedSub {
-    uint8_t id,loop,epoch;uint64_t generation;std::vector<Ref> refs;
-    std::shared_ptr<GroupBuffer> buffer;
-};
-bool matchesSub(const OwnedSub &o,const Group &g) {
-    return g.kind==GroupKind::Subscription && g.id==o.id && g.configured &&
-        g.loop==o.loop && g.epoch==o.epoch && g.refs==o.refs;
-}
-}
-struct LocalConnection::Context {
-    std::mutex mutex;
-    std::shared_ptr<Session> session;
-    std::shared_ptr<DeviceModel> model;
-    std::vector<Owned> owned;
-    std::vector<OwnedSub> subs;
-    std::atomic<bool> retired{false};
-    std::atomic<int> bootReason{-1};
-    // Set by the service executor once SAVE of Save and reboot succeeded,
-    // so a link drop before the reply callback still knows it.
-    std::atomic<bool> savedBeforeReboot{false};
-    std::atomic<uint64_t> safety{0};
-    std::atomic<uint64_t> armedSeen{0};
-    std::shared_ptr<Session> getSession() {std::lock_guard lock(mutex);return session;}
-    std::shared_ptr<DeviceModel> getModel() {std::lock_guard lock(mutex);return model;}
-    bool owns() {std::lock_guard lock(mutex);return !owned.empty();}
-    bool ownsAny() {std::lock_guard lock(mutex);return !owned.empty() || !subs.empty();}
-    void stopKeepers() {std::lock_guard lock(mutex);for(auto &o:owned) {if(o.keeper) {o.keeper->stop();}}}
-    // Called only on the serial service executor. Never clears a slot without
-    // matching its generation, epoch and complete configuration after a read.
-    void clearOwned(Client &client) {
-        std::vector<Owned> copy;
-        {std::lock_guard lock(mutex);copy=owned;}
-        stopKeepers();
-        for(const auto &o:copy) {
-            if(client.session().generation()!=o.generation) {continue;}
-            const auto list=client.groups();
-            const auto it=std::find_if(list.groups.begin(),list.groups.end(),[&](const auto &g){return matches(o,g);});
-            if(it!=list.groups.end()) {client.groupClear(o.plan.id,true);}
-        }
-        std::lock_guard lock(mutex);owned.clear();
-    }
-    // Close-time cleanup of everything this connection configured. The
-    // statistics groups are released even when a command clear failed.
-    void clearAll(Client &client) {
-        std::optional<Error> failure;
-        try {clearOwned(client);} catch(const Error &e) {failure=e;}
-        clearSubs(client);
-        if(failure) {throw *failure;}
-    }
-    // Same rule for loop-statistics subscriptions: clear only an exact match.
-    void clearSubs(Client &client) {
-        std::vector<OwnedSub> copy;
-        {std::lock_guard lock(mutex);copy=subs;}
-        if(copy.empty()) {return;}
-        const auto list=client.groups();
-        for(const auto &o:copy) {
-            if(client.session().generation()!=o.generation) {continue;}
-            const auto it=std::find_if(list.groups.begin(),list.groups.end(),[&](const auto &g){return matchesSub(o,g);});
-            if(it!=list.groups.end()) {client.groupClear(o.id,false);}
-        }
-        std::lock_guard lock(mutex);subs.clear();
-    }
-};
 
 LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     // Application ownership matters at Qt shutdown: deleting a receiver from
@@ -118,6 +30,10 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
         // expectation, so a later loss is again an unrequested one.
         if(m_expectReboot && !m_reconnecting && m_rebootElapsed.isValid() && m_rebootElapsed.elapsed()>m_reconnectWindowMs) {
             clearRebootExpectation();
+            if(m_ota && (m_ota->phase==OtaJob::Phase::Rebooting || m_ota->phase==OtaJob::Phase::Reconnecting)) {
+                otaStop(OtaJob::Phase::Failed,m_ota->rollback?tr("The device did not reboot; the reboot was not repeated and the build stays unconfirmed.")
+                    :tr("The device did not reboot; the reboot was not repeated. The prepared image is still waiting: abort it in the Firmware card."));
+            }
             emit notification(tr("The device did not reboot; it was not asked again"),2);emit changed();
         }
         // While a requested reboot is under way on a link that stays open,
@@ -159,6 +75,7 @@ QString LocalConnection::reason() const {
 }
 bool LocalConnection::armEnabled() const {
     return ready() && m_groupsReady && !m_arming && !m_armPending && !m_disarmPending && !m_waitingDisarm && !m_expectReboot &&
+        !(m_ota && m_ota->active()) &&
         (!m_observingArmed || m_explicitDisarmAcknowledged) &&
         !safeMode() && m_snapshot->status && armState()==0 && !(m_snapshot->status->flags&2);
 }
@@ -166,6 +83,7 @@ QString LocalConnection::armBlockedReason() const {
     if(!ready()) {return tr("Wait for current device metadata and status");}
     if(safeMode()) {return tr("Device is in safe mode");}
     if(m_expectReboot) {return tr("The device is rebooting");}
+    if(m_ota && m_ota->active()) {return tr("A firmware update is in progress");}
     if(m_observingArmed && !m_explicitDisarmAcknowledged) {return tr("Press DISARM before taking command ownership");}
     if(m_arming || m_armPending || m_disarmPending || m_waitingDisarm) {return tr("Waiting for arm/disarm confirmation");}
     if(!m_groupsReady) {return m_blocked.isEmpty()?tr("Preparing command keepalives"):m_blocked;}
@@ -184,7 +102,11 @@ void LocalConnection::report(const Error &e) {
 void LocalConnection::connectTo(const QString &endpoint,int baud) {
     if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<=0) {return;}
     // A new connection by the user ends any reboot follow-up of the last one.
-    if(!m_reconnecting && !m_afterLoss) {clearRebootExpectation();m_previous.reset();m_notice.clear();m_staleSubs.clear();}
+    if(!m_reconnecting && !m_afterLoss) {
+        clearRebootExpectation();m_previous.reset();m_notice.clear();m_staleSubs.clear();
+        if(m_ota && m_ota->terminal()) {m_ota.reset();}
+    }
+    ++m_connectionSerial;m_otaStatus.reset();m_otaStatusPending=false;m_otaStatusFailed=false;
     auto c=std::make_shared<Context>();m_context=c;m_endpoint=endpoint.trimmed();m_baud=baud;m_loading=true;m_linkLost=false;
     m_error.clear();m_mismatch.clear();m_blocked.clear();m_subsNote.clear();m_snapshot.reset();m_statusCounter.reset();
     m_setupAttempted=false;m_subsAttempted=false;m_recorded=false;m_diag.reset();m_loadStep=0;
@@ -341,6 +263,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         ((m_setupAttempted && m_setupGeneration==m_snapshot->generation) || m_observingArmed || armState()!=0);
     if(ready() && m_snapshot->status && !safeMode() && !m_subsPending && commandsSettled &&
        (!m_subsAttempted || m_subsGeneration!=m_snapshot->generation)) {setupLoopStats();}
+    otaRefresh();
     emit changed();
 }
 void LocalConnection::showRebootNotice(std::optional<uint8_t> reason,bool dirty,const QString &id) {
@@ -620,6 +543,9 @@ void LocalConnection::disconnectDevice() {
     // Disconnect also ends a lost link's overlay and any reboot follow-up.
     m_reconnecting=false;m_afterLoss=false;clearRebootExpectation();
     if(!m_context) {
+        // Between reconnect attempts after an update's reboot: no link to
+        // close, but the update must not wait for one any more.
+        otaInterrupted(tr("Disconnected before the device came back."));
         m_linkLost=false;m_previous.reset();m_snapshot.reset();
         m_instances.reset({});m_loops.reset({});m_faults.reset({});
         emit changed();emit disconnected();return;
@@ -692,15 +618,24 @@ void LocalConnection::finishClose(bool lost) {
             QTimer::singleShot(500,this,[this] {reconnectAfterReboot();});
         } else {
             m_reconnecting=false;clearRebootExpectation();m_linkLost=true;
+            otaInterrupted(tr("The device did not reconnect after its reboot."));
             report(Error(ErrorKind::Connection,"The device did not reconnect after its reboot"));
         }
     } else if(c && lost && m_expectReboot) {
         m_reconnecting=true;m_linkLost=false;m_reconnectElapsed.start();
+        if(m_ota && m_ota->phase==OtaJob::Phase::Rebooting) {m_ota->phase=OtaJob::Phase::Reconnecting;}
         QTimer::singleShot(300,this,[this] {reconnectAfterReboot();});
     } else if(c && !lost && m_afterLoss) {
         // Retry failed: keep the link-lost overlay with its error.
         m_afterLoss=false;m_linkLost=true;
     }
+    // An update's completions were drained above without a current context.
+    if(c && !m_reconnecting && !m_expectReboot) {
+        otaInterrupted(m_linkLost?tr("The link was lost."):tr("The connection closed."));
+    } else if(c && !m_reconnecting) {
+        otaInterrupted(tr("The connection closed."));
+    }
+    m_otaStatusPending=false;
     if(unsentDisarm) {report(Error(ErrorKind::Cancelled,"DISARM could not be sent before the connection closed"));}
     if(unconfirmedDisarm) {
         Error error(ErrorKind::Connection,"Connection closed before DISARM was confirmed");
@@ -802,6 +737,7 @@ QVariantList LocalConnection::armChecks() const {
 }
 QString LocalConnection::commonBlock() const {
     if(!ready()) {return tr("Wait for the device to finish loading");}
+    if(m_ota && m_ota->active()) {return tr("A firmware update is in progress");}
     if(!m_configAction.isEmpty()) {return tr("Wait for the current configuration action to finish");}
     return {};
 }
@@ -812,10 +748,16 @@ QVariantMap LocalConnection::actionBlocked() const {
     const QString armed=armState()==1 || m_arming?tr("Not allowed while armed; disarm first"):QString();
     const QString nothing=!unsaved()?tr("There are no unsaved changes"):QString();
     // A requested reboot is in progress: no second reboot request.
-    const QString rebooting=m_expectReboot?tr("The device is rebooting"):armed;
+    // REBOOT commits a prepared image, which would then run unchecked.
+    const QString prepared=m_otaStatus && m_otaStatus->state==2 && m_otaStatus->boot_slot==m_otaStatus->running_slot
+        ?tr("A prepared firmware update would be installed unchecked; abort it in the Firmware card first")
+        :!m_otaStatus && m_otaStatusFailed?tr("The firmware update state could not be read; a prepared image could be installed unchecked"):QString();
+    const QString rebooting=m_expectReboot?tr("The device is rebooting"):!armed.isEmpty()?armed:prepared;
     return {{"rename",pick({})},{"save",pick(armed.isEmpty()?nothing:armed)},{"revert",pick(armed.isEmpty()?nothing:armed)},
-        {"reboot",pick(rebooting)},{"saveAndReboot",pick(rebooting)},{"factoryReset",pick(rebooting)},
-        {"exitSafeMode",pick(!safeMode()?tr("The device is not in safe mode"):rebooting)}};
+        {"reboot",pick(rebooting)},{"saveAndReboot",pick(rebooting)},
+        {"factoryReset",pick(m_expectReboot?tr("The device is rebooting"):armed)},
+        {"exitSafeMode",pick(!safeMode()?tr("The device is not in safe mode"):m_expectReboot?tr("The device is rebooting"):armed)},
+        {"update",updateBlocked()}};
 }
 void LocalConnection::rename(const QString &name) {
     if(const auto problem=nameProblem(name);!problem.isEmpty()) {report(Error(ErrorKind::Usage,problem.toStdString()));return;}

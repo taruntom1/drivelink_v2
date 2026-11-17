@@ -4,12 +4,34 @@ All provisioning and fault injection targets an isolated vdev. Use the app's
 --endpoint/--out options directly for an existing physical device.
 """
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import struct
 import subprocess
 import tempfile
 import threading
+
+
+def write_image(path, seed, version, data_bytes):
+    """A structurally valid, non-executable app image for vdev (never flash it)."""
+    end = (32 + data_bytes + 16) & ~15
+    data = bytearray(end + 32)
+    data[0] = 0xe9; data[1] = 1; data[12] = 9; data[23] = 1
+    struct.pack_into('<II', data, 24, 0x3c000020, data_bytes)
+    struct.pack_into('<I', data, 32, 0xabcd5432)
+    data[48:48 + len(version)] = version.encode()
+    data[80:92] = b'drivelink_v2'
+    data[176:208] = bytes((seed + i) & 255 for i in range(32))
+    for i in range(288, 32 + data_bytes):
+        data[i] = (i + seed) & 255
+    checksum = 0xef
+    for value in data[32:32 + data_bytes]:
+        checksum ^= value
+    data[end - 1] = checksum
+    data[end:] = hashlib.sha256(data[:end]).digest()
+    path.write_bytes(data)
+    return path
 
 
 def render(gui, vdev, destination, scenario):
@@ -41,6 +63,9 @@ def render(gui, vdev, destination, scenario):
                        '--settle', '0' if scenario in ('connect', 'lost') else '1500']
             if endpoint:
                 command += ['--endpoint', endpoint]
+            if scenario.startswith('update'):
+                # Large enough that the writing screen holds mid-transfer.
+                command += ['--image', str(write_image(Path(work) / 'drivelink_fw_2.1.0.bin', 77, '2.1.0', 1 << 20))]
             if scenario in ('safe', 'fault', 'lost'):
                 command += ['--expect-state', scenario]
             app = subprocess.Popen(command, stdout=subprocess.PIPE,
@@ -96,12 +121,13 @@ def main():
     os.environ.setdefault('QT_QUICK_BACKEND', 'software')
     os.environ.setdefault('QT_FORCE_STDERR_LOGGING', '1')
     if args.backend:
-        subprocess.run([args.backend], check=True, timeout=180)
+        subprocess.run([args.backend], check=True, timeout=300)
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
                      ['connect', 'device', 'layout', 'tune', 'monitor', 'drawer', 'dialog', 'safe', 'fault', 'lost',
-                      'rename', 'reset', 'unsaved', 'notice']):
+                      'rename', 'reset', 'unsaved', 'notice',
+                      'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:
             render(args.gui, args.vdev, destination, scenario)
 

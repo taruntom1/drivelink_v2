@@ -74,6 +74,9 @@ public:
     void forget(const QString &id);
     // The most recent device seen on an endpoint, for the port list.
     QVariantMap onEndpoint(const QString &endpoint) const;
+    // The last firmware update this GUI ran on a device (Firmware card).
+    void recordUpdate(const QString &id, const QString &text);
+    QString lastUpdate(const QString &id) const;
     QString path() const { return m_path; }
 private:
     QString m_path;

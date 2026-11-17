@@ -262,6 +262,15 @@ QVariantMap RecentDevices::onEndpoint(const QString &endpoint) const {
     for(const auto &row:list()) { if(row.toMap().value("endpoint")==endpoint) { return row.toMap(); } }
     return {};
 }
+void RecentDevices::recordUpdate(const QString &id,const QString &text) {
+    if(id.isEmpty()) { return; }
+    QSettings settings(m_path,QSettings::IniFormat);
+    settings.setValue(QStringLiteral("lastUpdate/")+id,text);settings.sync();
+}
+QString RecentDevices::lastUpdate(const QString &id) const {
+    if(id.isEmpty()) { return {}; }
+    return QSettings(m_path,QSettings::IniFormat).value(QStringLiteral("lastUpdate/")+id).toString();
+}
 
 QVariantList portRows(const std::vector<SerialPortInfo> &ports,const RecentDevices &recent,const QString &active) {
     QVariantList rows;

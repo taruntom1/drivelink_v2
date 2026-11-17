@@ -287,6 +287,31 @@ out-of-order replies. OTA retains its identical-offset/data retry exception.
 Async cancellation never confirms or repeats REBOOT; if an upload is interrupted,
 inspect OTA status and abort explicitly when cleanup could not complete.
 
+## OTA workflow (`drivelink/ota.hpp`)
+
+`Client::otaUpload` reports `OtaProgress` (acknowledged offset, size and how
+many chunks were sent again with identical data). The rest of an update:
+
+- `describeOtaImage(bytes)` / `loadOtaImage(path)`: a validated unsigned
+  ESP32-S3 app with its app descriptor (version, project, date, time, IDF),
+  ELF SHA-256 (the build identity) and the whole-file SHA-256.
+- `requestOtaReboot(client)`: the single REBOOT. A reply is acceptance only; a
+  timeout, lost link or interrupting Boot returns `Uncertain`. Never call it
+  twice for one update.
+- `classifyOtaBoot(candidate, info, status)`: pure. `Confirmable`/`Confirmed`
+  only when the uploaded ELF runs from the other slot as the boot slot, idle,
+  with the matching GET_INFO build id; `NotCommitted` (old slot, image Ready or
+  Error), `RolledBack` (old slot again, idle and confirmed), else `Mismatch`.
+- `confirmOtaCandidate(client, candidate, confirm)`: GET_INFO (core version
+  check), STATUS, classification and, only for `Confirmable` with `confirm`,
+  one CONFIRM followed by a STATUS recheck of the identity. A CONFIRM whose
+  outcome stays unknown throws Timeout with `outcome_unknown` and the OTA
+  CONFIRM family/op.
+- `otaUpdate(endpoint, options, image, update, progress, cancelled)`: the
+  CLI's `ota-upload` on its own sessions, with the 30 s reconnect window and the
+  CLI's recovery messages. Within that window it reconciles an uncertain
+  CONFIRM by reconnecting and checking again (CONFIRM is idempotent).
+
 ## Pulled groups and managed commands
 
 ```cpp

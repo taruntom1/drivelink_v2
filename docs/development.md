@@ -160,7 +160,7 @@ It installs only what is missing and never removes or upgrades anything.
 | Profile | Packages for | Used by |
 |---|---|---|
 | `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
-| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules and the offscreen platform plugin | `host-linux` (WSL and CI) |
+| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` (WSL and CI) |
 
 ```bash
 wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host

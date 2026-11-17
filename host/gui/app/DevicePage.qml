@@ -4,7 +4,7 @@ import DriveLink.Style
 
 // G3 Device: identity with Rename, loops and CPU per core, ARM checks,
 // faults, configuration (Save, Revert, Reboot, Save and reboot, Factory
-// reset), limits and firmware. Refused-while-armed buttons say why.
+// reset), limits and the firmware update card. Refused-while-armed buttons say why.
 Flickable {
     id: page
     objectName: "devicePage"
@@ -14,6 +14,7 @@ Flickable {
     signal factoryResetRequested()
     signal faultsRequested()
     signal loopRequested(int loopId)
+    signal updateRequested()
 
     readonly property bool wide: width >= 1800
     // Loop table column fractions (G7b Device loop table).
@@ -321,6 +322,75 @@ Flickable {
                                 else page.backend[key]()
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // G3 Firmware update: what runs, the slots, the last update, and the
+        // explicit actions for an update this window did not finish.
+        Card {
+            objectName: "firmwareCard"
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignTop
+            title: qsTr("Firmware update")
+            InfoRow { label: qsTr("Running"); value: page.backend.firmware.running || "" }
+            InfoRow { label: qsTr("Slots"); value: page.backend.firmware.slots || "—" }
+            InfoRow { label: qsTr("Last update"); value: page.backend.firmware.lastUpdate || qsTr("None from this computer") }
+            Text {
+                objectName: "firmwareState"
+                width: parent.width; wrapMode: Text.Wrap
+                visible: text.length > 0
+                text: page.backend.firmware.state || ""
+                font: Theme.fontBodyDefault; color: Theme.statePending
+            }
+            Text {
+                width: parent.width; wrapMode: Text.Wrap
+                visible: text.length > 0
+                text: page.backend.firmware.note || ""
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+            Flow {
+                width: parent.width
+                spacing: Theme.space8
+                DLReasonHover {
+                    reason: page.backend.firmware.updateBlocked || ""
+                    DLButton {
+                        objectName: "chooseImageButton"
+                        text: qsTr("Choose image…")
+                        iconName: "upload"
+                        enabled: !page.backend.firmware.updateBlocked
+                        onClicked: page.updateRequested()
+                    }
+                }
+                DLReasonHover {
+                    visible: page.backend.firmware.canConfirm === true
+                    reason: page.backend.firmware.confirmBlocked || ""
+                    DLButton {
+                        objectName: "confirmFirmwareButton"
+                        text: qsTr("Confirm running build"); iconName: "check"; kind: DLButton.Primary
+                        enabled: !page.backend.firmware.confirmBlocked
+                        onClicked: page.backend.confirmFirmware()
+                    }
+                }
+                DLReasonHover {
+                    visible: page.backend.firmware.canRollBack === true
+                    reason: page.backend.firmware.confirmBlocked || ""
+                    DLButton {
+                        objectName: "rollBackButton"
+                        text: qsTr("Roll back"); iconName: "undo-2"
+                        enabled: !page.backend.firmware.confirmBlocked
+                        onClicked: page.backend.rollBackFirmware()
+                    }
+                }
+                DLReasonHover {
+                    visible: page.backend.firmware.canAbort === true
+                    reason: page.backend.firmware.abortBlocked || ""
+                    DLButton {
+                        objectName: "abortPreparedButton"
+                        text: qsTr("Abort update"); iconName: "x"
+                        enabled: !page.backend.firmware.abortBlocked
+                        onClicked: page.backend.abortPreparedUpdate()
                     }
                 }
             }
