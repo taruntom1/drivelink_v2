@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "test_options.hpp"
 #include "drivelink/client.hpp"
+#include "drivelink/ota.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "core/core.hpp"
@@ -8,6 +9,7 @@
 #include "mod_mock/modules.hpp"
 #include "../../protocol/test/ota_fixture.hpp"
 #include <asio.hpp>
+#include <atomic>
 #include <future>
 #include <thread>
 
@@ -117,7 +119,7 @@ TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
         for (;;) { const auto req=readFrame(s);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
     Session session(device.endpoint(),testOptions());Client client(session);const auto image=otaFixture();
-    CHECK_THROWS_AS(client.otaUpload(image,1,[](uint32_t,uint32_t){return false;}),Error);
+    CHECK_THROWS_AS(client.otaUpload(image,1,[](const OtaProgress &){return false;}),Error);
     CHECK(client.otaStatus().state==0);
 }
 TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
@@ -187,4 +189,81 @@ TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgement
     Session session(device.endpoint(),testOptions());Client client(session);client.info();
     CHECK(client.otaStatus().chunk_bytes==502);
     const auto image=otaFixture();CHECK(client.otaUpload(image).state==2);client.otaAbort();
+}
+TEST_CASE("OTA image description reads the app descriptor and both digests") {
+    auto bytes=otaFixture(4096,9);
+    std::copy_n("1.2.3-rc",9,bytes.data()+48);std::copy_n("drivelink_v2",13,bytes.data()+80);
+    std::copy_n("12:00:00",9,bytes.data()+112);std::copy_n("Nov 17 2026",12,bytes.data()+128);
+    // Re-seal the edited descriptor: checksum over the segment, then the appended SHA.
+    const size_t end=bytes.size()-32;uint8_t checksum=0xef;
+    for (size_t i=32;i<32+4096;++i) { checksum^=bytes[i]; }bytes[end-1]=checksum;
+    const auto digest=p::sha256(std::span(bytes).first(end));std::copy(digest.begin(),digest.end(),bytes.begin()+end);
+    const auto image=describeOtaImage(bytes);
+    CHECK(image.version=="1.2.3-rc");CHECK(image.project=="drivelink_v2");
+    CHECK(image.time=="12:00:00");CHECK(image.date=="Nov 17 2026");
+    CHECK(image.elf_sha256[0]==9);CHECK(image.sha256==p::sha256(bytes));
+    CHECK(image.buildId()==hex(image.elf_sha256).substr(0,16));CHECK(image.bytes==bytes);
+    bytes.push_back(0);CHECK_THROWS_AS(describeOtaImage(bytes),Error);
+}
+TEST_CASE("OTA boot classification confirms only the uploaded build in the new slot") {
+    const auto image=describeOtaImage(otaFixture(4096,5));
+    const OtaCandidate candidate{image.elf_sha256,0};
+    DeviceInfo info;info.build_id=image.buildId();
+    OtaStatus s;s.running_slot=1;s.boot_slot=1;s.pending_confirm=true;s.elf_sha256=image.elf_sha256;
+    CHECK(classifyOtaBoot(candidate,info,s)==OtaBoot::Confirmable);
+    s.pending_confirm=false;CHECK(classifyOtaBoot(candidate,info,s)==OtaBoot::Confirmed);
+    CHECK(otaBootProblem(OtaBoot::Confirmed).empty());
+    auto wrongBuild=info;wrongBuild.build_id="0000000000000000";
+    CHECK(classifyOtaBoot(candidate,wrongBuild,s)==OtaBoot::Mismatch);
+    auto other=s;other.elf_sha256[0]^=1;CHECK(classifyOtaBoot(candidate,info,other)==OtaBoot::Mismatch);
+    auto split=s;split.boot_slot=0;CHECK(classifyOtaBoot(candidate,info,split)==OtaBoot::Mismatch);
+    auto busy=s;busy.state=1;CHECK(classifyOtaBoot(candidate,info,busy)==OtaBoot::Mismatch);
+    // The old slot runs with the prepared (or failed) image: REBOOT did not commit.
+    OtaStatus old;old.running_slot=0;old.boot_slot=0;old.state=2;
+    CHECK(classifyOtaBoot(candidate,info,old)==OtaBoot::NotCommitted);
+    old.state=3;CHECK(classifyOtaBoot(candidate,info,old)==OtaBoot::NotCommitted);
+    CHECK(otaBootProblem(OtaBoot::NotCommitted).find("commit did not complete")!=std::string::npos);
+    // The old slot runs again, idle and confirmed: the bootloader rolled back.
+    old.state=0;CHECK(classifyOtaBoot(candidate,info,old)==OtaBoot::RolledBack);
+    CHECK(otaBootProblem(OtaBoot::RolledBack)=="running image/slot does not match uploaded candidate; not confirmed");
+    old.pending_confirm=true;CHECK(classifyOtaBoot(candidate,info,old)==OtaBoot::Mismatch);
+}
+TEST_CASE("OTA reboot outcome: a lost reply is uncertain and a refusal throws") {
+    // The peer answers GET_INFO, then refuses or ignores REBOOT.
+    for (const bool refuse : {false,true}) {
+        Device device([refuse](Socket &s) {
+            core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+            core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
+            for (;;) {
+                const auto req=readFrame(s);
+                if (req[2]==1 && req[3]==8) {
+                    if (!refuse) { continue; }
+                    send(s,Bytes{p::core_wire::kVersion,req[1],req[2],req[3],
+                                 uint8_t(p::defs::Result::Armed),uint8_t(p::defs::Detail::LockedWhileArmed)});continue;
+                }
+                const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n));
+            }
+        });
+        SessionOptions options=testOptions();options.timeout=std::chrono::milliseconds(150);
+        Session session(device.endpoint(),options);Client client(session);client.info();
+        if (refuse) { CHECK_THROWS_AS(requestOtaReboot(client),DeviceError); }
+        else { CHECK(requestOtaReboot(client)==OtaReboot::Uncertain); }
+        session.close();
+    }
+}
+TEST_CASE("OTA confirmation sends nothing for an idle device that never ran the candidate") {
+    std::atomic<int> confirms{0};
+    Device device([&confirms](Socket &s) {
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
+        for (;;) {
+            const auto req=readFrame(s);if (req[2]==9 && req[3]==5) { ++confirms; }
+            const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n));
+        }
+    });
+    Session session(device.endpoint(),testOptions());Client client(session);
+    const auto running=client.otaStatus();
+    const auto result=confirmOtaCandidate(client,{describeOtaImage(otaFixture(4096,3)).elf_sha256,running.running_slot},true);
+    CHECK(result.verdict==OtaBoot::RolledBack);CHECK_FALSE(result.confirmed);CHECK(confirms==0);
+    session.close();
 }

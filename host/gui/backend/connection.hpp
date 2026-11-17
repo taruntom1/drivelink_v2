@@ -1,10 +1,12 @@
 #pragma once
 #include "device_models.hpp"
 #include "models.hpp"
+#include "ota_model.hpp"
 #include <QElapsedTimer>
 #include <QHash>
 #include <QTimer>
 #include <functional>
+#include <atomic>
 #include <thread>
 
 namespace drivelink::gui {
@@ -47,6 +49,9 @@ class Connection : public QObject {
     Q_PROPERTY(QStringList unsavedChanges READ unsavedChanges NOTIFY changed)
     Q_PROPERTY(QVariantMap rebootNotice READ rebootNotice NOTIFY changed)
     Q_PROPERTY(QVariantList recentDevices READ recentDevices NOTIFY recentDevicesChanged)
+    // The firmware update dialog (empty when closed) and the Firmware card.
+    Q_PROPERTY(QVariantMap ota READ ota NOTIFY changed)
+    Q_PROPERTY(QVariantMap firmware READ firmware NOTIFY changed)
     Q_PROPERTY(QAbstractItemModel* instances READ instances CONSTANT)
     Q_PROPERTY(QAbstractItemModel* loops READ loops CONSTANT)
     Q_PROPERTY(QAbstractItemModel* faults READ faults CONSTANT)
@@ -87,6 +92,8 @@ public:
     virtual QStringList unsavedChanges() const=0;
     virtual QVariantMap rebootNotice() const=0;
     virtual QVariantList recentDevices() const=0;
+    virtual QVariantMap ota() const=0;
+    virtual QVariantMap firmware() const=0;
     virtual QAbstractItemModel *instances()=0;
     virtual QAbstractItemModel *loops()=0;
     virtual QAbstractItemModel *faults()=0;
@@ -106,6 +113,20 @@ public:
     Q_INVOKABLE virtual void dismissRebootNotice()=0;
     Q_INVOKABLE virtual QVariantList serialPorts()=0;
     Q_INVOKABLE virtual void forgetRecent(const QString &id)=0;
+    // Firmware update (OTA). inspectImage takes a path or a file:// URL and
+    // returns {ok, problem} or the image's description; it becomes the image
+    // startUpdate writes. The update runs once: REBOOT is never repeated, and
+    // CONFIRM follows only the full identity check (never with confirm=false).
+    Q_INVOKABLE virtual QVariantMap inspectImage(const QString &fileOrUrl)=0;
+    Q_INVOKABLE virtual void startUpdate(bool confirm=true)=0;
+    Q_INVOKABLE virtual void abortUpdate()=0;
+    Q_INVOKABLE virtual void closeUpdate()=0;
+    // Explicit user actions on the running/prepared image (Firmware card and
+    // the dialog's unconfirmed state). Each request is sent once.
+    Q_INVOKABLE virtual void confirmFirmware()=0;
+    Q_INVOKABLE virtual void rollBackFirmware()=0;
+    Q_INVOKABLE virtual void abortPreparedUpdate()=0;
+    Q_INVOKABLE void copyToClipboard(const QString &text) const;
     // Empty when the device would accept the name (SET_NAME rules).
     Q_INVOKABLE QString nameProblem(const QString &name) const;
 signals:
@@ -158,6 +179,8 @@ public:
     QStringList unsavedChanges() const override;
     QVariantMap rebootNotice() const override {return m_notice;}
     QVariantList recentDevices() const override {return m_recent.list();}
+    QVariantMap ota() const override;
+    QVariantMap firmware() const override;
     QAbstractItemModel *instances() override {return &m_instances;}
     QAbstractItemModel *loops() override {return &m_loops;}
     QAbstractItemModel *faults() override {return &m_faults;}
@@ -177,6 +200,19 @@ public:
     void dismissRebootNotice() override;
     QVariantList serialPorts() override;
     void forgetRecent(const QString &id) override;
+    QVariantMap inspectImage(const QString &fileOrUrl) override;
+    void startUpdate(bool confirm=true) override;
+    void abortUpdate() override;
+    void closeUpdate() override;
+    void confirmFirmware() override;
+    void rollBackFirmware() override;
+    void abortPreparedUpdate() override;
+    // Why an update cannot start now (empty when it can).
+    QString updateBlocked() const;
+    std::optional<OtaStatus> otaStatus() const {return m_otaStatus;}
+    // Tests and screenshots: hold the upload once it reaches `percent`
+    // (-1 releases). Abort and close still end a held upload.
+    void setOtaPauseAt(int percent) {m_otaPause->store(percent);}
     // Tests and screenshots keep their recent devices apart from the user's.
     void setSettingsPath(const QString &path) {m_recent=RecentDevices(path);emit recentDevicesChanged();}
     // The reconnect window after a requested reboot (default 30 s).
@@ -193,6 +229,26 @@ public:
 private:
     struct Context;
     enum class Op {Rename,Save,Revert,Reboot,SaveAndReboot,FactoryReset,ExitSafeMode};
+    // Firmware update state (connection_ota.cpp).
+    std::optional<OtaJob> m_ota;
+    std::shared_ptr<const OtaImage> m_chosenImage;
+    QString m_chosenFile;
+    std::optional<OtaStatus> m_otaStatus;
+    uint64_t m_otaStatusSerial=0,m_otaStatusGeneration=0,m_otaRun=0,m_connectionSerial=0;
+    uint64_t m_otaRebootSerial=0,m_otaRebootGeneration=0;
+    bool m_otaStatusPending=false;
+    std::shared_ptr<std::atomic<bool>> m_otaCancel=std::make_shared<std::atomic<bool>>(false);
+    std::shared_ptr<std::atomic<int>> m_otaPause=std::make_shared<std::atomic<int>>(-1);
+    // Candidates this GUI uploaded, per device id, for confirmation with the
+    // identity check after the dialog was closed.
+    QHash<QString,OtaCandidate> m_candidates;
+    void readOtaStatus();
+    void otaReboot();
+    void otaRefresh();
+    void otaConfirm(bool explicitRequest);
+    void otaStop(OtaJob::Phase phase,const QString &message);
+    void otaInterrupted(const QString &why);
+    QString firmwareActionBlocked() const;
     std::shared_ptr<Context> m_context;
     std::thread m_opener;
     std::shared_ptr<GuiDispatch> m_dispatch;

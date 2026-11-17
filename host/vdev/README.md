@@ -49,7 +49,8 @@ replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
 | `drop-config-reply N` | Suppress the Nth following CMD_CONFIG reply after the real mutation, once (0 disables, maximum 32) |
 | `drop-disarm N` | Ignore the next N fast DISARM requests, including their replies (maximum 32) |
 | `drop-arm-reply N` | Suppress the Nth following ARM reply after applying the real operation, once (maximum 32) |
-| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM request count, configured command group IDs/loops/widths |
+| `drop-reboot N` | Ignore the next N SYSTEM REBOOT requests: neither applied nor answered (maximum 32) |
+| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM and REBOOT request counts, configured command group IDs/loops/widths |
 
 Counters in the sidecar let GUI tests prove they sent no input value frames
 and did not adopt another owner's groups. The GUI scenario runner

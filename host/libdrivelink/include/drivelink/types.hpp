@@ -297,6 +297,14 @@ struct OtaStatus
     protocol::Sha256Digest sha256{};
     protocol::Sha256Digest elf_sha256{};
 };
+// Upload progress: bytes the device acknowledged, and how many chunks were
+// sent again after a missing or rejected reply (identical data each time).
+struct OtaProgress
+{
+    uint32_t offset = 0;
+    uint32_t size = 0;
+    uint32_t retries = 0;
+};
 struct LoopOverruns
 {
     uint8_t loop_id = 0;

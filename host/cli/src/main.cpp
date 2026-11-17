@@ -1,4 +1,5 @@
 #include "format.hpp"
+#include "drivelink/ota.hpp"
 #include "drivelink/protocol/defs.hpp"
 #include "drivelink/protocol/ota_image.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
@@ -689,58 +690,15 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
         else { usage("unknown/repeated OTA option"); }
     }
     if ((upload_only && no_confirm) || !window) { usage("invalid OTA options"); }
-    const auto image=readOtaImage(args[1]);protocol::Sha256Digest identity;
-    if (!protocol::otaImageIdentity(image,identity)) { usage("invalid OTA image"); }
-    auto session=std::make_unique<Session>(endpoint,options);
-    auto client=std::make_unique<Client>(*session);client->info();
-    const auto before=client->otaStatus();
+    const auto image=loadOtaImage(args[1]);
     InterruptScope interrupt;unsigned last_percent=101;
-    auto state=client->otaUpload(image,window,[&](uint32_t offset,uint32_t size) {
-        const auto percent=100U*offset/size;
+    OtaUpdateOptions update;update.upload_only=upload_only;update.confirm=!no_confirm;update.window=window;
+    const auto result=otaUpdate(endpoint,options,image,update,[&](const OtaProgress &p) {
+        const auto percent=100U*p.offset/p.size;
         if (percent/5!=last_percent/5) { std::cerr<<"OTA "<<percent<<"%\n";last_percent=percent; }
         return !interrupted;
-    });
-    if (upload_only) { auto output=toJson(state);output["rebooted"]=false;output["confirmed"]=false;return output; }
-    if (interrupted) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }
-    try { client->system(static_cast<uint8_t>(protocol::defs::SystemOp::Reboot)); }
-    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection && !e.boot_changed) { throw; } }
-    client.reset();session->close();session.reset();
-    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
-    std::string failure="device did not reconnect";
-    while (std::chrono::steady_clock::now()<deadline) {
-        if (interrupted) { throw Error(ErrorKind::Usage,"OTA cancelled after reboot; candidate left unconfirmed; inspect ota-status"); }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        try {
-            auto reconnect_options=options;
-            reconnect_options.timeout=std::min(options.timeout,std::chrono::milliseconds(1500));
-            session=std::make_unique<Session>(endpoint,reconnect_options);client=std::make_unique<Client>(*session);
-            const auto info=client->info();state=client->otaStatus();
-            if (state.running_slot==before.running_slot && (state.state==2 || state.state==3)) {
-                throw Error(ErrorKind::Protocol,"OTA reboot was accepted but commit did not complete; inspect ota-status, abort if boot_slot equals running_slot, otherwise reset for rollback");
-            }
-            if (state.elf_sha256!=identity || state.running_slot==before.running_slot ||
-                state.running_slot!=state.boot_slot || info.build_id!=hex(identity).substr(0,16) ||
-                state.state!=0) {
-                throw Error(ErrorKind::Protocol,"running image/slot does not match uploaded candidate; not confirmed");
-            }
-            if (!no_confirm && state.pending_confirm==true) {
-                if (interrupted) { throw Error(ErrorKind::Usage,"candidate left unconfirmed"); }
-                try { client->otaConfirm(); }
-                catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; } }
-                state=client->otaStatus();
-                if (state.pending_confirm==true) { throw Error(ErrorKind::Timeout,"confirmation uncertain; inspect ota-status and use ota-confirm"); }
-                if (state.elf_sha256!=identity || state.running_slot==before.running_slot ||
-                    state.running_slot!=state.boot_slot || state.state!=0) {
-                    throw Error(ErrorKind::Protocol,"running image changed during confirmation; inspect ota-status");
-                }
-            }
-            auto output=toJson(state);output["rebooted"]=true;output["confirmed"]=!state.pending_confirm;return output;
-        } catch (const Error &e) {
-            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout && !e.boot_changed) { throw; }
-            failure=e.what();client.reset();if (session) { session->close();session.reset(); }
-        }
-    }
-    throw Error(ErrorKind::Timeout,"OTA reconnect/confirmation failed: "+failure+"; inspect ota-status; confirmation remains uncertain");
+    },[] { return interrupted!=0; });
+    auto output=toJson(result.status);output["rebooted"]=result.rebooted;output["confirmed"]=result.confirmed;return output;
 }
 } // namespace
 int main(int argc, char **argv)
