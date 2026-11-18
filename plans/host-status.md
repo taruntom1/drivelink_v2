@@ -43,6 +43,7 @@ Every session reads all of this file, so it holds only what has no other home.
   - **QML into C++.** `QVariantMap` parameters reject JS `null`/`undefined` (warnings while the panel loads); take `QVariant` where QML can pass them. `QVERIFY2` evaluates its message eagerly: never read `expected::error()` there unguarded.
   - **Parallel builds.** Two ninja runs in one build directory corrupt the static libraries (`ar`/`ranlib` errors); serialize builds when a subagent also builds.
   - **A flaky native test.** `test_configurable_loops.cpp:246` (`REQUIRE(c.revert().ok())`) failed once in H2f's first `full` run and passed three reruns; firmware untouched. Rerun `--only native --force` before suspecting a change.
+  - **A flaky Windows integration step.** `host-win`'s CLI integration `motor_smoke` velocity assertion (`motor_smoke.py:304`) failed once under load during H2f and passed the rerun; nothing in its path changed.
   - **Irregular vdev ticks, square-wave steps, stale snapshots** (H2e) still hold.
 - **Open edges:**
   - **Mode edits elsewhere** (Layout during identification) and **response signal** selection on step runs (H2e).
