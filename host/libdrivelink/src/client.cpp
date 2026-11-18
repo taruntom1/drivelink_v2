@@ -201,7 +201,7 @@ try
                 j.id = r.readU16Le();
                 j.kind = static_cast<ItemKind>(r.readU8());
                 j.value_type = static_cast<ValueType>(r.readU8());
-                j.flags = r.readU8();
+                j.flags = r.readU16Le();
                 const auto limits = r.readU8();
                 if(static_cast<uint8_t>(j.kind)>3 ||
                    (static_cast<uint8_t>(j.value_type)>6 && j.value_type!=ValueType::None) || limits>3) { malformed(); }

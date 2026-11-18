@@ -8,9 +8,10 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.
 
 H2a-1 provides the style layer; H2a-2 adds the application, local device
-backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update
-and H2c-1/H2c-2 Layout (below). Tune and Monitor are placeholders until their steps
-([host-steps.md](../../plans/host-steps.md)).
+backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update,
+H2c-1/H2c-2 Layout, H2d-1/H2d-2 Monitor and its manual command, and H2e-1
+Tune runs (below). Tune's gain history, A/B compare, session files and plant
+identification follow in H2e-2 and H2e-3 ([host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
 |---|---|
@@ -340,6 +341,72 @@ and `style/DLCommandControl.qml`.
   for screenshots; with a value it arms, so it accepts only a `tcp://` vdev.
   Scenarios `monitor` (one input held, one latched) and
   `monitor-command-disarmed`.
+
+## Tune (H2e-1)
+
+The Tune page (G5) runs test signals on a controller and compares the captured
+responses. Pure rules in `backend/tune_model.*`, the QML-facing page in
+`backend/tune_view.*` (`connection.tune`), the device side in
+`backend/connection_tune.cpp`, the controls in `style/DLGainControl.qml` and
+`style/DLSlider.qml` (Log scale). Step metrics come from
+`drivelink/tuning.hpp` in libdrivelink.
+
+- **Controllers and gains.** The picker lists running instances, outside the
+  loop types, that have a running `testgen` f32 input. Gains are the
+  instance's live numeric params flagged `tune` (core v10 `ItemFlag::Tune`);
+  tune-flagged enums are combos on top. Gains are grouped by dotted prefix; the
+  group whose prefix starts the selected enum value's name is first and open,
+  others are collapsed but editable, a group no value selects is open
+  ([adding-a-module.md](../../docs/adding-a-module.md)).
+- **Gain control.** A log slider over a window of ÷4 to ×4 around the value
+  (typed low and high with the pencil, kept per connection), steps ÷2, −10 %,
+  +10 %, ×2, arrow keys 1 % (Shift 10 %, Ctrl 0.1 %), values rounded to 3
+  significant digits. Gain 0 disables the slider and steps (type a value).
+  A drag sends the latest value at most every 50 ms and once on release, never
+  two writes of one gain in flight; Enter sends a typed value. An accepted value
+  is shown until the device reads it back (or 2 s). Change lines coalesce per
+  param; the configuration is read back 300 ms after the last write. Gain writes
+  use the Layout live-write path: a commanded instance goes to 0 for the write.
+- **Saved values.** Taken while the status shows no unsaved changes (connect,
+  SAVE, REVERT, reload); unknown otherwise, which disables "Revert gains to
+  saved" with the reason. Revert writes one batch and waits for gain writes
+  in flight.
+- **Test signal and capture.** Target (a running `testgen` input of the
+  controller), waveform (step, ramp, sine, square, chirps), offset, amplitude,
+  frequencies (below half the loop rate), duration and repeat, checked before
+  Run. The capture defaults to the target and the first same-unit signal of
+  the controller at the loop rate (a divider fits it into the capacity), with
+  about 6 % before the trigger; the trigger is always the test signal start.
+- **Run.** One at a time, only with this window's accepted ARM and its command
+  groups ready (F5 or Run; Run shows why it is disabled). The controller's
+  manual commands go to 0 for the run (as for a live write); the GUI sends
+  CAPTURE CONFIG, ARM and TESTGEN START once. A refused step names itself and
+  ABORTs a capture this run configured; no reply to START sends STOP. When the
+  signal ends (TestgenDone, or STATUS) the controller's value group sends a
+  fresh frame, so a commandable target returns to 0; a target outside the hold
+  rule keeps the generator's last value. Stop ends the signal and keeps the
+  capture ("stopped"); a disarm ends it with a marker ("cut by a disarm"); the
+  capture keeps recording and is read once when Done. A run given up while its
+  signal may run (timeout, cleared or unreadable capture) sends STOP once and
+  keeps the controller at 0 until STATUS shows the signal stopped; Run is
+  blocked meanwhile. Boot, a lost link and close end the run; nothing is
+  retried. Gains, the mode and Revert are locked while a run is active.
+- **Runs.** Kept in memory per device (at most 50; the oldest unpinned goes),
+  numbered with fixed colours. The overlay shows pinned runs, the newest in
+  full and the two before it faded, one plot per unit of the checked signal
+  chips. Step runs get rise time (10–90 %), overshoot, settling time (2 %) and
+  steady-state error of the response (the first captured same-unit signal);
+  other waveforms show "—". A run on irregular device ticks (desktop vdev) says
+  so. Row menu: pin or unpin, remove.
+- **Tests and tools.** `gui_tune_tests` `tuneLogic` (pure), `tuneView`,
+  `tuneOperations` (vdev: step run, metrics, read-back 0, Stop, refused START,
+  a given-up run, disarm mid-run, Revert), `tuneInShell`, and `benchTune`
+  (env-gated: `DRIVELINK_GUI_BENCH_ENDPOINT` with `DRIVELINK_GUI_BENCH_STAGE_MOCK=1`
+  on a bare board, or `DRIVELINK_GUI_BENCH_TUNE`, `_TARGET`, optional
+  `_RESPONSE`, `_STEP`, `_DURATION`, `_MIN_RESPONSE`). The app's `--tune KEY`,
+  `--tune-set`, `--signal` and `--tune-runs KEY=V1:V2` build screenshots;
+  runs arm, so they accept only a `tcp://` vdev. Scenarios `tune`,
+  `tune-running`, `tune-disarm` and `tune-disarmed`.
 
 ## Theme
 

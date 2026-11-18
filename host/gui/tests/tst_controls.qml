@@ -55,6 +55,12 @@ TestCase {
         id: commandComponent
         DLCommandControl { name: "velocity_sp"; owner: "left_drive"; unit: "rad/s"; from: -2.5; to: 2.5; limit: 2.5; bound: 1000 }
     }
+    Component {
+        id: gainComponent
+        DLGainControl { name: "vel.kp"; description: "proportional"; valueText: "0.85"; position: 0.5
+                        lowText: "0.21"; midText: "0.85"; highText: "3.40" }
+    }
+    Component { id: logSliderComponent; DLSlider { width: 320; scaleType: DLSlider.Log; from: 0; to: 1 } }
     Component { id: spyComponent; SignalSpy {} }
 
     function spy(target, signalName) {
@@ -492,10 +498,81 @@ TestCase {
         control.writing = true
         verify(!slider.enabled)
         verify(field.readOnly)
-        verify(note.text.indexOf("written") >= 0)
+        verify(note.text.indexOf("param write") >= 0)
         control.writing = false
         control.problem = "Not a number"
         compare(note.text, "Not a number")
+        compare(field.status, DLNumberField.Rejected)
+    }
+
+    // DLSlider Log / DLGainControl (H2e-1) ------------------------------------
+
+    function test_log_slider_labels_and_ticks() {
+        const slider = createTemporaryObject(logSliderComponent, testCase,
+            { lowText: "0.21", midText: "0.85", highText: "3.40", value: 0.5,
+              ticks: [{position: 0.25, color: "red"}, {position: 0.9, color: "blue"}] })
+        verify(slider.log)
+        // No 0 mark on a log scale; the owner's labels and one mark per tick.
+        const texts = []
+        const marks = []
+        for (const child of slider.background.children) {
+            if (child.text !== undefined && child.visible) texts.push(child.text)
+            if (child.width === 2 && child.height === 8) marks.push(child)
+        }
+        verify(texts.indexOf("0.21") >= 0 && texts.indexOf("0.85") >= 0 && texts.indexOf("3.40") >= 0)
+        compare(marks.length, 2)
+        fuzzyCompare(marks[0].x + 1, 0.25 * slider.availableWidth, 0.5)
+    }
+
+    function test_gain_control_emits_and_zero_disables() {
+        const control = createTemporaryObject(gainComponent, testCase, { x: 20, y: 20 })
+        const slider = findChild(control, "gainSlider")
+        const field = findChild(control, "gainValue")
+        const note = findChild(control, "gainNote")
+        compare(control.width, 344)
+        compare(field.text, "0.85")
+        const pressed = spy(control, "sliderPressed")
+        const moved = spy(control, "sliderMoved")
+        const released = spy(control, "sliderReleased")
+        mousePress(slider, slider.width / 2, 22)
+        mouseMove(slider, slider.width * 0.8, 22)
+        compare(pressed.count, 1)
+        verify(moved.count >= 1)
+        verify(moved.signalArguments[moved.count - 1][0] > 0.5)
+        verify(note.text.indexOf("50 ms") >= 0)
+        mouseRelease(slider, slider.width * 0.8, 22)
+        compare(released.count, 1)
+        // While not pressed the slider shows the owner's position.
+        control.position = 0.5
+        compare(slider.value, 0.5)
+        // Keys: 1 %, Shift 10 %, Ctrl 0.1 % (not the slider's own steps).
+        const keys = spy(control, "keyStepped")
+        slider.forceActiveFocus()
+        keyClick(Qt.Key_Up)
+        keyClick(Qt.Key_Down, Qt.ShiftModifier)
+        compare(keys.count, 2)
+        compare(keys.signalArguments[0][0], true)
+        compare(keys.signalArguments[1][0], false)
+        compare(keys.signalArguments[1][1], true)
+        compare(slider.value, 0.5)
+        // % steps.
+        const steps = spy(control, "stepped")
+        mouseClick(findChild(control, "gainStep_2"))
+        compare(steps.count, 1)
+        compare(steps.signalArguments[0][0], 2)
+        // Enter sends the typed value; leaving the field drops it.
+        const typed = spy(control, "valueTyped")
+        field.forceActiveFocus()
+        field.text = "1.2"
+        keyClick(Qt.Key_Return)
+        compare(typed.signalArguments[0][0], "1.2")
+        // A gain of 0: no slider or steps until a value is typed.
+        control.zero = true
+        verify(!slider.enabled)
+        verify(!findChild(control, "gainStep_2").enabled)
+        verify(note.text.indexOf("non-zero") >= 0)
+        control.problem = "Locked while armed"
+        compare(note.text, "Locked while armed")
         compare(field.status, DLNumberField.Rejected)
     }
 }

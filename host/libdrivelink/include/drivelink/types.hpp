@@ -74,7 +74,7 @@ struct ItemDescriptor
     uint16_t id = 0;
     ItemKind kind = ItemKind::Param;
     ValueType value_type = ValueType::None;
-    uint8_t flags = 0;
+    uint16_t flags = 0;
     uint32_t min_bits = 0;
     uint32_t max_bits = 0;
     uint32_t default_bits = 0;

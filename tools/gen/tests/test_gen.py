@@ -144,6 +144,7 @@ class GoldenOutput(TempCase):
         self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
         self.assertIn(".flags = flagBits(ItemFlag::ReadOnly),", t)
         self.assertIn(".flags = flagBits(ItemFlag::Testgen),", t)
+        self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::Tune),", t)
         # f32 as hex bits with the decimal in a comment; i32 as two's complement
         self.assertIn(".default_bits = 0x3FC00000 /* 1.5 */,", t)
         self.assertIn(".min_bits = 0xBF000000 /* -0.5 */,", t)
@@ -477,6 +478,10 @@ class TypeErrors(TempCase):
             ("testgen on a param", f, "{id: 0x0023, kind: param, name: level,", "{id: 0x0023, kind: param, testgen: true, name: level,", "unknown key 'testgen'"),
             ("testgen on a signal", f, "name: ready, type: bool}", "name: ready, type: bool, testgen: true}", "unknown key 'testgen'"),
             ("testgen not a bool", f, "testgen: true", "testgen: sometimes", "'testgen' must be true/false"),
+            ("tune not a bool", f, "max: 2.25, tune: true}", "max: 2.25, tune: maybe}", "'tune' must be true/false"),
+            ("tune on a signal", f, "name: position, type: f32, unit: rad}", "name: position, type: f32, unit: rad, tune: true}", "unknown key 'tune'"),
+            ("tune on a reboot param", f, "type: u32, flags: [reboot_required], ref: actuator", "type: u32, flags: [reboot_required], tune: true, ref: actuator", "'tune' is only for a live param"),
+            ("tune on a bool", f, "type: bool, default: true", "type: bool, default: true, tune: true", "'tune' is only for a numeric or enum param"),
         ])
 
     def test_actions(self) -> None:

@@ -270,6 +270,20 @@ Window {
         }
 
         Section {
+            title: "TUNE: SLIDER (LOG), GAIN CONTROL"
+            Column {
+                spacing: Theme.space16
+                DLSlider { width: 320; scaleType: DLSlider.Log; from: 0; to: 1; value: 0.5; lowText: "0.21"; midText: "0.85"; highText: "3.40"
+                           ticks: [{position: 0.35, color: Theme.textPrimary}, {position: 0.42, color: Theme.series1}] }
+                DLSlider { width: 320; scaleType: DLSlider.Log; from: 0; to: 1; value: 0.5; enabled: false }
+            }
+            DLGainControl { name: "vel.kp"; description: "proportional"; unit: "1/(rad/s)"; valueText: "0.85"; position: 0.5
+                            lowText: "0.21"; midText: "0.85"; highText: "3.40"; savedText: "0.60"
+                            ticks: [{position: 0.35, color: Theme.textPrimary}, {position: 0.42, color: Theme.series1}] }
+            DLGainControl { name: "vel.kd"; description: "derivative"; unit: "s"; valueText: "0.0"; zero: true }
+        }
+
+        Section {
             title: "TOAST, TOOLTIP"
             DLToast { tone: DLToast.Info; text: "Model reloaded: the descriptor hash changed."; timeout: 0 }
             DLToast { tone: DLToast.Ok; text: "Saved to flash."; timeout: 0 }

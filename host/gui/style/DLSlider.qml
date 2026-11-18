@@ -1,13 +1,26 @@
 import QtQuick
 import QtQuick.Templates as T
 
-// Figma Slider, Scale=Symmetric: a linear track from `from` to `to` with a
+// Figma Slider. Scale=Symmetric: a linear track from `from` to `to` with a
 // mark at 0, the span from 0 to the value filled, the handle, a value bubble
 // while dragging and the range labels under the track. Values snap to
-// `stepSize` and are shown with `decimals`. (The Log scale of Tune's gains
-// arrives with H2e.) The control only draws and emits; its owner sends.
+// `stepSize` and are shown with `decimals`.
+// Scale=Log (Tune's gains, H2e): the value is the position 0..1 on a log
+// window the owner maps; the owner supplies the three labels, the bubble text
+// and `ticks` [{position, color}] (the saved value, the runs' gains), each at
+// its own position on the log scale. The control only draws and emits; its
+// owner sends.
 T.Slider {
     id: control
+
+    enum Scale { Symmetric, Log }
+    property int scaleType: DLSlider.Symmetric
+    readonly property bool log: scaleType === DLSlider.Log
+    property string lowText
+    property string midText
+    property string highText
+    property string bubbleText
+    property var ticks: []
 
     property int decimals: 2
     // What the value bubble shows while dragging; an owner that quantizes
@@ -39,6 +52,7 @@ T.Slider {
 
         // The 0 mark above the track.
         Rectangle {
+            visible: !control.log
             x: control.zeroPosition * parent.width - width / 2
             y: control.trackY - 12
             width: 1; height: 8
@@ -51,29 +65,42 @@ T.Slider {
             radius: 2
             color: Theme.bgSecondary
             Rectangle {
-                readonly property real a: Math.min(control.zeroPosition, control.visualPosition) * track.width
-                readonly property real b: Math.max(control.zeroPosition, control.visualPosition) * track.width
+                readonly property real origin: control.log ? 0 : control.zeroPosition
+                readonly property real a: Math.min(origin, control.visualPosition) * track.width
+                readonly property real b: Math.max(origin, control.visualPosition) * track.width
                 x: a; width: b - a; height: parent.height
                 radius: 2
                 color: Theme.accentDefault
             }
         }
+        // Log: tick marks above the track, each at its value's position.
+        Repeater {
+            model: control.log ? control.ticks : []
+            delegate: Rectangle {
+                required property var modelData
+                x: modelData.position * parent.width - width / 2
+                y: control.trackY - 12
+                width: 2; height: 8
+                color: modelData.color
+            }
+        }
         Text {
             y: control.trackY + 12
-            text: control.format(control.from)
+            text: control.log ? control.lowText : control.format(control.from)
             font: Theme.fontMonoSmall; color: Theme.textSecondary
         }
         Text {
-            visible: control.zeroPosition > 0.15 && control.zeroPosition < 0.85
-            x: control.zeroPosition * parent.width - width / 2
+            visible: control.log ? control.midText.length > 0
+                                 : control.zeroPosition > 0.15 && control.zeroPosition < 0.85
+            x: (control.log ? 0.5 : control.zeroPosition) * parent.width - width / 2
             y: control.trackY + 12
-            text: "0"
+            text: control.log ? control.midText : "0"
             font: Theme.fontMonoSmall; color: Theme.textSecondary
         }
         Text {
             x: parent.width - width
             y: control.trackY + 12
-            text: control.format(control.to)
+            text: control.log ? control.highText : control.format(control.to)
             font: Theme.fontMonoSmall; color: Theme.textSecondary
         }
     }
@@ -100,7 +127,7 @@ T.Slider {
             Text {
                 id: bubble
                 anchors.centerIn: parent
-                text: control.format(control.shownValue)
+                text: control.log ? control.bubbleText : control.format(control.shownValue)
                 font: Theme.fontMonoSmall; color: Theme.textPrimary
             }
         }

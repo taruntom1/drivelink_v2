@@ -6,6 +6,7 @@
 #include "models.hpp"
 #include "monitor_view.hpp"
 #include "ota_model.hpp"
+#include "tune_view.hpp"
 #include <drivelink/buffers.hpp>
 #include <QElapsedTimer>
 #include <QHash>
@@ -76,6 +77,8 @@ class Connection : public QObject {
     Q_PROPERTY(QObject* monitor READ monitor CONSTANT)
     // Monitor's Manual command card (CommandView).
     Q_PROPERTY(QObject* command READ command CONSTANT)
+    // The Tune page (TuneView): gains, test signal, capture, runs.
+    Q_PROPERTY(QObject* tune READ tune CONSTANT)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -125,6 +128,7 @@ public:
     virtual QAbstractItemModel *actions()=0;
     virtual QObject *monitor()=0;
     virtual QObject *command()=0;
+    virtual QObject *tune()=0;
     // The page the shell shows (device, layout, tune, monitor): the Layout
     // live group is set up only while Layout is shown.
     Q_INVOKABLE virtual void setPage(const QString &page)=0;
@@ -260,6 +264,11 @@ public:
     MonitorView &monitorView() {return m_monitor;}
     QObject *command() override {return &m_command;}
     CommandView &commandView() {return m_command;}
+    QObject *tune() override {return &m_tune;}
+    TuneView &tuneView() {return m_tune;}
+    // Why a Tune run cannot start now (empty when it can).
+    QString tuneBlocked() const;
+    bool tuneRunning() const {return m_tuneRun.has_value();}
     // Why manual commands are not accepted now (empty when they are).
     QString commandBlocked() const;
     // The command groups this connection configured: {id, loop, refs, values} (tests).
@@ -378,7 +387,10 @@ private:
     // m_changes go when Discard all drops them.
     QHash<QString,QStringList> m_stagedLines;
     void noteStaged(const QString &id,const QString &line) {m_changes[id]<<line;m_stagedLines[id]<<line;}
-    void forgetChanges(const QString &id) {m_changes.remove(id);m_changedParams.remove(id);m_stagedLines.remove(id);}
+    void forgetChanges(const QString &id) {
+        m_changes.remove(id);m_changedParams.remove(id);m_stagedLines.remove(id);
+        m_tuneLines.removeIf([&](QHash<QString,TuneLine>::iterator it) {return it.key().startsWith(id+"/");});
+    }
     // Live data of the selected node (connection_live.cpp): one GUI-owned
     // subscription group, reconfigured or cleared as the selection changes;
     // one mutation at a time, the latest selection wins.
@@ -420,6 +432,49 @@ private:
     CommandView m_command;
     void configureCommands();
     void discardCommands(uint8_t type,uint8_t instance);
+    // Tune (connection_tune.cpp): live gain writes and one run at a time.
+    struct TuneRun {
+        TuneView::RunSetup setup;
+        uint64_t generation=0;
+        uint8_t loop=0;
+        std::optional<uint32_t> run;
+        bool holding=false,signalEnded=false,stopRequested=false,polling=false,reading=false;
+        RunEnd end=RunEnd::Completed;
+        std::optional<int64_t> endedUs;
+        std::optional<CaptureData> data;
+        QElapsedTimer elapsed;
+    };
+    struct TuneLine {QString line,before;};
+    // A run given up while its signal may still run: the controller's manual
+    // commands stay at 0 until STATUS shows the signal stopped (a zero frame
+    // sent before STOP lands is discarded by the generator).
+    struct TuneRelease {
+        std::optional<InstanceKey> key; // none: nothing of ours is held
+        uint64_t generation=0;
+        uint8_t loop=0;
+        std::optional<uint32_t> run;
+        bool polling=false;
+    };
+    // How a run ends: DeviceGone (Boot, close) sends nothing to the device.
+    enum class TuneEnd {Done, AbortCapture, DeviceGone};
+    TuneView m_tune;
+    std::optional<TuneRun> m_tuneRun;
+    std::optional<TuneRelease> m_tuneRelease;
+    QTimer m_tuneTimer,m_tuneRefresh;
+    // Per device id and item key: the change line a Tune write added last.
+    QHash<QString,TuneLine> m_tuneLines;
+    void setupTune();
+    void syncTune();
+    void tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString)> done);
+    void startTuneRun();
+    void stopTuneRun();
+    void tuneSignalEnded(TestgenReason reason,std::optional<uint32_t> elapsedMs);
+    void pollTune();
+    void readTuneCapture();
+    void finishTuneRun();
+    void endTuneRun(const QString &failure,TuneEnd how=TuneEnd::Done);
+    void holdUntilStopped();
+    void pollTuneRelease();
     void syncLive();
     void pollLive();
     void resetLive();

@@ -74,8 +74,23 @@ MONITOR = {
     'monitor-budget': ([['set', '5:1:1=1000']], CONTROL + ',114:0:256', '0:1,1:1', '5', ''),
     'monitor-command-disarmed': ([], PLOTS, '', '10', '32:0:512,32:0:514'),
 }
+# H2e-1 Tune (G5) on the sample device: left_drive in velocity mode on its
+# mock plant, the control loop at 100 Hz (as for Monitor's armed screens).
+# Three 2 rad/s steps with vel.kp 0.04, 0.06 and 0.08 (overlaid, two faded);
+# one more captured while running; one more cut by DISARM; and the page
+# disarmed with no runs.
+TUNE_SETUP = [['set', '113:0:2=100000'], ['save']]
+VEL_KP = '32:0:32'
+TUNE_SET = '32:0:16=velocity,32:0:33=0.5'
+SIGNAL = 'target=32:0:512,amplitude=2,duration=1'
+TUNE = {
+    'tune': ('tune', VEL_KP + '=0.04:0.06:0.08', SIGNAL),
+    'tune-running': ('tune-running', VEL_KP + '=0.04', 'target=32:0:512,amplitude=2,duration=4'),
+    'tune-disarm': ('tune-disarm', VEL_KP + '=0.04', 'target=32:0:512,amplitude=2,duration=3'),
+    'tune-disarmed': ('tune', '', SIGNAL),
+}
 # Scenarios that render a screen of another name.
-SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor'}
+SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune'}
 
 
 # The action each scenario runs (left_enc's `sample`), and the loop stall
@@ -155,6 +170,17 @@ def render(gui, vdev, destination, scenario, cli=None):
                 provision(cli, endpoint, False)
                 for command in MONITOR[scenario][0]:
                     cli_run(cli, endpoint, command)
+            if scenario in TUNE:
+                provision(cli, endpoint, False)
+                # A fine encoder (the default 1440 counts quantize 2 rad/s at
+                # 100 Hz to steps of 0.44 rad/s), then the armed loop rate.
+                for command in TUNE_SETUP:
+                    cli_run(cli, endpoint, command)
+                subprocess.run([cli, '--endpoint', endpoint, 'reboot'], capture_output=True, text=True, timeout=30)
+                cli_run(cli, endpoint, ['info'], attempts=20)
+                for command in ARMED:
+                    cli_run(cli, endpoint, command)
+                screen = TUNE[scenario][0]
             out = destination / scenario
             # Isolated recent devices; let loop run time arrive before capture.
             command = [gui, '--screen', screen, '--out', str(out),
@@ -171,6 +197,11 @@ def render(gui, vdev, destination, scenario, cli=None):
                     command += ['--rate', rates]
                 if commands:
                     command += ['--command', commands]
+            if scenario in TUNE:
+                _, runs, signal = TUNE[scenario]
+                command += ['--tune', '32:0', '--tune-set', TUNE_SET, '--signal', signal]
+                if runs:
+                    command += ['--tune-runs', runs]
             if scenario in ACTIONS:
                 command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):
@@ -205,7 +236,7 @@ def render(gui, vdev, destination, scenario, cli=None):
             if os.environ.get('DRIVELINK_SCENARIO_LOG'):
                 print(scenario, ''.join(errors), flush=True)
             images = sorted(out.glob('*.png'))
-            if scenario in LAYOUT or scenario in MONITOR:
+            if scenario in LAYOUT or scenario in MONITOR or scenario in TUNE:
                 # The file names carry the screen, not the scenario.
                 assert all(image.name.startswith(screen) for image in images), images
             assert len(images) == 4, (scenario, images, output, errors)
@@ -242,7 +273,7 @@ def main():
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'device', *LAYOUT, 'tune', *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                     ['connect', 'device', *LAYOUT, *TUNE, *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
                       'rename', 'reset', 'unsaved', 'notice',
                       'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:

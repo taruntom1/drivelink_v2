@@ -209,7 +209,7 @@ Session event queue carries subscriptions as well as status and diagnostics.
 Pulled buffers and mappings are described below; legacy event consumers retain
 their existing behavior.
 
-Arming wrappers use core v9: arm(), disarm() and acknowledgeFault(). Session
+Arming wrappers use core v10: arm(), disarm() and acknowledgeFault(). Session
 routes system DISARM through the fast-path MSG_TYPE. Group capacities are
 read-only system params; Client::groups retains convenience capacity fields.
 
@@ -291,6 +291,20 @@ have at most four chunks in flight, preflight payload/resources, and correlate
 out-of-order replies. OTA retains its identical-offset/data retry exception.
 Async cancellation never confirms or repeats REBOOT; if an upload is interrupted,
 inspect OTA status and abort explicitly when cleanup could not complete.
+
+## Tuning math (`drivelink/tuning.hpp`, H2e-1)
+
+`stepMetrics(t, response, step_time, from, to, options)` measures the response
+to one step of the target, relative to the step size so a negative step works
+the same. Rise time runs from the first 10 % crossing to the first 90 %
+crossing (interpolated between samples); overshoot is the peak beyond `to` in
+% of the step (0 when none); settling time runs from the step to the last
+entry into the band (default 2 % of the step); steady-state error is `to`
+minus the mean response over the tail (default the last 10 % of the samples
+after the step). `end_time` drops samples after it (a stopped or cut run).
+Each metric is optional: `problem` says why one is missing (no step, too few
+samples after the step, the response never reaches 90 %, it never settles).
+NaN samples are skipped. Pure and device-free; the GUI's Tune page uses it.
 
 ## OTA workflow (`drivelink/ota.hpp`)
 

@@ -161,6 +161,17 @@ private:
 // Enough for the longest window at this rate, with a margin.
 size_t ringCapacity(double hz);
 
+// What a PlotItem draws from (Monitor's live rings, Tune's runs): a ring per
+// series key and the time span shown, in µs. The QObject that implements it
+// emits changed() and dataChanged().
+class PlotSource {
+public:
+    virtual ~PlotSource()=default;
+    virtual const SampleRing *ring(const QString &key) const=0;
+    virtual int64_t plotStart() const=0;
+    virtual int64_t plotEnd() const=0;
+};
+
 // The series over [t0, t1] as points: x in pixels (0..width), y the raw
 // value. At most two points (min and max, in time order) per pixel column,
 // plus the sample before t0 so the line enters from the left edge.

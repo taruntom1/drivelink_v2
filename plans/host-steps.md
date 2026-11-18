@@ -33,7 +33,7 @@ logs its internal choices.
 | H2b | Connect and Device screens (H2b-1), OTA (H2b-2) | H2a-2 | bare board: GUI scenarios | independent |
 | H2c | Layout screen | H2b | vdev | self |
 | H2d | Monitor screen: plots (H2d-1), manual command (H2d-2) | H2c | vdev; H2d-1 also a short bare-board run | independent |
-| H2e | Tune screen, run metrics and plant identification, session files | H2d | vdev; deferred: motor | independent |
+| H2e | Tune screen: runs and metrics (H2e-1), session (H2e-2), plant identification (H2e-3) | H2d | vdev; H2e-1 also bare board (wire change); deferred: motor | independent |
 | H2f | IMU calibration custom panel | H2c; may run beside H2d/H2e | vdev; deferred: IMU | self |
 | H2g | Inno Setup installer (unsigned), root `VERSION`, third-party notices, local GUI close-out | H2e, H2f | bare board: installed GUI | self |
 | H3a | Agent for several devices: server, access, per-device arbitration and lease, clock model, history, agent MSG_TYPEs; library agent client; agent check and CI | H1b (planned after H2g) | vdev | independent |
@@ -54,7 +54,9 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | Where the device name is stored (its own NVS key or the A/B config); allowed characters; vdev's stable fake id | H1c |
 | Faults badge: active faults only, or history too | H2b |
 | What the reboot notice lists as lost (the GUI tracks params changed since the last save) | H2b |
-| G5 1080p layouts: Tune plot column, A/B card, gain history placement (Monitor's settled in H2d-1) | H2e |
+| G5 1080p layouts: A/B card, gain history placement (the Tune plot column settled in H2e-1, Monitor's in H2d-1) | H2e-2 |
+| How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | H2e-2 |
+| How suggested gains map onto tune-flagged params generically (no module names) | H2e-3 |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | H2f |
 | Agent default port, history sizes, retry policy for an offline device | H3a |
 | mDNS library, service name and TXT records | H3b |
@@ -250,6 +252,19 @@ Scope:
 Hardware check: vdev. Deferred row: tuning a real motor with the GUI (first-run procedure).
 
 Review: independent (Run and Auto re-run start test signals that move motors).
+
+Split (user decision 2026-11-18), one PR each, each independently reviewed:
+- **H2e-1 Runs:** core v10 item flags u16 with `ItemFlag::Tune` (gains are
+  marked in the definitions, not by name), step metrics in libdrivelink, the
+  Tune page: controller picker, gains card, test signal and capture, Run/Stop,
+  run in progress and cut by a disarm, runs list, overlay, pinning, metrics,
+  the 1080p plot column. Bare board: v10 smokes and `benchTune` with a mock.
+- **H2e-2 Session:** gain history with restore, A/B compare and its 1080p card,
+  Auto re-run, session files (versioned JSON, base64 columns, keyed by device
+  id; how Open/Save pick a file), CSV export per run.
+- **H2e-3 Plant identification:** first-order-plus-deadtime fit and suggested
+  gains in libdrivelink, the identification tab, the CheckItem warning state;
+  how suggested gains map onto tune-flagged params generically.
 
 ## H2f IMU calibration panel
 

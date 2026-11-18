@@ -215,6 +215,8 @@ TEST_CASE("Fixture items: limits and defaults as slot bits")
     REQUIRE(vel_kp != nullptr);
     CHECK(f32FromBits(vel_kp->min_bits) == -0.5f);
     CHECK(f32FromBits(vel_kp->max_bits) == 2.25f);
+    CHECK(hasFlag(*vel_kp, ItemFlag::Tune));
+    CHECK(hasFlag(*vel_kp, ItemFlag::Persist));
 
     const ItemDesc *raw = findItem(t, fx::kRaw);
     REQUIRE(raw != nullptr);
@@ -282,6 +284,7 @@ TEST_CASE("Defs: gpio and ref_order flags, wiring values and categories")
     namespace wd = fixture_wired;
     CHECK(static_cast<uint8_t>(ItemFlag::Gpio) == 0x20);
     CHECK(static_cast<uint8_t>(ItemFlag::RefTicksAfter) == 0x40);
+    CHECK(static_cast<uint16_t>(ItemFlag::Tune) == 0x0100); // core v10: item flags are u16
     const ItemDesc *pin = findItem(wd::kDesc, wd::kPinA);
     REQUIRE(pin != nullptr);
     CHECK(hasFlag(*pin, ItemFlag::Gpio));

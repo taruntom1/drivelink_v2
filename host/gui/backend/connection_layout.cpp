@@ -17,7 +17,7 @@ const ModelItem *findItem(const DeviceSnapshot &s,const Ref &r) {
     const auto t=s.types.find(r.type);if(t==s.types.end()) {return nullptr;}
     const auto i=t->second.items.find(r.item);return i==t->second.items.end()?nullptr:&i->second;
 }
-bool flag(const ItemDescriptor &d,defs::ItemFlag f) {return (d.flags&uint8_t(f))!=0;}
+bool flag(const ItemDescriptor &d,defs::ItemFlag f) {return (d.flags&uint16_t(f))!=0;}
 QVariantList candidateList(const std::vector<Candidate> &items) {
     QVariantList result;
     for(const auto &c:items) {

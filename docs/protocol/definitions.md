@@ -117,6 +117,7 @@ A retired item has only `id`, `name` and `retired: true`. It keeps its id in the
 | `ref_order` | a `ref` param | `before` (default): the referenced instance ticks before this one. `after`: it ticks after this one (`ItemFlag::RefTicksAfter`) |
 | `gpio` | u8 param with `reboot_required` | `true` marks a pin (`ItemFlag::Gpio`). It takes no `min`, `max` or `default`: the default is `0xFF`, no pin |
 | `testgen` | input | `true` lets a test signal drive it |
+| `tune` | live numeric or enum param (not `reboot_required` or `read_only`) | `true` shows it on the GUI's Tune page (`ItemFlag::Tune` 0x0100): a gain, or the enum that selects which gains act. See [adding-a-module.md](../adding-a-module.md) for the grouping convention |
 | `runs_in` | action (required) | `loop` or `paused` |
 | `args`, `results` | action | up to 4 scalars each: `{name, type, unit}` with a scalar type (no enum) |
 | `blob` | action | `none` (default), `in`, `out` or `both` |

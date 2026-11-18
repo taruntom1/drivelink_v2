@@ -21,7 +21,7 @@ Rectangle {
     property bool latched: false
     property bool held: false
     property bool ramping: false
-    // A live param write to this instance is in flight: held at 0.
+    // A live param write or a Tune run on this instance is in flight: held at 0.
     property bool writing: false
     // Commands are accepted (armed by this window); otherwise everything is
     // shown at 0 and only the limit and Remove work.
@@ -163,7 +163,7 @@ Rectangle {
             readonly property bool running: control.latched && control.value !== 0
             text: control.problem.length > 0 ? control.problem
                 : !control.commandEnabled ? qsTr("Release returns to 0")
-                : control.writing ? qsTr("Held at 0 while a param of this instance is written")
+                : control.writing ? qsTr("Held at 0 during a param write or a Tune run on this instance")
                 : control.held ? qsTr("Sending · returns to 0 on release")
                 : control.ramping ? qsTr("Returning to 0")
                 : running ? qsTr("Latched at %1 · keeps running until you unlatch, Remove or Hold all")

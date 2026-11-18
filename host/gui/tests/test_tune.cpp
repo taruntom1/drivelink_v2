@@ -1,0 +1,601 @@
+// Tune (H2e-1): the pure rules (tune_model), runs on vdev through the
+// connection (a step run on a mock plant, metrics, the target back at 0, a
+// manual command suspended during the run, Stop, a disarm mid-run, a refused
+// START, gains and Revert gains to saved), the page in the shell, and the
+// env-gated bench check.
+#include "command_model.hpp"
+#include "connection.hpp"
+#include "layout_model.hpp"
+#include "plot_item.hpp"
+#include "safety_keys.hpp"
+#include "style.hpp"
+#include "test_support.hpp"
+#include "tune_model.hpp"
+#include "tune_view.hpp"
+#include <drivelink/protocol/defs.hpp>
+#include <drivelink/protocol/gen/registry.hpp>
+#include <drivelink/protocol/gen/type_controller_cascade_pid.hpp>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QQuickWindow>
+#include <QTemporaryDir>
+#include <QtTest>
+#include <bit>
+#include <cmath>
+
+using namespace drivelink;
+using namespace drivelink::gui;
+using namespace drivelink::gui::test;
+namespace pid=protocol::defs::controller_cascade_pid;
+namespace {
+constexpr uint16_t kTune=uint16_t(protocol::defs::ItemFlag::Tune);
+constexpr uint16_t kTestgen=uint16_t(protocol::defs::ItemFlag::Testgen);
+ModelItem item(uint16_t id,const char *name,ItemKind kind,ValueType type,const char *unit="",uint16_t flags=0) {
+    ModelItem i;i.descriptor.id=id;i.descriptor.name=name;i.descriptor.kind=kind;i.descriptor.value_type=type;
+    i.descriptor.unit=unit;i.descriptor.flags=flags;return i;
+}
+ModelItem ranged(ModelItem i,float lo,float hi) {
+    i.descriptor.has_min=i.descriptor.has_max=true;
+    i.descriptor.min_bits=std::bit_cast<uint32_t>(lo);i.descriptor.max_bits=std::bit_cast<uint32_t>(hi);return i;
+}
+// A controller with gains in two groups, a mode enum, an untuned limit and
+// two test-signal inputs; an actuator without one; a failed controller.
+DeviceSnapshot sample(uint8_t mode) {
+    DeviceSnapshot s;
+    auto &loop=s.types[5];loop.descriptor={5,0,"loop"};
+    loop.items[1]=item(1,"rate_hz",ItemKind::Param,ValueType::U16);
+    auto &c=s.types[32];c.descriptor={32,1,"controller.cascade_pid"};
+    c.items[16]=item(16,"mode",ItemKind::Param,ValueType::Enum,"",kTune);
+    c.items[16].enums={{0,"open_loop"},{1,"velocity"},{2,"position"}};
+    c.items[17]=ranged(item(17,"duty_limit",ItemKind::Param,ValueType::F32),0,1);
+    c.items[32]=ranged(item(32,"vel.kp",ItemKind::Param,ValueType::F32,"",kTune),0,1000);
+    c.items[33]=ranged(item(33,"vel.ki",ItemKind::Param,ValueType::F32,"",kTune),0,1000);
+    c.items[48]=ranged(item(48,"pos.kp",ItemKind::Param,ValueType::F32,"",kTune),0,1000);
+    c.items[0x101]=item(0x101,"velocity",ItemKind::Signal,ValueType::F32,"rad/s");
+    c.items[0x102]=item(0x102,"duty",ItemKind::Signal,ValueType::F32);
+    c.items[0x200]=ranged(item(0x200,"velocity_sp",ItemKind::Input,ValueType::F32,"rad/s",kTestgen),-1000,1000);
+    c.items[0x201]=item(0x201,"position_sp",ItemKind::Input,ValueType::F32,"rad",kTestgen);
+    auto &a=s.types[112];a.descriptor={112,1,"actuator.mock"};
+    a.items[0x200]=ranged(item(0x200,"duty",ItemKind::Input,ValueType::F32),-1,1); // no testgen flag here
+    s.info.loops={{0,"control",100,1}};
+    s.info.capture_capacity=4*1024*1024;
+    s.configured[{5,0}]={{5,0,255,0,"control"},{}};
+    s.configured[{32,0}]={{32,0,0,0,"left_drive"},{{16,EnumValue{mode}},{32,0.85f},{33,4.0f},{48,0.0f},{17,1.0f}}};
+    s.configured[{32,1}]={{32,1,0,1,"broken"},{}};
+    s.configured[{112,0}]={{112,0,0,0,"left_pwm"},{}};
+    s.pending=s.configured;
+    return s;
+}
+}
+
+class TuneTests : public QObject {
+    Q_OBJECT
+private slots:
+    void tuneLogic() {
+        const auto s=sample(1);
+        // Controllers: running instances with a testgen f32 input only.
+        const auto list=tuneControllers(s);
+        QCOMPARE(list.size(),size_t(1));QCOMPARE(list[0].label,QString("left_drive"));
+        QCOMPARE(list[0].targets.size(),size_t(2));
+        // Gains (the Tune flag): mode on top; vel.* first and open in
+        // velocity mode, pos.* collapsed; duty_limit is not tune-flagged.
+        auto layout=gainLayout(s,{32,0});
+        QCOMPARE(layout.enums,std::vector<uint16_t>{16});
+        QCOMPARE(layout.groups.size(),size_t(2));
+        QCOMPARE(layout.groups[0].prefix,QString("vel"));QVERIFY(layout.groups[0].open && layout.groups[0].selected);
+        QCOMPARE(layout.groups[0].items,(std::vector<uint16_t>{32,33}));
+        QCOMPARE(layout.groups[1].prefix,QString("pos"));QVERIFY(!layout.groups[1].open);
+        layout=gainLayout(sample(2),{32,0});
+        QCOMPARE(layout.groups[0].prefix,QString("pos"));QVERIFY(layout.groups[0].open);QVERIFY(!layout.groups[1].open);
+        // Open loop selects neither: both are collapsed (both match a mode).
+        layout=gainLayout(sample(0),{32,0});
+        QVERIFY(!layout.groups[0].open && !layout.groups[1].open);
+        // A group no enum value names is always open.
+        auto other=sample(1);other.types[32].items[34]=ranged(item(34,"ff.gain",ItemKind::Param,ValueType::F32,"",kTune),0,10);
+        layout=gainLayout(other,{32,0});
+        QCOMPARE(layout.groups.size(),size_t(3));QCOMPARE(layout.groups[1].prefix,QString("ff"));QVERIFY(layout.groups[1].open);
+
+        // The log window: ÷4..×4 within the range, on the value's side of 0.
+        auto w=gainWindow(0.85,0,1000);QVERIFY(w);QCOMPARE(w->lo,0.2125);QCOMPARE(w->hi,3.4);
+        QVERIFY(!gainWindow(0,0,1000));
+        w=gainWindow(800,0,1000);QCOMPARE(w->hi,1000.0);
+        w=gainWindow(-2,-5,5);QVERIFY(w);QCOMPARE(w->lo,0.5);QCOMPARE(w->hi,5.0);
+        w=gainWindow(1000,0,1000);QVERIFY(w);QCOMPARE(w->hi,1000.0); // at the maximum: room below only
+        QVERIFY(!gainWindow(5,5,5)); // no room at all
+        QCOMPARE(logPosition(0.85,*gainWindow(0.85,0,1000)),0.5);
+        QVERIFY(std::abs(logMagnitude(0.75,{1,16})-8.0)<1e-9);
+        QVERIFY(std::abs(logPosition(logMagnitude(0.3,{0.2,3.4}),{0.2,3.4})-0.3)<1e-12);
+        w=typedWindow(0.1,2,0,1000,0.85);QVERIFY(w);QCOMPARE(w->lo,0.1);
+        QVERIFY(typedWindow(-1,2,0,1000,0.85).has_value()); // magnitudes: |-1| .. 2
+        QVERIFY(!typedWindow(0,0,0,1000,0.85));
+        // Three significant digits; % steps keep the sign and the range.
+        QCOMPARE(roundGain(0.123456),0.123);QCOMPARE(roundGain(1234.5),1230.0);QCOMPARE(roundGain(-0.0456789),-0.0457);
+        QCOMPARE(stepGain(0.85,2,0,1000),1.7);QCOMPARE(stepGain(0.85,0.5,0,1000),0.425);
+        QCOMPARE(stepGain(0.85,1.1,0,1000),0.935);QCOMPARE(stepGain(-2,1.1,-5,5),-2.2);
+        QCOMPARE(stepGain(800,2,0,1000),1000.0);QCOMPARE(stepGain(0,2,0,1000),0.0);
+        // A 0.1 % step that rounds back still moves one digit.
+        QCOMPARE(stepGain(0.85,1.001,0,1000),0.851);QCOMPARE(stepGain(0.85,0.999,0,1000),0.849);
+        QCOMPARE(gainText(0.85),QString("0.85"));QCOMPARE(gainText(4),QString("4.0"));QCOMPARE(gainText(200),QString("200.0"));
+        QCOMPARE(gainText(0),QString("0.0"));QCOMPARE(gainText(0.000123),QString("0.000123"));
+
+        // Test signals: the device's rules, and the target's range.
+        const auto &target=s.types.at(32).items.at(0x200).descriptor;
+        TestSignal t;t.target={32,0,0x200};t.amplitude=2;
+        QCOMPARE(testSignalProblem(t,100,target),QString());
+        t.waveform=Waveform::Sine;QVERIFY(testSignalProblem(t,100,target).contains("half the loop rate"));
+        t.f0=10;QCOMPARE(testSignalProblem(t,100,target),QString());
+        t.f0=50;QVERIFY(!testSignalProblem(t,100,target).isEmpty());
+        t.waveform=Waveform::ChirpLog;t.f0=1;t.f1=60;QVERIFY(testSignalProblem(t,100,target).contains("End frequency"));
+        t.f1=20;QCOMPARE(testSignalProblem(t,100,target),QString());
+        t.waveform=Waveform::Step;t.offset=999;QVERIFY(testSignalProblem(t,100,target).contains("range"));
+        t.offset=0;t.amplitude=0;QVERIFY(testSignalProblem(t,100,target).contains("Amplitude"));
+        t.amplitude=1;t.duration_s=0;QVERIFY(testSignalProblem(t,100,target).contains("Duration"));
+        t.duration_s=1.5;t.repeat=0;QVERIFY(!testSignalProblem(t,100,target).isEmpty());
+        t.repeat=2;
+        const auto config=testgenConfig(t,0);
+        QCOMPARE(config.duration_ms,1500u);QCOMPARE(config.repeat,2u);QCOMPARE(config.frequency_start,0.0f);QCOMPARE(config.frequency_end,0.0f);
+        QCOMPARE(signalSeconds(t),3.0);
+
+        // Capture: defaults, the size, and the checks against the device.
+        const auto &ctrl=list[0];
+        auto cap=defaultCapture(s,ctrl,ctrl.targets[0],100,1.5,s.info.capture_capacity);
+        QCOMPARE(cap.refs,(std::vector<Ref>{{32,0,0x200},{32,0,0x101}}));
+        QCOMPARE(cap.divider,uint16_t(1));QCOMPARE(cap.samples,uint32_t(150+10));QCOMPARE(cap.pre,uint32_t(10));
+        QCOMPARE(captureProblem(s,cap,0,s.info.capture_capacity,16),QString());
+        QVERIFY(captureProblem(s,cap,0,100,16).contains("Needs"));
+        auto small=defaultCapture(s,ctrl,ctrl.targets[0],100,1.5,600); // 2 refs × 4 B: at most 75 samples
+        QVERIFY(small.divider>1);QVERIFY(captureBytes(small)<=600);
+        auto dup=cap;dup.refs.push_back(dup.refs[0]);QVERIFY(captureProblem(s,dup,0,s.info.capture_capacity,16).contains("twice"));
+        auto foreign=cap;foreign.refs.push_back({112,0,0x200});QCOMPARE(captureProblem(s,foreign,0,s.info.capture_capacity,16),QString());
+        auto failed=cap;failed.refs.push_back({32,1,0x101});QVERIFY(captureProblem(s,failed,0,s.info.capture_capacity,16).contains("not running"));
+        QVERIFY(captureProblem(s,cap,0,s.info.capture_capacity,1).contains("At most"));
+        auto pre=cap;pre.pre=pre.samples;QVERIFY(!captureProblem(s,pre,0,s.info.capture_capacity,16).isEmpty());
+        QCOMPARE(bytesText(18*1024),QString("18 KB"));QCOMPARE(bytesText(4*1024*1024),QString("4.0 MB"));
+
+        // A run from capture data: times from the trigger, metrics for a step.
+        CaptureData data;
+        data.status.state=CaptureState::Done;data.status.divider=1;data.status.period_us=10000;
+        data.status.trigger_index=10;data.status.refs=cap.refs;
+        for(int i=0;i<160;++i) {
+            const double t=(i-10)*0.01;
+            const float sp=t>=0?2.0f:0.0f,v=t>=0?float(2*(1-std::exp(-t/0.1))):0.0f;
+            data.data.push_back({std::bit_cast<uint32_t>(sp),std::bit_cast<uint32_t>(v)});
+        }
+        TestSignal step;step.target={32,0,0x200};step.amplitude=2;step.duration_s=1.5;
+        auto run=makeRun(s,data,cap,step);
+        QCOMPARE(run.startUs,int64_t(-100000));QCOMPARE(run.endUs,int64_t(1490000));
+        QCOMPARE(run.series.size(),size_t(2));QCOMPARE(run.series[1].time(10),int64_t(0));
+        QCOMPARE(run.response,1);QCOMPARE(run.names[1],QString("velocity"));
+        const auto m=runMetrics(run);
+        QVERIFY2(m.rise_s && std::abs(*m.rise_s-0.22)<0.02,m.problem.c_str());
+        QVERIFY(m.overshoot_pct && *m.overshoot_pct<0.1);QVERIFY(m.settling_s);QVERIFY(m.steady_error && std::abs(*m.steady_error)<0.01);
+        step.waveform=Waveform::Sine;run.signal=step;QVERIFY(!runMetrics(run).problem.empty());
+        // A stop ends the metrics window there: at 0.3 s (3 tau) it has not settled, at 0.6 s it has.
+        run.signal.waveform=Waveform::Step;run.endedUs=300000;QVERIFY(!runMetrics(run).settling_s);
+        run.endedUs=600000;QVERIFY(runMetrics(run).settling_s && *runMetrics(run).settling_s<0.6);
+        // Changed gains against the previous run.
+        std::map<uint16_t,double> a{{32,0.6},{33,4}},b{{32,0.85},{33,4}};
+        QCOMPARE(changedGains(s,{32,0},b,&a),QString("vel.kp 0.85"));
+        QCOMPARE(changedGains(s,{32,0},a,nullptr),QString("vel.kp 0.6, vel.ki 4.0"));
+        QCOMPARE(changedGains(s,{32,0},a,&a),QString("no gain change"));
+
+        // The overlay: newest full, two faded, pinned older runs too.
+        std::vector<RunRecord> runs(6);
+        for(int i=0;i<6;++i) {runs[size_t(i)].number=i+1;}
+        runs[0].pinned=true;
+        auto o=overlay(runs);
+        QCOMPARE(o.size(),size_t(4));QCOMPARE(o[0].index,size_t(0));QVERIFY(!o[0].faded);
+        QVERIFY(o[1].faded && o[2].faded && !o[3].faded);QCOMPARE(o[3].index,size_t(5));
+        std::vector<RunRecord> many(kMaxRuns+2);many[0].pinned=true;many[0].number=-1;many[1].number=-2;
+        trimRuns(many);QCOMPARE(many.size(),kMaxRuns);QCOMPARE(many[0].number,-1); // the oldest unpinned went
+        QCOMPARE(metricText(0.0381,"ms",1000,0),QString("38 ms"));QCOMPARE(metricText(std::nullopt,"%"),QString("—"));
+    }
+
+    // The view without a device: the gains card rows, the sender's 50 ms
+    // coalescing and one write in flight per gain, Revert to the saved values.
+    void tuneView() {
+        TuneView view;
+        struct Write {std::vector<Ref> refs;std::vector<uint32_t> bits;std::function<void(QString)> done;};
+        std::vector<Write> writes;
+        TuneView::Hooks hooks;
+        hooks.write=[&](std::vector<Ref> r,std::vector<uint32_t> b,std::function<void(QString)> d) {writes.push_back({r,b,d});};
+        hooks.runBlocked=[]{return QString();};
+        view.setHooks(hooks);
+        auto snap=sample(1);
+        snap.status=StatusFrame{};snap.ready=true;
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(snap),"dev");
+        QCOMPARE(view.controller(),QString("32:0"));
+        QCOMPARE(view.gainCount(),3); // vel.kp, vel.ki, pos.kp
+        auto *rows=view.gains();
+        // Rows: a header per group, then its gains.
+        QCOMPARE(rows->rowCount(),5);
+        QVERIFY(rows->data(rows->index(0,0),GainRows::Header).toBool());
+        QCOMPARE(rows->data(rows->index(0,0),GainRows::GroupTitle).toString(),QString("vel.* gains"));
+        QCOMPARE(rows->data(rows->index(1,0),GainRows::Name).toString(),QString("vel.kp"));
+        QVERIFY(rows->data(rows->index(3,0),GainRows::Header).toBool());
+        QVERIFY(!rows->data(rows->index(4,0),GainRows::GroupOpen).toBool());
+        QCOMPARE(float(rows->data(rows->index(1,0),GainRows::Saved).toDouble()),0.85f); // clean device: saved = live
+        QVERIFY(!view.revert()["enabled"].toBool());
+        // A drag: the first value goes at once, the rest coalesce while it is in flight.
+        view.gainPress("32:0:32");
+        view.gainDrag("32:0:32",0.75);view.gainDrag("32:0:32",0.8);view.gainDrag("32:0:32",0.9);
+        QCOMPARE(writes.size(),size_t(1));
+        QVERIFY(view.gainBusy());
+        // Run waits for the drag and its writes: the run records its gains.
+        QVERIFY(view.run()["blocked"].toString().contains("Wait"));QVERIFY(!view.runSetup());
+        writes.back().done({});
+        // Still within 50 ms of the first send: the latest waits for the timer.
+        QVERIFY(waitFor([&]{return writes.size()==2;},500));
+        const double sent=std::bit_cast<float>(writes[1].bits[0]);
+        QCOMPARE(float(sent),float(roundGain(0.85*std::pow(16.0,0.9-0.5))));
+        view.gainRelease("32:0:32");writes.back().done({});
+        QVERIFY(waitFor([&]{return !view.gainBusy();},500));
+        QCOMPARE(writes.size(),size_t(2)); // the release value was the one in flight
+        // Accepted but not read back yet: the row keeps showing the value sent,
+        // and a run started now records it.
+        QCOMPARE(float(rows->data(rows->index(1,0),GainRows::Value).toDouble()),float(sent));
+        QCOMPARE(float(view.runSetup()->gains.at(32)),float(sent));
+        // A refusal shows on the row.
+        view.gainText("32:0:33","5");QCOMPARE(writes.size(),size_t(3));
+        writes.back().done("Locked");QCOMPARE(rows->data(rows->index(2,0),GainRows::Problem).toString(),QString("Locked"));
+        QVERIFY(!view.gainText("32:0:33","2000").isEmpty());QCOMPARE(writes.size(),size_t(3));
+        // The device changed vel.kp and has unsaved changes: Revert writes the saved value.
+        auto dirty=snap;dirty.status->flags=8;
+        dirty.configured[{32,0}].params[32]=1.7f;
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(dirty),"dev");
+        QVERIFY(view.revert()["enabled"].toBool());
+        // Not while a gain write is in flight: never two writes of one gain.
+        QCOMPARE(view.gainText("32:0:33","3"),QString());QCOMPARE(writes.size(),size_t(4));
+        QVERIFY(!view.revert()["enabled"].toBool());QVERIFY(view.revert()["reason"].toString().contains("Wait"));
+        view.revertGains();QCOMPARE(writes.size(),size_t(4));
+        writes.back().done({});
+        QVERIFY(view.revert()["enabled"].toBool());
+        view.revertGains();QCOMPARE(writes.size(),size_t(5));
+        QCOMPARE(writes.back().refs,(std::vector<Ref>{{32,0,32}}));QCOMPARE(std::bit_cast<float>(writes.back().bits[0]),0.85f);
+        writes.back().done({});
+        // Accepted: the row shows the reverted value until the read-back.
+        QCOMPARE(float(rows->data(rows->index(1,0),GainRows::Value).toDouble()),0.85f);
+        // Another device: saved values unknown while it is dirty.
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(dirty),"other");
+        QVERIFY(!view.revert()["enabled"].toBool());QVERIFY(view.revert()["reason"].toString().contains("unknown"));
+        // Gain 0: no slider window and no steps.
+        view.gainStep("32:0:48",2);QCOMPARE(writes.size(),size_t(5));
+        QVERIFY(rows->data(rows->index(4,0),GainRows::Zero).toBool());
+    }
+
+    // A step run on vdev: left_drive (cascade_pid in velocity mode) on a mock
+    // plant at 100 Hz.
+    void tuneOperations() {
+        Fixture fixture;
+        uint8_t driven=0,enc=0,drive=0;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            driven=cl.add(112,"driven",0).instance;enc=cl.add(113,"enc",0).instance;drive=cl.add(32,"drive",0).instance;
+            const std::array<Ref,3> refs{{{113,enc,1},{32,drive,1},{32,drive,2}}};
+            const std::array<uint32_t,3> values{{112u<<8|driven,112u<<8|driven,113u<<8|enc}};
+            cl.set(refs,values);
+            // 100 Hz: a desktop vdev at 1 kHz can stall the loop after ARM.
+            const std::array<Ref,1> rate{{{5,0,1}}};const std::array<uint32_t,1> hz{{100}};cl.set(rate,hz);
+            cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QStringList toasts;
+        QObject::connect(&c,&Connection::notification,[&](QString text,int){toasts<<text;});
+        c.connectTo(fixture.endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled() && c.snapshot()->configured.contains({32,drive});},15000),
+                 qPrintable(c.armBlockedReason()+" / "+c.lastError()["text"].toString()));
+        auto &tv=c.tuneView();
+        const auto ctrl=nodeKey(32,drive);
+        tv.selectController(ctrl);
+        QCOMPARE(tv.controller(),ctrl);
+        // The real descriptors carry the Tune flag (core v10).
+        QVERIFY(tv.gainCount()>=8);
+        const auto enums=tv.enums();QCOMPARE(enums.size(),1);QCOMPARE(enums[0].toMap()["name"].toString(),QString("mode"));
+        // Disarmed: Run is refused with "Arm first".
+        QVERIFY(tv.run()["blocked"].toString().contains("Arm first"));
+        // Velocity mode and PI gains, live.
+        bool done=false;
+        auto pause=[&]{QTest::qWait(400);};
+        tv.setEnum(enums[0].toMap()["key"].toString(),1);pause();
+        QCOMPARE(tv.gainText(itemKey(32,drive,pid::kVelKp),"0.05"),QString());
+        QCOMPARE(tv.gainText(itemKey(32,drive,pid::kVelKi),"0.5"),QString());
+        QVERIFY(waitFor([&]{
+            const auto &p=c.snapshot()->configured.at({32,drive}).params;
+            return valueBits(p.at(pid::kMode))==1 && std::abs(std::bit_cast<float>(valueBits(p.at(pid::kVelKp)))-0.05f)<1e-6 &&
+                   std::abs(std::bit_cast<float>(valueBits(p.at(pid::kVelKi)))-0.5f)<1e-6;}));
+        // The change list has one line per param, however many writes.
+        tv.gainText(itemKey(32,drive,pid::kVelKp),"0.06");tv.gainText(itemKey(32,drive,pid::kVelKp),"0.05");
+        QVERIFY(waitFor([&]{return !tv.gainBusy();}));
+        QCOMPARE(c.unsavedChanges().filter("drive.vel.kp").size(),1);
+        // A 1 s step of 2 rad/s on velocity_sp, captured at 100 Hz.
+        tv.setTarget(itemKey(32,drive,pid::kVelocitySp));
+        QCOMPARE(tv.setSignalField("amplitude","2"),QString());
+        QCOMPARE(tv.setSignalField("duration","1"),QString());
+        QVERIFY(tv.testSignal()["problem"].toString().isEmpty());
+        QVERIFY2(tv.capture()["problem"].toString().isEmpty(),qPrintable(tv.capture()["problem"].toString()));
+        // Read the target back through Monitor, and latch a manual command on
+        // the controller's duty_sp: the run suspends it at 0.
+        auto &mv=c.monitorView();c.setPage("monitor");
+        const auto spKey=itemKey(32,drive,pid::kVelocitySp);
+        mv.toggleSignal(spKey);
+        auto latest=[&]()->std::optional<double> {
+            const auto *ring=mv.ring(spKey);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && c.commandView().enabled();}));
+        auto &cv=c.commandView();const Ref dutySp{32,drive,pid::kDutySp};const auto dutyKey=itemKey(32,drive,pid::kDutySp);
+        cv.add(dutyKey);cv.press(dutyKey);cv.drag(dutyKey,0.1);cv.setLatched(dutyKey,true);cv.release(dutyKey);
+        const auto duty=[&]{return cv.model().inputs()[size_t(cv.model().find(dutySp))];};
+        QCOMPARE(duty().value,0.1);
+        QVERIFY2(tv.run()["canRun"].toBool(),qPrintable(tv.run()["blocked"].toString()));
+        tv.startRun();
+        QVERIFY(c.tuneRunning());
+        QCOMPARE(duty().value,0.0);QVERIFY(!duty().latched);QVERIFY(duty().writes>0);
+        QVERIFY(!tv.run()["canRun"].toBool());
+        QVERIFY(waitFor([&]{return latest() && std::abs(*latest()-2.0)<1e-6;},5000));
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},10000),qPrintable(toasts.join("; ")));
+        QCOMPARE(tv.runCount(),1);
+        const auto &run=tv.runList().back();
+        QCOMPARE(int(run.end),int(RunEnd::Completed));QVERIFY(!run.endedUs);
+        QCOMPARE(run.capture.refs.front(),(Ref{32,drive,pid::kVelocitySp}));
+        // Every post-trigger sample; fewer before it when START follows ARM at once.
+        QCOMPARE(run.series[0].size()-run.series[0].lowerBound(0),size_t(run.capture.samples-run.capture.pre));
+        QVERIFY2(run.metrics.rise_s.has_value(),run.metrics.problem.c_str());
+        QVERIFY(*run.metrics.rise_s>0.01 && *run.metrics.rise_s<1.0);
+        // The suspension ended with the signal: velocity_sp read back at 0
+        // (the fresh frame), duty_sp free again and at 0.
+        QVERIFY2(waitFor([&]{return latest() && *latest()==0;},3000),qPrintable(QString::number(latest().value_or(-1))));
+        QCOMPARE(duty().writes,0);QCOMPARE(duty().value,0.0);
+        QCOMPARE(c.armState(),1);
+        QCOMPARE(tv.plots().size(),1); // rad/s: setpoint and velocity
+
+        // Stop keeps the capture: a 5 s signal stopped after about 0.5 s.
+        QCOMPARE(tv.setSignalField("duration","5"),QString());
+        QCOMPARE(tv.setSamples("160","10"),QString());
+        tv.startRun();QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running && tv.run()["progress"].toDouble()>=0;}));
+        QTest::qWait(500);tv.stopRun();
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},10000),qPrintable(toasts.join("; ")));
+        QCOMPARE(tv.runCount(),2);
+        QCOMPARE(int(tv.runList().back().end),int(RunEnd::Stopped));
+        QVERIFY(tv.runList().back().endedUs && *tv.runList().back().endedUs>200000 && *tv.runList().back().endedUs<2000000);
+        QVERIFY(waitFor([&]{return latest() && *latest()==0;},3000));
+
+        // Given up while the signal runs (another client cleared the capture):
+        // STOP goes once and the controller stays held at 0 until STATUS shows
+        // the signal stopped; only then does the fresh frame return
+        // velocity_sp to 0 (a frame before STOP would be discarded).
+        toasts.clear();
+        tv.startRun();QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running && tv.run()["progress"].toDouble()>=0;}));
+        // During a run the gains and the mode are locked.
+        QVERIFY(!tv.gainText(itemKey(32,drive,pid::kVelKp),"0.06").isEmpty());
+        QVERIFY(!tv.revert()["enabled"].toBool());
+        QVERIFY(waitFor([&]{return latest() && std::abs(*latest()-2.0)<1e-6;},5000));
+        c.runOnDevice([&](Client &client){client.captureAbort();},[&](QString){done=true;});
+        QVERIFY(waitFor([&]{return done;}));done=false;
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},5000),qPrintable(toasts.join("; ")));
+        QVERIFY2(!toasts.filter("cleared").isEmpty() && !toasts.filter("may still be running").isEmpty(),qPrintable(toasts.join("; ")));
+        QCOMPARE(tv.runCount(),2);
+        QVERIFY(waitFor([&]{return duty().writes==0;},3000));
+        QVERIFY2(waitFor([&]{return latest() && *latest()==0;},3000),qPrintable(QString::number(latest().value_or(-1))));
+        QVERIFY(waitFor([&]{return tv.run()["canRun"].toBool();},3000));
+        TestgenStatus after;
+        c.runOnDevice([&](Client &client){after=client.testgenStatus(0);},[&](QString){done=true;});
+        QVERIFY(waitFor([&]{return done;}));done=false;
+        QCOMPARE(int(after.state),int(TestgenState::Done));QCOMPARE(int(after.reason),int(TestgenReason::Stopped));
+
+        // A refused START (another run active on the loop) aborts the capture.
+        c.runOnDevice([&](Client &client) {
+            TestgenConfig other;other.loop=0;other.target={32,drive,pid::kVelocitySp};other.waveform=0;other.amplitude=0.5f;other.duration_ms=3000;
+            client.testgenStart(other);
+        },[&](QString){done=true;});
+        QVERIFY(waitFor([&]{return done;}));done=false;
+        toasts.clear();
+        tv.startRun();
+        QVERIFY(waitFor([&]{return !c.tuneRunning();},5000));
+        QVERIFY(!toasts.filter("did not start").isEmpty());QCOMPARE(tv.runCount(),2);
+        CaptureStatus status;
+        c.runOnDevice([&](Client &client){status=client.captureStatus();client.testgenStop(0);},[&](QString){done=true;});
+        QVERIFY(waitFor([&]{return done;}));done=false;
+        QCOMPARE(int(status.state),int(CaptureState::Idle));
+        QVERIFY(waitFor([&]{return duty().writes==0;}));
+        QTest::qWait(300); // the other run's terminal event
+
+        // A disarm cuts the run: the capture keeps recording, the run is incomplete.
+        toasts.clear();
+        QVERIFY(waitFor([&]{return tv.run()["canRun"].toBool();},3000));
+        tv.startRun();QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running;}));
+        QTest::qWait(300);c.disarm();
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},10000),qPrintable(toasts.join("; ")));
+        QCOMPARE(tv.runCount(),3);QCOMPARE(int(tv.runList().back().end),int(RunEnd::Disarmed));
+        QVERIFY(!toasts.filter("disarm").isEmpty());
+        QVERIFY(tv.run()["blocked"].toString().contains("Arm first"));
+        QVERIFY(!tv.plots().isEmpty() && !tv.plots().front().toMap()["markers"].toList().isEmpty());
+
+        // Revert gains to saved: the device was saved before these changes.
+        QVERIFY(waitFor([&]{return tv.revert()["enabled"].toBool();}));
+        tv.revertGains();
+        QVERIFY(waitFor([&]{
+            const auto &p=c.snapshot()->configured.at({32,drive}).params;
+            return std::bit_cast<float>(valueBits(p.at(pid::kVelKp)))==0.0f && std::bit_cast<float>(valueBits(p.at(pid::kVelKi)))==0.0f;}));
+        // Runs stay for the same device after a close; another device clears them.
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+        QCOMPARE(tv.runCount(),3);QCOMPARE(tv.controller(),QString());
+    }
+
+    // The page in the shell: Run disabled with "Arm first", F5, a gain drag
+    // with the mouse sends, Esc during a run disarms and ends it.
+    void tuneInShell() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();
+        Fixture fixture;
+        uint8_t drive=0;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            const auto driven=cl.add(112,"driven",0).instance;const auto enc=cl.add(113,"enc",0).instance;drive=cl.add(32,"drive",0).instance;
+            // Velocity mode: its vel.* gains are the open group.
+            const std::array<Ref,5> refs{{{113,enc,1},{32,drive,1},{32,drive,2},{32,drive,pid::kVelKp},{32,drive,pid::kMode}}};
+            const std::array<uint32_t,5> values{{112u<<8|driven,112u<<8|driven,113u<<8|enc,std::bit_cast<uint32_t>(0.5f),1}};
+            cl.set(refs,values);
+            const std::array<Ref,1> rate{{{5,0,1}}};const std::array<uint32_t,1> hz{{100}};cl.set(rate,hz);
+            cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        QTemporaryDir dir;LocalConnection connection;connection.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;
+        QObject::connect(&keys,&SafetyKeys::escapeRequested,&connection,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(1920,1080);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled() && connection.snapshot()->configured.contains({32,drive});},15000));
+        auto shown=[&](const QString &name)->QQuickItem * {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible()?item:nullptr;
+        };
+        auto center=[&](QQuickItem *item,double fx=0.5) {return item->mapToScene({item->width()*fx,item->height()/2}).toPoint();};
+        window->setProperty("page",2);
+        QVERIFY(waitFor([&]{return shown("tunePage") && shown("tuneRun");}));
+        auto &tv=connection.tuneView();
+        QVERIFY(!shown("tuneRun")->isEnabled());
+        // F5 while disarmed does nothing.
+        QTest::keyClick(window,Qt::Key_F5);QTest::qWait(200);QVERIFY(!connection.tuneRunning());
+        // A gain drag with the mouse: sent live, the slider re-centred after.
+        QVERIFY(waitFor([&]{return shown("gain_vel.kp");}));
+        auto *slider=visualChild(shown("gain_vel.kp"),"gainSlider");QVERIFY(slider && slider->isEnabled());
+        QTest::mousePress(window,Qt::LeftButton,Qt::NoModifier,center(slider,0.5));
+        QTest::mouseMove(window,center(slider,0.7));QTest::mouseMove(window,center(slider,0.9));
+        QTest::mouseRelease(window,Qt::LeftButton,Qt::NoModifier,center(slider,0.9));
+        QVERIFY(waitFor([&]{
+            const auto v=std::bit_cast<float>(valueBits(connection.snapshot()->configured.at({32,drive}).params.at(pid::kVelKp)));
+            return v>0.6f && !tv.gainBusy();}));
+        // Armed: F5 runs; Esc disarms and the run ends incomplete.
+        tv.setTarget(itemKey(32,drive,pid::kVelocitySp));tv.setSignalField("duration","3");
+        connection.arm();QVERIFY(waitFor([&]{return connection.armState()==1 && shown("tuneRun")->isEnabled();}));
+        QTest::keyClick(window,Qt::Key_F5);
+        QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running;}));
+        QTest::keyClick(window,Qt::Key_Escape);
+        QVERIFY(waitFor([&]{return connection.armState()==0;}));
+        QVERIFY(waitFor([&]{return !connection.tuneRunning();},10000));
+        QCOMPARE(tv.runCount(),1);QCOMPARE(int(tv.runList().back().end),int(RunEnd::Disarmed));
+        QVERIFY(waitFor([&]{return shown("tunePlotItem_0") && shown("tunePlotItem_0")->property("vertices").toInt()>2;}));
+        QVERIFY(shown("tuneMetricRow_1"));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
+
+    // A Tune run on a device. Env: DRIVELINK_GUI_BENCH_ENDPOINT, and either
+    // DRIVELINK_GUI_BENCH_STAGE_MOCK=1 (bare board: adds an actuator.mock in
+    // loop 0, saves and reboots; afterwards removes it, saves and reboots
+    // again) or DRIVELINK_GUI_BENCH_TUNE (the controller, type:instance) with
+    // DRIVELINK_GUI_BENCH_TARGET (its test-signal input) and optional
+    // DRIVELINK_GUI_BENCH_RESPONSE (a signal). DRIVELINK_GUI_BENCH_STEP (the
+    // step, default 0.2), DRIVELINK_GUI_BENCH_DURATION (s, default 1) and
+    // DRIVELINK_GUI_BENCH_MIN_RESPONSE (the least |response| at the end of the
+    // step). A real motor (deferred row) needs the first-run procedure:
+    // wheels off the ground, a current-limited supply, a hand on the power.
+    // Arms, runs a step (completed, every post-trigger sample, the target back
+    // at 0 after it), then a 3 s step stopped after 0.5 s (stopped, back at 0),
+    // and disarms. No param is written; nothing else is saved.
+    void benchTune() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        const bool stage=qEnvironmentVariable("DRIVELINK_GUI_BENCH_STAGE_MOCK")=="1";
+        auto controllerKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TUNE");
+        auto targetKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TARGET");
+        auto responseKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_RESPONSE");
+        if(endpoint.isEmpty() || (!stage && (controllerKey.isEmpty() || targetKey.isEmpty()))) {
+            QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_STAGE_MOCK=1, or _TUNE and _TARGET, to run on a device");
+        }
+        bool ok=false;
+        const double step=qEnvironmentVariable("DRIVELINK_GUI_BENCH_STEP","0.2").toDouble(&ok);QVERIFY2(ok && step!=0,"DRIVELINK_GUI_BENCH_STEP");
+        const double duration=qEnvironmentVariable("DRIVELINK_GUI_BENCH_DURATION","1").toDouble(&ok);QVERIFY2(ok && duration>0,"DRIVELINK_GUI_BENCH_DURATION");
+        const double minResponse=qEnvironmentVariable("DRIVELINK_GUI_BENCH_MIN_RESPONSE","0").toDouble();
+        // Reboots and waits for the device to answer again.
+        const auto reboot=[&] {
+            try {Session s(endpoint.toStdString());Client cl(s);cl.info();cl.system(uint8_t(protocol::defs::SystemOp::Reboot));} catch(const Error &) {}
+            QTest::qWait(1500);
+            for(int i=0;i<40;++i) {
+                try {Session s(endpoint.toStdString());Client cl(s);cl.info();return true;} catch(const Error &) {QTest::qWait(250);}
+            }
+            return false;
+        };
+        std::optional<uint8_t> staged;
+        if(stage) {
+            Session s(endpoint.toStdString());Client cl(s);const auto info=cl.info();
+            QVERIFY2(!(info.flags&1),"refusing to stage: pending layout changes");
+            staged=cl.add(112,"tune_bench",0).instance;
+            cl.system(uint8_t(protocol::defs::SystemOp::Save));
+        }
+        if(staged) {
+            QVERIFY2(reboot(),"the device did not come back after staging");
+            controllerKey=nodeKey(112,*staged);targetKey=itemKey(112,*staged,0x200);responseKey=itemKey(112,*staged,0x100);
+        }
+        QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        struct Restore {std::function<void()> run;~Restore() {run();}} restore{[&] {
+            if(c.linked()) {
+                c.disarm();waitFor([&]{return c.armState()==0;},5000);
+                c.disconnectDevice();waitFor([&]{return !c.closing();},10000);
+            }
+            if(staged) {
+                try {
+                    Session s(endpoint.toStdString());Client cl(s);cl.info();
+                    cl.remove(112,*staged);cl.system(uint8_t(protocol::defs::SystemOp::Save));
+                } catch(const Error &e) {qWarning("bench restore: %s",e.what());}
+                if(!reboot()) {qWarning("bench restore: the device did not come back");}
+                qInfo("bench: staged mock removed, saved and rebooted");
+            }
+        }};
+        c.connectTo(endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled();},30000),qPrintable(c.armBlockedReason()+" / "+c.lastError()["message"].toString()));
+        QVERIFY2(!c.unsaved(),"refusing to run with unsaved changes");
+        auto &tv=c.tuneView();auto &view=c.monitorView();
+        tv.selectController(controllerKey);QCOMPARE(tv.controller(),controllerKey);
+        tv.setTarget(targetKey);
+        QCOMPARE(tv.setSignalField("amplitude",QString::number(step)),QString());
+        QCOMPARE(tv.setSignalField("duration",QString::number(duration)),QString());
+        QVERIFY2(tv.testSignal()["problem"].toString().isEmpty(),qPrintable(tv.testSignal()["problem"].toString()));
+        c.setPage("monitor");view.toggleSignal(targetKey);if(!responseKey.isEmpty()) {view.toggleSignal(responseKey);}
+        auto latest=[&](const QString &key)->std::optional<double> {
+            const auto *ring=view.ring(key);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        QVERIFY(waitFor([&]{return latest(targetKey).has_value();},10000));
+        qInfo("bench: device %s firmware %s, %s: step %g on %s for %g s",qPrintable(c.deviceId()),qPrintable(c.info()["firmware"].toString()),
+              qPrintable(controllerKey),step,qPrintable(targetKey),duration);
+        c.arm();QVERIFY2(waitFor([&]{return c.armState()==1 && tv.run()["canRun"].toBool();},5000),qPrintable(tv.run()["blocked"].toString()));
+        std::optional<double> during;
+        tv.startRun();
+        QVERIFY(waitFor([&]{return latest(targetKey) && std::abs(*latest(targetKey)-step)<1e-6;},5000));
+        QTest::qWait(int(duration*900));
+        if(!responseKey.isEmpty()) {during=latest(responseKey);}
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},int(duration*1000)+15000),qPrintable(tv.run()["text"].toString()));
+        QVERIFY(tv.runCount()==1);
+        const auto &run=tv.runList().back();
+        QCOMPARE(int(run.end),int(RunEnd::Completed));
+        QCOMPARE(run.series[0].size()-run.series[0].lowerBound(0),size_t(run.capture.samples-run.capture.pre));
+        qInfo("bench: run 1: %zu samples, irregular %d, response at the end %g, rise %s, overshoot %s",
+              run.series[0].size(),int(run.irregular),during.value_or(NAN),
+              qPrintable(metricText(run.metrics.rise_s,"ms",1000,0)),qPrintable(metricText(run.metrics.overshoot_pct,"%")));
+        if(!c.info()["firmware"].toString().endsWith("-vdev")) {QVERIFY2(!run.irregular,"a board's capture should be regular");}
+        if(!responseKey.isEmpty()) {QVERIFY2(during && std::abs(*during)>=minResponse,"no response to the step");}
+        QVERIFY2(waitFor([&]{return latest(targetKey) && *latest(targetKey)==0;},2000),"the target did not return to 0");
+        // Stop: a 3 s step stopped after 0.5 s; the capture keeps recording.
+        QCOMPARE(tv.setSignalField("duration","3"),QString());
+        tv.startRun();QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running;},5000));
+        QTest::qWait(500);tv.stopRun();
+        QVERIFY(waitFor([&]{return latest(targetKey) && *latest(targetKey)==0;},2000));
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},20000),qPrintable(tv.run()["text"].toString()));
+        QCOMPARE(int(tv.runList().back().end),int(RunEnd::Stopped));
+        qInfo("bench: run 2 stopped at %.3f s",double(tv.runList().back().endedUs.value_or(-1))/1e6);
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));
+        qInfo("bench: completed, stopped, back at 0 and disarmed");
+    }
+};
+
+QTEST_MAIN(TuneTests)
+#include "test_tune.moc"

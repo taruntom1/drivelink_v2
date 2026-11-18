@@ -45,6 +45,7 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     m_monitorTimer.setInterval(50);
     connect(&m_monitorTimer,&QTimer::timeout,this,[this] {pollMonitor();});
     m_monitorTimer.start();
+    setupTune();
     m_timer.setInterval(100);
     connect(&m_timer,&QTimer::timeout,this,[this] {
         if(m_closing) {
@@ -237,6 +238,9 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         // Row states belong to the previous boot's layout.
         m_edits.clear();
         resetLive();resetMonitorGroups();m_command.clearGroups();
+        // The groups and the capture went with the boot: so does a run.
+        if(m_tuneRun) {endTuneRun(tr("The device rebooted during the run; nothing was recorded"),TuneEnd::DeviceGone);}
+        m_tuneRelease.reset(); // the reboot ended the signal; clearGroups ended the hold
         for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
             if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
         }
@@ -312,6 +316,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     syncLive();syncMonitor();
     if(ready()) {m_command.setSnapshot(m_snapshot,deviceId());}
     m_command.setBlocked(commandBlocked());
+    syncTune();
     // The live view follows every refresh: Boot, safe mode, reload, run
     // states and staged targets all change it, not only new samples.
     emit changed();emit liveChanged();
@@ -683,6 +688,7 @@ void LocalConnection::disconnectDevice() {
         m_instances.reset({});m_loops.reset({});m_faults.reset({});
         m_monitor.reset(); // a lost link kept it for the reconnect
         m_command.reset();
+        m_tune.reset();
         emit changed();emit disconnected();return;
     }
     if(m_closing) {return;}
@@ -741,6 +747,11 @@ void LocalConnection::finishClose(bool lost) {
     // A lost link keeps the card's inputs for the same device, like Monitor.
     if(lost) {m_command.clearGroups();} else {m_command.reset();}
     m_command.setBlocked(tr("Not connected"));
+    if(m_tuneRun) {endTuneRun(lost?tr("The link was lost during the run; nothing was recorded"):QString(),TuneEnd::DeviceGone);}
+    m_tuneRelease.reset();m_tuneTimer.stop();
+    m_tuneRefresh.stop();
+    // Runs stay for the same device (H2e-2 saves them); the rest goes.
+    m_tune.reset();
     if(lost && c) {
         // Remember the device for the reboot notice after a reconnect.
         std::optional<uint64_t> uptime;
