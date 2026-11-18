@@ -11,6 +11,7 @@
 #include "style.hpp"
 #include "test_support.hpp"
 #include "tune_model.hpp"
+#include "tune_session.hpp"
 #include "tune_view.hpp"
 #include <drivelink/protocol/defs.hpp>
 #include <drivelink/protocol/gen/registry.hpp>
@@ -18,7 +19,13 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QtEndian>
 #include <QtTest>
 #include <bit>
 #include <cmath>
@@ -65,6 +72,25 @@ DeviceSnapshot sample(uint8_t mode) {
     s.configured[{112,0}]={{112,0,0,0,"left_pwm"},{}};
     s.pending=s.configured;
     return s;
+}
+// A captured 1.5 s step of 2 rad/s at 100 Hz: velocity_sp and a first-order
+// velocity with time constant tau.
+RunRecord stepRun(const DeviceSnapshot &s,double tau) {
+    CaptureSetup cap;cap.refs={{32,0,0x200},{32,0,0x101}};cap.samples=160;cap.pre=10;
+    CaptureData data;
+    data.status.state=CaptureState::Done;data.status.divider=1;data.status.period_us=10000;
+    data.status.trigger_index=10;data.status.refs=cap.refs;
+    for(int i=0;i<160;++i) {
+        const double t=(i-10)*0.01;
+        const float sp=t>=0?2.0f:0.0f,v=t>=0?float(2*(1-std::exp(-t/tau))):0.0f;
+        data.data.push_back({std::bit_cast<uint32_t>(sp),std::bit_cast<uint32_t>(v)});
+    }
+    TestSignal step;step.target={32,0,0x200};step.amplitude=2;step.duration_s=1.5;
+    return makeRun(s,data,cap,step);
+}
+QString readText(const QString &path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly)?QString::fromUtf8(f.readAll()):QString();
 }
 }
 
@@ -263,6 +289,306 @@ private slots:
         QVERIFY(rows->data(rows->index(4,0),GainRows::Zero).toBool());
     }
 
+    // H2e-2, pure: history rules, name matching, A/B metrics, session files
+    // (round trip and refusals), the run CSV.
+    void tuneSessionLogic() {
+        const auto s=sample(1);
+        const std::map<uint16_t,QString> names{{32,"vel.kp"},{33,"vel.ki"},{48,"pos.kp"}};
+        // Equal as f32; the changes and the equal gains as text.
+        QVERIFY(sameGains({{32,0.85}},{{32,double(0.85f)}}));
+        QVERIFY(!sameGains({{32,0.85}},{{32,0.86}}));QVERIFY(!sameGains({{32,0.85}},{{32,0.85},{33,1}}));
+        QCOMPARE(gainChanges(names,{{32,0.6},{33,4}},{{32,0.85},{33,4}}),QString("vel.kp 0.6 → 0.85"));
+        QCOMPARE(equalGains(names,{{32,0.6},{33,4}},{{32,0.85},{33,4}}),QString("vel.ki equal"));
+        QCOMPARE(equalGains(names,{{32,0.6}},{{32,0.85}}),QString());
+        // Entries: a set equal to the controller's last one is not added; the
+        // limit is per controller.
+        std::vector<HistoryEntry> h;
+        HistoryEntry e;e.controllerType="controller.cascade_pid";e.controllerLabel="left_drive";e.gains={{32,1}};e.id=1;
+        QCOMPARE(recordEntry(h,e),0);
+        e.id=2;QCOMPARE(recordEntry(h,e),0);QCOMPARE(h.size(),size_t(1));
+        HistoryEntry other=e;other.controllerLabel="right_drive";other.id=3;QCOMPARE(recordEntry(h,other),1);
+        e.id=4;e.gains={{32,2}};QCOMPARE(recordEntry(h,e),2);
+        QCOMPARE(lastEntry(h,"controller.cascade_pid","left_drive",""),2);QCOMPARE(lastEntry(h,"x","left_drive",""),-1);
+        // Another device's entry is never joined by a set recorded here.
+        QCOMPARE(lastEntry(h,"controller.cascade_pid","left_drive","dev"),-1);
+        HistoryEntry here=e;here.id=5;here.device="dev";QCOMPARE(recordEntry(h,here),3);
+        for(int i=0;i<int(kMaxHistory)+5;++i) {e.id=10+i;e.gains={{32,3.0+i}};recordEntry(h,e);}
+        QCOMPARE(size_t(std::count_if(h.begin(),h.end(),[](const HistoryEntry &x){return x.controllerLabel=="left_drive";})),kMaxHistory);
+        QVERIFY(std::any_of(h.begin(),h.end(),[](const HistoryEntry &x){return x.controllerLabel=="right_drive";}));
+        // The newest run of an entry still in the list.
+        std::vector<RunRecord> runs(2);runs[0].number=4;runs[1].number=7;
+        HistoryEntry withRuns;withRuns.runs={4,7,9};
+        QCOMPARE(entryRun(withRuns,runs),std::optional<int>(7));withRuns.runs={9};QVERIFY(!entryRun(withRuns,runs));
+
+        // Matching by type and label and gain names, never by ids alone.
+        auto set=resolveGains(s,"controller.cascade_pid","left_drive",{{132,0.5},{133,2}},{{132,"vel.kp"},{133,"vel.ki"}});
+        QVERIFY2(set.has_value(),qPrintable(set?QString():set.error()));
+        QCOMPARE(set->key,(InstanceKey{32,0}));
+        QCOMPARE(set->values,(std::vector<std::pair<uint16_t,double>>{{32,0.5},{33,2}}));
+        QVERIFY(resolveGains(s,"controller.cascade_pid","right_drive",{{32,1}},names).error().contains("No running"));
+        QVERIFY(resolveGains(s,"controller.cascade_pid","left_drive",{{99,1}},{{99,"ff.gain"}}).error().contains("no gain"));
+        QVERIFY(resolveGains(s,"controller.cascade_pid","left_drive",{{17,1}},{{17,"duty_limit"}}).error().contains("not a live gain"));
+        QVERIFY(resolveGains(s,"controller.cascade_pid","left_drive",{{32,5000}},names).error().contains("range"));
+        // Values the type cannot hold (an edited file): no infinite f32, no
+        // integer conversion out of range or of a fraction.
+        auto open=s;
+        open.types[32].items[40]=item(40,"ff.gain",ItemKind::Param,ValueType::F32,"",kTune);
+        open.types[32].items[41]=item(41,"vel.n",ItemKind::Param,ValueType::U32,"",kTune);
+        QVERIFY(resolveGains(open,"controller.cascade_pid","left_drive",{{40,1e39}},{{40,"ff.gain"}}).error().contains("range"));
+        QVERIFY(resolveGains(open,"controller.cascade_pid","left_drive",{{40,1e30}},{{40,"ff.gain"}}).has_value());
+        QVERIFY(resolveGains(open,"controller.cascade_pid","left_drive",{{41,-1}},{{41,"vel.n"}}).error().contains("range"));
+        QVERIFY(resolveGains(open,"controller.cascade_pid","left_drive",{{41,1e12}},{{41,"vel.n"}}).error().contains("range"));
+        QVERIFY(resolveGains(open,"controller.cascade_pid","left_drive",{{41,1.5}},{{41,"vel.n"}}).error().contains("whole"));
+        QCOMPARE(gainNamesOf(s,{32,0}).size(),size_t(4)); // mode, vel.kp, vel.ki, pos.kp
+
+        // A/B metrics: B − A with signs and units.
+        auto a=stepRun(s,0.1),b=stepRun(s,0.05);
+        a.metrics=runMetrics(a);b.metrics=runMetrics(b);
+        const auto rows=compareMetrics(a,b);
+        QCOMPARE(rows.size(),size_t(4));QCOMPARE(rows[0].name,QString("Rise time"));
+        QVERIFY2(rows[0].change.startsWith(QString::fromUtf8("−")) && rows[0].change.endsWith("ms"),qPrintable(rows[0].change));
+        QVERIFY(rows[3].a.endsWith("rad/s"));
+        a.signal.waveform=Waveform::Sine;a.metrics=runMetrics(a);QCOMPARE(compareMetrics(a,b)[0].change,QString("—"));
+
+        // A session round trip.
+        SessionData d;
+        d.deviceId="1cdbd446ff38";d.deviceName="bench";d.name="left_drive tuning";d.savedAt="2026-11-18T10:00:00";
+        auto r=stepRun(s,0.1);
+        r.number=3;r.colour=2;r.time="18:44:12";r.controller={32,0};r.controllerType="controller.cascade_pid";r.controllerLabel="left_drive";
+        r.gains={{32,0.85},{33,4}};r.gainNames={{32,"vel.kp"},{33,"vel.ki"}};r.changed="vel.kp 0.85";
+        r.end=RunEnd::Stopped;r.endedUs=600000;r.pinned=true;r.irregular=true;
+        d.runs.push_back(r);
+        HistoryEntry he;he.id=2;he.time="18:44:00";he.controller={32,0};he.controllerType=r.controllerType;he.controllerLabel=r.controllerLabel;
+        he.gains=r.gains;he.names=r.gainNames;he.source=HistorySource::Restored;he.change="vel.kp 0.6 → 0.85";he.note="restored 18:41:30";he.runs={3,99};
+        d.history.push_back(he);
+        d.windows.push_back({"controller.cascade_pid","left_drive","vel.kp",0.1,2});
+        TestSignal sig;sig.target={32,0,0x200};sig.waveform=Waveform::ChirpLog;sig.f0=1;sig.f1=20;sig.amplitude=0.5;sig.duration_s=2;sig.repeat=3;
+        d.setup=SessionSetup{{32,0},sig,{{{32,0,0x200}},2,500,20}};
+        d.nextNumber=4;d.nextColour=3;d.nextHistory=3;
+        const auto bytes=writeSession(d);
+        QVERIFY(bytes.contains("\"format\":\"drivelink-tune-session\""));QVERIFY(bytes.contains("\"version\":1"));
+        auto back=readSession(bytes);
+        QVERIFY2(back.has_value(),qPrintable(back?QString():back.error()));
+        QCOMPARE(back->deviceId,d.deviceId);QCOMPARE(back->name,d.name);QCOMPARE(back->nextNumber,4);QCOMPARE(back->nextHistory,3);
+        QCOMPARE(back->runs.size(),size_t(1));
+        const auto &rb=back->runs[0];
+        QCOMPARE(rb.number,3);QCOMPARE(rb.colour,2);QCOMPARE(rb.controllerLabel,QString("left_drive"));
+        QCOMPARE(rb.gains,r.gains);QCOMPARE(rb.gainNames,r.gainNames);QCOMPARE(int(rb.end),int(RunEnd::Stopped));
+        QCOMPARE(rb.endedUs,r.endedUs);QVERIFY(rb.pinned && rb.irregular);QCOMPARE(rb.response,1);
+        QCOMPARE(rb.capture.refs,r.capture.refs);QCOMPARE(rb.names,r.names);QCOMPARE(rb.units,r.units);
+        QCOMPARE(rb.series.size(),size_t(2));QCOMPARE(rb.series[1].size(),r.series[1].size());
+        for(size_t i=0;i<r.series[1].size();++i) {
+            QCOMPARE(rb.series[1].time(i),r.series[1].time(i));QCOMPARE(rb.series[1].value(i),r.series[1].value(i));
+        }
+        QCOMPARE(rb.startUs,r.startUs);QCOMPARE(rb.endUs,r.endUs);
+        QVERIFY(rb.metrics.rise_s.has_value()); // recomputed on reading
+        QCOMPARE(back->history.size(),size_t(1));
+        QCOMPARE(back->history[0].runs,std::vector<int>{3}); // run 99 is not in the file
+        QCOMPARE(int(back->history[0].source),int(HistorySource::Restored));QCOMPARE(back->history[0].note,he.note);
+        QCOMPARE(back->windows.size(),size_t(1));QCOMPARE(back->windows[0].gain,QString("vel.kp"));
+        QVERIFY(back->setup);QCOMPARE(int(back->setup->signal.waveform),int(Waveform::ChirpLog));QCOMPARE(back->setup->signal.repeat,3u);
+        QCOMPARE(back->setup->capture.divider,uint16_t(2));QCOMPARE(back->setup->capture.samples,500u);
+        // Refusals.
+        const auto refused=[](QByteArray text) {auto x=readSession(text);return x?QString():x.error();};
+        QVERIFY(refused("not json").contains("JSON"));
+        QVERIFY(refused("{\"format\":\"other\",\"version\":1}").contains("Not a DriveLink"));
+        QVERIFY(refused(QByteArray(bytes).replace("\"version\":1","\"version\":2")).contains("newer"));
+        QVERIFY(refused(QByteArray(bytes).replace("\"nextNumber\":4","\"nextNumber\":2")).contains("nextNumber"));
+        QVERIFY(!refused(QByteArray(bytes).replace("\"response\":1","\"response\":5")).isEmpty());
+        QVERIFY(!refused(QByteArray(bytes).replace("\"end\":1","\"end\":7")).isEmpty());
+        auto broken=QJsonDocument::fromJson(bytes).object();
+        auto runsJson=broken["runs"].toArray();auto run0=runsJson[0].toObject();auto series=run0["series"].toArray();
+        auto col=series[0].toObject();col["t"]=QString("@@@");series[0]=col;run0["series"]=series;runsJson[0]=run0;broken["runs"]=runsJson;
+        QVERIFY(refused(QJsonDocument(broken).toJson()).contains("base64"));
+        col["t"]=QString::fromLatin1(QByteArray(12,'\0').toBase64());series[0]=col;run0["series"]=series;runsJson[0]=run0;broken["runs"]=runsJson;
+        QVERIFY(refused(QJsonDocument(broken).toJson()).contains("8-byte"));
+        // Times that go back.
+        QByteArray back16(16,'\0');qToLittleEndian<qint64>(5,back16.data());qToLittleEndian<qint64>(4,back16.data()+8);
+        col["t"]=QString::fromLatin1(back16.toBase64());col["v"]=QString::fromLatin1(QByteArray(16,'\0').toBase64());
+        series[0]=col;run0["series"]=series;runsJson[0]=run0;broken["runs"]=runsJson;
+        QVERIFY(refused(QJsonDocument(broken).toJson()).contains("go back"));
+        run0=QJsonDocument::fromJson(bytes).object()["runs"].toArray()[0].toObject();
+        run0["names"]=QJsonArray{"velocity_sp"};runsJson[0]=run0;broken["runs"]=runsJson;
+        QVERIFY(refused(QJsonDocument(broken).toJson()).contains("do not match"));
+        runsJson=QJsonArray{QJsonDocument::fromJson(bytes).object()["runs"].toArray()[0],QJsonDocument::fromJson(bytes).object()["runs"].toArray()[0]};
+        broken=QJsonDocument::fromJson(bytes).object();broken["runs"]=runsJson;
+        QVERIFY(refused(QJsonDocument(broken).toJson()).contains("twice"));
+
+        // CSV: the run, then time and one column per signal.
+        const auto csv=runCsv(r);
+        const auto lines=csv.split('\n');
+        QVERIFY(lines[0].startsWith("# DriveLink tune run 3"));
+        QVERIFY(csv.contains("# gains: vel.kp=0.85 vel.ki=4"));QVERIFY(csv.contains("# ended: stopped at 0.600000 s"));
+        const int header=int(lines.indexOf(QRegularExpression("^time_s,.*")));
+        QVERIFY(header>0);QCOMPARE(lines[header],QString("time_s,velocity_sp (rad/s),velocity (rad/s)"));
+        QCOMPARE(lines[header+1],QString("-0.100000,0,0"));
+        QCOMPARE(lines.size()-header-2,int(r.series[0].size())); // a row per sample, then the final newline
+        QCOMPARE(sessionFilePath("C:/a/b"),QString("C:/a/b.tune.json"));QCOMPARE(sessionFilePath("x.JSON"),QString("x.JSON"));
+        QCOMPARE(csvFilePath("run"),QString("run.csv"));QCOMPARE(csvFilePath("run.csv"),QString("run.csv"));
+    }
+
+    // H2e-2, the view with fake hooks: history entries after the gains
+    // settle, Auto re-run only under the ARM of the user's Run, a gain change
+    // during a run cancels it, Restore, A/B, files and the recovery file.
+    void tuneSessionView() {
+        QTemporaryDir dir;
+        TuneView view;
+        view.setRecoveryFolder(dir.filePath("recovery"));
+        struct Write {std::vector<Ref> refs;std::vector<uint32_t> bits;std::function<void(QString)> done;};
+        std::vector<Write> writes;
+        int starts=0,cancels=0;uint64_t epoch=0;QString blocked;
+        TuneView::Hooks hooks;
+        hooks.write=[&](std::vector<Ref> r,std::vector<uint32_t> b,std::function<void(QString)> d) {writes.push_back({r,b,d});};
+        hooks.runBlocked=[&]{return blocked;};
+        hooks.start=[&]{++starts;};
+        hooks.stop=[]{};
+        hooks.cancel=[&]{++cancels;};
+        hooks.armEpoch=[&]{return epoch;};
+        hooks.autoBlocked=[]{return QString();};
+        view.setHooks(hooks);
+        auto snap=sample(1);snap.status=StatusFrame{};snap.ready=true;
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(snap),"dev");
+        // The first entry: the gains as read; not an unsaved change.
+        QCOMPARE(view.historyCount(),1);
+        auto *rows=view.history();
+        QCOMPARE(rows->data(rows->index(0,0),HistoryRows::Change).toString(),QString("loaded from device"));
+        QVERIFY(rows->data(rows->index(0,0),HistoryRows::Current).toBool());
+        QVERIFY(!view.unsaved());
+        QVERIFY(!view.autoRerun()["allowed"].toBool());
+        QCOMPARE(view.autoRerun()["text"].toString(),QString("starts after your first Run"));
+        // A typed gain settles after 0.5 s: a new entry; no Auto re-run before a Run.
+        QCOMPARE(view.gainText("32:0:32","1.0"),QString());writes.back().done({});
+        QVERIFY(waitFor([&]{return view.historyCount()==2;},1500));
+        QCOMPARE(rows->data(rows->index(0,0),HistoryRows::Change).toString(),QString("vel.kp 0.85 → 1.0"));
+        QVERIFY(view.unsaved());QCOMPARE(starts,0);
+        // Under an ARM, the user's Run allows Auto re-run for that ARM only.
+        epoch=1;
+        QVERIFY2(view.run()["canRun"].toBool(),qPrintable(view.run()["blocked"].toString()));
+        view.startRun();QCOMPARE(starts,1);
+        QVERIFY(view.autoRerun()["allowed"].toBool());
+        // The run ends (the connection adds it): it joins the current entry.
+        view.setPhase(TuneView::Phase::Running);
+        // During a run with Auto re-run on, a change cancels the run.
+        QCOMPARE(view.gainText("32:0:32","1.2"),QString());QCOMPARE(cancels,1);
+        view.setPhase(TuneView::Phase::Idle); // the connection ends the cancelled run
+        writes.back().done({});
+        QVERIFY(waitFor([&]{return starts==2;},1500)); // re-run after 0.5 s quiet
+        QCOMPARE(view.historyCount(),3);
+        auto setup=*view.runSetup();
+        auto run=stepRun(snap,0.1);view.addRun(run,setup);
+        QCOMPARE(view.runCount(),1);
+        QCOMPARE(view.historyList().back().runs,std::vector<int>{1});
+        QCOMPARE(rows->data(rows->index(0,0),HistoryRows::Run).toInt(),1);
+        // The same gains again: no new run; another change re-runs.
+        QCOMPARE(view.gainText("32:0:32","1.2"),QString());writes.back().done({});
+        QTest::qWait(800);QCOMPARE(starts,2);
+        // A change and the user's Run within 0.5 s: that Run carries it, no re-run after.
+        QCOMPARE(view.gainText("32:0:32","1.25"),QString());writes.back().done({});
+        view.startRun();QCOMPARE(starts,3);
+        view.setPhase(TuneView::Phase::Running);QTest::qWait(800);
+        view.setPhase(TuneView::Phase::Idle);view.addRun(stepRun(snap,0.08),*view.runSetup());
+        QTest::qWait(100);QCOMPARE(starts,3);
+        // A transient block (a release, a run): the re-run waits for it.
+        blocked="release";
+        QCOMPARE(view.gainText("32:0:32","1.3"),QString());writes.back().done({});
+        QTest::qWait(800);QCOMPARE(starts,3);QVERIFY(view.autoRerun()["pending"].toBool());
+        blocked.clear();view.refreshRunState();
+        QVERIFY(waitFor([&]{return starts==4;},500));
+        view.addRun(stepRun(snap,0.05),*view.runSetup());
+        // Another ARM: no Auto re-run until the next Run.
+        epoch=2;
+        QCOMPARE(view.gainText("32:0:32","1.4"),QString());writes.back().done({});
+        QTest::qWait(800);QCOMPARE(starts,4);QVERIFY(!view.autoRerun()["pending"].toBool());
+        // Auto re-run off: gains lock during a run again.
+        view.setAutoRerun(false);view.setPhase(TuneView::Phase::Running);
+        QVERIFY(view.gainText("32:0:32","1.5").contains("locked"));
+        view.setPhase(TuneView::Phase::Idle);view.setAutoRerun(true);
+        // Loaded, 1.0, 1.2, 1.25, 1.3, 1.4 (1.5 was refused locally).
+        QCOMPARE(view.historyCount(),6);
+        // Restore the first entry: one batch of the gains that differ; a new entry.
+        const int first=rows->data(rows->index(5,0),HistoryRows::Id).toInt();
+        QVERIFY(rows->data(rows->index(5,0),HistoryRows::CanRestore).toBool());
+        QVERIFY(!rows->data(rows->index(0,0),HistoryRows::CanRestore).toBool()); // the current set
+        const auto before=writes.size();
+        view.restoreEntry(first);
+        QCOMPARE(writes.size(),before+1);
+        QCOMPARE(writes.back().refs,(std::vector<Ref>{{32,0,32}}));QCOMPARE(std::bit_cast<float>(writes.back().bits[0]),0.85f);
+        QVERIFY(!rows->data(rows->index(5,0),HistoryRows::CanRestore).toBool()); // writing
+        writes.back().done({});
+        QVERIFY(waitFor([&]{return view.historyCount()==7;},1500));
+        QVERIFY(view.historyList().back().note.startsWith("restored"));
+        // A/B: entries with runs only; the overlay shows just A and B.
+        const auto runsOf=[&](int row){return rows->data(rows->index(row,0),HistoryRows::Run).toInt();};
+        int withA=-1,withB=-1;
+        for(int i=0;i<view.historyCount();++i) {if(runsOf(i)>0) {(withB<0?withB:withA)=i;}}
+        QVERIFY(withA>=0 && withB>=0);
+        QVERIFY(!rows->data(rows->index(0,0),HistoryRows::CanCompare).toBool());
+        view.pickCompare(rows->data(rows->index(withA,0),HistoryRows::Id).toInt());
+        QVERIFY(view.compare()["picking"].toBool());
+        view.pickCompare(rows->data(rows->index(withB,0),HistoryRows::Id).toInt());
+        auto cmp=view.compare();
+        QVERIFY(cmp["active"].toBool());
+        QCOMPARE(cmp["metrics"].toList().size(),4);
+        QVERIFY(cmp["gainChanges"].toString().startsWith("vel.kp"));
+        QCOMPARE(rows->data(rows->index(withA,0),HistoryRows::Mark).toString(),QString("A"));
+        QCOMPARE(view.plots().size(),1);
+        // Picking A again unmarks it; B becomes A.
+        view.pickCompare(rows->data(rows->index(withA,0),HistoryRows::Id).toInt());
+        QVERIFY(view.compare()["picking"].toBool());
+        QCOMPARE(view.compare()["a"].toMap()["run"].toInt(),runsOf(withB));
+        view.exitCompare();QVERIFY(!view.compare()["active"].toBool() && !view.compare()["picking"].toBool());
+
+        // Files: save, export, and the recovery file of an unsaved session.
+        const auto file=dir.filePath("left");
+        QCOMPARE(view.saveSession(QUrl::fromLocalFile(file).toString()),QString());
+        QVERIFY(QFile::exists(file+".tune.json"));QVERIFY(!view.unsaved());
+        QCOMPARE(view.session()["file"].toString(),QString("left.tune.json"));QCOMPARE(view.session()["name"].toString(),QString("left"));
+        QCOMPARE(view.exportRun(1,dir.filePath("run1")),QString());
+        QVERIFY(readText(dir.filePath("run1.csv")).startsWith("# DriveLink tune run 1"));
+        QVERIFY(!view.exportRun(42,dir.filePath("x")).isEmpty());
+        view.pinRun(1,true);QVERIFY(view.unsaved());
+        // Another device: the unsaved session goes to its recovery file first.
+        auto other=snap;
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(other),"other");
+        QCOMPARE(view.runCount(),0);QCOMPARE(view.historyCount(),1);QVERIFY(!view.recovery()["available"].toBool());
+        QVERIFY(QFile::exists(dir.filePath("recovery/dev.tune.json")));
+        // Open the saved file here: runs from another device; Restore by name.
+        QCOMPARE(view.openSession(file+".tune.json"),QString());
+        QCOMPARE(view.runCount(),3);QVERIFY(view.runList().front().foreign);QVERIFY(!view.unsaved());
+        QVERIFY(view.historyCount()>=6);
+        QVERIFY(rows->data(rows->index(1,0),HistoryRows::Foreign).toBool());
+        // The live gains are this device's first entry, and the current one.
+        QVERIFY(rows->data(rows->index(0,0),HistoryRows::Current).toBool());
+        QVERIFY(!rows->data(rows->index(1,0),HistoryRows::Current).toBool());
+        // Opening a session ends Auto re-run's permission: it may bring another signal.
+        view.startRun();QVERIFY(view.autoRerun()["allowed"].toBool());
+        // Saved here, the runs keep the device they were recorded on.
+        QCOMPARE(view.saveSession(dir.filePath("mixed")),QString());
+        QCOMPARE(view.openSession(dir.filePath("mixed.tune.json")),QString());
+        QVERIFY(!view.autoRerun()["allowed"].toBool());
+        QFile mixed(dir.filePath("mixed.tune.json"));QVERIFY(mixed.open(QIODevice::ReadOnly));
+        const auto reread=readSession(mixed.readAll());
+        QVERIFY(reread);QCOMPARE(reread->deviceId,QString("other"));
+        QCOMPARE(reread->runs.front().device,QString("dev"));QCOMPARE(reread->history.front().device,QString("dev"));
+        // Back on the first device: its recovery is offered and restores the pin.
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(snap),"dev");
+        QVERIFY(view.recovery()["available"].toBool());
+        // A gain change does not replace the offered recovery (only a run does).
+        const auto recovered=readText(dir.filePath("recovery/dev.tune.json"));
+        QCOMPARE(view.gainText("32:0:32","0.9"),QString());writes.back().done({});
+        QTest::qWait(1800);
+        QVERIFY(view.recovery()["available"].toBool());QCOMPARE(readText(dir.filePath("recovery/dev.tune.json")),recovered);
+        view.restoreRecovery();
+        QCOMPARE(view.runCount(),3);QVERIFY(view.runList().front().pinned);QVERIFY(!view.runList().front().foreign);
+        QVERIFY(view.unsaved());QVERIFY(!view.recovery()["available"].toBool());
+        // Saved: the recovery file goes.
+        QCOMPARE(view.saveSession(file),QString());
+        QVERIFY(!QFile::exists(dir.filePath("recovery/dev.tune.json")));
+        // A bad file is refused and changes nothing.
+        QFile bad(dir.filePath("bad.tune.json"));QVERIFY(bad.open(QIODevice::WriteOnly));bad.write("{}");bad.close();
+        QVERIFY(view.openSession(bad.fileName()).contains("Not a DriveLink"));QCOMPARE(view.runCount(),3);
+    }
+
     // A step run on vdev: left_drive (cascade_pid in velocity mode) on a mock
     // plant at 100 Hz.
     void tuneOperations() {
@@ -289,6 +615,9 @@ private slots:
         const auto ctrl=nodeKey(32,drive);
         tv.selectController(ctrl);
         QCOMPARE(tv.controller(),ctrl);
+        // H2e-1's rules: with Auto re-run off the gains lock during a run
+        // (tuneAuto covers it on).
+        tv.setAutoRerun(false);
         // The real descriptors carry the Tune flag (core v10).
         QVERIFY(tv.gainCount()>=8);
         const auto enums=tv.enums();QCOMPARE(enums.size(),1);QCOMPARE(enums[0].toMap()["name"].toString(),QString("mode"));
@@ -424,6 +753,107 @@ private slots:
         QCOMPARE(tv.runCount(),3);QCOMPARE(tv.controller(),QString());
     }
 
+    // H2e-2 on vdev: no Auto re-run before the user's Run; after it a gain
+    // change re-runs; a gain change during a run cancels it (STOP and ABORT,
+    // not kept, the target back at 0) and re-runs; not while Tune is hidden;
+    // a new ARM needs a Run again.
+    void tuneAuto() {
+        Fixture fixture;
+        uint8_t drive=0;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            const auto driven=cl.add(112,"driven",0).instance;const auto enc=cl.add(113,"enc",0).instance;drive=cl.add(32,"drive",0).instance;
+            const std::array<Ref,6> refs{{{113,enc,1},{32,drive,1},{32,drive,2},{32,drive,pid::kMode},{32,drive,pid::kVelKp},{32,drive,pid::kVelKi}}};
+            const std::array<uint32_t,6> values{{112u<<8|driven,112u<<8|driven,113u<<8|enc,1,std::bit_cast<uint32_t>(0.05f),std::bit_cast<uint32_t>(0.5f)}};
+            cl.set(refs,values);
+            const std::array<Ref,1> rate{{{5,0,1}}};const std::array<uint32_t,1> hz{{100}};cl.set(rate,hz);
+            cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QStringList toasts;
+        QObject::connect(&c,&Connection::notification,[&](QString text,int){toasts<<text;});
+        c.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return c.armEnabled() && c.snapshot()->configured.contains({32,drive});},15000));
+        c.setPage("tune");
+        auto &tv=c.tuneView();
+        tv.selectController(nodeKey(32,drive));
+        QVERIFY(tv.autoRerun()["on"].toBool());
+        tv.setTarget(itemKey(32,drive,pid::kVelocitySp));
+        QCOMPARE(tv.setSignalField("amplitude","1"),QString());QCOMPARE(tv.setSignalField("duration","0.5"),QString());
+        const auto kp=itemKey(32,drive,pid::kVelKp);
+        // velocity_sp read back through a Monitor plot (its group keeps
+        // running while Tune is shown).
+        auto &mv=c.monitorView();const auto spKey=itemKey(32,drive,pid::kVelocitySp);
+        c.setPage("monitor");mv.toggleSignal(spKey);
+        const auto velocitySp=[&]()->std::optional<double> {
+            const auto *ring=mv.ring(spKey);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        QVERIFY(waitFor([&]{return velocitySp().has_value();},5000));
+        c.setPage("tune");
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && tv.run()["canRun"].toBool();},5000));
+        // Before the user's first Run: a gain change does not run.
+        QVERIFY(!tv.autoRerun()["allowed"].toBool());
+        QCOMPARE(tv.gainText(kp,"0.06"),QString());
+        QTest::qWait(1200);QCOMPARE(tv.runCount(),0);QVERIFY(!c.tuneRunning());
+        // The user's Run, then a gain change: a run follows by itself.
+        tv.startRun();
+        QVERIFY2(waitFor([&]{return !c.tuneRunning() && tv.runCount()==1;},10000),qPrintable(toasts.join("; ")));
+        QVERIFY(tv.autoRerun()["allowed"].toBool());
+        QCOMPARE(tv.gainText(kp,"0.07"),QString());
+        QVERIFY2(waitFor([&]{return tv.runCount()==2 && !c.tuneRunning();},10000),qPrintable(toasts.join("; ")+" / "+tv.autoRerun()["text"].toString()));
+        QCOMPARE(float(tv.runList().back().gains.at(pid::kVelKp)),0.07f);
+        // Its history entry holds that run.
+        QCOMPARE(tv.historyList().back().runs,std::vector<int>{2});
+        // A change during a run cancels it: not kept, a re-run with the new gains.
+        QCOMPARE(tv.setSignalField("duration","3"),QString());
+        tv.startRun();
+        QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running && tv.run()["progress"].toDouble()>=0;},5000));
+        QTest::qWait(300);
+        toasts.clear();
+        QCOMPARE(tv.gainText(kp,"0.08"),QString());
+        QVERIFY2(waitFor([&]{return !toasts.filter("cancelled").isEmpty();},3000),qPrintable(toasts.join("; ")));
+        // The re-run (3 s) starts once the cancelled signal shows it stopped.
+        QVERIFY2(waitFor([&]{return c.tuneRunning();},5000),qPrintable(toasts.join("; ")+" / "+tv.autoRerun()["text"].toString()));
+        tv.stopRun();
+        QVERIFY2(waitFor([&]{return !c.tuneRunning();},10000),qPrintable(toasts.join("; ")));
+        QCOMPARE(tv.runCount(),3); // the cancelled run was not kept
+        QCOMPARE(float(tv.runList().back().gains.at(pid::kVelKp)),0.08f);
+        QCOMPARE(int(tv.runList().back().end),int(RunEnd::Stopped));
+        QVERIFY2(waitFor([&]{return velocitySp()==0.0;},3000),qPrintable(QString::number(velocitySp().value_or(-1))));
+        // A change while START is still in flight: cancelled when it is
+        // answered (STOP and ABORT), not kept, then re-run.
+        QCOMPARE(tv.setSignalField("duration","0.5"),QString());
+        tv.startRun();QCOMPARE(int(tv.phase()),int(TuneView::Phase::Starting));
+        toasts.clear();
+        QCOMPARE(tv.gainText(kp,"0.085"),QString());
+        QVERIFY2(waitFor([&]{return !toasts.filter("cancelled").isEmpty();},5000),qPrintable(toasts.join("; ")));
+        QVERIFY2(waitFor([&]{return tv.runCount()==4 && !c.tuneRunning();},10000),qPrintable(toasts.join("; ")+" / "+tv.autoRerun()["text"].toString()));
+        QCOMPARE(float(tv.runList().back().gains.at(pid::kVelKp)),0.085f);
+        QCOMPARE(int(tv.runList().back().end),int(RunEnd::Completed));
+        QVERIFY(waitFor([&]{return velocitySp()==0.0;},3000));
+        // Tune not shown: skipped.
+        c.setPage("device");
+        QCOMPARE(tv.gainText(kp,"0.09"),QString());
+        QTest::qWait(1200);QCOMPARE(tv.runCount(),4);
+        QVERIFY(tv.autoRerun()["text"].toString().contains("not shown"));
+        c.setPage("tune");
+        // A new ARM: no Auto re-run until the next Run.
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;}));
+        QVERIFY(!tv.autoRerun()["allowed"].toBool());
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && tv.run()["canRun"].toBool();},5000));
+        QVERIFY(!tv.autoRerun()["allowed"].toBool());
+        QCOMPARE(tv.gainText(kp,"0.1"),QString());
+        QTest::qWait(1200);QCOMPARE(tv.runCount(),4);QVERIFY(!c.tuneRunning());
+        // Session and history follow the device: autosaved beside the settings.
+        QVERIFY(tv.unsaved());
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;}));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+        QVERIFY(QDir(dir.filePath("tune-recovery")).entryList({"*.tune.json"}).size()==1);
+    }
+
     // The page in the shell: Run disabled with "Arm first", F5, a gain drag
     // with the mouse sends, Esc during a run disarms and ends it.
     void tuneInShell() {
@@ -501,12 +931,18 @@ private slots:
     // Arms, runs a step (completed, every post-trigger sample, the target back
     // at 0 after it), then a 3 s step stopped after 0.5 s (stopped, back at 0),
     // and disarms. No param is written; nothing else is saved.
+    // H2e-2: with DRIVELINK_GUI_BENCH_GAIN (a tune gain of the controller, an
+    // item key) it also checks Auto re-run: the gain +10 % re-runs by itself
+    // (completed, with the new gain); during a 3 s run the gain back to its
+    // value cancels the run (not kept, the target at 0) and re-runs, which is
+    // stopped. The gain ends at its original value (live, not saved).
     void benchTune() {
         const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
         const bool stage=qEnvironmentVariable("DRIVELINK_GUI_BENCH_STAGE_MOCK")=="1";
         auto controllerKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TUNE");
         auto targetKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TARGET");
         auto responseKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_RESPONSE");
+        const auto gainKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_GAIN");
         if(endpoint.isEmpty() || (!stage && (controllerKey.isEmpty() || targetKey.isEmpty()))) {
             QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_STAGE_MOCK=1, or _TUNE and _TARGET, to run on a device");
         }
@@ -554,6 +990,16 @@ private slots:
         QVERIFY2(!c.unsaved(),"refusing to run with unsaved changes");
         auto &tv=c.tuneView();auto &view=c.monitorView();
         tv.selectController(controllerKey);QCOMPARE(tv.controller(),controllerKey);
+        // Auto re-run runs only while Tune is shown; reads go through Monitor's
+        // group, which keeps running on the Tune page.
+        std::optional<double> originalGain;
+        if(!gainKey.isEmpty()) {
+            const auto *gains=tv.gains();
+            for(int i=0;i<gains->rowCount();++i) {
+                if(gains->data(gains->index(i,0),GainRows::Key).toString()==gainKey) {originalGain=gains->data(gains->index(i,0),GainRows::Value).toDouble();}
+            }
+            QVERIFY2(originalGain && *originalGain!=0,"DRIVELINK_GUI_BENCH_GAIN: not a non-zero tune gain of the controller");
+        }
         tv.setTarget(targetKey);
         QCOMPARE(tv.setSignalField("amplitude",QString::number(step)),QString());
         QCOMPARE(tv.setSignalField("duration",QString::number(duration)),QString());
@@ -592,6 +1038,33 @@ private slots:
         QVERIFY2(waitFor([&]{return !c.tuneRunning();},20000),qPrintable(tv.run()["text"].toString()));
         QCOMPARE(int(tv.runList().back().end),int(RunEnd::Stopped));
         qInfo("bench: run 2 stopped at %.3f s",double(tv.runList().back().endedUs.value_or(-1))/1e6);
+        if(originalGain) {
+            c.setPage("tune");
+            const auto gainItem=parseItemKey(gainKey)->item;
+            QCOMPARE(tv.setSignalField("duration",QString::number(duration)),QString());
+            // +10 %: a run follows by itself with the new gain.
+            const double nudged=stepGain(*originalGain,1.1,-1e30,1e30);
+            QCOMPARE(tv.gainText(gainKey,QString::number(nudged,'g',9)),QString());
+            QVERIFY2(waitFor([&]{return tv.runCount()==3 && !c.tuneRunning();},int(duration*1000)+15000),qPrintable(tv.autoRerun()["text"].toString()));
+            QCOMPARE(int(tv.runList().back().end),int(RunEnd::Completed));
+            QCOMPARE(float(tv.runList().back().gains.at(gainItem)),float(nudged));
+            QVERIFY2(waitFor([&]{return latest(targetKey) && *latest(targetKey)==0;},2000),"the target did not return to 0 after the auto re-run");
+            qInfo("bench: auto re-run 3 with %s %g completed",qPrintable(gainKey),nudged);
+            // Back during a 3 s run: cancelled (not kept), then re-run; Stop it.
+            QCOMPARE(tv.setSignalField("duration","3"),QString());
+            tv.startRun();QVERIFY(waitFor([&]{return tv.phase()==TuneView::Phase::Running;},5000));
+            QTest::qWait(500);
+            QCOMPARE(tv.gainText(gainKey,QString::number(*originalGain,'g',9)),QString());
+            QVERIFY2(waitFor([&]{return !c.tuneRunning();},5000),"the run was not cancelled");
+            QVERIFY2(waitFor([&]{return latest(targetKey) && *latest(targetKey)==0;},2000),"the target did not return to 0 after the cancel");
+            QVERIFY2(waitFor([&]{return tv.phase()==TuneView::Phase::Running;},8000),qPrintable(tv.autoRerun()["text"].toString()));
+            QTest::qWait(300);tv.stopRun();
+            QVERIFY2(waitFor([&]{return !c.tuneRunning();},20000),qPrintable(tv.run()["text"].toString()));
+            QCOMPARE(tv.runCount(),4); // the cancelled run was not kept
+            QCOMPARE(float(tv.runList().back().gains.at(gainItem)),float(*originalGain));
+            QVERIFY(waitFor([&]{return latest(targetKey) && *latest(targetKey)==0;},2000));
+            qInfo("bench: run cancelled by a gain change, re-run 4 stopped; %s back at %g",qPrintable(gainKey),*originalGain);
+        }
         c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));
         qInfo("bench: completed, stopped, back at 0 and disarmed");
     }

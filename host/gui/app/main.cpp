@@ -36,7 +36,7 @@ int main(int argc,char **argv) {
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
-                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running or tune-disarm.","name","device"});
+                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm or tune-ab.","name","device"});
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
     parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
     parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
@@ -62,7 +62,7 @@ int main(int argc,char **argv) {
     const QStringList pages={"connect","device","layout","tune","monitor"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
                               "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
-                              "tune-running","tune-disarm"};
+                              "tune-running","tune-disarm","tune-ab"};
     const bool layoutScreen=screen.startsWith("layout");
     const bool monitorScreen=screen.startsWith("monitor");
     const bool tuneScreen=screen.startsWith("tune");
@@ -276,6 +276,14 @@ int main(int argc,char **argv) {
             if(screen=="tune-disarm") {
                 stages.push_back({[&] {return !connection.tuneRunning() && tune.runCount()==int(runValues.size())+1;},[] {}});
             }
+        }
+        // H2e-2 A/B: the oldest and the newest gain set with a run, compared.
+        if(screen=="tune-ab") {
+            stages.push_back({[&] {return !connection.tuneRunning() && tune.runCount()>=2;},[&] {
+                std::vector<int> ids;
+                for(const auto &e:tune.historyList()) {if(!e.runs.empty()) {ids.push_back(e.id);}}
+                if(ids.size()>=2) {tune.pickCompare(ids.front());tune.pickCompare(ids.back());}
+            }});
         }
     }
     // Monitor: data across most of the window, then (paused) freeze it and

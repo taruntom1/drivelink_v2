@@ -14,8 +14,16 @@
 // then holds its last value. The capture keeps recording after Stop or a
 // disarm; when it is Done its data is read once and the run joins the list.
 // Boot, a lost link and close end the run; nothing is retried or re-armed.
+//
+// H2e-2 (user decisions 2026-11-18): with Auto re-run on, a gain change during
+// a run cancels it: STOP and ABORT once, the run is not kept, and the
+// controller stays at 0 until STATUS shows the signal stopped (the same
+// release as a given-up run). Auto re-runs start through startTuneRun like
+// Run, only under the ARM of the user's last Run (m_armEpoch) and only while
+// Tune is shown.
 #include "connection_internal.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
+#include <QFileInfo>
 #include <QPointer>
 
 namespace drivelink::gui {
@@ -44,6 +52,9 @@ void LocalConnection::setupTune() {
     hooks.runBlocked=[this] {return tuneBlocked();};
     hooks.start=[this] {startTuneRun();};
     hooks.stop=[this] {stopTuneRun();};
+    hooks.cancel=[this] {cancelTuneRun();};
+    hooks.armEpoch=[this]()->uint64_t {return m_ownArm && armState()==1?m_armEpoch:0;};
+    hooks.autoBlocked=[this] {return m_page==QLatin1String("tune")?QString():tr("Tune is not shown");};
     m_tune.setHooks(std::move(hooks));
 }
 
@@ -60,6 +71,8 @@ QString LocalConnection::tuneBlocked() const {
 }
 
 void LocalConnection::syncTune() {
+    // Autosaved sessions live beside the GUI's settings, one per device id.
+    m_tune.setRecoveryFolder(QFileInfo(m_recent.path()).absolutePath()+QStringLiteral("/tune-recovery"));
     if(ready()) {m_tune.setSnapshot(m_snapshot,deviceId());}
     // The fast path for the end of the signal: the TestgenDone event.
     if(m_tuneRun && m_tuneRun->run && !m_tuneRun->signalEnded && m_snapshot &&
@@ -151,7 +164,7 @@ void LocalConnection::startTuneRun() {
     if(!session || !m_snapshot) {return;}
     const auto key=setup->controller.key;
     TuneRun run;
-    run.setup=*setup;run.generation=m_snapshot->generation;run.loop=setup->controller.loop;
+    run.setup=*setup;run.generation=m_snapshot->generation;run.loop=setup->controller.loop;run.serial=++m_tuneSerial;
     run.elapsed.start();
     // The controller takes no manual command during the run; its value group
     // sends 0 for it until the signal ends (then a fresh frame).
@@ -163,7 +176,7 @@ void LocalConnection::startTuneRun() {
     const auto capture=setup->capture;
     const auto config=testgenConfig(setup->signal,loop);
     const QPointer<LocalConnection> self(this);
-    const auto generation=m_snapshot->generation;
+    const auto serial=m_tuneRun->serial;
     // One step at a time; a failure after a CONFIG that may have been accepted
     // ABORTs the capture (a refused CONFIG may be another client's capture).
     enum class Step {Config,Arm,Start};
@@ -189,8 +202,8 @@ void LocalConnection::startTuneRun() {
                 try {client.captureAbort();} catch(const Error &) {}
             }
             return out;
-        },[self,c,generation](std::expected<Started,Error> result) {
-            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->generation!=generation) {return;}
+        },[self,c,serial](std::expected<Started,Error> result) {
+            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->serial!=serial) {return;}
             if(!result || result->error) {
                 const auto &e=result?*result->error:result.error();
                 const auto step=result?result->step:Step::Config;
@@ -210,6 +223,7 @@ void LocalConnection::startTuneRun() {
             self->m_tuneRun->run=result->started->run;
             self->m_tune.setPhase(TuneView::Phase::Running,tr("Run %1 running").arg(self->m_tune.run()["next"].toInt()),0);
             self->m_tuneTimer.start();
+            if(self->m_tuneRun->cancelRequested) {self->cancelTuneRun();return;}
             if(self->m_tuneRun->stopRequested) {self->stopTuneRun();}
             self->syncTune(); // a short signal may already have ended
         });
@@ -232,6 +246,22 @@ void LocalConnection::stopTuneRun() {
             self->pollTune();
         });
     } catch(const Error &e) {report(e);}
+}
+
+void LocalConnection::cancelTuneRun() {
+    if(!m_tuneRun) {return;}
+    // START not answered yet: cancelled when it is (the chain must not leave
+    // a signal running unseen).
+    if(!m_tuneRun->run) {
+        m_tuneRun->cancelRequested=true;
+        m_tune.setPhase(TuneView::Phase::Starting,tr("Cancelling: a gain changed"));
+        return;
+    }
+    const int number=m_tune.run()["next"].toInt();
+    // STOP while the signal may run (its release keeps the controller at 0
+    // until STATUS shows it stopped), ABORT the capture; nothing is kept.
+    m_tuneRun->quietHold=true;
+    endTuneRun(tr("Run %1 cancelled: a gain changed").arg(number),TuneEnd::AbortCapture,0);
 }
 
 void LocalConnection::tuneSignalEnded(TestgenReason reason,std::optional<uint32_t> elapsedMs) {
@@ -263,13 +293,13 @@ void LocalConnection::pollTune() {
         endTuneRun(tr("The run did not finish in time; nothing was recorded"),TuneEnd::AbortCapture);return;
     }
     run.polling=true;
-    const auto loop=run.loop;const auto generation=run.generation;
+    const auto loop=run.loop;const auto serial=run.serial;
     const QPointer<LocalConnection> self(this);
     struct Poll {CaptureStatus capture;TestgenStatus testgen;};
     try {
         Client(*session).async([loop](Client &client) {return Poll{client.captureStatus(),client.testgenStatus(loop)};},
-            [self,c,generation](std::expected<Poll,Error> result) {
-            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->generation!=generation) {return;}
+            [self,c,serial](std::expected<Poll,Error> result) {
+            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->serial!=serial) {return;}
             auto &run=*self->m_tuneRun;
             run.polling=false;
             if(!result) {return;} // the next tick asks again (reads are idempotent)
@@ -303,11 +333,11 @@ void LocalConnection::readTuneCapture() {
     if(!session) {return;}
     m_tuneRun->reading=true;
     m_tune.setPhase(TuneView::Phase::Reading,tr("Reading the capture"),-1);
-    const auto generation=m_tuneRun->generation;
+    const auto serial=m_tuneRun->serial;
     const QPointer<LocalConnection> self(this);
     try {
-        Client(*session).async([](Client &client) {return client.captureData();},[self,c,generation](std::expected<CaptureData,Error> result) {
-            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->generation!=generation) {return;}
+        Client(*session).async([](Client &client) {return client.captureData();},[self,c,serial](std::expected<CaptureData,Error> result) {
+            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->serial!=serial) {return;}
             self->m_tuneRun->reading=false;
             if(!result) {self->endTuneRun(tr("The capture could not be read: %1").arg(errorText(result.error())));return;}
             self->m_tuneRun->data=std::move(*result);
@@ -326,7 +356,7 @@ void LocalConnection::finishTuneRun() {
     m_tune.addRun(std::move(record),run.setup);
 }
 
-void LocalConnection::endTuneRun(const QString &failure,TuneEnd how) {
+void LocalConnection::endTuneRun(const QString &failure,TuneEnd how,int tone) {
     const bool sameBoot=how!=TuneEnd::DeviceGone && m_tuneRun && m_snapshot && m_snapshot->generation==m_tuneRun->generation;
     if(sameBoot) {
         // Given up while the signal may still run (a timeout, a cleared or
@@ -345,7 +375,7 @@ void LocalConnection::endTuneRun(const QString &failure,TuneEnd how) {
                 },[](auto) {});
             } catch(const Error &) {}
         }
-        if(stop) {holdUntilStopped();}
+        if(stop) {holdUntilStopped(m_tuneRun->quietHold);}
         if(m_tuneRun->holding) {
             const auto key=m_tuneRun->setup.controller.key;
             m_command.endWrite(key.first,key.second);
@@ -354,10 +384,10 @@ void LocalConnection::endTuneRun(const QString &failure,TuneEnd how) {
     m_tuneRun.reset();
     if(!m_tuneRelease) {m_tuneTimer.stop();}
     m_tune.setPhase(TuneView::Phase::Idle);
-    if(!failure.isEmpty()) {emit notification(failure,2);}
+    if(!failure.isEmpty()) {emit notification(failure,tone);}
 }
 
-void LocalConnection::holdUntilStopped() {
+void LocalConnection::holdUntilStopped(bool quiet) {
     if(!m_tuneRun || !m_snapshot) {return;}
     auto &run=*m_tuneRun;
     if(run.holding) {
@@ -369,7 +399,9 @@ void LocalConnection::holdUntilStopped() {
         m_tuneRelease=TuneRelease{std::nullopt,run.generation,run.loop,run.run};
     }
     m_tuneTimer.start();
-    emit notification(tr("The test signal may still be running: its target stays at 0 here until the device shows it stopped (DISARM stops it)"),2);
+    if(!quiet) {
+        emit notification(tr("The test signal may still be running: its target stays at 0 here until the device shows it stopped (DISARM stops it)"),2);
+    }
 }
 
 void LocalConnection::pollTuneRelease() {

@@ -88,6 +88,8 @@ TUNE = {
     'tune-running': ('tune-running', VEL_KP + '=0.04', 'target=32:0:512,amplitude=2,duration=4'),
     'tune-disarm': ('tune-disarm', VEL_KP + '=0.04', 'target=32:0:512,amplitude=2,duration=3'),
     'tune-disarmed': ('tune', '', SIGNAL),
+    # H2e-2: runs 1 and 3 compared A/B.
+    'tune-ab': ('tune-ab', VEL_KP + '=0.04:0.06:0.08', SIGNAL),
 }
 # Scenarios that render a screen of another name.
 SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune'}

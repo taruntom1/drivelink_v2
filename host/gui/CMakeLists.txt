@@ -11,7 +11,7 @@ qt_add_library(drivelink_gui_backend STATIC
   backend/layout_model.cpp backend/layout_model.hpp backend/live_model.cpp backend/live_model.hpp
   backend/command_model.cpp backend/command_model.hpp backend/command_view.cpp backend/command_view.hpp
   backend/connection_monitor.cpp backend/monitor_model.cpp backend/monitor_model.hpp backend/monitor_view.cpp backend/monitor_view.hpp
-  backend/connection_tune.cpp backend/tune_model.cpp backend/tune_model.hpp backend/tune_view.cpp backend/tune_view.hpp
+  backend/connection_tune.cpp backend/tune_model.cpp backend/tune_model.hpp backend/tune_session.cpp backend/tune_session.hpp backend/tune_view.cpp backend/tune_view.hpp
   backend/models.cpp backend/models.hpp backend/ota_model.cpp backend/ota_model.hpp
   backend/safety_keys.cpp backend/safety_keys.hpp)
 target_include_directories(drivelink_gui_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/backend)

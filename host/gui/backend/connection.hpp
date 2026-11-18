@@ -436,12 +436,14 @@ private:
     struct TuneRun {
         TuneView::RunSetup setup;
         uint64_t generation=0;
+        uint64_t serial=0; // this run among all of this connection (a late reply of an earlier run is ignored)
         uint8_t loop=0;
         std::optional<uint32_t> run;
-        bool holding=false,signalEnded=false,stopRequested=false,polling=false,reading=false;
+        bool holding=false,signalEnded=false,stopRequested=false,cancelRequested=false,polling=false,reading=false;
         RunEnd end=RunEnd::Completed;
         std::optional<int64_t> endedUs;
         std::optional<CaptureData> data;
+        bool quietHold=false; // a cancel: its own toast says so
         QElapsedTimer elapsed;
     };
     struct TuneLine {QString line,before;};
@@ -459,6 +461,7 @@ private:
     enum class TuneEnd {Done, AbortCapture, DeviceGone};
     TuneView m_tune;
     std::optional<TuneRun> m_tuneRun;
+    uint64_t m_tuneSerial=0;
     std::optional<TuneRelease> m_tuneRelease;
     QTimer m_tuneTimer,m_tuneRefresh;
     // Per device id and item key: the change line a Tune write added last.
@@ -468,12 +471,14 @@ private:
     void tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString)> done);
     void startTuneRun();
     void stopTuneRun();
+    // H2e-2: a gain changed during a run with Auto re-run on: STOP, ABORT, not kept.
+    void cancelTuneRun();
     void tuneSignalEnded(TestgenReason reason,std::optional<uint32_t> elapsedMs);
     void pollTune();
     void readTuneCapture();
     void finishTuneRun();
-    void endTuneRun(const QString &failure,TuneEnd how=TuneEnd::Done);
-    void holdUntilStopped();
+    void endTuneRun(const QString &failure,TuneEnd how=TuneEnd::Done,int tone=2);
+    void holdUntilStopped(bool quiet=false);
     void pollTuneRelease();
     void syncLive();
     void pollLive();
@@ -501,6 +506,8 @@ private:
     // This window's ARM was accepted and no status has shown the device
     // disarmed since: only then does Monitor's manual command send values.
     bool m_ownArm=false;
+    // Counts this window's accepted ARMs (Tune's Auto re-run belongs to one ARM).
+    uint64_t m_armEpoch=0;
     bool m_ackPending=false,m_linkLost=false,m_waitingDisarm=false;
     bool m_observingArmed=false,m_explicitDisarmAcknowledged=false;
     bool m_disarmWhenOpened=false,m_subsPending=false,m_subsAttempted=false;

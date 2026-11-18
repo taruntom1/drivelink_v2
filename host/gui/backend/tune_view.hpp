@@ -1,13 +1,16 @@
 #pragma once
-// The Tune page's state for QML (H2e-1, G5 Tune), `connection.tune`: the
-// controller picker, the gains card (in-place rows: a drag survives updates)
-// with its sender, the test signal and capture cards, the run in progress and
-// the runs with their overlay and metrics. The rules are in tune_model; the
-// connection writes params, runs the test signal and capture
-// (connection_tune.cpp) and reports back here. Runs are kept per device in
-// memory (session files arrive in H2e-2).
+// The Tune page's state for QML (H2e-1, H2e-2, G5 Tune), `connection.tune`:
+// the controller picker, the gains card (in-place rows: a drag survives
+// updates) with its sender, the test signal and capture cards, the run in
+// progress, the runs with their overlay and metrics, the gain history with
+// Restore and A/B, Auto re-run and the session (files, autosave). The rules
+// are in tune_model and tune_session; the connection writes params, runs the
+// test signal and capture (connection_tune.cpp) and reports back here. Runs
+// and history are kept per device in memory and in a recovery file.
 #include "tune_model.hpp"
+#include "tune_session.hpp"
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
@@ -15,6 +18,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <functional>
+#include <future>
 #include <memory>
 
 namespace drivelink::gui {
@@ -49,6 +53,22 @@ private:
     TuneView &m_view;
 };
 
+// The gain history of the selected controller, newest first.
+class HistoryRows final : public QAbstractListModel {
+    Q_OBJECT
+public:
+    enum Role { Id=Qt::UserRole+1, Time, Change, Note, Run, RunColour, Current, Mark, CanRestore, RestoreReason,
+                CanCompare, CompareReason, Foreign };
+    explicit HistoryRows(TuneView &view) : m_view(view) {}
+    int rowCount(const QModelIndex &p={}) const override;
+    QVariant data(const QModelIndex &, int) const override;
+    QHash<int,QByteArray> roleNames() const override;
+private:
+    friend class TuneView;
+    TuneView &m_view;
+    std::vector<size_t> m_rows; // indices into the history
+};
+
 class TuneView final : public QObject, public PlotSource {
     Q_OBJECT
     // {key, text, subtitle} per tunable instance.
@@ -80,6 +100,18 @@ class TuneView final : public QObject, public PlotSource {
     Q_PROPERTY(QVariantList plots READ plots NOTIFY changed)
     Q_PROPERTY(double plotStartUs READ plotStartUs NOTIFY changed)
     Q_PROPERTY(double plotEndUs READ plotEndUs NOTIFY changed)
+    // H2e-2. The selected controller's gain history (HistoryRows).
+    Q_PROPERTY(QAbstractItemModel* history READ history CONSTANT)
+    Q_PROPERTY(int historyCount READ historyCount NOTIFY changed)
+    // {active, picking, a{id, run, colour, time}, b{...}, gainChanges, equal,
+    //  metrics[{name, a, b, change}]}.
+    Q_PROPERTY(QVariantMap compare READ compare NOTIFY changed)
+    // {on, allowed, pending, text}: Auto re-run.
+    Q_PROPERTY(QVariantMap autoRerun READ autoRerun NOTIFY runChanged)
+    // {name, file, unsaved, canSave, saveReason, canOpen, openReason, folder}.
+    Q_PROPERTY(QVariantMap session READ session NOTIFY changed)
+    // {available, time}: an autosaved session of this device to restore.
+    Q_PROPERTY(QVariantMap recovery READ recovery NOTIFY changed)
 public:
     // Writes live params (one batch, one loop); `done` gets "" or the refusal.
     using Writer=std::function<void(std::vector<Ref>, std::vector<uint32_t>, std::function<void(QString)>)>;
@@ -87,8 +119,17 @@ public:
         Writer write;
         std::function<QString()> runBlocked; // why a run cannot start ("" when it can)
         std::function<void()> start, stop;
+        // H2e-2. Ends the run in progress without keeping it (a gain changed
+        // during a run while Auto re-run is on).
+        std::function<void()> cancel;
+        // This window's accepted ARM: a number that changes with every ARM,
+        // 0 while not armed by this window.
+        std::function<uint64_t()> armEpoch;
+        // Why an automatic run may not start now ("" when it may), beyond Run's rules.
+        std::function<QString()> autoBlocked;
     };
     explicit TuneView(QObject *parent=nullptr);
+    ~TuneView() override;
     void setHooks(Hooks hooks) { m_hooks=std::move(hooks); }
 
     QVariantList controllers() const;
@@ -142,12 +183,47 @@ public:
     Q_INVOKABLE void pinRun(int number, bool pinned);
     Q_INVOKABLE void removeRun(int number);
 
+    // H2e-2.
+    QAbstractItemModel *history() { return &m_historyRows; }
+    int historyCount() const { return int(m_historyRows.m_rows.size()); }
+    QVariantMap compare() const;
+    QVariantMap autoRerun() const;
+    QVariantMap session() const;
+    QVariantMap recovery() const;
+    // Writes an entry's gains again (live).
+    Q_INVOKABLE void restoreEntry(int id);
+    // The A/B button of an entry: the first pick is A, the second B; picking
+    // a marked entry unmarks it; a further pick replaces B.
+    Q_INVOKABLE void pickCompare(int id);
+    Q_INVOKABLE void exitCompare();
+    Q_INVOKABLE void restoreCompare(bool b);
+    Q_INVOKABLE void setAutoRerun(bool on);
+    // Files: a URL or local path; "" or why not.
+    Q_INVOKABLE QString saveSession(const QString &url);
+    Q_INVOKABLE QString openSession(const QString &url);
+    Q_INVOKABLE QString exportRun(int number, const QString &url);
+    // A failure from QML (a dialog's result) as a toast.
+    Q_INVOKABLE void report(const QString &text) { if(!text.isEmpty()) {emit notification(text,2);} }
+    // The file name a save dialog offers (no folder).
+    Q_INVOKABLE QString suggestedName(const QString &kind, int number=0) const;
+    Q_INVOKABLE void restoreRecovery();
+    Q_INVOKABLE void discardRecovery();
+    // The newest run's number (0 without runs).
+    Q_INVOKABLE int newestRun() const { return m_runs.empty()?0:m_runs.back().number; }
+
     // Connection side.
     void setSnapshot(std::shared_ptr<const DeviceSnapshot>, const QString &deviceId);
     // The connection closed or another device: the runs stay only for the same device.
     void reset();
-    // Re-evaluate whether Run is possible (arm state, groups, another run).
-    void refreshRunState() { emit runChanged(); }
+    // Re-evaluate whether Run is possible (arm state, groups, another run);
+    // an Auto re-run waiting for it is checked again.
+    void refreshRunState();
+    // Where autosaved sessions are kept (a folder; "" for none).
+    void setRecoveryFolder(const QString &folder) { m_recoveryFolder=folder; }
+    // Writes the autosave now when one is due (closing, another device).
+    void flushAutosave();
+    const std::vector<HistoryEntry> &historyList() const { return m_history; }
+    bool unsaved() const { return m_dirty; }
     // What the next run uses; empty optional when the setup is not valid.
     struct RunSetup {
         TuneController controller;
@@ -177,6 +253,7 @@ signals:
 private:
     friend class GainRows;
     friend class RunRows;
+    friend class HistoryRows;
     struct Gain {
         uint16_t item=0;
         QString key;
@@ -223,6 +300,26 @@ private:
     Hooks m_hooks;
     QTimer m_sendTimer;
     QElapsedTimer m_clock;
+    // H2e-2. Typed slider windows per gain item key (kept across controller changes).
+    QHash<QString,SessionWindow> m_windows;
+    std::vector<HistoryEntry> m_history;
+    HistoryRows m_historyRows;
+    int m_nextHistory=1;
+    std::optional<int> m_compareA, m_compareB; // history ids
+    // Gains quiet for 0.5 s: a history entry, then an Auto re-run when due.
+    QTimer m_settle, m_autoCheck, m_autosave;
+    QString m_settleNote;
+    HistorySource m_settleSource=HistorySource::Changed;
+    // A gain changed and has not settled; an Auto re-run is due and waits for Run.
+    bool m_autoOn=true, m_changePending=false, m_autoPending=false;
+    uint64_t m_autoEpoch=0; // the ARM of the last manual Run
+    QString m_autoNote;
+    QString m_sessionName, m_sessionPath, m_recoveryFolder;
+    bool m_dirty=false, m_autosaveDue=false, m_tooLargeNoted=false;
+    // The autosave writes on a worker thread from a copy (a large session
+    // must not stall the GUI thread, where DISARM is handled).
+    std::future<QString> m_autosaveJob;
+    std::optional<QDateTime> m_recoveryOffer;
 
     std::optional<TuneController> currentController() const;
     const ModelItem *itemOf(uint16_t id) const;
@@ -237,5 +334,28 @@ private:
     void reconcileCapture();
     double loopRate() const;
     void runsChanged();
+    // H2e-2.
+    bool gainsLocked() const;
+    void gainChanged();
+    void settled();
+    void tryAuto();
+    bool gainsDifferFromLastRun() const;
+    bool recordCurrent(HistorySource, const QString &note);
+    void refreshHistoryRows();
+    void historyChanged();
+    std::vector<OverlayEntry> shownRuns() const;
+    const HistoryEntry *entryById(int id) const;
+    QString restoreBlocked(const HistoryEntry &) const;
+    void writeSet(const ResolvedGains &, HistorySource, const QString &note);
+    void markDirty();
+    QString recoveryPath() const;
+    // `now`: write on this thread (closing, another device); else on a worker.
+    void writeAutosave(bool now);
+    void autosaveDone();
+    void waitAutosave();
+    QString tooLarge() const;
+    SessionData sessionData() const;
+    void applySession(SessionData, bool recovered);
+    void clearSession();
 };
 } // namespace drivelink::gui
