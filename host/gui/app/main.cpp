@@ -8,9 +8,12 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 // The static DriveLink.Shell module's C++ types (PlotItem).
 void qml_register_types_DriveLink_Shell();
@@ -37,6 +40,9 @@ int main(int argc,char **argv) {
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
     parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
     parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
+    parser.addOption({"command","Monitor screens: put these inputs on the Manual command card (comma-separated "
+                      "KEY[@LIMIT][=VALUE[:latch]]); with a value the device is armed first and the slider is held there, "
+                      "or latched (a vdev only).","inputs"});
     parser.addOption({"select","Layout screens: select this node (type:instance, e.g. 5:0).","key"});
     parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
@@ -81,7 +87,9 @@ int main(int argc,char **argv) {
     }
     QDir directory(parser.value("out"));if(!directory.mkpath(".")) {return 2;}
     QTimer timeout;timeout.setSingleShot(true);timeout.setInterval(30000);
-    QObject::connect(&timeout,&QTimer::timeout,&app,[&] {std::fprintf(stderr,"Screenshot timed out: %s\n",qPrintable(connection.lastError().value("message").toString()));app.exit(2);});
+    QObject::connect(&timeout,&QTimer::timeout,&app,[&] {std::fprintf(stderr,"Screenshot timed out: %s (arm: %s; command: %s)\n",qPrintable(connection.lastError().value("message").toString()),
+                     qPrintable(connection.armBlockedReason()),qPrintable(connection.commandBlocked()));
+        app.exit(2);});
     timeout.start();
     auto capture=[&] {
         auto *theme=engine.singletonInstance<QObject *>("DriveLink.Style","Theme");
@@ -178,6 +186,42 @@ int main(int argc,char **argv) {
                           [&] {connection.runAction(action,{},{});}});
         stages.push_back({[&] {const auto state=row().value("result").toMap().value("state").toString();
                                 return !state.isEmpty() && state!="running";},[] {}});
+    }
+    // Manual command: the inputs on the card; with values, ARM, then each
+    // slider held at its value or latched there, as a drag would.
+    struct Commanded { QString key,limit; std::optional<double> value; bool latch=false; };
+    std::vector<Commanded> commanded;
+    for(const auto &entry:parser.value("command").split(',',Qt::SkipEmptyParts)) {
+        Commanded c;const auto parts=entry.split(QLatin1Char('='));c.key=parts[0].section(QLatin1Char('@'),0,0);c.limit=parts[0].section(QLatin1Char('@'),1);
+        if(parts.size()>1) {
+            auto value=parts[1];
+            if(value.endsWith(":latch")) {c.latch=true;value.chop(6);}
+            bool ok=false;const double v=value.toDouble(&ok);
+            if(!ok) {std::fprintf(stderr,"Invalid --command value\n");return 2;}
+            c.value=v;
+        }
+        commanded.push_back(c);
+    }
+    const bool armForCommand=std::any_of(commanded.begin(),commanded.end(),[](const Commanded &c){return c.value.has_value();});
+    // Commanding arms and drives inputs: a vdev only, never a board.
+    if(armForCommand && !parser.value("endpoint").startsWith("tcp://")) {
+        std::fprintf(stderr,"--command with a value arms the device; use a vdev tcp:// endpoint\n");return 2;
+    }
+    if(monitorScreen && !commanded.empty()) {
+        auto &command=connection.commandView();
+        stages.push_back({[&] {return connection.armEnabled() || connection.armState()==1;},[&] {
+            for(const auto &c:commanded) {command.add(c.key);if(!c.limit.isEmpty()) {command.setLimitText(c.key,c.limit);}}
+            if(armForCommand && connection.armState()!=1) {connection.arm();}
+        }});
+        if(armForCommand) {
+            stages.push_back({[&] {return connection.armState()==1 && command.enabled();},[&] {
+                for(const auto &c:commanded) {
+                    if(!c.value) {continue;}
+                    command.press(c.key);command.drag(c.key,*c.value);
+                    if(c.latch) {command.setLatched(c.key,true);command.release(c.key);}
+                }
+            }});
+        }
     }
     // Monitor: data across most of the window, then (paused) freeze it and
     // place the cursors.

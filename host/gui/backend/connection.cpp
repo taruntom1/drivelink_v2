@@ -25,6 +25,21 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     connect(this,&Connection::changed,this,[this] {updateActions();});
     connect(&m_monitor,&MonitorView::plansChanged,this,[this] {syncMonitor();});
     connect(&m_monitor,&MonitorView::notification,this,&Connection::notification);
+    // Manual command frames go only to this connection's value groups of the
+    // current boot; the GUI thread is their single producer.
+    m_command.setSettingsPath(m_recent.path());
+    m_command.setBlocked(tr("Not connected"));
+    m_command.setWriter([this](uint8_t group,std::span<const uint32_t> bits) {
+        if(!m_context || !m_snapshot || !commandBlocked().isEmpty()) {return false;}
+        std::shared_ptr<CommandGroup> keeper;
+        {
+            std::lock_guard lock(m_context->mutex);
+            for(const auto &o:m_context->owned) {
+                if(o.plan.id==group && o.plan.values && o.generation==m_snapshot->generation) {keeper=o.keeper;}
+            }
+        }
+        return keeper && keeper->writeBits(bits);
+    });
     // Monitor's samples are popped at 20 Hz: plots move smoothly and a
     // 1 kHz group stays far from its 2048-sample buffer.
     m_monitorTimer.setInterval(50);
@@ -217,11 +232,11 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         c->stopKeepers();
         {std::lock_guard lock(c->mutex);c->owned.clear();std::erase_if(c->subs,[&](const OwnedSub &o){return o.generation!=snapshot->generation;});}
         m_groupsReady=false;m_setupAttempted=false;m_subsAttempted=false;m_statusCounter.reset();++c->safety;
-        m_arming=false;m_waitingDisarm=false;
+        m_arming=false;m_armReplied=false;m_ownArm=false;m_waitingDisarm=false;
         if(m_snapshot) {m_explicitDisarmAcknowledged=false;}
         // Row states belong to the previous boot's layout.
         m_edits.clear();
-        resetLive();resetMonitorGroups();
+        resetLive();resetMonitorGroups();m_command.clearGroups();
         for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
             if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
         }
@@ -244,7 +259,10 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     }
     if(m_snapshot->status && (!m_statusCounter || *m_statusCounter!=m_snapshot->status->counter)) {
         m_statusCounter=m_snapshot->status->counter;m_seen.restart();
-        if(armState()==1) {m_arming=false;}
+        // A status after the ARM reply ends "arming" whatever it shows: a
+        // fault or watchdog can disarm before any status reports Armed.
+        if(armState()==1 || (m_armReplied && !m_armPending)) {m_arming=false;m_armReplied=false;}
+        if(armState()!=1 && !m_armPending) {m_ownArm=false;}
         if(armState()==0) {m_waitingDisarm=false;}
         m_loops.setStatus(&*m_snapshot->status);
     }
@@ -292,6 +310,8 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     // Monitor follows complete metadata only: a reload in progress never prunes its plots.
     if(ready()) {m_monitor.setSnapshot(m_snapshot);}
     syncLive();syncMonitor();
+    if(ready()) {m_command.setSnapshot(m_snapshot,deviceId());}
+    m_command.setBlocked(commandBlocked());
     // The live view follows every refresh: Boot, safe mode, reload, run
     // states and staged targets all change it, not only new samples.
     emit changed();emit liveChanged();
@@ -488,7 +508,18 @@ void LocalConnection::setupGroups() {
                     // reconciles exact configuration, even without a reply.
                     {std::lock_guard lock(c->mutex);c->owned.push_back(owned);}
                     GroupMutation configured;
-                    try {configured=client.cmdConfigure(plan.id,plan.loop,plan.refs);}
+                    try {
+                        for(int attempt=1;;++attempt) {
+                            try {configured=client.cmdConfigure(plan.id,plan.loop,plan.refs);break;}
+                            catch(const Error &e) {
+                                // Busy/Withdrawn guarantees no change (the loop
+                                // missed its claim window): not a blind repeat.
+                                const bool withdrawn=e.kind==ErrorKind::Rejected && e.result==uint8_t(defs::Result::Busy) &&
+                                    e.detail==uint8_t(defs::Detail::Withdrawn);
+                                if(!withdrawn || attempt>=3 || c->retired) {throw;}
+                            }
+                        }
+                    }
                     catch(const Error &e) {
                         if(!e.outcome_unknown) {
                             std::lock_guard lock(c->mutex);
@@ -497,9 +528,16 @@ void LocalConnection::setupGroups() {
                         throw;
                     }
                     if(configured.generation!=snapshot->generation) {throw Error(ErrorKind::Cancelled,"Device rebooted during command setup");}
-                    // Empty descriptors permit only prefix writes on this handle;
-                    // input defaults never enter the producer queue.
-                    auto keeper=session->manageCommand(plan.id,configured.epoch,{}, {},uint16_t(watchdog),configured.generation);
+                    // Keepalive-only groups: empty descriptors permit only prefix
+                    // writes. Value groups (the hold rule): full descriptors and
+                    // an explicit hold of 0, the value the firmware sets at ARM.
+                    // Nothing is written here; input defaults never enter the queue.
+                    std::vector<ItemDescriptor> descriptors;
+                    if(plan.values) {
+                        for(const auto &ref:plan.refs) {descriptors.push_back(snapshot->types.at(ref.type).items.at(ref.item).descriptor);}
+                    }
+                    const std::vector<uint32_t> zeros(descriptors.size(),0);
+                    auto keeper=session->manageCommand(plan.id,configured.epoch,std::move(descriptors),zeros,uint16_t(watchdog),configured.generation);
                     std::lock_guard lock(c->mutex);
                     const auto slot=std::find_if(c->owned.begin(),c->owned.end(),[&](const auto &o) {
                         return o.generation==snapshot->generation && o.plan.id==plan.id;
@@ -519,16 +557,59 @@ void LocalConnection::setupGroups() {
             self->m_setupPending=false;
             if(self->m_snapshot && self->m_snapshot->generation!=self->m_setupGeneration) {self->refresh(c);return;}
             self->m_groupsReady=bool(result);
-            if(result) {self->m_observingArmed=false;}
-            if(!result) {self->m_blocked=errorText(result.error());self->report(result.error());}
+            if(result) {self->m_observingArmed=false;self->configureCommands();}
+            if(!result) {self->m_command.clearGroups();self->m_blocked=errorText(result.error());self->report(result.error());}
+            self->m_command.setBlocked(self->commandBlocked());
             emit self->changed();
         });
     } catch(const Error &e) {m_setupPending=false;m_blocked=errorText(e);report(e);}
 }
+void LocalConnection::configureCommands() {
+    std::vector<CommandGroupSpec> groups;
+    if(m_context && m_snapshot) {
+        std::lock_guard lock(m_context->mutex);
+        for(const auto &o:m_context->owned) {
+            if(!o.plan.values || !o.keeper || o.generation!=m_snapshot->generation) {continue;}
+            CommandGroupSpec group;group.id=o.plan.id;
+            for(const auto &ref:o.plan.refs) {group.inputs.push_back({ref,m_snapshot->types.at(ref.type).items.at(ref.item).descriptor});}
+            groups.push_back(std::move(group));
+        }
+    }
+    m_command.setSnapshot(m_snapshot,deviceId());
+    m_command.configure(groups);
+}
+void LocalConnection::discardCommands(uint8_t type,uint8_t instance) {
+    if(!m_context) {return;}
+    std::lock_guard lock(m_context->mutex);
+    for(const auto &o:m_context->owned) {
+        if(!o.plan.values || !o.keeper) {continue;}
+        if(std::any_of(o.plan.refs.begin(),o.plan.refs.end(),[&](const Ref &r){return r.type==type && r.instance==instance;})) {
+            o.keeper->discardQueued();
+        }
+    }
+}
+std::vector<CommandPlan> LocalConnection::commandGroups() const {
+    std::vector<CommandPlan> plans;
+    if(!m_context) {return plans;}
+    std::lock_guard lock(m_context->mutex);
+    for(const auto &o:m_context->owned) {plans.push_back(o.plan);}
+    return plans;
+}
+QString LocalConnection::commandBlocked() const {
+    if(!ready()) {return tr("Connect and wait for the device");}
+    if(m_observingArmed && !m_explicitDisarmAcknowledged) {return tr("Another owner armed the device; press DISARM first");}
+    if(!m_groupsReady) {return m_blocked.isEmpty()?tr("Preparing command groups"):m_blocked;}
+    if(m_disarmPending || m_waitingDisarm) {return tr("Disarming");}
+    if(m_arming || m_armPending) {return tr("Arming");}
+    if(armState()==2) {return tr("A fault is latched; acknowledge it and arm again");}
+    if(armState()!=1) {return tr("Arm to command inputs");}
+    if(!m_ownArm) {return tr("Another client armed the device; press DISARM, then ARM here");}
+    return {};
+}
 void LocalConnection::arm() {
     if(!armEnabled()) {return;}
     auto c=m_context;auto session=c->getSession();const auto fence=c->safety.load();const auto generation=m_snapshot->generation;
-    m_arming=true;m_armPending=true;emit changed();const QPointer<LocalConnection> self(this);
+    m_arming=true;m_armPending=true;m_armReplied=false;emit changed();const QPointer<LocalConnection> self(this);
     try {
         Client(*session).async([c,fence,generation](Client &client) {
             if(c->retired || c->safety!=fence || client.session().generation()!=generation) {throw Error(ErrorKind::Cancelled,"ARM cancelled by DISARM or connection change");}
@@ -537,7 +618,7 @@ void LocalConnection::arm() {
             return result;
         },[self,c,fence](std::expected<SystemResult,Error> result) {
             if(!self || !self->current(c)) {return;}
-            self->m_armPending=false;
+            self->m_armPending=false;self->m_armReplied=bool(result);self->m_ownArm=result && c->safety==fence;
             if(c->safety!=fence) {self->m_arming=false;self->disarm();}
             else if(!result) {
                 self->m_arming=false;self->report(result.error());
@@ -549,6 +630,13 @@ void LocalConnection::arm() {
 }
 void LocalConnection::disarm() {
     auto c=m_context;if(!c) {return;}++c->safety;m_arming=false;m_waitingDisarm=true;
+    // No manual value is queued after DISARM is requested, and none still
+    // queued is sent (the firmware would discard it anyway).
+    m_command.setBlocked(tr("Disarming"));m_ownArm=false;
+    {
+        std::lock_guard lock(c->mutex);
+        for(const auto &o:c->owned) {if(o.plan.values && o.keeper) {o.keeper->discardQueued();}}
+    }
     auto session=c->getSession();
     if(!session) {m_disarmWhenOpened=true;emit changed();return;}
     m_disarmWhenOpened=false;
@@ -594,6 +682,7 @@ void LocalConnection::disconnectDevice() {
         m_linkLost=false;m_previous.reset();m_snapshot.reset();
         m_instances.reset({});m_loops.reset({});m_faults.reset({});
         m_monitor.reset(); // a lost link kept it for the reconnect
+        m_command.reset();
         emit changed();emit disconnected();return;
     }
     if(m_closing) {return;}
@@ -642,13 +731,16 @@ void LocalConnection::finishClose(bool lost) {
         QCoreApplication::sendPostedEvents(m_dispatch->receiver,QEvent::MetaCall);
         std::this_thread::yield();
     }
-    m_loading=false;m_closing=false;m_groupsReady=false;m_setupPending=false;m_arming=false;
+    m_loading=false;m_closing=false;m_groupsReady=false;m_setupPending=false;m_arming=false;m_armReplied=false;m_ownArm=false;
     m_armPending=false;m_disarmPending=false;m_disarmAgain=false;m_ackPending=false;m_waitingDisarm=false;
     m_disarmWhenOpened=false;m_subsPending=false;m_configAction.clear();m_loadStep=0;
     resetLive();m_livePending=false;m_actionRunning.clear();m_actionResults.clear();
     // A lost link keeps Monitor's plot set, as Layout keeps its selection.
     resetMonitorGroups();m_monitorPending=false;
     if(lost) {m_monitor.lose();} else {m_monitor.reset();}
+    // A lost link keeps the card's inputs for the same device, like Monitor.
+    if(lost) {m_command.clearGroups();} else {m_command.reset();}
+    m_command.setBlocked(tr("Not connected"));
     if(lost && c) {
         // Remember the device for the reboot notice after a reconnect.
         std::optional<uint64_t> uptime;

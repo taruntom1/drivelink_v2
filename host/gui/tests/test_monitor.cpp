@@ -1,5 +1,8 @@
 // Monitor (H2d-1): the pure rules, the view without a device, its groups on
-// vdev, the page in the shell and the plot item's cost at 1 kHz.
+// vdev, the page in the shell and the plot item's cost at 1 kHz. Manual
+// command (H2d-2): the hold rule, the command model, its groups on vdev, the
+// card in the shell and the bench check.
+#include "command_model.hpp"
 #include "connection.hpp"
 #include "layout_model.hpp"
 #include "monitor_model.hpp"
@@ -18,6 +21,7 @@
 #include <QtTest>
 #include <bit>
 #include <cmath>
+#include <limits>
 
 using namespace drivelink;
 using namespace drivelink::gui;
@@ -489,6 +493,347 @@ private slots:
         QVERIFY(waitFor([&]{return shown("monitorRefusal");}));
         connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
     }
+    // H2d-2 hold rule and the manual command rules: which inputs are
+    // commanded, the group split, the slider span, steps, ramp, Latch,
+    // typed values, Hold all, the zero after a live write, frames.
+    void commandLogic() {
+        auto ranged=[](ValueType type,double lo,double hi,bool hasRange=true) {
+            ItemDescriptor d;d.kind=ItemKind::Input;d.value_type=type;d.has_min=d.has_max=hasRange;
+            d.min_bits=numberToBits(type,lo);d.max_bits=numberToBits(type,hi);d.name="in";return d;
+        };
+        QVERIFY(commandable(ranged(ValueType::F32,-1,1)));
+        QVERIFY(commandable(ranged(ValueType::U16,0,100)));
+        QVERIFY(commandable(ranged(ValueType::I32,-5,5)));
+        QVERIFY(!commandable(ranged(ValueType::F32,-1,1,false)));      // position_sp: no range
+        QVERIFY(!commandable(ranged(ValueType::F32,0.001,1000)));      // excludes 0
+        QVERIFY(!commandable(ranged(ValueType::F32,0,0)));             // only 0
+        QVERIFY(!commandable(ranged(ValueType::Bool,0,1)));
+        QVERIFY(!commandable(ranged(ValueType::Enum,0,3)));
+        auto inf=ranged(ValueType::F32,-1,1);inf.max_bits=std::bit_cast<uint32_t>(std::numeric_limits<float>::infinity());
+        QVERIFY(!commandable(inf));
+        QVERIFY(commandRefusal(ranged(ValueType::F32,-1,1,false)).contains("range"));
+        // Planning: per loop, value groups (commandable inputs) and
+        // keepalive-only groups (the rest), each split by the entry limit.
+        {
+            auto s=sample();s.ready=true;s.connected=true;s.info.max_payload=1024;
+            auto &act=s.types[112];
+            ModelItem duty=act.items[0x200];duty.descriptor=ranged(ValueType::F32,-1,1);duty.descriptor.id=0x200;act.items[0x200]=duty;
+            ModelItem extra=duty;extra.descriptor.id=0x202;act.items[0x202]=extra;
+            act.items[0x201]=item(0x201,"position_sp",ItemKind::Input,ValueType::F32);
+            GroupList groups;groups.entry_capacity=64;
+            for(uint8_t id=0;id<6;++id) {Group g;g.kind=GroupKind::Command;g.id=id;groups.groups.push_back(g);}
+            auto plans=planCommands(s,groups);
+            QCOMPARE(plans.size(),size_t(2));
+            QVERIFY(plans[0].values);QCOMPARE(plans[0].loop,uint8_t(0));
+            QCOMPARE(plans[0].refs,(std::vector<Ref>{{112,0,0x200},{112,0,0x202}}));
+            QVERIFY(!plans[1].values);QCOMPARE(plans[1].refs,(std::vector<Ref>{{112,0,0x201}}));
+            s.system_params[protocol::defs::system::kLimitsGroupEntries]=uint16_t(1);
+            plans=planCommands(s,groups);
+            QCOMPARE(plans.size(),size_t(3));QVERIFY(plans[0].values && plans[1].values && !plans[2].values);
+            groups.groups.resize(2);
+            QVERIFY_EXCEPTION_THROWN(planCommands(s,groups),Error); // not enough slots: ARM unavailable
+        }
+        // The model: one value group of an f32 duty [-1, 1] and an i32 count [-10, 10].
+        auto count=ranged(ValueType::I32,-10,10);
+        CommandModel m;
+        m.configure({{4,{{{112,0,0x200},ranged(ValueType::F32,-1,1)},{{112,0,0x203},count}}}});
+        QCOMPARE(m.inputs().size(),size_t(2));
+        QCOMPARE(m.inputs()[0].limit,0.25);QCOMPARE(m.inputs()[0].decimals,2);QCOMPARE(m.inputs()[0].from(),-0.25);
+        QCOMPARE(m.inputs()[1].limit,3.0);QCOMPARE(m.inputs()[1].step,1.0);
+        QVERIFY_EXCEPTION_THROWN(m.configure({{1,{{{112,0,0x201},ranged(ValueType::F32,-1,1,false)}}}}),Error);
+        m.configure({{4,{{{112,0,0x200},ranged(ValueType::F32,-1,1)},{{112,0,0x203},count}}}});
+        // Disabled (disarmed): nothing is accepted or sent.
+        m.setShown(0,true);m.setShown(1,true);
+        QVERIFY(!m.press(0));QVERIFY(m.tick(0).empty());
+        m.setEnabled(true);
+        auto value=[](const CommandModel::Frame &f,size_t i,ValueType t){return bitsToNumber(t,f.bits.at(i));};
+        // Drag: clamped to the limit, on the shown step; the frame carries
+        // every input of the group; frames are at least 20 ms apart.
+        QVERIFY(m.press(0));QVERIFY(m.drag(0,0.1234));QCOMPARE(m.inputs()[0].value,0.12);
+        auto frames=m.tick(1000);QCOMPARE(frames.size(),size_t(1));QCOMPARE(frames[0].group,uint8_t(4));
+        QCOMPARE(frames[0].bits.size(),size_t(2));
+        QCOMPARE(value(frames[0],0,ValueType::F32),double(0.12f));QCOMPARE(value(frames[0],1,ValueType::I32),0.0);
+        QVERIFY(m.tick(1005).empty());
+        m.drag(0,0.9);QCOMPARE(m.inputs()[0].value,0.25);
+        QVERIFY(m.tick(1010).empty());QCOMPARE(m.tick(1020).size(),size_t(1));
+        // Release without Latch: a ramp to 0 in 20 ms steps; every frame a
+        // shown value (on the step, never growing), the last exactly 0.
+        m.release(0,2000);QVERIFY(m.inputs()[0].ramping);
+        double last=0.25;int sent=0;
+        for(int64_t t=2000;t<=2400;t+=CommandModel::kStepMs) {
+            for(const auto &f:m.tick(t)) {
+                const double v=value(f,0,ValueType::F32);++sent;
+                QVERIFY(v<=last+1e-9);last=v;
+                QCOMPARE(v,double(float(m.inputs()[0].value)));
+                QVERIFY(std::abs(m.inputs()[0].value*100-std::round(m.inputs()[0].value*100))<1e-9);
+            }
+        }
+        QCOMPARE(last,0.0);QVERIFY(!m.inputs()[0].ramping);QVERIFY(sent>=10);QVERIFY(!m.active());
+        // Latch keeps the value on release; a typed value needs Latch.
+        QVERIFY(!m.type(0,0.1));
+        m.press(0);m.drag(0,0.2);m.setLatched(0,true,3000);m.release(0,3000);
+        QCOMPARE(m.inputs()[0].value,0.2);QVERIFY(!m.inputs()[0].ramping);
+        QCOMPARE(*m.type(0,-0.155),-0.16);QCOMPARE(*m.type(0,-7),-0.25);
+        m.tick(3100);
+        // Unlatching a value not held ramps it to 0.
+        m.setLatched(0,false,3200);QVERIFY(m.inputs()[0].ramping);
+        for(int64_t t=3200;t<=3500;t+=CommandModel::kStepMs) {m.tick(t);}
+        QCOMPARE(m.inputs()[0].value,0.0);
+        // Pressing stops a ramp where it is.
+        m.press(1);m.drag(1,2.6);QCOMPARE(m.inputs()[1].value,3.0);m.release(1,4000);m.tick(4000);m.tick(4040);
+        const double stopped=m.inputs()[1].value;QVERIFY(stopped<3 && stopped>0);
+        m.press(1);QVERIFY(!m.inputs()[1].ramping);QCOMPARE(m.inputs()[1].value,stopped);
+        m.release(1,4100);for(int64_t t=4100;t<=4400;t+=20) {m.tick(t);}
+        // Hold all: every input to 0 at once, unlatched.
+        m.press(0);m.drag(0,0.1);m.setLatched(0,true,5000);m.release(0,5000);m.tick(5000);
+        m.holdAll();QCOMPARE(m.inputs()[0].value,0.0);QVERIFY(!m.inputs()[0].latched);
+        frames=m.tick(5100);QCOMPARE(frames.size(),size_t(1));QCOMPARE(value(frames[0],0,ValueType::F32),0.0);
+        // After a live write: the instance's inputs to 0 and a fresh frame,
+        // even at 0 already.
+        QVERIFY(m.tick(5200).empty());
+        m.zeroInstance(112,0);frames=m.tick(5300);QCOMPARE(frames.size(),size_t(1));
+        m.zeroInstance(113,0);QVERIFY(m.tick(5400).empty());
+        // Remove returns the input to 0; a frame the caller could not queue is retried.
+        m.press(0);m.drag(0,0.05);m.release(0,6000);m.setLatched(0,true,6000);
+        m.tick(6100);
+        m.remove(0);QVERIFY(!m.inputs()[0].shown);frames=m.tick(6200);QCOMPARE(frames.size(),size_t(1));
+        m.retry(4);QVERIFY(m.active());QCOMPARE(m.tick(6300).size(),size_t(1));
+        // The limit: clamped to the descriptor bound; the step follows it.
+        m.setShown(0,true);
+        m.setLimit(0,5);QCOMPARE(m.inputs()[0].limit,1.0);
+        m.setLimit(0,0.05);QCOMPARE(m.inputs()[0].decimals,3);QCOMPARE(m.inputs()[0].step,0.001);
+        m.press(0);m.drag(0,0.04567);QCOMPARE(m.inputs()[0].value,0.046);
+        m.setLimit(0,0.02);QCOMPARE(m.inputs()[0].value,0.02);m.release(0,7000);
+        // Disabling (DISARM) returns every value to 0 locally and sends nothing.
+        m.press(1);m.drag(1,2);m.setLatched(1,true,8000);m.release(1,8000);
+        m.setEnabled(false);
+        QCOMPARE(m.inputs()[1].value,0.0);QVERIFY(!m.inputs()[1].latched);QVERIFY(m.tick(9000).empty());QVERIFY(!m.active());
+        m.setEnabled(true);QVERIFY(m.tick(9100).empty());
+        // An unsigned input: the slider span starts at 0.
+        CommandModel u;u.configure({{0,{{{112,0,0x204},ranged(ValueType::U16,0,100)}}}});
+        u.setEnabled(true);u.setShown(0,true);
+        QCOMPARE(u.inputs()[0].from(),0.0);QCOMPARE(u.inputs()[0].to(),25.0);
+        u.press(0);u.drag(0,-5);QCOMPARE(u.inputs()[0].value,0.0);u.drag(0,7.6);QCOMPARE(u.inputs()[0].value,8.0);
+        QCOMPARE(numberToBits(ValueType::U16,8),8u);
+        // A range finer than the card's 4 decimals could only send 0.
+        QVERIFY(!commandable(ranged(ValueType::F32,-5e-5,5e-5)));
+        QVERIFY(commandable(ranged(ValueType::F32,-2e-4,2e-4)));
+        // A limit change re-quantizes toward zero: never a larger value.
+        CommandModel g;g.configure({{1,{{{112,0,0x200},ranged(ValueType::F32,-100,100)}}}});
+        g.setEnabled(true);g.setShown(0,true);g.setLimit(0,5);
+        g.press(0);g.drag(0,4.56);g.setLatched(0,true,0);g.release(0,0);QCOMPARE(g.inputs()[0].value,4.56);
+        g.setLimit(0,10);QCOMPARE(g.inputs()[0].decimals,1);QCOMPARE(g.inputs()[0].value,4.5);
+        g.setLimit(0,5);g.type(0,-4.56);g.setLimit(0,10);QCOMPARE(g.inputs()[0].value,-4.5);
+        // A live param write in flight (user decision 2026-11-18): the
+        // instance goes to 0 at its start, takes no press, Latch or typed
+        // value, and its group sends a fresh frame when the write ends.
+        CommandModel w;
+        w.configure({{2,{{{112,0,0x200},ranged(ValueType::F32,-1,1)},{{112,1,0x200},ranged(ValueType::F32,-1,1)}}}});
+        w.setEnabled(true);w.setShown(0,true);w.setShown(1,true);
+        w.press(0);w.drag(0,0.2);w.setLatched(0,true,0);w.release(0,0);
+        w.press(1);w.drag(1,0.1);w.setLatched(1,true,0);w.release(1,0);w.tick(0);
+        w.beginWrite(112,0);
+        QCOMPARE(w.inputs()[0].value,0.0);QVERIFY(!w.inputs()[0].latched);QCOMPARE(w.inputs()[1].value,0.1);
+        frames=w.tick(100);QCOMPARE(frames.size(),size_t(1));
+        QCOMPARE(value(frames[0],0,ValueType::F32),0.0);QCOMPARE(value(frames[0],1,ValueType::F32),double(0.1f));
+        QVERIFY(!w.press(0));w.setLatched(0,true,100);QVERIFY(!w.inputs()[0].latched);
+        // Another input of the group keeps working; its frames carry 0 for the written one.
+        QVERIFY(w.press(1));w.drag(1,0.15);w.release(1,200);
+        frames=w.tick(200);QCOMPARE(value(frames[0],0,ValueType::F32),0.0);
+        w.beginWrite(112,0);w.endWrite(112,0); // two writes in flight, one ended
+        QVERIFY(!w.press(0));
+        QCOMPARE(w.tick(300).size(),size_t(1)); // each ended write sends a fresh frame
+        w.endWrite(112,0);frames=w.tick(400);QCOMPARE(frames.size(),size_t(1)); // the fresh frame
+        QVERIFY(w.press(0));
+        w.endWrite(112,0);QVERIFY(w.press(0)); // an extra end (a Boot in between) is harmless
+    }
+    // Manual command on vdev: the group split as configured on the device,
+    // nothing accepted while disarmed, the commanded input read back over
+    // Monitor's subscription, the dead-man ramp, Latch, a live write that
+    // zeroes the instance, Hold all, DISARM, idle keepalives, and close.
+    void commandOperations() {
+        Fixture fixture;
+        uint8_t freeId=0,drivenId=0,encId=0,driveId=0;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            freeId=cl.add(112,"free",0).instance;drivenId=cl.add(112,"driven",0).instance;
+            encId=cl.add(113,"enc",0).instance;driveId=cl.add(32,"drive",0).instance;
+            const std::array<Ref,3> refs{{{113,encId,1},{32,driveId,1},{32,driveId,2}}};
+            const std::array<uint32_t,3> values{{112u<<8|drivenId,112u<<8|drivenId,113u<<8|encId}};
+            cl.set(refs,values);cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        c.connectTo(fixture.endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled() && c.snapshot()->configured.contains({32,driveId});},15000),
+                 qPrintable(c.armBlockedReason()+" / "+c.lastError()["text"].toString()));
+        QCOMPARE(c.snapshot()->configured.at({32,driveId}).instance.state,uint8_t(0));
+        auto &cv=c.commandView();
+        const Ref duty{112,freeId,0x200},position{32,driveId,0x201},velocitySp{32,driveId,0x200};
+        // The split as planned and as configured on the device.
+        const auto plans=c.commandGroups();
+        auto planOf=[&](const Ref &r)->std::optional<CommandPlan> {
+            for(const auto &p:plans) {if(std::find(p.refs.begin(),p.refs.end(),r)!=p.refs.end()) {return p;}}
+            return std::nullopt;
+        };
+        QVERIFY(planOf(duty) && planOf(duty)->values);
+        QVERIFY(planOf(velocitySp) && planOf(velocitySp)->values);
+        QVERIFY(planOf(position) && !planOf(position)->values);
+        {
+            GroupList list;bool done=false;
+            c.runOnDevice([&](Client &client){list=client.groups();},[&](QString){done=true;});
+            QVERIFY(waitFor([&]{return done;}));
+            for(const auto &p:plans) {
+                const auto g=std::find_if(list.groups.begin(),list.groups.end(),[&](const Group &g){return g.kind==GroupKind::Command && g.id==p.id;});
+                QVERIFY(g!=list.groups.end() && g->configured);QCOMPARE(g->refs,p.refs);
+            }
+        }
+        // Candidates: commandable inputs enabled, position_sp disabled with the reason.
+        const auto dutyKey=itemKey(duty.type,duty.instance,duty.item);
+        bool sawPosition=false;
+        for(const auto &v:cv.candidates()) {
+            const auto row=v.toMap();
+            if(row["key"]==itemKey(position.type,position.instance,position.item)) {
+                sawPosition=true;QVERIFY(!row["enabled"].toBool());QVERIFY(row["reason"].toString().contains("range"));
+            }
+            if(row["key"]==dutyKey) {QVERIFY(row["enabled"].toBool());}
+        }
+        QVERIFY(sawPosition);
+        // Plot the commanded input and the mock's response.
+        auto &view=c.monitorView();c.setPage("monitor");
+        const auto velocityKey=itemKey(112,freeId,0x100);
+        view.toggleSignal(dutyKey);view.toggleSignal(velocityKey);
+        auto latest=[&](const QString &key)->std::optional<double> {
+            const auto *ring=view.ring(key);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        QVERIFY(waitFor([&]{return latest(dutyKey).has_value();}));
+        // Disarmed: the card refuses.
+        cv.add(dutyKey);QCOMPARE(cv.rows()->rowCount(),1);
+        QVERIFY(!cv.enabled());QVERIFY(cv.blocked().contains("Arm"));
+        cv.press(dutyKey);cv.drag(dutyKey,0.2);QCOMPARE(cv.model().inputs()[size_t(cv.model().find(duty))].value,0.0);
+        // Armed: a drag is sent and read back; the mock responds.
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && cv.enabled();}));
+        const auto at=[&]{return cv.model().inputs()[size_t(cv.model().find(duty))];};
+        cv.press(dutyKey);cv.drag(dutyKey,0.2);QCOMPARE(at().value,0.2);
+        QVERIFY2(waitFor([&]{return latest(dutyKey) && std::abs(*latest(dutyKey)-0.2)<1e-6;}),
+                 qPrintable(QString::number(latest(dutyKey).value_or(-1))));
+        QVERIFY(waitFor([&]{return latest(velocityKey) && *latest(velocityKey)>0.5;}));
+        // Release ramps to 0 (dead-man).
+        cv.release(dutyKey);QVERIFY(at().ramping);
+        QVERIFY(waitFor([&]{return at().value==0 && !at().ramping && latest(dutyKey) && *latest(dutyKey)==0;}));
+        // Latch keeps the value after release; idle keepalives keep the
+        // device armed past the watchdog (1 s on this fixture).
+        cv.press(dutyKey);cv.drag(dutyKey,0.15);cv.setLatched(dutyKey,true);cv.release(dutyKey);
+        QTest::qWait(1500);
+        QCOMPARE(c.armState(),1);QCOMPARE(at().value,0.15);
+        QVERIFY(waitFor([&]{return latest(dutyKey) && std::abs(*latest(dutyKey)-0.15)<1e-6;}));
+        // A typed value while latched.
+        QCOMPARE(cv.typeValue(dutyKey,"+0.1"),QString());
+        QVERIFY(waitFor([&]{return latest(dutyKey) && std::abs(*latest(dutyKey)-0.1)<1e-6;}));
+        QVERIFY(!cv.typeValue(dutyKey,"abc").isEmpty());
+        // A live write to the commanded instance: its inputs return to 0.
+        c.setParamText(itemKey(112,freeId,2),"12");
+        QVERIFY(waitFor([&]{return at().value==0 && !at().latched && latest(dutyKey) && *latest(dutyKey)==0;}));
+        // Hold all.
+        cv.press(dutyKey);cv.drag(dutyKey,0.1);cv.setLatched(dutyKey,true);cv.release(dutyKey);
+        QVERIFY(waitFor([&]{return latest(dutyKey) && std::abs(*latest(dutyKey)-0.1)<1e-6;}));
+        QVERIFY(cv.commanding());
+        cv.holdAll();QVERIFY(waitFor([&]{return latest(dutyKey) && *latest(dutyKey)==0;}));QVERIFY(!cv.commanding());
+        // A page change releases a held slider.
+        cv.press(dutyKey);cv.drag(dutyKey,0.1);c.setPage("layout");QVERIFY(at().ramping || at().value==0);
+        QVERIFY(waitFor([&]{return at().value==0;}));
+        c.setPage("monitor");
+        // DISARM: values return to 0 locally at once; nothing more is accepted.
+        cv.press(dutyKey);cv.drag(dutyKey,0.2);cv.setLatched(dutyKey,true);cv.release(dutyKey);
+        QVERIFY(waitFor([&]{return latest(dutyKey) && std::abs(*latest(dutyKey)-0.2)<1e-6;}));
+        c.disarm();
+        QVERIFY(!cv.enabled());QCOMPARE(at().value,0.0);QVERIFY(!at().latched);
+        QVERIFY(waitFor([&]{return c.armState()==0;}));
+        QVERIFY(waitFor([&]{return latest(dutyKey) && *latest(dutyKey)==0;}));
+        cv.press(dutyKey);cv.drag(dutyKey,0.2);QCOMPARE(at().value,0.0);
+        // Armed by another client (here through this connection's executor,
+        // not this window's ARM): the card refuses.
+        {
+            bool done=false;QString error;
+            c.runOnDevice([](Client &client){client.arm();},[&](QString e){error=e;done=true;});
+            QVERIFY(waitFor([&]{return done;}));QVERIFY2(error.isEmpty(),qPrintable(error));
+        }
+        QVERIFY(waitFor([&]{return c.armState()==1;}));QTest::qWait(200);
+        QVERIFY(!cv.enabled());QVERIFY(cv.blocked().contains("Another client"));
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;}));
+        // Close clears this window's command groups.
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
+        QCOMPARE(cv.rows()->rowCount(),0);
+        Session s(fixture.endpoint.toStdString());Client client(s);
+        for(const auto &g:client.groups().groups) {QVERIFY(g.kind!=GroupKind::Command || !g.configured);}
+    }
+    // The Manual command card in the shell: add an input from the list,
+    // disabled while disarmed, a mouse drag sends and its release ramps to
+    // 0, Latch and a typed value, and Esc in the value field disarms.
+    void commandInShell() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();
+        Fixture fixture;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            cl.add(112,"left_pwm",0);cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        QTemporaryDir dir;LocalConnection connection;connection.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;
+        QObject::connect(&keys,&SafetyKeys::escapeRequested,&connection,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(1920,1080);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestActivate();
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled() && connection.snapshot()->configured.contains({112,0});},15000));
+        auto shown=[&](const QString &name)->QQuickItem * {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible()?item:nullptr;
+        };
+        auto center=[&](QQuickItem *item,double fx=0.5) {return item->mapToScene({item->width()*fx,item->height()/2}).toPoint();};
+        auto click=[&](QQuickItem *item) {QTest::qWait(100);QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,center(item));};
+        window->setProperty("page",3);
+        QVERIFY(waitFor([&]{return shown("monitorCommand");}));
+        auto &cv=connection.commandView();
+        const QString key="112:0:512";
+        click(shown("commandAdd"));
+        QVERIFY(waitFor([&]{return shown("candidate:"+key);}));
+        click(shown("candidate:"+key));
+        QVERIFY(waitFor([&]{return shown("command:"+key);}));
+        auto *control=shown("command:"+key);
+        auto *slider=visualChild(control,"commandSlider");QVERIFY(slider);
+        QVERIFY(!slider->isEnabled());QVERIFY(shown("commandBlocked"));
+        connection.arm();
+        QVERIFY(waitFor([&]{return connection.armState()==1 && slider->isEnabled();}));
+        const auto at=[&]{return cv.model().inputs()[size_t(cv.model().find({112,0,0x200}))];};
+        // A drag with the mouse: held and sending while pressed, a ramp to 0 after.
+        QTest::mousePress(window,Qt::LeftButton,Qt::NoModifier,center(slider,0.5));
+        QTest::mouseMove(window,center(slider,0.7));QTest::mouseMove(window,center(slider,0.85));
+        QVERIFY(waitFor([&]{return at().held && at().value>0.05;}));
+        QTest::mouseRelease(window,Qt::LeftButton,Qt::NoModifier,center(slider,0.85));
+        QVERIFY(waitFor([&]{return !at().held && at().value==0;}));
+        // Latch, then a typed value in the field.
+        auto *latch=visualChild(control,"commandLatch");QVERIFY(latch);click(latch);
+        QVERIFY(waitFor([&]{return at().latched;}));
+        auto *field=visualChild(control,"commandValue");QVERIFY(field);
+        QVERIFY(waitFor([&]{return !field->property("readOnly").toBool();}));
+        click(field);QTRY_VERIFY(field->hasActiveFocus());
+        field->setProperty("text","0.1");QTest::keyClick(window,Qt::Key_Return);
+        QVERIFY(waitFor([&]{return std::abs(at().value-0.1)<1e-9;}));
+        // Esc in the field disarms: the value returns to 0 locally.
+        click(field);QTRY_VERIFY(field->hasActiveFocus());
+        QTest::keyClick(window,Qt::Key_Escape);
+        QVERIFY(waitFor([&]{return connection.armState()==0;}));
+        QCOMPARE(at().value,0.0);QVERIFY(!slider->isEnabled());
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
     // 16 series at 1 kHz over a 10 s window: decimation and a frame of the
     // plot item (offscreen, software). Logged; the bounds are loose.
     void plotPerformance() {
@@ -651,6 +996,67 @@ private slots:
         Session s(endpoint.toStdString());Client client(s);
         for(const auto &g:client.groups().groups) {QVERIFY2(!g.configured,"a group is still configured after close");}
         qInfo("bench: restored, %u Hz, groups idle",saved);
+    }
+    // Manual command on a device (deferred: a real motor; dry-run on vdev
+    // with a mock actuator). Env: DRIVELINK_GUI_BENCH_ENDPOINT, and
+    // DRIVELINK_GUI_BENCH_INPUT (an item key, type:instance:item),
+    // DRIVELINK_GUI_BENCH_VALUE (small, e.g. 0.1), optional
+    // DRIVELINK_GUI_BENCH_RESPONSE (a signal key) with
+    // DRIVELINK_GUI_BENCH_MIN_RESPONSE (its least |value| while commanded).
+    // Arms, commands the value with the slider path, checks the read-back
+    // and the response, releases (ramp to 0), Latch then Hold all, a live
+    // write zeroing the instance is not exercised (it would change a
+    // param), and disarms. Nothing is saved; the board keeps its layout.
+    void benchCommand() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        const auto inputKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_INPUT");
+        if(endpoint.isEmpty() || inputKey.isEmpty()) {QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_INPUT to run on a device");}
+        bool ok=false;const double target=qEnvironmentVariable("DRIVELINK_GUI_BENCH_VALUE","0.1").toDouble(&ok);
+        QVERIFY2(ok && target!=0,"DRIVELINK_GUI_BENCH_VALUE must be a non-zero number");
+        const auto responseKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_RESPONSE");
+        const double minResponse=qEnvironmentVariable("DRIVELINK_GUI_BENCH_MIN_RESPONSE","0").toDouble();
+        const auto ref=parseItemKey(inputKey);QVERIFY2(ref,"DRIVELINK_GUI_BENCH_INPUT is not type:instance:item");
+        QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));c.connectTo(endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled();},30000),qPrintable(c.armBlockedReason()+" / "+c.lastError()["message"].toString()));
+        struct Restore {std::function<void()> run;~Restore() {run();}} restore{[&] {
+            c.disarm();waitFor([&]{return c.armState()==0;},5000);
+            c.disconnectDevice();waitFor([&]{return !c.closing();},10000);
+        }};
+        auto &cv=c.commandView();auto &view=c.monitorView();
+        const int index=cv.model().find(*ref);
+        QVERIFY2(index>=0,"the input is not in a value group (hold rule: a finite range including 0)");
+        cv.add(inputKey);
+        if(std::abs(target)>cv.model().inputs()[size_t(index)].limit) {QCOMPARE(cv.setLimitText(inputKey,QString::number(std::abs(target))),QString());}
+        c.setPage("monitor");
+        view.toggleSignal(inputKey);if(!responseKey.isEmpty()) {view.toggleSignal(responseKey);}
+        auto latest=[&](const QString &key)->std::optional<double> {
+            const auto *ring=view.ring(key);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        QVERIFY(waitFor([&]{return latest(inputKey).has_value();},10000));
+        const auto at=[&]{return cv.model().inputs()[size_t(index)];};
+        qInfo("bench: device %s firmware %s, input %s to %g (limit %g)",qPrintable(c.deviceId()),qPrintable(c.info()["firmware"].toString()),
+              qPrintable(inputKey),target,at().limit);
+        c.arm();QVERIFY2(waitFor([&]{return c.armState()==1 && cv.enabled();},5000),qPrintable(cv.blocked()));
+        cv.press(inputKey);cv.drag(inputKey,target);
+        const double shown=at().value;QVERIFY(std::abs(shown-target)<=at().step);
+        QVERIFY2(waitFor([&]{return latest(inputKey) && std::abs(*latest(inputKey)-shown)<1e-6;},3000),
+                 qPrintable(QString::number(latest(inputKey).value_or(NAN))));
+        QTest::qWait(1000);
+        if(!responseKey.isEmpty()) {
+            const auto response=latest(responseKey);
+            qInfo("bench: %s = %g while commanded",qPrintable(responseKey),response.value_or(NAN));
+            QVERIFY2(response && std::abs(*response)>=minResponse,"no response to the command");
+        }
+        cv.release(inputKey);
+        QVERIFY(waitFor([&]{return at().value==0 && latest(inputKey) && *latest(inputKey)==0;},3000));
+        cv.press(inputKey);cv.drag(inputKey,target);cv.setLatched(inputKey,true);cv.release(inputKey);
+        QTest::qWait(500);QCOMPARE(c.armState(),1);
+        QVERIFY(latest(inputKey) && std::abs(*latest(inputKey)-shown)<1e-6);
+        cv.holdAll();QVERIFY(waitFor([&]{return latest(inputKey) && *latest(inputKey)==0;},3000));
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));QCOMPARE(at().value,0.0);
+        qInfo("bench: commanded, ramped, latched, held and disarmed");
     }
 };
 QTEST_MAIN(MonitorTests)

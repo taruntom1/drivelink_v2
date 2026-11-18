@@ -54,10 +54,15 @@ a reason. Setup errors do not blindly repeat mutations; uncertain operations
 are reconciled by generation, epoch and complete configuration before cleanup.
 Only matching GUI-owned slots are cleared.
 
-**Keepalives leave input values unchanged.** Handles have empty descriptor/hold
-vectors and send prefixes only; this backend exposes no value-command API.
-Descriptor defaults are not semantic holds. H2d must install explicit finite
-holds and full descriptors before introducing manual value commands.
+**The hold rule (H2d-2).** Each loop's running inputs are split at connect:
+numeric inputs whose descriptor range is finite and includes 0 go to value
+groups (full descriptors, an explicit hold of 0, the value the firmware sets
+at ARM); every other input (e.g. `position_sp`) goes to a keepalive-only group
+whose handle has empty descriptors and sends prefixes only. Nothing is written
+at setup; descriptor defaults are never semantic holds. A Busy/Withdrawn
+`CMD_CONFIG` (no change, the loop missed its claim window) is retried twice;
+the split can need more slots than before, and a shortage leaves ARM
+unavailable with the reason. Only Monitor's manual command writes values.
 An already-armed connection observes without adopting groups or renewing
 another owner's receipts. This includes an armed state seen during slow
 discovery: a subsequent watchdog disarm does not authorize takeover. An
@@ -285,7 +290,56 @@ plot item in `app/plot_item.*` and the page in `app/MonitorPage.qml`.
   path, no dialog) and Add plot. Plots and rates are not saved.
 - **Plot in Monitor.** Layout's Signals and Statistics cards add the node's
   signals (not its inputs) and open Monitor.
-- **Manual command** is a placeholder card until H2d-2.
+
+## Manual command (H2d-2)
+
+Monitor's right-hand card (G5 CommandControl) sets inputs by hand. Pure rules
+in `backend/command_model.*`, the QML-facing card in `backend/command_view.*`
+(`connection.command`), the controls in `style/DLSlider.qml` (Symmetric scale)
+and `style/DLCommandControl.qml`.
+
+- **What can be commanded.** "Command another input" lists every running
+  input; those outside the hold rule (no finite range, a range without 0, a
+  bool or enum, a range finer than 4 decimals) are disabled with the reason.
+  The card's inputs are kept for a reconnect of the same device, not saved.
+- **When.** Only while this window's ARM was accepted and no status has shown
+  the device disarmed since (groups ready, not observing another owner).
+  Otherwise the card shows why and every value is 0. DISARM (Esc), a fault,
+  the watchdog, Boot, a lost link and close return every value to 0 locally
+  at once; DISARM also discards queued values. Nothing replays after a re-ARM.
+- **Slider.** Linear from −limit to +limit within the descriptor range; the
+  limit starts at 25 % of the descriptor maximum (or of |min| when the
+  maximum is 0), can be raised to max(|min|, |max|) with the pencil, and is
+  remembered per device and input in the app settings. Values are quantized
+  to the shown step (2 decimals below a limit of 10, 1 below 100, whole
+  numbers above, more below 0.1); every value sent is the value shown, or 0.
+  Only a held handle commands: no keyboard steps.
+- **Dead-man and Latch.** Releasing ramps to 0 in 12 steps of 20 ms, each a
+  shown value. A held slider that loses its press (focus loss, a page change)
+  counts as released. Latch keeps the value on release and on other pages
+  until Unlatch (a ramp to 0), Remove or Hold all (0 at once) or DISARM.
+  The value field is editable only while latched and sends on Enter; leaving
+  it drops the typed text.
+- **Frames.** One frame per value group at most every 20 ms carries the shown
+  value of each of its inputs (latest wins; a full queue retries on the next
+  tick); keepalives run as before.
+- **Live param writes.** When Layout writes a live param to an instance with
+  inputs in a value group, its queued values are discarded, its inputs go to
+  0, unlatch and take no command while the write is in flight; when the write
+  ends (reply, refusal or uncertain outcome) its group sends a fresh frame,
+  so a mode change resumes from 0 (user decisions 2026-11-18).
+- **Not covered.** The dead-man runs on the GUI thread while keepalives run
+  on I/O: a frozen GUI with a slider held keeps that value running; DISARM
+  (or the watchdog once the app dies) stops it.
+- **Tests and tools.** `gui_monitor_tests` `commandLogic` (pure),
+  `commandOperations` (vdev), `commandInShell`, and `benchCommand` (env-gated:
+  `DRIVELINK_GUI_BENCH_ENDPOINT`, `DRIVELINK_GUI_BENCH_INPUT` as
+  `type:instance:item`, `DRIVELINK_GUI_BENCH_VALUE`, optional
+  `DRIVELINK_GUI_BENCH_RESPONSE` and `DRIVELINK_GUI_BENCH_MIN_RESPONSE`).
+  The app's `--command KEY[@LIMIT][=VALUE[:latch]]` puts inputs on the card
+  for screenshots; with a value it arms, so it accepts only a `tcp://` vdev.
+  Scenarios `monitor` (one input held, one latched) and
+  `monitor-command-disarmed`.
 
 ## Theme
 

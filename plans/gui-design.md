@@ -143,7 +143,7 @@ The states the designs must cover, completed in G0. G1 gives each one a place on
 | Action | idle, running, done with outputs, failed (result, detail), refused while armed (`paused` actions on an instance in a real-time loop) |
 | Capture | not configured, Idle, Armed (waiting for the trigger), Triggered (recording), Done, reading (progress), read failed, config over capacity |
 | Test signal | stopped, running (progress), stopped by disarm, refused (not armed, target not a testgen input) |
-| Manual command | no command group, inputs held, sending (keepalive when idle), NaN shown as hold |
+| Manual command | no command group, inputs held, sending (keepalive when idle), NaN shown as hold. Built in H2d-2: disabled with the reason (not armed by this window, another owner, setup failed), held at 0 while a param write is in flight, refused inputs listed with the reason |
 | Live plots | subscription groups used (n of 8), link budget %, packet loss (counter gap), paused, signal from a stalled loop |
 | Tune session | new and unsaved, saved to a file; per run: visible or hidden, colour, params snapshot, differs from the current params; export to CSV |
 | OTA | choose image, refused while armed, writing (progress, retries), verifying (SHA-256), rebooting, reconnecting, waiting to confirm, confirmed, rolled back, aborted or failed |
@@ -540,6 +540,7 @@ code and records the outcome here; the notes below give the detail.
 | Layout Signals card "Plot in Monitor" | closed by H2d-1: on the Signals and Statistics cards; it adds the node's signals (not its inputs) and opens Monitor |
 | Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | closed by H2d-1: custom `PlotItem`, no QtGraphs (16 series × 10 k samples: decimation ≈ 7 ms, a software frame ≈ 20 ms; line strips on RHI); series colours appear only in plots, chips and browser checkboxes, never in the status bar |
 | G5 1080p: Monitor plot fitting and paused toolbar | closed by H2d-1: plot areas share the column's height, legends and the toolbar wrap (screenshots `monitor`, `monitor-paused`, `monitor-budget` at both sizes) |
+| Manual command card (G5 CommandControl, 344 px) at both sizes | closed by H2d-2: the card is 376 px and scrolls when it outgrows the column; Remove is a small x beside Latch (G5 shows no Remove control); screenshots `monitor` (held and latched) and `monitor-command-disarmed` |
 | G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |
 | CheckItem has no warning state (plant identification caution) | H2e |
 | G7 calibration: F6 contract reconciliation, PC file format, provenance, Euler convention, cancel and reconnect | H2f |

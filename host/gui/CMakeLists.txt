@@ -9,6 +9,7 @@ qt_add_library(drivelink_gui_backend STATIC
   backend/connection.cpp backend/connection.hpp backend/device_models.cpp backend/device_models.hpp
   backend/connection_internal.hpp backend/connection_ota.cpp backend/connection_layout.cpp backend/connection_live.cpp
   backend/layout_model.cpp backend/layout_model.hpp backend/live_model.cpp backend/live_model.hpp
+  backend/command_model.cpp backend/command_model.hpp backend/command_view.cpp backend/command_view.hpp
   backend/connection_monitor.cpp backend/monitor_model.cpp backend/monitor_model.hpp backend/monitor_view.cpp backend/monitor_view.hpp
   backend/models.cpp backend/models.hpp backend/ota_model.cpp backend/ota_model.hpp
   backend/safety_keys.cpp backend/safety_keys.hpp)

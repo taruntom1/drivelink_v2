@@ -292,13 +292,22 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
     const auto id=deviceId();const auto generation=m_snapshot->generation;
     const auto snapshot=m_snapshot;const auto modelItem=*item;
     m_edits[key]={"sending",{},text};updateParams();emit changed();
+    // Manual command (hold rule, user decisions 2026-11-18): an instance
+    // this GUI commands goes to 0 and takes no command while the write is in
+    // flight, and its queued values are discarded first; when the write ends,
+    // whatever the outcome, its group sends a fresh frame with 0 for it.
+    const bool commanded=m_command.commands(ref.type,ref.instance);
+    if(commanded) {discardCommands(ref.type,ref.instance);m_command.beginWrite(ref.type,ref.instance);}
     try {
         Client(*session).async([ref,bits](Client &client) {
             const std::array refs{ref};const std::array values{bits};
             return client.set(refs,values);
-        },[self,c,key,ref,bits,text,id,generation,snapshot,modelItem,subject,before,after](std::expected<ParamResult,Error> result) {
+        },[self,c,key,ref,bits,text,id,generation,snapshot,modelItem,subject,before,after,commanded](std::expected<ParamResult,Error> result) {
             if(!self || !self->current(c)) {return;}
             const bool sameBoot=self->m_snapshot && self->m_snapshot->generation==generation;
+            // After a Boot the card was set up again: this write began on the
+            // old groups and must not end a newer write's hold.
+            if(commanded && sameBoot) {self->m_command.endWrite(ref.type,ref.instance);}
             if(!result) {
                 const auto &e=result.error();
                 if(sameBoot) {
@@ -326,6 +335,8 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
             self->updateParams();emit self->changed();
         });
     } catch(const Error &e) {
+        // Not sent: the write ends here (a fresh frame with 0 for the instance).
+        if(commanded) {m_command.endWrite(ref.type,ref.instance);}
         m_edits[key]={"rejected",errorText(e),text};updateParams();emit changed();
     }
 }

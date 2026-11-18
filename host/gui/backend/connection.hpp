@@ -1,4 +1,5 @@
 #pragma once
+#include "command_view.hpp"
 #include "device_models.hpp"
 #include "layout_model.hpp"
 #include "live_model.hpp"
@@ -73,6 +74,8 @@ class Connection : public QObject {
     Q_PROPERTY(QAbstractItemModel* actions READ actions CONSTANT)
     // The Monitor page (MonitorView): plots, rates, link budget.
     Q_PROPERTY(QObject* monitor READ monitor CONSTANT)
+    // Monitor's Manual command card (CommandView).
+    Q_PROPERTY(QObject* command READ command CONSTANT)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -121,6 +124,7 @@ public:
     virtual QVariantMap live() const=0;
     virtual QAbstractItemModel *actions()=0;
     virtual QObject *monitor()=0;
+    virtual QObject *command()=0;
     // The page the shell shows (device, layout, tune, monitor): the Layout
     // live group is set up only while Layout is shown.
     Q_INVOKABLE virtual void setPage(const QString &page)=0;
@@ -254,6 +258,12 @@ public:
     QAbstractItemModel *actions() override {return &m_actions;}
     QObject *monitor() override {return &m_monitor;}
     MonitorView &monitorView() {return m_monitor;}
+    QObject *command() override {return &m_command;}
+    CommandView &commandView() {return m_command;}
+    // Why manual commands are not accepted now (empty when they are).
+    QString commandBlocked() const;
+    // The command groups this connection configured: {id, loop, refs, values} (tests).
+    std::vector<CommandPlan> commandGroups() const;
     void setPage(const QString &page) override;
     // Monitor's subscription groups, one per plotted loop (tests).
     std::vector<uint8_t> monitorSubscriptions() const;
@@ -313,7 +323,7 @@ public:
     // (-1 releases). Abort and close still end a held upload.
     void setOtaPauseAt(int percent) {m_otaPause->store(percent);}
     // Tests and screenshots keep their recent devices apart from the user's.
-    void setSettingsPath(const QString &path) {m_recent=RecentDevices(path);emit recentDevicesChanged();}
+    void setSettingsPath(const QString &path) {m_recent=RecentDevices(path);m_command.setSettingsPath(m_recent.path());emit recentDevicesChanged();}
     // The reconnect window after a requested reboot (default 30 s).
     void setReconnectWindow(int ms) {m_reconnectWindowMs=ms;}
     std::shared_ptr<const DeviceSnapshot> snapshot() const {return m_snapshot;}
@@ -405,6 +415,11 @@ private:
     void syncMonitor();
     void pollMonitor();
     void resetMonitorGroups();
+    // Manual command (H2d-2): the card, its value groups after setup, and
+    // the discard before a live param write to a commanded instance.
+    CommandView m_command;
+    void configureCommands();
+    void discardCommands(uint8_t type,uint8_t instance);
     void syncLive();
     void pollLive();
     void resetLive();
@@ -426,6 +441,11 @@ private:
     int m_baud=921600,m_loadStep=0,m_reconnectWindowMs=30000,m_pollTick=0;
     bool m_loading=false,m_closing=false,m_groupsReady=false,m_setupPending=false;
     bool m_arming=false,m_armPending=false,m_disarmPending=false,m_disarmAgain=false;
+    // The ARM reply arrived (accepted): the next status settles "arming".
+    bool m_armReplied=false;
+    // This window's ARM was accepted and no status has shown the device
+    // disarmed since: only then does Monitor's manual command send values.
+    bool m_ownArm=false;
     bool m_ackPending=false,m_linkLost=false,m_waitingDisarm=false;
     bool m_observingArmed=false,m_explicitDisarmAcknowledged=false;
     bool m_disarmWhenOpened=false,m_subsPending=false,m_subsAttempted=false;

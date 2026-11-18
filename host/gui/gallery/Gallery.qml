@@ -256,6 +256,20 @@ Window {
         }
 
         Section {
+            title: "MANUAL COMMAND: SLIDER (SYMMETRIC), COMMAND CONTROL"
+            Column {
+                spacing: Theme.space16
+                DLSlider { width: 320; from: -2.5; to: 2.5; stepSize: 0.01; value: 0 }
+                DLSlider { width: 320; from: -2.5; to: 2.5; stepSize: 0.01; value: 1.6 }
+                DLSlider { width: 320; from: 0; to: 25; stepSize: 1; decimals: 0; value: 8 }
+                DLSlider { width: 320; from: -0.25; to: 0.25; value: 0.1; enabled: false }
+            }
+            DLCommandControl { name: "velocity_sp"; owner: "left_drive"; unit: "rad/s"; from: -2.5; to: 2.5; limit: 2.5; bound: 1000; commandEnabled: true }
+            DLCommandControl { name: "velocity_sp"; owner: "left_drive"; unit: "rad/s"; from: -2.5; to: 2.5; limit: 2.5; bound: 1000; value: 1.6; held: true; commandEnabled: true }
+            DLCommandControl { name: "velocity_sp"; owner: "left_drive"; unit: "rad/s"; from: -2.5; to: 2.5; limit: 2.5; bound: 1000; value: 1.6; latched: true; commandEnabled: true }
+        }
+
+        Section {
             title: "TOAST, TOOLTIP"
             DLToast { tone: DLToast.Info; text: "Model reloaded: the descriptor hash changed."; timeout: 0 }
             DLToast { tone: DLToast.Ok; text: "Saved to flash."; timeout: 0 }
