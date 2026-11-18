@@ -72,6 +72,8 @@ public:
     // Around a live param write to the instance (see CommandModel).
     void beginWrite(uint8_t type, uint8_t instance);
     void endWrite(uint8_t type, uint8_t instance);
+    // A fresh frame at 0 for the instance's inputs, the hold kept.
+    void zeroInstance(uint8_t type, uint8_t instance);
     const CommandModel &model() const { return m_model; }
     // Tests: frames are written at once instead of on the 20 ms timer.
     void pumpNow() { pump(); }

@@ -7,6 +7,7 @@
 // are in tune_model and tune_session; the connection writes params, runs the
 // test signal and capture (connection_tune.cpp) and reports back here. Runs
 // and history are kept per device in memory and in a recovery file.
+#include "identify_view.hpp"
 #include "tune_model.hpp"
 #include "tune_session.hpp"
 #include <QAbstractListModel>
@@ -112,6 +113,8 @@ class TuneView final : public QObject, public PlotSource {
     Q_PROPERTY(QVariantMap session READ session NOTIFY changed)
     // {available, time}: an autosaved session of this device to restore.
     Q_PROPERTY(QVariantMap recovery READ recovery NOTIFY changed)
+    // H2e-3. Plant identification (IdentifyView).
+    Q_PROPERTY(QObject* identify READ identify CONSTANT)
 public:
     // Writes live params (one batch, one loop); `done` gets "" or the refusal.
     using Writer=std::function<void(std::vector<Ref>, std::vector<uint32_t>, std::function<void(QString)>)>;
@@ -225,12 +228,7 @@ public:
     const std::vector<HistoryEntry> &historyList() const { return m_history; }
     bool unsaved() const { return m_dirty; }
     // What the next run uses; empty optional when the setup is not valid.
-    struct RunSetup {
-        TuneController controller;
-        TestSignal signal;
-        CaptureSetup capture;
-        std::map<uint16_t,double> gains;
-    };
+    using RunSetup=drivelink::gui::RunSetup;
     std::optional<RunSetup> runSetup(QString *problem=nullptr) const;
     // The run's progress, from the connection.
     enum class Phase { Idle, Starting, Running, Capturing, Reading };
@@ -240,6 +238,19 @@ public:
     // A finished run joins the list (numbered, coloured, metrics computed).
     void addRun(RunRecord, const RunSetup &);
     const std::vector<RunRecord> &runList() const { return m_runs; }
+    // H2e-3. Plant identification: its view, and while it runs (the step,
+    // then the mode written back) the gains, mode, Restore, Revert, Run and
+    // Auto re-run wait.
+    QObject *identify() { return &m_identify; }
+    IdentifyView &identifyView() { return m_identify; }
+    void setIdentifying(bool on);
+    bool identifying() const { return m_identifying; }
+    // A gain or a tune enum (the mode) being written or dragged.
+    bool writesPending() const { return gainsMoving() || !m_enumSending.isEmpty(); }
+    // Why gains cannot be written now ("" when they can); applies a
+    // suggestion as one live batch with a history entry ("" or why not).
+    QString applyBlocked() const;
+    QString applyGains(const ResolvedGains &, const QString &note);
     // Tests: the gain sender's state.
     bool gainBusy() const;
     // A gain write pending or in flight, or a gain being dragged.
@@ -320,6 +331,10 @@ private:
     // must not stall the GUI thread, where DISARM is handled).
     std::future<QString> m_autosaveJob;
     std::optional<QDateTime> m_recoveryOffer;
+    // H2e-3.
+    IdentifyView m_identify;
+    bool m_identifying=false;
+    bool busy() const { return m_phase!=Phase::Idle || m_identifying; }
 
     std::optional<TuneController> currentController() const;
     const ModelItem *itemOf(uint16_t id) const;

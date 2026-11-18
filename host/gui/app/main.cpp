@@ -36,7 +36,7 @@ int main(int argc,char **argv) {
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
-                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm or tune-ab.","name","device"});
+                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm, tune-ab or tune-identify (a vdev; --identify does the same on tune).","name","device"});
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
     parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
     parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
@@ -49,6 +49,8 @@ int main(int argc,char **argv) {
                       "(0-5), offset, amplitude, f0, f1, duration, repeat).","fields"});
     parser.addOption({"tune-runs","Tune screens: arm, then one step run per value of this gain (KEY=V1:V2:...; a vdev only). "
                       "tune-running starts one more and captures it running; tune-disarm cuts one more with DISARM.","runs"});
+    parser.addOption({"identify","Tune screens: arm, show Plant identification, confirm, run the step and wait for the fit (a vdev only; the tune-identify screen implies it)."});
+    parser.addOption({"identify-response","Plant identification screens: show the response whose name starts with this text.","text"});
     parser.addOption({"select","Layout screens: select this node (type:instance, e.g. 5:0).","key"});
     parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
@@ -62,7 +64,7 @@ int main(int argc,char **argv) {
     const QStringList pages={"connect","device","layout","tune","monitor"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
                               "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
-                              "tune-running","tune-disarm","tune-ab"};
+                              "tune-running","tune-disarm","tune-ab","tune-identify"};
     const bool layoutScreen=screen.startsWith("layout");
     const bool monitorScreen=screen.startsWith("monitor");
     const bool tuneScreen=screen.startsWith("tune");
@@ -238,8 +240,9 @@ int main(int argc,char **argv) {
     const auto runKey=runs.section(QLatin1Char('='),0,0);
     const auto runValues=runs.section(QLatin1Char('='),1).split(QLatin1Char(':'),Qt::SkipEmptyParts);
     const bool extraRun=screen=="tune-running" || screen=="tune-disarm";
-    if((!runValues.isEmpty() || extraRun) && !parser.value("endpoint").startsWith("tcp://")) {
-        std::fprintf(stderr,"--tune-runs and the tune-running/tune-disarm screens arm the device; use a vdev tcp:// endpoint\n");return 2;
+    const bool identify=parser.isSet("identify") || screen=="tune-identify";
+    if((!runValues.isEmpty() || extraRun || identify) && !parser.value("endpoint").startsWith("tcp://")) {
+        std::fprintf(stderr,"--tune-runs, --identify and the tune-running/tune-disarm/tune-identify screens arm the device; use a vdev tcp:// endpoint\n");return 2;
     }
     if(tuneScreen) {
         stages.push_back({[&] {return connection.ready() && !tune.controllers().isEmpty();},[&] {
@@ -260,7 +263,7 @@ int main(int argc,char **argv) {
                 else {tune.setSignalField(field,value);}
             }
         }});
-        if(!runValues.isEmpty() || extraRun) {
+        if(!runValues.isEmpty() || extraRun || identify) {
             stages.push_back({[&] {return !tune.gainBusy() && connection.armEnabled();},[&] {connection.arm();}});
             stages.push_back({[&] {return connection.armState()==1 && tune.run().value("canRun").toBool();},[] {}});
         }
@@ -276,6 +279,29 @@ int main(int argc,char **argv) {
             if(screen=="tune-disarm") {
                 stages.push_back({[&] {return !connection.tuneRunning() && tune.runCount()==int(runValues.size())+1;},[] {}});
             }
+        }
+        // H2e-3 Plant identification: after the runs (if any), show the tab,
+        // tick the confirmation, run the step and wait (bounded) for the fit.
+        if(identify) {
+            auto &id=tune.identifyView();
+            auto started=std::make_shared<QElapsedTimer>();
+            stages.push_back({[&] {return connection.armState()==1 && id.availability().value("available").toBool();},[&] {
+                id.setShown(true);id.setConfirmed(true);
+            }});
+            stages.push_back({[&] {return !tune.gainBusy() && id.run().value("canRun").toBool();},[&,started] {id.startStep();started->start();}});
+            stages.push_back({[&,started] {
+                if(started->isValid() && started->elapsed()>20000) {
+                    std::fprintf(stderr,"The identification step did not finish in 20 s: %s\n",
+                        qPrintable(id.run().value("text").toString()));
+                    app.exit(2);return false;
+                }
+                return !id.run().value("active").toBool() && id.result().value("available").toBool() && !id.result().value("fitting").toBool();
+            },[&] {
+                const auto responses=id.result().value("responses").toStringList();
+                for(qsizetype i=0;i<responses.size();++i) {
+                    if(parser.isSet("identify-response") && responses[i].startsWith(parser.value("identify-response"))) {id.setResponse(int(i));break;}
+                }
+            }});
         }
         // H2e-2 A/B: the oldest and the newest gain set with a run, compared.
         if(screen=="tune-ab") {

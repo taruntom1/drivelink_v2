@@ -5,6 +5,8 @@
 // env-gated bench check.
 #include "command_model.hpp"
 #include "connection.hpp"
+#include "identify_model.hpp"
+#include "identify_view.hpp"
 #include "layout_model.hpp"
 #include "plot_item.hpp"
 #include "safety_keys.hpp"
@@ -87,6 +89,55 @@ RunRecord stepRun(const DeviceSnapshot &s,double tau) {
     }
     TestSignal step;step.target={32,0,0x200};step.amplitude=2;step.duration_s=1.5;
     return makeRun(s,data,cap,step);
+}
+// H2e-3: the sample with a unitless duty_sp step input, a position signal and
+// a full pos.* PID group (pos.kp, pos.ki), so both signals are candidates.
+DeviceSnapshot identifySample(uint8_t mode) {
+    auto s=sample(mode);
+    auto &c=s.types[32];
+    c.items[49]=ranged(item(49,"pos.ki",ItemKind::Param,ValueType::F32,"",kTune),0,1000);
+    c.items[0x100]=item(0x100,"position",ItemKind::Signal,ValueType::F32,"rad");
+    c.items[0x202]=ranged(item(0x202,"duty_sp",ItemKind::Input,ValueType::F32,"",kTestgen),-1,1);
+    s.configured[{32,0}].params[49]=0.0f;
+    s.pending=s.configured;
+    return s;
+}
+// A captured open-loop step of duty_sp at 100 Hz: `from` for `seconds`, then
+// `to`; a first-order-plus-dead-time velocity (K 10, T 0.1 s, L 0.02 s) and
+// its integral, the position.
+// `backAt`: the input returns to 0 there (the release's fresh frame after a
+// signal that ended early in sample time, as on irregular vdev ticks).
+RunRecord identifyRun(const DeviceSnapshot &s,double from,double to,double seconds,double backAt=1e9) {
+    IdentifyStep step;step.input={32,0,0x202};step.from=from;step.to=to;step.seconds=seconds;
+    const auto signal=identifySignal(step);
+    CaptureSetup cap;cap.refs={{32,0,0x202},{32,0,0x100},{32,0,0x101}};
+    const int pre=10,post=int(std::lround(signalSeconds(signal)*100));
+    cap.samples=uint32_t(pre+post);cap.pre=pre;
+    CaptureData data;
+    data.status.state=CaptureState::Done;data.status.divider=1;data.status.period_us=10000;
+    data.status.trigger_index=pre;data.status.refs=cap.refs;
+    const auto fopdt=[](double du,double tau) {return tau<=0.02?0.0:10*du*(1-std::exp(-(tau-0.02)/0.1));};
+    double position=0;
+    for(int i=0;i<pre+post;++i) {
+        const double t=(i-pre)*0.01;
+        const double u=t<0 || t>=backAt?0:t<seconds?from:to;
+        const double v=(t<0?0:fopdt(from,t))+(t<seconds?0:fopdt(to-from,t-seconds))+(t<backAt?0:fopdt(-to,t-backAt));
+        position+=v*0.01;
+        data.data.push_back({std::bit_cast<uint32_t>(float(u)),std::bit_cast<uint32_t>(float(position)),std::bit_cast<uint32_t>(float(v))});
+    }
+    auto r=makeRun(s,data,cap,signal);
+    r.controller={32,0};
+    return r;
+}
+QString describeFits(const IdentifyResult &r) {
+    QStringList out;
+    for(const auto &f:r.fits) {
+        out<<QStringLiteral("%1: K %2 T %3 L %4 err %5 noise %6 settled %7 step %8 %9→%10 y %11→%12 [%13]").arg(f.name)
+            .arg(f.fit.gain.value_or(NAN)).arg(f.fit.time_constant_s.value_or(NAN)).arg(f.fit.dead_time_s.value_or(NAN))
+            .arg(f.fit.error_pct.value_or(NAN)).arg(f.fit.noise).arg(f.fit.settled).arg(f.fit.step_time).arg(f.fit.input_from)
+            .arg(f.fit.input_to).arg(f.fit.response_from).arg(f.fit.response_to).arg(QString::fromStdString(f.fit.problem));
+    }
+    return out.join(QStringLiteral(" | "));
 }
 QString readText(const QString &path) {
     QFile f(path);
@@ -854,6 +905,399 @@ private slots:
         QVERIFY(QDir(dir.filePath("tune-recovery")).entryList({"*.tune.json"}).size()==1);
     }
 
+    // H2e-3, pure: the naming conventions (PID groups, responses, the
+    // open_loop value, the unitless commandable input), the step's signal and
+    // capture, the fit of each response and the suggested gains.
+    void identifyLogic() {
+        const auto s=identifySample(1);
+        const auto groups=pidGroups(s,{32,0});
+        QCOMPARE(groups.size(),size_t(2));
+        QCOMPARE(groups[0].prefix,QString("vel"));QCOMPARE(groups[0].kp,uint16_t(32));QCOMPARE(groups[0].ki,uint16_t(33));
+        QVERIFY(!groups[0].kd);
+        QCOMPARE(groups[1].prefix,QString("pos"));
+        // Without pos.ki, pos.* is not a PID group.
+        QCOMPARE(pidGroups(sample(1),{32,0}).size(),size_t(1));
+        QCOMPARE(groupFor(groups,"velocity")->prefix,QString("vel"));
+        QCOMPARE(groupFor(groups,"position")->prefix,QString("pos"));
+        QVERIFY(!groupFor(groups,"duty"));
+        const auto candidates=responseCandidates(s,{32,0});
+        QCOMPARE(candidates,(std::vector<Ref>{{32,0,0x100},{32,0,0x101}})); // not the unitless duty
+        const auto modes=modeChoices(s,{32,0});
+        QCOMPARE(modes.size(),size_t(3));QCOMPARE(modes[1].label,QString("mode: velocity"));
+        QCOMPARE(defaultMode(s,{32,0})->value,0u);
+        QCOMPARE(*enumValue(s,{32,0},16),1u);
+        const auto controllers=tuneControllers(s);
+        const auto &ctrl=*std::find_if(controllers.begin(),controllers.end(),[](const TuneController &c){return c.key==InstanceKey{32,0};});
+        // position_sp has no finite range: it could not return to 0.
+        QCOMPARE(stepInputs(ctrl).size(),size_t(2));
+        QCOMPARE(defaultStepInput(ctrl)->ref,(Ref{32,0,0x202}));
+        QCOMPARE(defaultStepInput(tuneControllers(sample(1)).front())->ref,(Ref{32,0,0x200}));
+
+        // The signal: one Square period, its first half holding `from` (0 too).
+        IdentifyStep step;step.input={32,0,0x202};step.to=0.3;step.seconds=1;
+        auto sig=identifySignal(step);
+        QCOMPARE(int(sig.waveform),int(Waveform::Square));
+        QVERIFY(std::abs(sig.offset-0.15)<1e-12);QVERIFY(std::abs(sig.amplitude+0.15)<1e-12);QCOMPARE(sig.duration_s,2.0);
+        step.from=0.1;
+        sig=identifySignal(step);
+        QCOMPARE(int(sig.waveform),int(Waveform::Square));
+        QVERIFY(std::abs(sig.offset-0.2)<1e-12);QVERIFY(std::abs(sig.amplitude+0.1)<1e-12);
+        QCOMPARE(sig.f0,0.5);QCOMPARE(sig.duration_s,2.0);QCOMPARE(sig.repeat,1u);
+        const auto &duty=s.types.at(32).items.at(0x202).descriptor;
+        QCOMPARE(identifyProblem(step,100,duty),QString());
+        auto bad=step;bad.to=bad.from;QVERIFY(identifyProblem(bad,100,duty).contains("change"));
+        bad=step;bad.seconds=0.1;QVERIFY(identifyProblem(bad,100,duty).contains("20 loop periods"));
+        bad=step;bad.to=2;QVERIFY(identifyProblem(bad,100,duty).contains("range"));
+        QVERIFY(identifyProblem(step,100,s.types.at(32).items.at(0x201).descriptor).contains("cannot return to 0"));
+        // The capture: the input and the candidates over the whole signal.
+        const auto cap=identifyCapture(step,candidates,100,4*1024*1024,8);
+        QCOMPARE(cap.refs.size(),size_t(3));QCOMPARE(cap.refs.front(),step.input);
+        QCOMPARE(cap.samples-cap.pre,200u);QCOMPARE(cap.divider,uint16_t(1));
+        QCOMPARE(identifyCapture(step,candidates,100,4*1024*1024,2).refs.size(),size_t(2));
+
+        // The fit: velocity settles and fits; position integrates and is not the default.
+        step.from=0;
+        auto r=makeIdentify(s,identifyRun(s,0,0.3,1),step,defaultMode(s,{32,0}),100);
+        QCOMPARE(r.fits.size(),size_t(2));
+        QCOMPARE(r.controllerLabel,QString("left_drive"));
+        QCOMPARE(r.fits[size_t(r.response)].name,QString("velocity"));
+        const auto &v=r.fits[size_t(r.response)];
+        QVERIFY2(v.fit.problem.empty(),v.fit.problem.c_str());
+        QVERIFY(std::abs(*v.fit.gain-10)<0.3);QVERIFY(std::abs(*v.fit.time_constant_s-0.1)<0.01);
+        QVERIFY(std::abs(*v.fit.dead_time_s-0.02)<0.006);
+        QCOMPARE(v.group->prefix,QString("vel"));
+        const auto &p=r.fits[r.response==0?1:0];
+        QCOMPARE(p.name,QString("position"));QVERIFY(!p.fit.settled);
+        // With a pre-level the step is the second change.
+        step.from=0.1;
+        const auto r2=makeIdentify(s,identifyRun(s,0.1,0.3,1),step,std::nullopt,100);
+        const auto &v2=r2.fits[size_t(r2.response)].fit;
+        QVERIFY(std::abs(v2.step_time-1.0)<0.011);QVERIFY(std::abs(v2.input_from-0.1)<1e-6);
+        QVERIFY(std::abs(*v2.gain-10)<0.3);
+        // The input back at 0 before the signal's nominal end: the window
+        // ends where it leaves `to`, so the return is not taken for the step.
+        step.from=0;
+        const auto r3=makeIdentify(s,identifyRun(s,0,0.3,1,1.7),step,std::nullopt,100);
+        const auto &v3=r3.fits[size_t(r3.response)];
+        QCOMPARE(v3.name,QString("velocity"));
+        QVERIFY(std::abs(v3.fit.step_time-1.0)<0.011);QVERIFY(std::abs(v3.fit.input_to-0.3)<1e-6);
+        QVERIFY(std::abs(*v3.fit.gain-10)<0.5);
+        QCOMPARE(r3.stepEndUs,int64_t(1690000));
+
+        // Suggestions: SIMC on vel.kp and vel.ki, rounded; none for position.
+        const auto sug=suggestGains(s,{32,0},v,TuneSpeed::Balanced,0.01,true);
+        QVERIFY2(sug.problem.isEmpty(),qPrintable(sug.problem));
+        QCOMPARE(sug.gains.size(),size_t(2));
+        QCOMPARE(sug.gains[0].item,uint16_t(32));QCOMPARE(sug.gains[0].suggested,roundGain(sug.pi.kp));
+        QCOMPARE(sug.gains[1].item,uint16_t(33));QCOMPARE(sug.gains[1].suggested,roundGain(sug.pi.ki));
+        QCOMPARE(sug.gains[0].current,double(0.85f));QVERIFY(!sug.gains[0].clamped);
+        QVERIFY(sug.pi.closed_loop_s>=0.04-1e-12); // at least four loop periods at 100 Hz
+        QVERIFY(suggestGains(s,{32,0},v,TuneSpeed::Robust,0.01,true).pi.kp<sug.pi.kp);
+        QVERIFY(!suggestGains(s,{32,0},p,TuneSpeed::Balanced,0.01,true).problem.isEmpty());
+        auto noGroup=v;noGroup.group.reset();
+        QVERIFY(suggestGains(s,{32,0},noGroup,TuneSpeed::Balanced,0.01,true).problem.contains("no PID gains"));
+        // A gain range below the suggestion clamps it, marked.
+        auto narrow=s;narrow.types[32].items[32]=ranged(item(32,"vel.kp",ItemKind::Param,ValueType::F32,"",kTune),0,0.001f);
+        const auto clamped=suggestGains(narrow,{32,0},v,TuneSpeed::Balanced,0.01,true);
+        QVERIFY(clamped.gains[0].clamped);QCOMPARE(clamped.gains[0].suggested,double(0.001f));
+        // A kd member is suggested 0.
+        auto withKd=s;withKd.types[32].items[34]=ranged(item(34,"vel.kd",ItemKind::Param,ValueType::F32,"",kTune),0,1000);
+        withKd.configured[{32,0}].params[34]=0.5f;
+        auto vk=v;vk.group=groupFor(pidGroups(withKd,{32,0}),"velocity");
+        const auto kd=suggestGains(withKd,{32,0},vk,TuneSpeed::Balanced,0.01,true);
+        QCOMPARE(kd.gains.size(),size_t(3));QCOMPARE(kd.gains[2].item,uint16_t(34));QCOMPARE(kd.gains[2].suggested,0.0);
+        QCOMPARE(gainUnit("rad/s","duty_sp"),QString("rad/s per duty_sp"));
+        // Only an open-loop step suggests gains: a closed-loop step (the mode
+        // left at velocity, or velocity held) fits the loop, not the plant.
+        QVERIFY(suggestGains(s,{32,0},v,TuneSpeed::Balanced,0.01,false).problem.contains("open-loop"));
+        QVERIFY(runsOpenLoop(s,{32,0},defaultMode(s,{32,0}),duty));
+        QVERIFY(!runsOpenLoop(s,{32,0},std::nullopt,duty));
+        QVERIFY(!runsOpenLoop(s,{32,0},modes[1],duty));
+        QVERIFY(runsOpenLoop(identifySample(0),{32,0},std::nullopt,duty));
+        // A Stop cuts the window at the stop.
+        auto stopped=identifyRun(s,0,0.3,1);stopped.end=RunEnd::Stopped;stopped.endedUs=1500000;
+        const auto r4=makeIdentify(s,stopped,step,std::nullopt,100);
+        QCOMPARE(r4.stepEndUs,int64_t(1500000));
+        QVERIFY(r4.fits[size_t(r4.response)].fit.gain.has_value());
+    }
+
+    // H2e-3 with fake hooks: the checks and their confirmation (cleared by a
+    // DISARM), the run gate, the setup for the connection, the fit shown,
+    // Apply through the hook, and Tune's locks while identifying.
+    void identifyView() {
+        auto snap=std::make_shared<const DeviceSnapshot>(identifySample(1));
+        IdentifyView v;
+        int starts=0,stops=0;uint64_t epoch=0;QString blocked;
+        std::optional<ResolvedGains> applied;QString note;
+        IdentifyView::Hooks hooks;
+        hooks.runBlocked=[&]{return blocked;};hooks.start=[&]{++starts;};hooks.stop=[&]{++stops;};
+        hooks.armEpoch=[&]{return epoch;};
+        hooks.apply=[&](const ResolvedGains &set,const QString &n){applied=set;note=n;return QString();};
+        hooks.applyBlocked=[]{return QString();};
+        v.setHooks(hooks);
+        v.setContext(snap,InstanceKey{32,0},"dev");
+        QVERIFY(v.availability()["available"].toBool());
+        QCOMPARE(v.step()["input"].toString(),itemKey(32,0,0x202));
+        QCOMPARE(v.modes().size(),4);QCOMPARE(v.step()["mode"].toInt(),1); // open_loop
+        QVERIFY(v.step()["problem"].toString().isEmpty());
+        // The first check gates the run.
+        QCOMPARE(v.run()["blocked"].toString(),QString("Confirm the first check"));
+        auto checks=v.checks();
+        QCOMPARE(checks.size(),2);
+        QCOMPARE(checks[0].toMap()["status"].toInt(),int(IdentifyView::Pending));
+        QCOMPARE(checks[1].toMap()["status"].toInt(),int(IdentifyView::Warning));
+        QVERIFY(checks[1].toMap()["label"].toString().contains("Open loop"));
+        QCOMPARE(checks[1].toMap()["tag"].toString(),QString("warning"));
+        // Ticked while disarmed, it carries into the ARM; a DISARM clears it.
+        v.setConfirmed(true);
+        epoch=5;v.refreshRunState();QVERIFY(v.confirmed());
+        QVERIFY2(v.run()["canRun"].toBool(),qPrintable(v.run()["blocked"].toString()));
+        epoch=0;v.refreshRunState();QVERIFY(!v.confirmed());
+        epoch=6;v.refreshRunState();v.setConfirmed(true);
+        blocked="Arm first";QCOMPARE(v.run()["blocked"].toString(),blocked);blocked.clear();
+        // The setup: open_loop for the step, velocity to write back.
+        auto setup=v.setup();
+        QVERIFY(setup);QCOMPARE(setup->mode->value,0u);QCOMPARE(*setup->previous,1u);
+        QCOMPARE(int(setup->run.signal.waveform),int(Waveform::Square));QCOMPARE(setup->run.signal.duration_s,2.0);
+        QCOMPARE(setup->run.capture.refs.size(),size_t(3)); // duty_sp, position, velocity
+        v.setMode(0);QVERIFY(!v.setup()->mode);
+        v.setMode(1);
+        QCOMPARE(v.setField("to","x"),QString("Not a number"));
+        QCOMPARE(v.setField("from","0.1"),QString());QVERIFY(std::abs(v.setup()->run.signal.offset-0.2)<1e-12);
+        QCOMPARE(v.setField("from","0"),QString());
+        v.startStep();QCOMPARE(starts,1);
+        v.setPhase(IdentifyView::Phase::Running,"The step running",0.5);
+        QVERIFY(v.active());QVERIFY(!v.run()["canRun"].toBool());
+        QVERIFY(!v.setField("to","0.2").isEmpty());
+        v.setConfirmed(false);QVERIFY(v.confirmed()); // locked while it runs
+        v.stopStep();QCOMPARE(stops,1);
+        v.setPhase(IdentifyView::Phase::Idle);
+        // A result: fitted on a worker, then the model, the plot and Apply.
+        QVERIFY(!v.result()["available"].toBool());
+        v.addResult(snap,identifyRun(*snap,0,0.3,1),*setup);
+        v.waitFit();
+        const auto result=v.result();
+        QVERIFY(result["available"].toBool());QVERIFY(!result["fitting"].toBool());
+        QCOMPARE(result["responses"].toStringList(),(QStringList{"position (rad)","velocity (rad/s)"}));
+        QCOMPARE(result["response"].toInt(),1);
+        QCOMPARE(result["gainUnit"].toString(),QString("rad/s per duty_sp"));
+        QCOMPARE(result["quality"].toInt(),int(FitQuality::Good));
+        QVERIFY(result["problem"].toString().isEmpty());
+        QVERIFY(v.run()["done"].toBool());
+        QCOMPARE(v.plots().size(),1);
+        QVERIFY(v.ring("m") && v.ring("f") && v.ring("m")->size()>100);
+        // The plot shows the step: from just before it to the signal's end.
+        QVERIFY2(v.plotStart()>850000 && v.plotStart()<1000000 && v.plotEnd()<=2000000,qPrintable(QString::number(v.plotStart())));
+        auto sug=v.suggestion();
+        QVERIFY2(sug["canApply"].toBool(),qPrintable(sug["applyReason"].toString()));
+        QCOMPARE(sug["gains"].toList().size(),2);
+        const auto balanced=sug["gains"].toList()[0].toMap()["suggested"].toString();
+        v.setSpeed(0);
+        QVERIFY(v.suggestion()["gains"].toList()[0].toMap()["suggested"].toString()!=balanced);
+        v.setSpeed(1);
+        v.applySuggested();
+        QVERIFY(applied);QCOMPARE(applied->key,(InstanceKey{32,0}));QCOMPARE(applied->values.size(),size_t(2));
+        QVERIFY(note.startsWith("suggested (Balanced): K "));
+        // Leaving velocity mode unchanged: a closed-loop step, no suggestions.
+        v.setMode(0);
+        const auto closed=v.setup();QVERIFY(closed && !closed->openLoop);
+        v.addResult(snap,identifyRun(*snap,0,0.3,1),*closed);v.waitFit();
+        QVERIFY(v.suggestion()["problem"].toString().contains("open-loop"));QVERIFY(!v.suggestion()["canApply"].toBool());
+        v.setMode(1);
+        v.addResult(snap,identifyRun(*snap,0,0.3,1),*v.setup());v.waitFit();
+        // The position response: no suggestion.
+        v.setResponse(0);
+        QVERIFY(!v.suggestion()["canApply"].toBool());QVERIFY(!v.suggestion()["problem"].toString().isEmpty());
+        v.setResponse(1);
+        // Another device with the same controller key: not its result either.
+        v.setContext(snap,InstanceKey{32,0},"other");QVERIFY(!v.result()["available"].toBool());
+        v.setContext(snap,InstanceKey{32,0},"dev");
+        v.addResult(snap,identifyRun(*snap,0,0.3,1),*setup);v.waitFit();QVERIFY(v.result()["available"].toBool());
+        // Another controller: the result is not its.
+        v.setContext(snap,InstanceKey{32,1},"dev");
+        QVERIFY(!v.result()["available"].toBool());QVERIFY(!v.confirmed());
+
+        // Tune's side: identifying locks the gains, Revert, Run and Apply.
+        TuneView tv;
+        TuneView::Hooks th;
+        th.write=[](std::vector<Ref>,std::vector<uint32_t>,std::function<void(QString)> done){done({});};
+        th.runBlocked=[]{return QString();};
+        tv.setHooks(th);
+        tv.setSnapshot(snap,"dev");
+        QCOMPARE(tv.controller(),nodeKey(32,0));
+        tv.setIdentifying(true);
+        QVERIFY(tv.run()["blocked"].toString().contains("Plant identification"));
+        QVERIFY(!tv.gainText(itemKey(32,0,32),"0.5").isEmpty());
+        QVERIFY(!tv.applyBlocked().isEmpty());
+        QVERIFY(!tv.applyGains({{32,0},{{32,0.5}}},"x").isEmpty());
+        tv.setIdentifying(false);
+        QVERIFY(tv.applyBlocked().isEmpty());
+        QCOMPARE(tv.applyGains({{32,0},{{32,0.5}}},"suggested"),QString());
+    }
+
+    // H2e-3 on vdev: the step switches velocity mode to open_loop and writes
+    // it back, duty_sp returns to 0, the fit matches the mock plant, Apply
+    // writes the suggested gains with a history entry; a pre-level step;
+    // Stop and a disarm mid-step still write the mode back; no Auto re-run.
+    void identifyOperations() {
+        Fixture fixture;
+        uint8_t driven=0,enc=0,drive=0;
+        {
+            Session s(fixture.endpoint.toStdString());Client cl(s);cl.info();
+            driven=cl.add(112,"driven",0).instance;enc=cl.add(113,"enc",0).instance;drive=cl.add(32,"drive",0).instance;
+            const std::array<Ref,3> refs{{{113,enc,1},{32,drive,1},{32,drive,2}}};
+            const std::array<uint32_t,3> values{{112u<<8|driven,112u<<8|driven,113u<<8|enc}};
+            cl.set(refs,values);
+            const std::array<Ref,1> rate{{{5,0,1}}};const std::array<uint32_t,1> hz{{100}};cl.set(rate,hz);
+            // A fine encoder (as the Tune scenarios use) and a 5 Hz velocity
+            // filter: a desktop vdev's irregular ticks alias the velocity
+            // into a ±60 % three-sample pattern that a board does not show.
+            const std::array<Ref,2> enc2{{{113,enc,2},{113,enc,4}}};
+            const std::array<uint32_t,2> encValues{{std::bit_cast<uint32_t>(100000.0f),std::bit_cast<uint32_t>(5.0f)}};
+            cl.set(enc2,encValues);
+            cl.system(5);cl.system(8);
+        }
+        QTest::qWait(150);
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QStringList toasts;
+        QObject::connect(&c,&Connection::notification,[&](QString text,int){toasts<<text;});
+        c.connectTo(fixture.endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled() && c.snapshot()->configured.contains({32,drive});},15000),
+                 qPrintable(c.armBlockedReason()+" / "+c.lastError()["text"].toString()));
+        auto &tv=c.tuneView();auto &iv=tv.identifyView();
+        tv.selectController(nodeKey(32,drive));
+        const auto mode=[&]{return valueBits(c.snapshot()->configured.at({32,drive}).params.at(pid::kMode));};
+        const auto param=[&](uint16_t id){return std::bit_cast<float>(valueBits(c.snapshot()->configured.at({32,drive}).params.at(id)));};
+        // Velocity mode with small PI gains, as a user would have it.
+        tv.setEnum(tv.enums()[0].toMap()["key"].toString(),1);QTest::qWait(400);
+        QCOMPARE(tv.gainText(itemKey(32,drive,pid::kVelKp),"0.05"),QString());
+        QCOMPARE(tv.gainText(itemKey(32,drive,pid::kVelKi),"0.5"),QString());
+        QVERIFY(waitFor([&]{return mode()==1 && std::abs(param(pid::kVelKp)-0.05f)<1e-6 && std::abs(param(pid::kVelKi)-0.5f)<1e-6;}));
+        QVERIFY(waitFor([&]{return !tv.gainBusy();}));
+        iv.setShown(true);
+        QVERIFY(iv.availability()["available"].toBool());
+        QCOMPARE(iv.step()["input"].toString(),itemKey(32,drive,pid::kDutySp));
+        QCOMPARE(iv.modes().value(iv.step()["mode"].toInt()),QString("mode: open_loop"));
+        QVERIFY(iv.run()["blocked"].toString().contains("Arm first"));
+        // duty_sp read back through Monitor.
+        auto &mv=c.monitorView();c.setPage("monitor");
+        const auto dutyKey=itemKey(32,drive,pid::kDutySp);
+        mv.toggleSignal(dutyKey);
+        const auto latest=[&]()->std::optional<double> {
+            const auto *ring=mv.ring(dutyKey);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        c.setPage("tune");
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && c.commandView().enabled();}));
+        iv.setConfirmed(true);
+        QVERIFY(iv.setField("to","0.3").isEmpty());QVERIFY(iv.setField("seconds","1").isEmpty());
+        QVERIFY2(iv.run()["canRun"].toBool(),qPrintable(iv.run()["blocked"].toString()));
+
+        // The step: open_loop during it, velocity again afterwards.
+        bool sawOpenLoop=false,sawStep=false;
+        const auto watch=[&]{
+            if(mode()==0) {sawOpenLoop=true;}
+            if(latest() && std::abs(*latest()-0.3)<1e-6) {sawStep=true;}
+        };
+        iv.startStep();
+        QVERIFY(c.tuneRunning() && tv.identifying());
+        QVERIFY(!tv.run()["canRun"].toBool());
+        QVERIFY(!tv.gainText(itemKey(32,drive,pid::kVelKp),"0.06").isEmpty());
+        // No SAVE (it would keep the open-loop mode), REVERT, reboot or rename meanwhile.
+        QVERIFY(c.actionBlocked()["save"].toString().contains("plant identification"));
+        QVERIFY(c.actionBlocked()["rename"].toString().contains("plant identification"));
+        // An update reboots: the Firmware card's update waits too.
+        QVERIFY(c.actionBlocked()["update"].toString().contains("plant identification"));
+        QVERIFY2(c.firmware()["updateBlocked"].toString().contains("plant identification"),
+                 qPrintable(c.firmware()["updateBlocked"].toString()));
+        QVERIFY2(waitFor([&]{watch();return !tv.identifying();},15000),qPrintable(toasts.join("; ")));
+        QVERIFY(sawOpenLoop);QVERIFY(sawStep);
+        QVERIFY(waitFor([&]{return mode()==1;},3000));
+        QVERIFY2(waitFor([&]{return latest() && *latest()==0;},3000),qPrintable(QString::number(latest().value_or(-1))));
+        QCOMPARE(c.armState(),1);
+        iv.waitFit();
+        const auto *r=iv.current();
+        QVERIFY(r);
+        const auto &fit=r->fits[size_t(r->response)];
+        const auto fits=describeFits(*r);
+        QVERIFY2(fit.name==QString("velocity"),qPrintable(fits));
+        // The mock: velocity = 10 × the applied duty, τ 0.1 s, a tick's delay
+        // and the encoder's 30 Hz velocity filter. A desktop vdev ticks
+        // irregularly: capture times count samples (about two thirds of
+        // device time here) and the measured velocity reads high, so the
+        // bounds are wide; the pure tests check the fit itself.
+        qInfo("vdev fit: %s",qPrintable(fits));
+        QVERIFY2(fit.fit.gain && *fit.fit.gain>8 && *fit.fit.gain<13,qPrintable(QString::number(fit.fit.gain.value_or(-1))));
+        QVERIFY2(*fit.fit.time_constant_s>0.03 && *fit.fit.time_constant_s<0.16,qPrintable(QString::number(*fit.fit.time_constant_s)));
+        QVERIFY(*fit.fit.dead_time_s<0.06);
+        QVERIFY2(fitQuality(fit.fit)!=FitQuality::Poor,qPrintable(QString::number(fit.fit.error_pct.value_or(-1))));
+        QVERIFY(!tv.autoRerun()["allowed"].toBool()); // identification is not the user's Run
+        QCOMPARE(tv.runCount(),0);
+
+        // Apply: one batch, a history entry with the note.
+        const auto sug=iv.suggestion();
+        QVERIFY2(sug["canApply"].toBool(),qPrintable(sug["applyReason"].toString()));
+        const auto kp=sug["gains"].toList()[0].toMap()["suggested"].toString().toDouble();
+        iv.applySuggested();
+        QVERIFY(waitFor([&]{return std::abs(param(pid::kVelKp)-float(kp))<1e-6;},3000));
+        QVERIFY(waitFor([&]{
+            const auto &h=tv.historyList();
+            return std::any_of(h.begin(),h.end(),[](const HistoryEntry &e){return e.note.startsWith("suggested");});},3000));
+
+        // From a pre-level: the step is the second half of the square.
+        QVERIFY(iv.setField("from","0.1").isEmpty());
+        QVERIFY(waitFor([&]{return iv.run()["canRun"].toBool();},3000));
+        iv.startStep();
+        QVERIFY2(waitFor([&]{return !tv.identifying();},15000),qPrintable(toasts.join("; ")));
+        iv.waitFit();
+        const auto &pre=iv.current()->fits[size_t(iv.current()->response)].fit;
+        // The step after the 1 s half (in sample time: less on vdev).
+        QVERIFY2(pre.step_time>0.4 && pre.step_time<1.05,qPrintable(QString::number(pre.step_time)));
+        QVERIFY(std::abs(pre.input_from-0.1)<1e-6);
+        QVERIFY2(iv.current()->fits[size_t(iv.current()->response)].name==QString("velocity"),qPrintable(describeFits(*iv.current())));
+        QVERIFY2(pre.gain && *pre.gain>8 && *pre.gain<13,qPrintable(describeFits(*iv.current())));
+        QVERIFY(waitFor([&]{return mode()==1;},3000));
+        QVERIFY(iv.setField("from","0").isEmpty());
+
+        // Stop mid-step: the mode still goes back.
+        QVERIFY(iv.setField("seconds","2").isEmpty());
+        iv.startStep();
+        QVERIFY(waitFor([&]{return iv.phase()==IdentifyView::Phase::Running && iv.run()["progress"].toDouble()>=0;},5000));
+        QTest::qWait(400);iv.stopStep();
+        QVERIFY2(waitFor([&]{return !tv.identifying();},15000),qPrintable(toasts.join("; ")));
+        QVERIFY(waitFor([&]{return mode()==1;},3000));
+        iv.waitFit();
+        QVERIFY(!iv.result()["end"].toString().isEmpty());
+        QVERIFY(waitFor([&]{return latest() && *latest()==0;},3000));
+
+        // A disarm mid-step: the mode is written back while disarmed.
+        QVERIFY(waitFor([&]{return iv.run()["canRun"].toBool();},3000));
+        iv.startStep();
+        QVERIFY(waitFor([&]{return iv.phase()==IdentifyView::Phase::Running;},5000));
+        QTest::qWait(300);c.disarm();
+        QVERIFY2(waitFor([&]{return !tv.identifying();},15000),qPrintable(toasts.join("; ")));
+        QVERIFY(waitFor([&]{return mode()==1;},3000));
+        QCOMPARE(c.armState(),0);
+        iv.waitFit();
+        QVERIFY(iv.result()["end"].toString().contains("disarm"));
+        QVERIFY(!iv.confirmed()); // the DISARM cleared the confirmation
+
+        // Already in open_loop: nothing is written, nothing written back.
+        tv.setEnum(tv.enums()[0].toMap()["key"].toString(),0);
+        QVERIFY(waitFor([&]{return mode()==0;},3000));
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && c.commandView().enabled();}));
+        iv.setConfirmed(true);QVERIFY(iv.setField("seconds","1").isEmpty());
+        QVERIFY(waitFor([&]{return iv.run()["canRun"].toBool();},3000));
+        bool sawOther=false;
+        iv.startStep();
+        QVERIFY2(waitFor([&]{if(mode()!=0) {sawOther=true;} return !tv.identifying();},15000),qPrintable(toasts.join("; ")));
+        QVERIFY(!sawOther);QTest::qWait(500);QCOMPARE(mode(),0u);
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;}));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+        QVERIFY(!iv.result()["available"].toBool());
+    }
+
     // The page in the shell: Run disabled with "Arm first", F5, a gain drag
     // with the mouse sends, Esc during a run disarms and ends it.
     void tuneInShell() {
@@ -1067,6 +1511,126 @@ private slots:
         }
         c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));
         qInfo("bench: completed, stopped, back at 0 and disarmed");
+    }
+
+    // H2e-3 on a device (env-gated; the deferred motor row): plant
+    // identification of DRIVELINK_GUI_BENCH_IDENTIFY (a controller node key)
+    // through the GUI's path: the mode switched for the step and written back,
+    // the step input back at 0, a model with K of at least _MIN_GAIN and a fit
+    // that is not poor, Apply (then the original gains written back), a Stop
+    // mid-step, disarmed at the end. Optional: _INPUT (step input item key),
+    // _FROM (0), _TO (0.2), _DURATION (1 s), _MIN_GAIN (0), _APPLY (1).
+    void benchIdentify() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        const auto controllerKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_IDENTIFY");
+        if(endpoint.isEmpty() || controllerKey.isEmpty()) {
+            QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_IDENTIFY to run on a device");
+        }
+        const auto inputKey=qEnvironmentVariable("DRIVELINK_GUI_BENCH_INPUT");
+        const auto from=qEnvironmentVariable("DRIVELINK_GUI_BENCH_FROM","0");
+        const auto to=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TO","0.2");
+        const auto duration=qEnvironmentVariable("DRIVELINK_GUI_BENCH_DURATION","1");
+        const double minGain=qEnvironmentVariable("DRIVELINK_GUI_BENCH_MIN_GAIN","0").toDouble();
+        const bool apply=qEnvironmentVariable("DRIVELINK_GUI_BENCH_APPLY","1")=="1";
+        QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        QStringList toasts;
+        QObject::connect(&c,&Connection::notification,[&](QString text,int){toasts<<text;qInfo("bench toast: %s",qPrintable(text));});
+        struct Restore {std::function<void()> run;~Restore() {run();}} restore{[&] {
+            if(c.linked()) {
+                c.disarm();waitFor([&]{return c.armState()==0;},5000);
+                c.disconnectDevice();waitFor([&]{return !c.closing();},10000);
+            }
+        }};
+        c.connectTo(endpoint);
+        QVERIFY2(waitFor([&]{return c.armEnabled();},30000),qPrintable(c.armBlockedReason()+" / "+c.lastError()["message"].toString()));
+        QVERIFY2(!c.unsaved(),"refusing to run with unsaved changes");
+        auto &tv=c.tuneView();auto &iv=tv.identifyView();auto &view=c.monitorView();
+        tv.selectController(controllerKey);QCOMPARE(tv.controller(),controllerKey);
+        const auto key=*parseNodeKey(controllerKey);
+        iv.setShown(true);
+        QVERIFY2(iv.availability()["available"].toBool(),qPrintable(iv.availability()["reason"].toString()));
+        if(!inputKey.isEmpty()) {iv.setInput(inputKey);}
+        QCOMPARE(iv.setField("from",from),QString());QCOMPARE(iv.setField("to",to),QString());
+        QCOMPARE(iv.setField("seconds",duration),QString());
+        QVERIFY2(iv.step()["problem"].toString().isEmpty(),qPrintable(iv.step()["problem"].toString()));
+        const auto stepInput=iv.step()["input"].toString();
+        const auto setup=iv.setup();
+        QVERIFY(setup);
+        const auto modeValue=[&]()->std::optional<uint32_t> {
+            return setup->mode?enumValue(*c.snapshot(),key,setup->mode->item):std::nullopt;
+        };
+        const auto original=modeValue();
+        std::map<uint16_t,double> gains;
+        for(const auto &[id,name]:gainNamesOf(*c.snapshot(),key)) {
+            const auto &d=c.snapshot()->types.at(key.first).items.at(id).descriptor;
+            if(d.value_type==ValueType::Enum) {continue;} // the mode is written back by identification itself
+            gains[id]=bitsToNumber(d.value_type,valueBits(c.snapshot()->configured.at(key).params.at(id)));
+        }
+        c.setPage("monitor");view.toggleSignal(stepInput);c.setPage("tune");
+        const auto latest=[&]()->std::optional<double> {
+            const auto *ring=view.ring(stepInput);
+            if(!ring || ring->size()==0) {return std::nullopt;}
+            return ring->value(ring->size()-1);
+        };
+        QVERIFY(waitFor([&]{return latest().has_value();},10000));
+        qInfo("bench: device %s firmware %s, %s: identify on %s from %s to %s for %s s, %s",qPrintable(c.deviceId()),
+              qPrintable(c.info()["firmware"].toString()),qPrintable(controllerKey),qPrintable(stepInput),qPrintable(from),
+              qPrintable(to),qPrintable(duration),setup->mode?qPrintable(setup->mode->label):"mode unchanged");
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && c.commandView().enabled();},5000));
+        iv.setConfirmed(true);
+        QVERIFY2(waitFor([&]{return iv.run()["canRun"].toBool();},5000),qPrintable(iv.run()["blocked"].toString()));
+        bool switched=!setup->mode || (original && *original==setup->mode->value);
+        iv.startStep();
+        QVERIFY2(waitFor([&]{
+            if(setup->mode && modeValue()==setup->mode->value) {switched=true;}
+            return !tv.identifying();},int(duration.toDouble()*2000)+20000),qPrintable(toasts.join("; ")));
+        QVERIFY2(switched,"the mode was not set for the step");
+        QVERIFY2(waitFor([&]{return modeValue()==original;},3000),"the mode was not written back");
+        QVERIFY2(waitFor([&]{return latest() && *latest()==0;},3000),"the step input did not return to 0");
+        iv.waitFit();
+        const auto result=iv.result();
+        QVERIFY(result["available"].toBool());
+        const auto *r=iv.current();
+        const auto &fit=r->fits[size_t(r->response)];
+        qInfo("bench: response %s: K %s %s, T %s, L %s, error %s (%s) %s",qPrintable(fit.name),qPrintable(result["gain"].toString()),
+              qPrintable(result["gainUnit"].toString()),qPrintable(result["timeConstant"].toString()),qPrintable(result["deadTime"].toString()),
+              qPrintable(result["error"].toString()),qPrintable(result["qualityText"].toString()),qPrintable(result["problem"].toString()));
+        if(!c.info()["firmware"].toString().endsWith("-vdev")) {QVERIFY2(!r->run.irregular,"a board's capture should be regular");}
+        QVERIFY2(fit.fit.gain && *fit.fit.gain>=minGain,"K is below DRIVELINK_GUI_BENCH_MIN_GAIN (check the polarity)");
+        QVERIFY2(fitQuality(fit.fit)!=FitQuality::Poor,"the model does not fit");
+        const auto sug=iv.suggestion();
+        for(const auto &g:sug["gains"].toList()) {
+            const auto m=g.toMap();
+            qInfo("bench: suggested %s %s -> %s%s",qPrintable(m["name"].toString()),qPrintable(m["current"].toString()),
+                  qPrintable(m["suggested"].toString()),m["clamped"].toBool()?" (limited)":"");
+        }
+        if(apply && sug["canApply"].toBool()) {
+            const auto first=sug["gains"].toList()[0].toMap();
+            const auto item=parseItemKey(first["key"].toString())->item;
+            iv.applySuggested();
+            QVERIFY(waitFor([&]{
+                const auto &d=c.snapshot()->types.at(key.first).items.at(item).descriptor;
+                return gainText(bitsToNumber(d.value_type,valueBits(c.snapshot()->configured.at(key).params.at(item))))==first["suggested"].toString();},3000));
+            QVERIFY(waitFor([&]{return tv.applyBlocked().isEmpty();},3000));
+            ResolvedGains back{key,{}};
+            for(const auto &[id,value]:gains) {back.values.push_back({id,value});}
+            QCOMPARE(tv.applyGains(back,"bench: original gains"),QString());
+            QVERIFY(waitFor([&]{return tv.applyBlocked().isEmpty();},3000));
+            qInfo("bench: applied the suggestion, then wrote the original gains back");
+        } else {
+            qInfo("bench: not applied: %s",qPrintable(sug["applyReason"].toString()));
+        }
+        // Stop: a 3 s step stopped after 0.5 s; the mode still goes back.
+        QCOMPARE(iv.setField("seconds","3"),QString());
+        QVERIFY(waitFor([&]{return iv.run()["canRun"].toBool();},5000));
+        iv.startStep();
+        QVERIFY(waitFor([&]{return iv.phase()==IdentifyView::Phase::Running;},5000));
+        QTest::qWait(500);iv.stopStep();
+        QVERIFY2(waitFor([&]{return !tv.identifying();},30000),qPrintable(toasts.join("; ")));
+        QVERIFY2(waitFor([&]{return modeValue()==original;},3000),"the mode was not written back after Stop");
+        QVERIFY2(waitFor([&]{return latest() && *latest()==0;},3000),"the step input did not return to 0 after Stop");
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));
+        qInfo("bench: identified, stopped, mode written back, input at 0 and disarmed");
     }
 };
 

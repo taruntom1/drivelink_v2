@@ -56,7 +56,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | What the reboot notice lists as lost (the GUI tracks params changed since the last save) | H2b |
 | G5 1080p layouts: A/B card, gain history placement (the Tune plot column settled in H2e-1, Monitor's in H2d-1) | settled in H2e-2 |
 | How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | settled in H2e-2: non-modal native dialogs, allowed while armed (user decision) |
-| How suggested gains map onto tune-flagged params generically (no module names) | H2e-3 |
+| How suggested gains map onto tune-flagged params generically (no module names) | settled in H2e-3: naming conventions in `docs/adding-a-module.md` (`<prefix>.kp/.ki/.kd`, responses named after the prefix, the `open_loop` value); no wire change (user decision) |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | H2f |
 | Agent default port, history sizes, retry policy for an offline device | H3a |
 | mDNS library, service name and TXT records | H3b |
@@ -262,14 +262,18 @@ Split (user decision 2026-11-18), one PR each, each independently reviewed:
 - **H2e-2 Session:** gain history with restore, A/B compare and its 1080p card,
   Auto re-run, session files (versioned JSON, base64 columns, keyed by device
   id; how Open/Save pick a file), CSV export per run. Done:
-  [h2e-implementation.md](h2e-implementation.md) "H2e-2" (user decisions
+  [h2e-implementation.md](archive/h2e-implementation.md) "H2e-2" (user decisions
   2026-11-18: with Auto re-run on a gain change cancels the run, off the gains
   lock; Auto re-run needs the user's Run under each ARM; non-modal native file
   dialogs allowed while armed; Open never writes to the device and Restore
   matches by names; autosave with recovery on the next connect).
 - **H2e-3 Plant identification:** first-order-plus-deadtime fit and suggested
   gains in libdrivelink, the identification tab, the CheckItem warning state;
-  how suggested gains map onto tune-flagged params generically.
+  how suggested gains map onto tune-flagged params generically. Done (user
+  decisions 2026-11-18: the step switches the mode to `open_loop` and writes
+  it back; naming conventions, no wire change; SIMC PI with Robust /
+  Balanced / Fast; a "from" pre-level, built as one square period of the
+  generator): [h2e-implementation.md](archive/h2e-implementation.md) "H2e-3".
 
 ## H2f IMU calibration panel
 

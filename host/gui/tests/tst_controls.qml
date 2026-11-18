@@ -418,6 +418,14 @@ TestCase {
         verify(findChild(item, "detail").visible)
         item.status = DLCheckItem.Pass
         compare(item.colors[item.status], Theme.stateOk)
+        verify(!findChild(item, "tag").visible, "no tag by default")
+        item.status = DLCheckItem.Warning
+        item.tag = "warning"
+        compare(item.icons[item.status], "triangle-alert")
+        compare(item.colors[item.status], Theme.textSecondary)
+        verify(findChild(item, "tag").visible)
+        compare(findChild(item, "tag").text, "warning")
+        verify(findChild(item, "tag").x > findChild(item, "label").width, "the tag sits right of the label")
     }
 
     function test_progress_bar_value() {

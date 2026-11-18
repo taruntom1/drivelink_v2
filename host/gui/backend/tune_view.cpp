@@ -210,6 +210,7 @@ QVariant HistoryRows::data(const QModelIndex &i, int role) const {
 
 TuneView::TuneView(QObject *parent):QObject(parent),m_gainRows(*this),m_runRows(*this),m_historyRows(*this) {
     m_clock.start();
+    connect(&m_identify,&IdentifyView::notification,this,&TuneView::notification);
     m_sendTimer.setInterval(10);
     connect(&m_sendTimer,&QTimer::timeout,this,[this]{flush(false);});
     // G5: a history entry and an Auto re-run once the gains are still for 0.5 s.
@@ -298,7 +299,7 @@ QVariantMap TuneView::revert() const {
     if(!m_savedKnown) {
         return {{"enabled",false},{"reason",tr("The saved values are unknown: the device had unsaved changes when this window connected")}};
     }
-    if(m_phase!=Phase::Idle) {return {{"enabled",false},{"reason",tr("Gains are locked while a run is active")}};}
+    if(busy()) {return {{"enabled",false},{"reason",tr("Gains are locked while a run is active")}};}
     if(gainsMoving()) {return {{"enabled",false},{"reason",tr("Wait for the gain writes to finish")}};}
     bool differs=false;
     for(const auto &g:m_gains) {
@@ -402,6 +403,7 @@ std::optional<TuneView::RunSetup> TuneView::runSetup(QString *problem) const {
 QVariantMap TuneView::run() const {
     QString blocked;
     if(m_phase!=Phase::Idle) {blocked=tr("A run is in progress");}
+    else if(m_identifying) {blocked=tr("Plant identification is running");}
     if(blocked.isEmpty() && m_hooks.runBlocked) {blocked=m_hooks.runBlocked();}
     if(blocked.isEmpty()) {runSetup(&blocked);}
     return {{"active",m_phase!=Phase::Idle},{"stopping",m_stopping},{"text",m_phaseText},{"progress",m_progress},
@@ -550,6 +552,7 @@ void TuneView::setSnapshot(std::shared_ptr<const DeviceSnapshot> snapshot, const
         reconcileCapture();
         refreshHistoryRows();
     }
+    m_identify.setContext(m_snapshot,m_controller,m_deviceId);
     emit changed();emit runChanged();
 }
 void TuneView::reset() {
@@ -561,6 +564,7 @@ void TuneView::reset() {
     // Closed: nothing runs by itself after a reconnect.
     m_settle.stop();m_autoCheck.stop();m_autoEpoch=0;m_autoPending=false;m_changePending=false;
     m_settleNote.clear();m_settleSource=HistorySource::Changed;
+    m_identifying=false;m_identify.reset();
     flushAutosave();
     historyChanged();
     emit changed();emit runChanged();
@@ -654,7 +658,30 @@ void TuneView::setGain(int index, double value, bool now) {
 bool TuneView::gainsLocked() const {
     // User decision 2026-11-18 (H2e-2): with Auto re-run on, a gain change
     // during a run cancels it; with it off the gains stay locked.
-    return m_phase!=Phase::Idle && !m_autoOn;
+    // Plant identification (H2e-3) locks them throughout.
+    return m_identifying || (m_phase!=Phase::Idle && !m_autoOn);
+}
+void TuneView::setIdentifying(bool on) {
+    if(on==m_identifying) {return;}
+    m_identifying=on;
+    updateGains();refreshHistoryRows();
+    emit changed();emit runChanged();
+    if(!on && m_autoPending) {m_autoCheck.start();}
+}
+QString TuneView::applyBlocked() const {
+    if(!m_snapshot || !m_controller) {return tr("Not connected");}
+    if(busy()) {return tr("Gains are locked while a run is active");}
+    if(gainsMoving()) {return tr("Wait for the gain writes to finish");}
+    return {};
+}
+QString TuneView::applyGains(const ResolvedGains &set, const QString &note) {
+    if(const auto why=applyBlocked();!why.isEmpty()) {return why;}
+    if(set.key!=*m_controller) {return tr("Select the controller the step ran on");}
+    for(const auto &[id,value]:set.values) {
+        if(gainIndex(itemKey(set.key.first,set.key.second,id))<0) {return tr("%1 is not a gain of the selected controller").arg(id);}
+    }
+    writeSet(set,HistorySource::Changed,note);
+    return {};
 }
 void TuneView::gainChanged() {
     m_changePending=true;m_settle.stop();
@@ -705,7 +732,7 @@ void TuneView::flush(bool force) {
 }
 
 void TuneView::selectController(const QString &key) {
-    if(m_phase!=Phase::Idle) {return;}
+    if(busy()) {return;}
     const auto k=parseNodeKey(key);
     if(!k || (m_controller && *k==*m_controller) || !m_snapshot) {return;}
     const auto list=tuneControllers(*m_snapshot);
@@ -716,12 +743,13 @@ void TuneView::selectController(const QString &key) {
     m_compareA.reset();m_compareB.reset();
     rebuildGains();defaultsForTarget();
     historyChanged();
+    m_identify.setContext(m_snapshot,m_controller,m_deviceId);
     emit changed();emit runChanged();emit dataChanged();
 }
 void TuneView::setEnum(const QString &key, int index) {
     const auto ref=parseItemKey(key);
     const auto *item=ref?itemOf(ref->item):nullptr;
-    if(!item || index<0 || size_t(index)>=item->enums.size() || !m_hooks.write || m_phase!=Phase::Idle) {return;}
+    if(!item || index<0 || size_t(index)>=item->enums.size() || !m_hooks.write || busy()) {return;}
     m_enumSending[key]=true;m_enumProblems.remove(key);emit changed();
     m_hooks.write({*ref},{item->enums[size_t(index)].value},[this,key](QString error) {
         m_enumSending.remove(key);
@@ -837,7 +865,8 @@ void TuneView::writeSet(const ResolvedGains &set, HistorySource source, const QS
     gainChanged();
     m_settleSource=source;m_settleNote=note;
     updateGains();
-    const auto what=source==HistorySource::Reverted?tr("Revert gains to saved"):tr("Restore");
+    const auto what=source==HistorySource::Reverted?tr("Revert gains to saved"):source==HistorySource::Changed?
+        tr("Apply suggested gains"):tr("Restore");
     m_hooks.write(refs,bits,[this,refs,values,what](QString error) {
         // The controller may have changed meanwhile: only its own gains count.
         for(size_t i=0;i<refs.size();++i) {
@@ -960,6 +989,7 @@ void TuneView::setPhase(Phase phase, const QString &text, double progress) {
     if(phase==Phase::Idle && m_autoPending) {m_autoCheck.start();}
 }
 void TuneView::refreshRunState() {
+    m_identify.refreshRunState();
     emit runChanged();
     if(m_autoPending) {m_autoCheck.start();}
 }
@@ -1045,7 +1075,7 @@ void TuneView::tryAuto() {
     if(!m_autoOn) {return drop({});}
     if(epoch==0 || epoch!=m_autoEpoch) {return drop(tr("starts after your first Run"));}
     // Still changing, or a run (or its release) in progress: wait.
-    if(gainsMoving() || m_settle.isActive() || m_phase!=Phase::Idle) {emit runChanged();return;}
+    if(gainsMoving() || m_settle.isActive() || busy()) {emit runChanged();return;}
     if(m_hooks.autoBlocked) {
         if(const auto why=m_hooks.autoBlocked();!why.isEmpty()) {return drop(tr("skipped: %1").arg(why));}
     }
@@ -1109,7 +1139,7 @@ const HistoryEntry *TuneView::entryById(int id) const {
 }
 QString TuneView::restoreBlocked(const HistoryEntry &e) const {
     if(!m_snapshot || !m_controller) {return tr("Not connected");}
-    if(m_phase!=Phase::Idle) {return tr("Gains are locked while a run is active");}
+    if(busy()) {return tr("Gains are locked while a run is active");}
     if(gainsMoving()) {return tr("Wait for the gain writes to finish");}
     const auto set=resolveGains(*m_snapshot,e.controllerType,e.controllerLabel,e.gains,e.names);
     if(!set) {return set.error();}
@@ -1241,7 +1271,7 @@ QVariantMap TuneView::session() const {
     const bool any=!m_runs.empty() || std::any_of(m_history.begin(),m_history.end(),[](const HistoryEntry &e){return e.source!=HistorySource::Loaded;});
     QString openReason;
     if(!m_snapshot) {openReason=tr("Connect first");}
-    else if(m_phase!=Phase::Idle) {openReason=tr("Not while a run is active");}
+    else if(busy()) {openReason=tr("Not while a run is active");}
     else if(gainsMoving()) {openReason=tr("Wait for the gain writes to finish");}
     const auto docs=QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     return {{"name",name},{"file",m_sessionPath.isEmpty()?QString():QFileInfo(m_sessionPath).fileName()},{"unsaved",m_dirty},

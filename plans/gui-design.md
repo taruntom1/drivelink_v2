@@ -543,7 +543,7 @@ code and records the outcome here; the notes below give the detail.
 | Manual command card (G5 CommandControl, 344 px) at both sizes | closed by H2d-2: the card is 376 px and scrolls when it outgrows the column; Remove is a small x beside Latch (G5 shows no Remove control); screenshots `monitor` (held and latched) and `monitor-command-disarmed` |
 | G5 1080p: Tune plot column; slider ticks at their log-scale values | closed by H2e-1: below 2100 px the gains card is one scrolling column and the plot column keeps its width; ticks sit at their log positions (screenshots `tune`, `tune-running`, `tune-disarm`, `tune-disarmed` at both sizes) |
 | G5 1080p: A/B card, gain history placement | closed by H2e-2: gain history is a card under the gains in the left column (it scrolls with them at 1080p); the A/B card replaces Run metrics with the gain differences beside the table, stacked below 900 px (at 1920×1080 they still fit side by side); screenshots `tune` and `tune-ab` at both sizes |
-| CheckItem has no warning state (plant identification caution) | H2e-3 |
+| CheckItem has no warning state (plant identification caution) | closed by H2e-3: `DLCheckItem` Warning (neutral `triangle-alert`, not amber) with an optional trailing tag ("warning"); the Plant identification frame is built as the tab beside Step runs with the three cards (screenshot `tune-identify` at both sizes and themes) |
 | G7 calibration: F6 contract reconciliation, PC file format, provenance, Euler convention, cancel and reconnect | H2f |
 | Remote: live-edit warning opt-out per connection, lease-revoked cancels runs, agent device list | H3b |
 | Rename / `SET_NAME` applies live and sets Unsaved; device name and id in `GET_INFO` | closed by H1c (core v9) |

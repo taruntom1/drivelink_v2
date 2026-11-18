@@ -40,6 +40,8 @@ QVariantMap LocalConnection::firmware() const {
 }
 QString LocalConnection::firmwareActionBlocked() const {
     if(const auto common=commonBlock();!common.isEmpty()) {return common;}
+    // An update reboots the device: plant identification writes its mode back first.
+    if((m_tuneRun && m_tuneRun->identify) || m_modeRestore) {return tr("Wait for plant identification to write the mode back");}
     if(armState()==1 || m_arming) {return tr("Not allowed while armed; disarm first");}
     if(m_expectReboot) {return tr("The device is rebooting");}
     if(m_otaStatusPending || !m_otaStatus) {return tr("Reading the update state");}

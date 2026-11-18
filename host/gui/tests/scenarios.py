@@ -79,7 +79,10 @@ MONITOR = {
 # Three 2 rad/s steps with vel.kp 0.04, 0.06 and 0.08 (overlaid, two faded);
 # one more captured while running; one more cut by DISARM; and the page
 # disarmed with no runs.
-TUNE_SETUP = [['set', '113:0:2=100000'], ['save']]
+# A fine encoder, and a 5 Hz velocity filter: a desktop vdev's irregular
+# ticks alias the measured velocity into a ±60 % three-sample pattern that a
+# board does not show (H2e-3; plant identification fits through it).
+TUNE_SETUP = [['set', '113:0:2=100000'], ['set', '113:0:4=5'], ['save']]
 VEL_KP = '32:0:32'
 TUNE_SET = '32:0:16=velocity,32:0:33=0.5'
 SIGNAL = 'target=32:0:512,amplitude=2,duration=1'
@@ -90,6 +93,9 @@ TUNE = {
     'tune-disarmed': ('tune', '', SIGNAL),
     # H2e-2: runs 1 and 3 compared A/B.
     'tune-ab': ('tune-ab', VEL_KP + '=0.04:0.06:0.08', SIGNAL),
+    # H2e-3: Plant identification after one open-loop duty step (the mode
+    # default; the backend switches to it for the step and writes it back).
+    'tune-identify': ('tune-identify', '', SIGNAL),
 }
 # Scenarios that render a screen of another name.
 SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune'}
@@ -204,6 +210,8 @@ def render(gui, vdev, destination, scenario, cli=None):
                 command += ['--tune', '32:0', '--tune-set', TUNE_SET, '--signal', signal]
                 if runs:
                     command += ['--tune-runs', runs]
+                if scenario == 'tune-identify':
+                    command += ['--identify-response', 'velocity']
             if scenario in ACTIONS:
                 command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):

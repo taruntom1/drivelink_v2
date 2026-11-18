@@ -10,7 +10,11 @@ import DriveLink.Style
 // disarmed it is disabled with "Arm first". With Auto re-run on, the gains
 // stay editable during a run and a change cancels it. Session files and CSV
 // use non-modal native dialogs (user decision 2026-11-18): DISARM stays
-// clickable while one is open. Plant identification follows in H2e-3.
+// clickable while one is open. H2e-3 Plant identification: the centre has two
+// tabs (Step runs, Plant identification); on the second the centre plots the
+// measured and fitted response and the right column shows IdentifyCards (the
+// check, the step, the model and the suggested gains) instead of Test signal,
+// Capture, Runs and Session. The left column is the same on both tabs.
 Item {
     id: page
     objectName: "tunePage"
@@ -25,6 +29,13 @@ Item {
     readonly property var compare: tune.compare || ({})
     readonly property var autoRerun: tune.autoRerun || ({})
     readonly property var session: tune.session || ({})
+    // H2e-3 Plant identification.
+    readonly property var identify: tune.identify
+    readonly property bool idShown: identify.shown === true
+    readonly property var idRun: identify.run || ({})
+    readonly property var idResult: identify.result || ({})
+    readonly property var idPlots: identify.plots || []
+    readonly property real idSpanUs: Math.max(1, identify.plotEndUs - identify.plotStartUs)
     readonly property var recovery: tune.recovery || ({})
     // Open asked over unsaved runs: the inline confirmation is showing.
     property bool confirmOpen: false
@@ -43,14 +54,14 @@ Item {
         const alpha = (s.faded ? 0.45 : 1.0) * (s.target ? 0.5 : 1.0)
         return Qt.rgba(c.r, c.g, c.b, alpha)
     }
-    function timeText(us) {
+    function timeText(us, span) {
         const s = us / 1e6
-        return Number(s).toLocaleString(Qt.locale("C"), "f", page.spanUs < 2e6 ? 2 : 1) + " s"
+        return Number(s).toLocaleString(Qt.locale("C"), "f", (span === undefined ? page.spanUs : span) < 2e6 ? 2 : 1) + " s"
     }
 
     Shortcut {
         sequence: "F5"
-        enabled: page.visible && !page.blocked
+        enabled: page.visible && !page.blocked && !page.idShown
         onActivated: page.tune.startRun()
     }
 
@@ -409,6 +420,7 @@ Item {
 
             Card {
                 objectName: "tuneSignal"
+                visible: !page.idShown
                 width: parent.width
                 title: qsTr("Test signal")
                 contentSpacing: Theme.space12
@@ -486,6 +498,7 @@ Item {
 
             Card {
                 objectName: "tuneCapture"
+                visible: !page.idShown
                 width: parent.width
                 title: qsTr("Capture")
                 contentSpacing: Theme.space12
@@ -582,6 +595,7 @@ Item {
 
             Card {
                 objectName: "tuneRuns"
+                visible: !page.idShown
                 width: parent.width
                 title: qsTr("Runs")
                 contentSpacing: Theme.space8
@@ -667,6 +681,7 @@ Item {
             Card {
                 id: sessionCard
                 objectName: "tuneSession"
+                visible: !page.idShown
                 width: parent.width
                 contentSpacing: Theme.space12
                 Row {
@@ -805,6 +820,13 @@ Item {
                     font: Theme.fontCaption; color: Theme.textSecondary
                 }
             }
+
+            IdentifyCards {
+                objectName: "tuneIdentifyCards"
+                visible: page.idShown
+                width: parent.width
+                identify: page.identify
+            }
         }
     }
 
@@ -817,9 +839,46 @@ Item {
         y: Theme.space24
         height: page.height - 2 * Theme.space24
 
+        // H2e-3: Step runs / Plant identification.
+        Item {
+            id: centreTabs
+            objectName: "tuneTabs"
+            width: parent.width; height: Theme.sizeControl
+            Row {
+                spacing: Theme.space8
+                DLTabButton {
+                    objectName: "tuneTabRuns"
+                    text: qsTr("Step runs")
+                    checkable: false
+                    checked: !page.idShown
+                    // The step's Stop and progress stay in view while it runs.
+                    enabled: !page.identify.run.active
+                    onClicked: page.identify.shown = false
+                }
+                DLTabButton {
+                    objectName: "tuneTabIdentify"
+                    text: qsTr("Plant identification")
+                    checkable: false
+                    checked: page.idShown
+                    enabled: !page.run.active
+                    onClicked: page.identify.shown = true
+                }
+            }
+            Text {
+                objectName: "tuneIdentifySummary"
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                visible: page.idShown
+                text: (page.identify.step || ({})).summary || ""
+                textFormat: Text.PlainText
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+        }
+
         Flow {
             id: toolbar
             objectName: "tuneToolbar"
+            visible: !page.idShown
+            y: centreTabs.height + Theme.space8
             width: parent.width
             spacing: Theme.space8
             DLReasonHover {
@@ -882,6 +941,7 @@ Item {
         Column {
             id: plotStack
             objectName: "tunePlots"
+            visible: !page.idShown
             anchors.top: toolbar.bottom; anchors.topMargin: Theme.space12
             anchors.bottom: page.compare.active ? abCard.top : metrics.top; anchors.bottomMargin: Theme.space24
             width: parent.width
@@ -1024,12 +1084,146 @@ Item {
             }
         }
 
+        // ---- Plant identification: measured vs fitted (H2e-3) ----------------
+        Rectangle {
+            id: idPlotFrame
+            objectName: "tuneIdentifyPlot"
+            visible: page.idShown
+            anchors.top: centreTabs.bottom; anchors.topMargin: Theme.space12
+            anchors.bottom: parent.bottom
+            width: parent.width
+            color: Theme.bgSurface; radius: Theme.radiusMd
+            border.width: Theme.borderWidth; border.color: Theme.borderDefault
+            readonly property var plotInfo: page.idPlots.length > 0 ? page.idPlots[0] : null
+
+            Text {
+                visible: idPlotFrame.plotInfo === null || page.idResult.fitting === true
+                anchors.centerIn: parent
+                z: 2
+                width: parent.width * 0.6
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                text: page.idResult.fitting === true ? qsTr("Fitting…")
+                    : page.idRun.active ? (page.idRun.text || "")
+                    : qsTr("Run the step to fit a model")
+                font: Theme.fontBodyDefault; color: Theme.textTertiary
+            }
+            Flow {
+                id: idLegend
+                visible: idPlotFrame.plotInfo !== null
+                x: Theme.space12; y: Theme.space8
+                width: parent.width - 2 * Theme.space12
+                spacing: Theme.space8
+                Text {
+                    height: Theme.sizeControlSm; verticalAlignment: Text.AlignVCenter
+                    text: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.title + (idPlotFrame.plotInfo.unit.length > 0 ? " (" + idPlotFrame.plotInfo.unit + ")" : "") : ""
+                    textFormat: Text.PlainText
+                    font: Theme.fontBodyStrong; color: Theme.textPrimary
+                }
+                Repeater {
+                    model: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.legend : []
+                    delegate: Rectangle {
+                        id: idChip
+                        required property var modelData
+                        height: Theme.sizeControlSm; width: idChipRow.implicitWidth + 2 * Theme.space8
+                        radius: Theme.radiusSm; color: Theme.bgSecondary
+                        Row {
+                            id: idChipRow
+                            x: Theme.space8; height: parent.height; spacing: Theme.space8
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter; width: 10; height: 10; radius: 2
+                                color: page.colorOf(idChip.modelData.colour)
+                            }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: idChip.modelData.text; textFormat: Text.PlainText; font: Theme.fontMonoSmall; color: Theme.textPrimary }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                id: idArea
+                visible: idPlotFrame.plotInfo !== null
+                anchors.left: parent.left; anchors.leftMargin: 64
+                anchors.right: parent.right; anchors.rightMargin: Theme.space12
+                anchors.top: idLegend.bottom; anchors.topMargin: Theme.space8
+                anchors.bottom: idAxis.top; anchors.bottomMargin: Theme.space4
+                color: Theme.plotBg
+                border.width: Theme.borderWidth; border.color: Theme.plotAxis
+                clip: true
+                Repeater {
+                    model: idPlot.ticks
+                    delegate: Rectangle { required property var modelData; y: modelData.y; width: idArea.width; height: 1; color: Theme.plotGrid }
+                }
+                Repeater {
+                    model: 4
+                    delegate: Rectangle { required property int index; x: idArea.width * (index + 1) / 5; width: 1; height: idArea.height; color: Theme.plotGrid }
+                }
+                // The step's start.
+                Rectangle {
+                    x: (0 - page.identify.plotStartUs) / page.idSpanUs * idArea.width
+                    width: 1; height: idArea.height
+                    color: Theme.plotAxis
+                }
+                PlotItem {
+                    id: idPlot
+                    objectName: "tuneIdentifyPlotItem"
+                    anchors.fill: parent
+                    source: page.identify
+                    keys: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.series.map(s => s.key) : []
+                    colors: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.series.map(s => page.seriesColor(s)) : []
+                }
+                // Where a Stop or a disarm cut the step.
+                Repeater {
+                    model: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.markers : []
+                    delegate: Item {
+                        id: idMarker
+                        required property var modelData
+                        x: (modelData.us - page.identify.plotStartUs) / page.idSpanUs * idArea.width
+                        height: idArea.height
+                        Rectangle { width: 2; height: parent.height; color: Theme.stateArmed }
+                        Text {
+                            x: Theme.space4; y: Theme.space4
+                            text: idMarker.modelData.text
+                            font: Theme.fontLabelCaps; color: Theme.stateArmed
+                        }
+                    }
+                }
+            }
+            Repeater {
+                model: idPlotFrame.plotInfo ? idPlot.ticks : []
+                delegate: Text {
+                    required property var modelData
+                    x: 0; width: idArea.x - Theme.space8
+                    y: idArea.y + modelData.y - height / 2
+                    visible: modelData.y >= 0 && modelData.y <= idArea.height
+                    horizontalAlignment: Text.AlignRight
+                    text: modelData.text
+                    font: Theme.fontMonoSmall; color: Theme.textSecondary
+                }
+            }
+            Item {
+                id: idAxis
+                visible: idPlotFrame.plotInfo !== null
+                anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.space4
+                x: 64; width: parent.width - 64 - Theme.space12
+                height: Theme.sizeControlSm
+                Repeater {
+                    model: 6
+                    delegate: Text {
+                        required property int index
+                        x: idAxis.width * index / 5 - (index === 5 ? width : index === 0 ? 0 : width / 2)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.timeText(page.identify.plotStartUs + page.idSpanUs * index / 5, page.idSpanUs)
+                        font: Theme.fontMonoSmall; color: Theme.textSecondary
+                    }
+                }
+            }
+        }
+
         // G5 A/B compare: the gain differences and the metrics side by side;
         // at 1080p the differences stack above the table.
         Card {
             id: abCard
             objectName: "tuneCompare"
-            visible: page.compare.active === true
+            visible: page.compare.active === true && !page.idShown
             anchors.bottom: parent.bottom
             width: parent.width
             readonly property bool stacked: width < 900
@@ -1134,7 +1328,7 @@ Item {
         Card {
             id: metrics
             objectName: "tuneMetrics"
-            visible: page.compare.active !== true
+            visible: page.compare.active !== true && !page.idShown
             anchors.bottom: parent.bottom
             width: parent.width
             title: qsTr("Run metrics")
