@@ -293,6 +293,24 @@ TestCase {
         compare(rail.currentIndex, 2)
     }
 
+    function test_nav_rail_sections_enable_separately() {
+        const rail = createTemporaryObject(railComponent, testCase, { pagesEnabled: false })
+        const activated = spy(rail, "activated")
+        mouseClick(rail, 36, 8 + 32)
+        mouseClick(rail, 36, 8 + 64 + 4 + 32)
+        compare(activated.count, 0, "disabled page items do not activate")
+        mouseClick(rail, 36, rail.height - 8 - 32)
+        compare(activated.count, 1)
+        compare(activated.signalArguments[0][0], 2)
+        rail.footerEnabled = false
+        mouseClick(rail, 36, rail.height - 8 - 32)
+        compare(activated.count, 1, "a disabled footer item does not activate")
+        rail.pagesEnabled = true
+        mouseClick(rail, 36, 8 + 32)
+        compare(activated.count, 2)
+        compare(activated.signalArguments[1][0], 0)
+    }
+
     // Banner ------------------------------------------------------------------
 
     function test_banner_actions() {

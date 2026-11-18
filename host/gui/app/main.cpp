@@ -1,3 +1,4 @@
+#include "app_settings.hpp"
 #include "connection.hpp"
 #include "register.hpp"
 #include "safety_keys.hpp"
@@ -19,7 +20,23 @@
 // The static DriveLink.Shell module's C++ types (PlotItem).
 void qml_register_types_DriveLink_Shell();
 
+#ifdef _WIN32
+#include <windows.h>
+// A Windows GUI program (the installer's build) has no console. Started from
+// one, print there; output already redirected (a pipe or file) is kept.
+static void attachParentConsole() {
+    const auto valid=[](DWORD id) {const HANDLE h=GetStdHandle(id);return h!=nullptr && h!=INVALID_HANDLE_VALUE;};
+    if(valid(STD_OUTPUT_HANDLE) || valid(STD_ERROR_HANDLE) || !AttachConsole(ATTACH_PARENT_PROCESS)) {return;}
+    std::FILE *ignored=nullptr;
+    freopen_s(&ignored,"CONOUT$","w",stdout);
+    freopen_s(&ignored,"CONOUT$","w",stderr);
+}
+#endif
+
 int main(int argc,char **argv) {
+#ifdef _WIN32
+    attachParentConsole();
+#endif
     Q_INIT_RESOURCE(qmake_DriveLink_Shell);
     Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);
     qml_register_types_DriveLink_Shell();
@@ -36,7 +53,7 @@ int main(int argc,char **argv) {
     parser.addOption({"baud","Serial baud rate (default 921600).","rate","921600"});
     parser.addOption({"settings","Keep recent devices in this INI file instead of the user's.","file"});
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
-    parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
+    parser.addOption({"screen","connect, settings (both also without --endpoint), device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
                       "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm, tune-ab or tune-identify (a vdev; --identify does the same on tune).","name","device"});
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
@@ -63,8 +80,9 @@ int main(int argc,char **argv) {
     const QString screen=parser.value("screen");
     const QString expected=parser.value("expect-state");
     if(!QStringList{"ready","fault","safe","lost"}.contains(expected)) {return 2;}
-    // Pages first (their index is the nav index plus one), then shell states.
-    const QStringList pages={"connect","device","layout","tune","monitor"};
+    // Pages first (their index is the nav index plus one; Settings is page 4,
+    // the rail's footer item), then shell states.
+    const QStringList pages={"connect","device","layout","tune","monitor","settings"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
                               "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
                               "tune-running","tune-disarm","tune-ab","tune-identify"};
@@ -79,19 +97,30 @@ int main(int argc,char **argv) {
     if(!numeric || baud<=0 || settle<0) {std::fprintf(stderr,"Invalid --baud or --settle\n");return 2;}
     drivelink::gui::LocalConnection connection;
     if(parser.isSet("settings")) {connection.setSettingsPath(parser.value("settings"));}
+    drivelink::gui::AppSettings appSettings(connection.settingsPath());
+    // Screenshots render both themes without saving the user's choice.
+    appSettings.setPersistent(!render);
     drivelink::gui::SafetyKeys keys;
     QObject::connect(&keys,&drivelink::gui::SafetyKeys::escapeRequested,&connection,&drivelink::gui::Connection::disarm);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("connection",&connection);
     engine.rootContext()->setContextProperty("safetyKeys",&keys);
+    engine.rootContext()->setContextProperty("appSettings",&appSettings);
     if(!drivelink::gui::installStyle(engine)) {return 2;}
     engine.loadFromModule("DriveLink.Shell","Shell");
     if(engine.rootObjects().isEmpty()) {return 2;}
+    // Theme.dark follows the Settings page's choice (dark, light or the OS).
+    auto *theme=engine.singletonInstance<QObject *>("DriveLink.Style","Theme");
+    if(!theme) {return 2;}
+    auto applyTheme=[&] {theme->setProperty("dark",appSettings.dark());};
+    applyTheme();
+    QObject::connect(&appSettings,&drivelink::gui::AppSettings::themeChanged,theme,applyTheme);
     auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());
     if(!window) {return 2;}
     if(parser.isSet("endpoint")) {connection.connectTo(parser.value("endpoint"),baud);}
     if(!render) {return app.exec();}
-    if(screen!="connect" && !parser.isSet("endpoint")) {
+    const bool standalone=screen=="connect" || screen=="settings";
+    if(!standalone && !parser.isSet("endpoint")) {
         std::fprintf(stderr,"This screen needs --endpoint; use host/gui/tests/scenarios.py for isolated vdev fixtures\n");return 2;
     }
     // These screens rename (and reboot) the device: vdev only, never a board.
@@ -105,11 +134,10 @@ int main(int argc,char **argv) {
         app.exit(2);});
     timeout.start();
     auto capture=[&] {
-        auto *theme=engine.singletonInstance<QObject *>("DriveLink.Style","Theme");
         for(const QSize size:{QSize(2560,1440),QSize(1920,1080)}) {
             window->resize(size);
             for(const bool dark:{true,false}) {
-                theme->setProperty("dark",dark);
+                appSettings.setTheme(dark?QStringLiteral("dark"):QStringLiteral("light"));
                 QCoreApplication::processEvents();
                 const auto image=window->grabWindow();
                 const auto name=QString("%1-%2x%3-%4.png").arg(screen).arg(size.width()).arg(size.height()).arg(dark?"dark":"light");
@@ -130,6 +158,7 @@ int main(int argc,char **argv) {
         if(connection.ready() && connection.snapshot()->status && !announced) {
             announced=true;std::printf("GUI READY\n");std::fflush(stdout);
         }
+        if(standalone && !parser.isSet("endpoint")) {return true;}
         if(screen=="connect") {return true;}
         if(expected=="lost") {return connection.linkLost();}
         if(!connection.ready() || !connection.snapshot()->status) {return false;}

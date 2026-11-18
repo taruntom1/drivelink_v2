@@ -33,6 +33,13 @@ target_compile_definitions(gui_panel_tests PRIVATE VDEV_PATH="$<TARGET_FILE:driv
 target_link_libraries(gui_panel_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
 add_dependencies(gui_panel_tests drivelink-vdev)
 
+# Settings and About (H2g): AppSettings and the Settings page in the shell.
+qt_add_executable(gui_settings_tests test_settings.cpp test_support.hpp)
+set_target_properties(gui_settings_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+target_compile_definitions(gui_settings_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
+target_link_libraries(gui_settings_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
+add_dependencies(gui_settings_tests drivelink-vdev)
+
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_quick_tests PRIVATE QUICK_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -63,6 +70,9 @@ set_tests_properties(gui-monitor PROPERTIES TIMEOUT 300
 add_test(NAME gui-panels COMMAND gui_panel_tests)
 set_tests_properties(gui-panels PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")
+add_test(NAME gui-settings COMMAND gui_settings_tests)
+set_tests_properties(gui-settings PROPERTIES TIMEOUT 120
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
 add_test(NAME gui-tune COMMAND gui_tune_tests)
 set_tests_properties(gui-tune PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")

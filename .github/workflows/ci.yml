@@ -46,12 +46,24 @@ jobs:
           python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O C:/Qt
           python -m aqt install-tool windows desktop tools_cmake qt.tools.cmake -O C:/Qt
           python -m aqt install-tool windows desktop tools_ninja qt.tools.ninja -O C:/Qt
-      - name: Build (warnings are errors), test (GUI offscreen) and check the installed packages
-        timeout-minutes: 30
+      - name: Install Inno Setup 6 when the runner lacks it
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe')) {
+            choco install innosetup --version 6.7.1 --no-progress -y
+          }
+      - name: Build (warnings are errors), test (GUI offscreen), check the installed packages, build the installer
+        timeout-minutes: 45
         run: |
           $qtVersion = & 'C:/Qt/6.12.0/mingw_64/bin/qmake.exe' -query QT_VERSION
           if ($LASTEXITCODE -ne 0 -or $qtVersion -ne '6.12.0') { throw "Expected Qt 6.12.0, found $qtVersion" }
-          python tools/validate.py --only host-win
+          python tools/validate.py --only host-win installer
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-windows-installer
+          path: build/installer/DriveLink-*-setup.exe
+          if-no-files-found: error
       - name: Upload validation diagnostics
         if: always()
         uses: actions/upload-artifact@v4

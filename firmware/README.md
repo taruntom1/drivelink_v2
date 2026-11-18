@@ -79,6 +79,10 @@ Flash a board on the dual-slot partition table with
 erases NVS. Later updates go over the link with the CLI's OTA workflow
 (`docs/protocol/ota.md`).
 
+The app version (`esp_app_desc_t.version`, GET_INFO's `firmware_version`) is
+the root `VERSION`, with `+g<sha7>[.dirty]` away from its tag
+([development guide](../docs/development.md), "Version").
+
 ## Configuration
 
 Component tunables (UART pins and baud, queue depths, task stacks, pool sizes,

@@ -11,12 +11,15 @@ H2a-1 provides the style layer; H2a-2 adds the application, local device
 backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update,
 H2c-1/H2c-2 Layout, H2d-1/H2d-2 Monitor and its manual command, and H2e-1
 to H2e-3 Tune: runs, the session (gain history, A/B compare, session files)
-and plant identification (below; [host-steps.md](../../plans/host-steps.md)).
+and plant identification, H2f custom panels, and H2g Settings, the notices
+and the Windows installer (below; [host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
 |---|---|
 | `theme/` | `tokens.json` (Figma export), `gen_theme.py`, generated `Theme.qml`, `export_tokens.js` |
 | `resources/` | Inter, JetBrains Mono, the Lucide icons, their licences ([SOURCES.md](resources/SOURCES.md)) |
+| `notices/` | third-party notices: manifest, licence texts, generator, the generated file (H2g) |
+| `installer/` | the Inno Setup script (H2g) |
 | `style/` | QML module `DriveLink.Style` (static library `drivelink_gui_style`) |
 | `gallery/` | `drivelink-style-gallery`: every control state, Dark and Light |
 | `backend/` | `Connection`, `LocalConnection`, `SafetyKeys`, generic Qt models and command planning |
@@ -26,8 +29,9 @@ and plant identification (below; [host-steps.md](../../plans/host-steps.md)).
 ## Application and backend
 
 Run `drivelink-gui`, or pass `--endpoint tcp://127.0.0.1:8765` (vdev) or
-`--endpoint serial://COM3`. Windows needs Qt's MinGW and Qt `bin` directories
-on PATH until H2g packages the application. The Windows executable is
+`--endpoint serial://COM3`. A development build needs Qt's MinGW and Qt `bin`
+directories on PATH; the installed copy is self-contained (H2g, below). The
+Windows executable is
 `host/superbuild/build/windows-mingw/gui/drivelink-gui.exe`.
 
 `Connection` is the Qt-facing interface. `LocalConnection` opens a Session and
@@ -604,6 +608,51 @@ panel in the shell on vdev's `imu.mock`, and the panel's C++ logic. `benchCalibr
 `DRIVELINK_GUI_BENCH_CAL_WAIT` seconds (300) for 3/3/3/3, then reads,
 exports, imports and applies through the panel and checks the staged
 params; it refuses unsaved changes and REVERTs at the end.
+
+## Settings and About (H2g)
+
+The nav rail's footer item **Settings** (page 4) opens before connecting too:
+`DLNavRail` enables its page items (`pagesEnabled`, only with a ready device)
+and its footer (`footerEnabled`, whenever no dialog is open) separately. The
+page is built by a `Loader` only while shown. It replaces Connect or the
+current page; its Close button, the footer item again or another page item
+leads back (Close returns to the page it opened from). Leaving Monitor or Tune
+for Settings is a page change like any other (dead-man release, Auto re-run
+stops); DISARM and Esc are unchanged.
+
+- **Appearance:** Dark, Light or Follow system. `AppSettings` (backend) keeps
+  the choice in the GUI's INI file (`appearance/theme`, the recent devices'
+  file, so `--settings` isolates it) and resolves "system" from Qt's colour
+  scheme; `main.cpp` sets `Theme.dark` from it. Screenshot mode switches
+  themes without saving them.
+- **About:** the full version (`cmake/DriveLinkVersion.cmake`, configure
+  time), Qt and compiler, the repository `LICENSE` and the third-party
+  notices, both compiled into the backend's resources, with Copy.
+
+`gui_settings_tests` (ctest `gui-settings`) covers `AppSettings` and the page
+in the shell, disconnected and on vdev. Screenshot scenarios `settings` and
+`settings-offline`.
+
+## Windows installer and notices (H2g)
+
+`python tools/package_win.py` (the `installer` check of `validate.py`, and
+host-windows CI, which uploads the result) builds the `windows-mingw-release`
+preset (Release, no tests, `drivelink-gui` as a Windows GUI program that
+attaches to a parent console when started from one), stages the three
+programs with `windeployqt` (Basic style only; `platforms/qoffscreen.dll` for
+`--out` screenshots), runs a self-contained smoke with Qt and MinGW off PATH,
+and compiles `installer/drivelink.iss` with Inno Setup 6 into
+`build/installer/DriveLink-<version>-setup.exe`. The AppId in the script is
+permanent.
+
+`notices/notices.json` lists every bundled component (version, licence,
+copyright, source, licence files, and the DLL names it ships as);
+`notices/gen_notices.py --write` renders `THIRD_PARTY_NOTICES.txt` from it, and
+`validate.py gen` fails when the file is stale. Staging fails on any DLL that
+no component names. A new bundled dependency, Qt module or plugin therefore
+needs a manifest entry (and its licence text in `notices/licenses/`) before
+the installer builds. Qt's own third-party parts come from the SBOM files of
+the Qt install (`C:/Qt/6.12.0/mingw_64/sbom/`), as a superset.
 
 ## Theme
 

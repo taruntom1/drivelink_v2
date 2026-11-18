@@ -154,12 +154,16 @@ def plan_gen(jobs):
     need_yaml()
     return [
         Step('generated files are current', [python(), 'tools/gen/gen.py', '--check']),
+        Step('versions match VERSION', [python(), 'tools/version.py', '--check']),
         Step('generator tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/gen/tests']),
         Step('validate.py tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/tests']),
         Step('Python frame reference', [python(), 'firmware/test/uart_comm/protocol.py']),
         Step('GUI Theme is current', [python(), 'host/gui/theme/gen_theme.py', '--check']),
         Step('GUI Theme generator tests', [python(), '-m', 'unittest', 'discover',
                                            '-s', 'host/gui/theme', '-p', 'test_*.py']),
+        Step('third-party notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check']),
+        Step('notices generator tests', [python(), '-m', 'unittest', 'discover',
+                                         '-s', 'host/gui/notices', '-p', 'test_*.py']),
     ]
 
 
@@ -226,6 +230,22 @@ def plan_host_win(jobs):
     return plan_host('windows-mingw', 'windows-mingw', jobs, env)
 
 
+ISCC_DIRS = [Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6',
+             Path('C:/Program Files (x86)/Inno Setup 6')]
+
+
+def plan_installer(jobs):
+    """The Release staging directory, its self-contained smoke and the installer."""
+    plan_host_win(jobs)  # the same Qt MinGW 13.1 prerequisites
+    iscc = shutil.which('ISCC') or next((str(d / 'ISCC.exe') for d in ISCC_DIRS if (d / 'ISCC.exe').is_file()), None)
+    if not iscc:
+        raise Unavailable('Inno Setup 6 not found; run: winget install --id JRSoftware.InnoSetup -e')
+    env = dict(os.environ)
+    env['PATH'] = ';'.join([*map(str, QT_DIRS), env['PATH']])
+    return [Step('package and installer', [python(), 'tools/package_win.py', '--jobs', jobs, '--iscc', iscc],
+                 env=env)]
+
+
 def worktree_key():
     return f'{ROOT.name}-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]}'
 
@@ -278,6 +298,8 @@ CHECKS = [
     Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
     Check('native', 'native unit tests (firmware/test/native)', plan_native),
     Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
+    Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,
+          windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.

@@ -100,9 +100,10 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
-| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests) | The Python that runs the script |
+| `gen` | `gen.py --check`, `version.py --check` (every consumer names the root `VERSION`), the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests), the third-party notices (`gen_notices.py --check` and its tests) | The Python that runs the script |
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
+| `installer` | `tools/package_win.py`: the `windows-mingw-release` preset, the `windeployqt` staging directory, its notices coverage and a self-contained smoke (Qt and MinGW off `PATH`), then the Inno Setup installer in `build/installer/`. Windows only | As `host-win`, plus Inno Setup 6 (`ISCC`): `winget install --id JRSoftware.InnoSetup -e` |
 | `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 
@@ -152,6 +153,20 @@ One script holds the list of checks and their commands. CI calls it with `--only
   while this field is false. Hardware and toolchain freshness are not certified;
   existing `--force` rules still apply. Reports are replaced atomically.
 
+## Version (`VERSION`)
+
+The root `VERSION` (semver) is the one version of the repository.
+`cmake/DriveLinkVersion.cmake` gives it to every CMake project before
+`project()`: the firmware and HIL app as `PROJECT_VER` (GET_INFO's
+`firmware_version`; `bench_fw.py`'s `-D PROJECT_VER` wins), `protocol/`,
+`libdrivelink/` and the superbuild, the GUI's About and the installer. A build
+at a clean checkout of tag `v<VERSION>` uses it as is; any other build appends
+`+g<sha7>`, and `.dirty` with modified tracked files (git is read at configure
+time). vdev reports `<VERSION>-vdev`. The `package.xml` files repeat it
+literally. To release, edit `VERSION` and the two `package.xml` files;
+`python tools/version.py --check` (in `gen`) fails on any mismatch, and
+`python tools/version.py` prints the full version.
+
 ## Linux packages (`tools/setup_linux.sh`)
 
 The one list of Ubuntu 26.04 packages, for the WSL distro and the CI containers.
@@ -178,10 +193,12 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 - `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
 - `host-windows` on `windows-2025` with Python 3.12. It caches Qt 6.12.0
   `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt`, verifies the
-  SDK version and runs `validate.py --only host-win`. The validator and preset
+  SDK version and runs `validate.py --only host-win installer`, installing Inno
+  Setup 6.7.1 with Chocolatey when the runner lacks it, and uploads the setup exe
+  as the `drivelink-windows-installer` artifact. The validator and preset
   enforce the selected compiler; the runner's default compiler cannot replace it.
   Validation logs and JSON/text summaries are uploaded even on failure.
-  Its build/test/install step has a 30-minute limit, leaving the diagnostic
+  Its build/test/install step has a 45-minute limit, leaving the diagnostic
   upload step able to run after a timeout.
 - The Windows installer uses aqtinstall pinned to upstream commit
   `5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7`: released 3.3.0 does not handle

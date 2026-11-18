@@ -15,6 +15,9 @@ import subprocess
 import tempfile
 import time
 
+# vdev reports the root VERSION with the -vdev marker (host/vdev/CMakeLists.txt).
+VDEV_VERSION = (Path(__file__).resolve().parents[2] / 'VERSION').read_text(encoding='utf-8').strip() + '-vdev'
+
 
 class Cli:
     def __init__(self, path, endpoint):
@@ -124,7 +127,7 @@ def run(cli_path, endpoint, baseline, candidate, stack_wait=0):
 
 def simulated(cli_path, endpoint):
     """Same campaign with structurally valid non-executable native fixtures."""
-    assert Cli(cli_path, endpoint)('info')['firmware_version'] == '0.1.0-vdev', 'synthetic images require a fresh vdev baseline'
+    assert Cli(cli_path, endpoint)('info')['firmware_version'] == VDEV_VERSION, 'synthetic images require a fresh vdev baseline'
     def fixture(seed):
         data = bytearray(4176)
         data[0] = 0xe9; data[1] = 1; data[12] = 9; data[23] = 1

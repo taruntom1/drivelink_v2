@@ -275,6 +275,9 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
                 const PendingEntry *entry=nullptr;
                 if(pending) { entry=&m_core.pendingLayout().entries()[next]; }
                 else { rec=m_core.recordAt(next); }
+                // recordAt is non-null below configuredCount(); the explicit
+                // check keeps GCC -O3 (vdev's Release build) from assuming null.
+                if(!entry && !rec) { break; }
                 const char *name=entry ? entry->label : rec->label;
                 if(w.remaining()<6+std::strlen(name)) { break; }
                 w.appendU8(entry?entry->type_id:rec->type_id);w.appendU8(entry?entry->instance:rec->instance);

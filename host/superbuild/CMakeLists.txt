@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
-project(drivelink_host VERSION 0.1.0 LANGUAGES CXX)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/DriveLinkVersion.cmake)
+project(drivelink_host VERSION ${DRIVELINK_VERSION} LANGUAGES CXX)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13.1)
   message(FATAL_ERROR "DriveLink host requires GCC 13.1 or newer for C++23")
 endif()

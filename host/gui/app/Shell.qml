@@ -29,7 +29,16 @@ Basic.ApplicationWindow {
     property alias dialog: dialog
     property alias scrim: scrim
     // The connection sets up the Layout live group only while Layout is shown.
-    readonly property var pageNames: ["device", "layout", "tune", "monitor"]
+    // Page 4 is Settings (the nav rail's footer item), also before connecting.
+    readonly property var pageNames: ["device", "layout", "tune", "monitor", "settings"]
+    readonly property int settingsPage: 4
+    property int previousPage: 0
+    // Settings opens over the current page; its item, close button or another
+    // page item leads back.
+    function toggleSettings() {
+        if (page === settingsPage) page = previousPage
+        else { previousPage = page; page = settingsPage }
+    }
     onPageChanged: connection.setPage(pageNames[page])
     Component.onCompleted: connection.setPage(pageNames[page])
     property alias toastCount: toasts.count
@@ -63,7 +72,7 @@ Basic.ApplicationWindow {
     Connections {
         target: safetyKeys
         function onEscapeRequested() { shell.cancelOverlay() }
-        function onPageRequested(page) { if (connection.ready && !shell.modalOpen) shell.page = page }
+        function onPageRequested(page) { if (connection.ready && !shell.modalOpen && page < shell.settingsPage) shell.page = page }
     }
     DLStatusBar {
         id: status
@@ -113,11 +122,13 @@ Basic.ApplicationWindow {
         DLNavRail {
             id: nav
             height: parent.height
-            enabled: connection.ready && !connection.closing && !shell.modalOpen
+            pagesEnabled: connection.ready && !connection.closing && !shell.modalOpen
+            footerEnabled: !connection.closing && !shell.modalOpen
             currentIndex: shell.page
-            model: [{text: qsTr("Device"), icon: "cpu"}, {text: qsTr("Layout"), icon: "workflow"},
-                    {text: qsTr("Tune"), icon: "sliders-horizontal"}, {text: qsTr("Monitor"), icon: "chart-line"}]
-            onActivated: function(index) { shell.page = index }
+            model: [{text: qsTr("Device"), icon: "cpu", objectName: "navDevice"}, {text: qsTr("Layout"), icon: "workflow", objectName: "navLayout"},
+                    {text: qsTr("Tune"), icon: "sliders-horizontal", objectName: "navTune"}, {text: qsTr("Monitor"), icon: "chart-line", objectName: "navMonitor"}]
+            footerModel: [{text: qsTr("Settings"), icon: "settings", objectName: "navSettings"}]
+            onActivated: function(index) { if (index === shell.settingsPage) shell.toggleSettings(); else shell.page = index }
         }
         Item {
             id: content
@@ -151,22 +162,33 @@ Basic.ApplicationWindow {
                 id: connectPage
                 anchors.fill: parent
                 backend: shell.backend
-                visible: (connection.loading || !connection.linked) && !connection.linkLost && !connection.reconnecting
+                visible: (connection.loading || !connection.linked) && !connection.linkLost && !connection.reconnecting && shell.page !== shell.settingsPage
             }
             // A Boot in place reloads the model on the same link.
             DLCheckItem {
                 objectName: "reloading"
                 anchors.centerIn: parent
                 width: 420
-                visible: connection.linked && !connection.loading && !connection.ready && !connection.closing
+                visible: connection.linked && !connection.loading && !connection.ready && !connection.closing && shell.page !== shell.settingsPage
                 status: DLCheckItem.Active
                 label: qsTr("Reloading the device model")
                 detail: qsTr("The device rebooted; DISARM stays available.")
             }
+            // Built only while shown: it holds the long notices text.
+            Loader {
+                id: settingsLoader
+                anchors.fill: parent
+                anchors.topMargin: banner.visible ? banner.height : 0
+                active: shell.page === shell.settingsPage
+                sourceComponent: SettingsPage {
+                    onCloseRequested: shell.toggleSettings()
+                    onCopied: function(what) { shell.notify(qsTr("%1 copied").arg(what), 1) }
+                }
+            }
             Item {
                 anchors.fill: parent
                 anchors.topMargin: banner.visible ? banner.height : 0
-                visible: connection.ready
+                visible: connection.ready && shell.page !== shell.settingsPage
                 DevicePage {
                     anchors.fill: parent
                     visible: shell.page === 0
