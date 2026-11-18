@@ -1,6 +1,6 @@
 import QtQuick
 import DriveLink.Style
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // The banner across the top of the calibration panel: what the live data is
 // doing, or that a local file is loaded and not applied. Informational only.
@@ -18,7 +18,7 @@ DLBanner {
     readonly property bool applied: !!panel && panel.operation !== null && panel.operation.state === "ok"
                                     && panel.operation.steps.length > 0
     readonly property bool pendingFile: !!panel && panel.imported !== null && !applied
-    readonly property bool calibrated: !!panel && sensorState === "live" && Cal.fullyCalibrated(panel.sensor)
+    readonly property bool calibrated: !!panel && sensorState === "live" && ImuCalibration.fullyCalibrated(panel.sensor)
 
     // [title, message, icon]
     readonly property var content: {

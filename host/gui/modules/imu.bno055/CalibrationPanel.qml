@@ -3,7 +3,7 @@ import QtCore
 import QtQml.Models
 import QtQuick.Dialogs
 import DriveLink.Style
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // The imu.bno055 calibration panel (G7, H2f); imu.mock loads it too (the same
 // F6 contract). Layout gives it `backend` (the Connection), `nodeKey` (the
@@ -12,7 +12,7 @@ import "calibration.js" as Cal
 //
 // This file holds the state and every device call; the cards only draw it
 // and call the functions below. Contract for the cards (all read-only):
-//   sensor        Cal.sensorState(backend.live): state, note, levels, euler,
+//   sensor        ImuCalibration.sensorState(backend.live): state, note, levels, euler,
 //                 quat, valid, sampleCount, ageUs, mode
 //   loopText      "sensor loop" (the loop the instance runs in)
 //   readReason    why Read from IMU is disabled ("" when enabled)
@@ -36,7 +36,7 @@ Item {
     readonly property string title: qsTr("Calibration")
     readonly property bool dialogOpen: applyDialog.visible
 
-    readonly property var sensor: Cal.sensorState(backend ? backend.live : null)
+    readonly property var sensor: ImuCalibration.sensorState(backend ? backend.live : null)
     readonly property var nodeInfo: backend && backend.layout.node ? backend.layout.node : ({})
     readonly property var target: ({deviceId: backend ? backend.deviceId : "", deviceName: backend ? backend.deviceName : "",
                                      instance: nodeInfo.label || "", type: nodeInfo.typeName || ""})
@@ -44,7 +44,7 @@ Item {
     // the panel's memory must not switch away mid-operation.
     property string deviceKey: ""
     Binding on deviceKey { when: panel.target.deviceId.length > 0; value: panel.target.deviceId; restoreMode: Binding.RestoreNone }
-    readonly property string storeKey: deviceKey.length > 0 && nodeKey.length > 0 ? Cal.storeKey(deviceKey, nodeKey) : ""
+    readonly property string storeKey: deviceKey.length > 0 && nodeKey.length > 0 ? ImuCalibration.storeKey(deviceKey, nodeKey) : ""
     readonly property string loopText: nodeInfo.loopName ? qsTr("%1 loop").arg(nodeInfo.loopName) : ""
 
     // The instance's calibration actions by name (from the descriptors).
@@ -84,15 +84,15 @@ Item {
     property var operation: null
     property var sequence: null      // the Apply in flight or last finished
     property var readStep: null      // {key, read (provenance)} while Read runs
-    readonly property bool applying: Cal.busy(sequence) || readStep !== null
+    readonly property bool applying: ImuCalibration.busy(sequence) || readStep !== null
     readonly property string readReason: applying ? qsTr("Wait for the current operation")
-                                                  : Cal.readBlock(sensor, blockOf(Cal.ACTION_READ))
+                                                  : ImuCalibration.readBlock(sensor, blockOf(ImuCalibration.actionRead))
     readonly property string applyReason: {
         if (applying) return qsTr("Wait for the current operation")
         if (!imported) return qsTr("Import a file first")
-        var write = blockOf(Cal.ACTION_WRITE, Cal.encodeBlob(imported.cal))
+        var write = blockOf(ImuCalibration.actionWrite, ImuCalibration.encodeBlob(imported.cal))
         if (write) return write
-        return blockOf(Cal.ACTION_APPLY)
+        return blockOf(ImuCalibration.actionApply)
     }
 
     // ---- Per-instance memory (survives reloads and reconnects) -------------
@@ -105,15 +105,15 @@ Item {
         if (!storeKey) return
         interrupt()
         loadedKey = storeKey
-        var saved = Cal.recall(storeKey)
+        var saved = ImuCalibration.recall(storeKey)
         lastRead = saved.lastRead || null
         imported = saved.imported || null
         operation = saved.operation || null
         importError = ""
     }
-    function keep(field, value) { if (loadedKey) Cal.remember(loadedKey, field, value) }
+    function keep(field, value) { if (loadedKey) ImuCalibration.remember(loadedKey, field, value) }
     function interrupt() {
-        if (!Cal.busy(sequence) && readStep === null) return
+        if (!ImuCalibration.busy(sequence) && readStep === null) return
         keep("operation", {title: operation ? operation.title : qsTr("Operation"), state: "uncertain",
                            text: qsTr("Interrupted: the panel closed while a step was running. It may have run; nothing further was sent."),
                            steps: operation ? operation.steps : []})
@@ -129,7 +129,7 @@ Item {
         title: qsTr("Import an IMU calibration file")
         fileMode: FileDialog.OpenFile
         modality: Qt.NonModal
-        nameFilters: [qsTr("IMU calibration (*%1 *.json)").arg(Cal.FILE_SUFFIX), qsTr("All files (*)")]
+        nameFilters: [qsTr("IMU calibration (*%1 *.json)").arg(ImuCalibration.fileSuffix), qsTr("All files (*)")]
         onAccepted: panel.importFile(selectedFile.toString())
     }
     function openImport() { importDialog.open() }
@@ -138,7 +138,7 @@ Item {
     function importFile(url) {
         var file = backend.readTextFile(url)
         if (!file.ok) { rejectImport(fileName(url), file.error); return }
-        var parsed = Cal.parseFile(file.text, target)
+        var parsed = ImuCalibration.parseFile(file.text, target)
         if (!parsed.ok) { rejectImport(fileName(file.path), parsed.error); return }
         imported = {fileName: fileName(file.path), path: file.path, cal: parsed.cal, source: parsed.source, warnings: parsed.warnings}
         importError = ""
@@ -156,9 +156,9 @@ Item {
     // ---- Read and Export --------------------------------------------------
     function read() {
         if (readReason) return
-        var key = actionKeys[Cal.ACTION_READ]
+        var key = actionKeys[ImuCalibration.actionRead]
         // Provenance as it is now: the levels that allowed the read.
-        var provenance = {type: target.type, createdUtc: Cal.utcText(new Date()), deviceId: target.deviceId,
+        var provenance = {type: target.type, createdUtc: ImuCalibration.nowUtcText(), deviceId: target.deviceId,
                           deviceName: target.deviceName, instance: target.instance,
                           firmware: backend.info.firmware || "", gui: ("drivelink-gui " + (Qt.application.version || "")).trim(),
                           levels: sensor.levels, actualMode: sensor.mode}
@@ -174,7 +174,7 @@ Item {
     }
     function finishRead() {
         if (!readStep || sending) return
-        var o = Cal.stepOutcome(readStep.key, backend.actionResults, backend.actionRunning, backend.linked)
+        var o = ImuCalibration.stepOutcome(readStep.key, backend.actionResults, backend.actionRunning, backend.linked)
         if (o.state === "running") return
         var step = readStep
         readStep = null
@@ -182,7 +182,7 @@ Item {
             setOperation({title: qsTr("Read from IMU"), state: o.state === "rebooted" ? "uncertain" : o.state, text: o.text, steps: []})
             return
         }
-        var decoded = Cal.decodeBlob(o.blobHex)
+        var decoded = ImuCalibration.decodeBlob(o.blobHex)
         if (!decoded.ok) {
             setOperation({title: qsTr("Read from IMU"), state: "refused", text: qsTr("The device returned an unreadable profile: %1").arg(decoded.error), steps: []})
             return
@@ -199,19 +199,19 @@ Item {
         fileMode: FileDialog.SaveFile
         modality: Qt.NonModal
         defaultSuffix: "json"
-        nameFilters: [qsTr("IMU calibration (*%1)").arg(Cal.FILE_SUFFIX), qsTr("All files (*)")]
+        nameFilters: [qsTr("IMU calibration (*%1)").arg(ImuCalibration.fileSuffix), qsTr("All files (*)")]
         onAccepted: panel.exportFile(selectedFile.toString())
     }
     property string exportNote: ""
     function openExport() {
         if (!lastRead) return
         var folder = exportDialog.currentFolder.toString() || StandardPaths.writableLocation(StandardPaths.DocumentsLocation).toString()
-        exportDialog.selectedFile = folder.replace(/\/$/, "") + "/" + Cal.suggestedName(lastRead.read)
+        exportDialog.selectedFile = folder.replace(/\/$/, "") + "/" + ImuCalibration.suggestedName(lastRead.read)
         exportDialog.open()
     }
     function exportFile(url) {
         if (!lastRead) return
-        var written = backend.writeTextFile(url, Cal.buildFile(lastRead.cal, lastRead.read, exportNote))
+        var written = backend.writeTextFile(url, ImuCalibration.buildFile(lastRead.cal, lastRead.read, exportNote))
         setOperation(written.ok
             ? {title: qsTr("Export"), state: "ok", text: qsTr("Saved %1 on this PC").arg(fileName(written.path)), steps: []}
             : {title: qsTr("Export"), state: "refused", text: written.error, steps: []})
@@ -229,7 +229,7 @@ Item {
         sending = true
         try {
             backend.runAction(key, [], blob)
-            return Cal.sentOutcome(key, backend.actionResults, backend.actionRunning)
+            return ImuCalibration.sentOutcome(key, backend.actionResults, backend.actionRunning)
         } finally {
             sending = false
         }
@@ -237,33 +237,33 @@ Item {
     function confirmApply() {
         applyDialog.close()
         if (applyReason || !imported || sending) return
-        var blob = Cal.encodeBlob(imported.cal)
-        var seq = Cal.newApply(nodeKey, actionKeys[Cal.ACTION_WRITE], actionKeys[Cal.ACTION_APPLY], blob, imported.fileName)
+        var blob = ImuCalibration.encodeBlob(imported.cal)
+        var seq = ImuCalibration.newApply(nodeKey, actionKeys[ImuCalibration.actionWrite], actionKeys[ImuCalibration.actionApply], blob, imported.fileName)
         sequence = seq
-        sequence = Cal.markSent(seq, send(seq.writeKey, blob))
+        sequence = ImuCalibration.markSent(seq, send(seq.writeKey, blob))
         showSequence()
     }
     function advanceSequence() {
         if (!sequence || sending) return
-        var step = Cal.advance(sequence, {results: backend.actionResults, running: backend.actionRunning,
+        var step = ImuCalibration.advance(sequence, {results: backend.actionResults, running: backend.actionRunning,
                                           linked: backend.ready && backend.linked, nodeKey: nodeKey,
                                           sensor: sensor, now: Date.now()})
         var seq = step.seq
         if (step.send === "apply") {
             sequence = seq
-            seq = Cal.markSent(seq, send(seq.applyKey, ""))
+            seq = ImuCalibration.markSent(seq, send(seq.applyKey, ""))
         }
         if (JSON.stringify(seq) !== JSON.stringify(sequence) || step.send) { sequence = seq; showSequence() }
     }
     function showSequence() {
         var s = sequence
-        var state = s.phase === "applied" ? "ok" : Cal.busy(s) ? "running"
+        var state = s.phase === "applied" ? "ok" : ImuCalibration.busy(s) ? "running"
                   : s.phase === "failed" ? "refused" : s.phase === "noSample" ? "info" : "uncertain"
         var op = {title: qsTr("Apply %1").arg(s.label), state: state, text: s.note,
                   steps: s.steps.map(function(t) { return {title: t.title, state: t.state, text: t.text} })}
         // The memory keeps only finished sequences: a reloaded panel never
         // resumes one (nothing is ever re-sent).
-        if (Cal.busy(s)) operation = op; else setOperation(op)
+        if (ImuCalibration.busy(s)) operation = op; else setOperation(op)
     }
 
     // Every backend change can end a step; the timer catches "no new sample".
@@ -275,7 +275,7 @@ Item {
     }
     Timer {
         interval: 250; repeat: true
-        running: Cal.busy(panel.sequence) || panel.sequence !== null && panel.sequence.phase === "noSample"
+        running: ImuCalibration.busy(panel.sequence) || panel.sequence !== null && panel.sequence.phase === "noSample"
         onTriggered: panel.advanceSequence()
     }
 

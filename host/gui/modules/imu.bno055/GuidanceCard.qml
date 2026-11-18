@@ -1,7 +1,7 @@
 import QtQuick
 import DriveLink.Style
 import DriveLink.Shell
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // Calibration guidance: what each sensor needs, with a Calibrated tag once
 // its level is 3.
@@ -11,7 +11,7 @@ Card {
 
     property var panel
 
-    readonly property var rows: Cal.guidance(panel.sensor)
+    readonly property var rows: ImuCalibration.guidance(panel.sensor)
 
     title: qsTr("Calibration guidance")
 

@@ -1,6 +1,6 @@
 import QtQuick
 import DriveLink.Style
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // The four calibration levels across the panel (System, Gyroscope,
 // Accelerometer, Magnetometer), from the live signals.
@@ -15,14 +15,14 @@ Row {
     spacing: Theme.space16
 
     Repeater {
-        model: Cal.LEVELS
+        model: ImuCalibration.levels
         DLCalibrationLevel {
             required property string modelData
             objectName: row.objectNames[modelData]
             width: (row.width - 3 * row.spacing) / 4
-            title: Cal.LEVEL_TITLES[modelData]
+            title: ImuCalibration.levelTitles[modelData]
             level: row.panel ? row.panel.sensor.levels[modelData] : -1
-            caption: Cal.levelText(level)
+            caption: ImuCalibration.levelText(level)
         }
     }
 }

@@ -10,8 +10,9 @@ panel by the type name the device reports
 
 | File | What |
 |---|---|
-| `calibration.js` | Pure logic: the 42-byte blob, the PC file, the import review, the sensor state from the live signals, guidance, the orientation projection, the write → apply sequence, the per-instance memory. Tested by `tests/tst_imu_calibration.qml` |
-| `CalibrationPanel.qml` | State and every device call; its header is the cards' contract |
+| `calibration.hpp/.cpp` | Typed C++ logic (Qt Core): the 42-byte blob, the PC file, the import review, the sensor state from the live signals, guidance, the orientation projection, the write → apply sequence. Tested by `gui_panel_tests` (`calibrationBlob`, `calibrationFileFormat`, `calibrationSensor`, `calibrationAxes`, `calibrationSequence`) |
+| `calibration_qml.hpp/.cpp` | The QML singleton `ImuCalibration` (`import DriveLink.Modules.ImuBno055`): converts maps at the boundary and keeps the per-instance memory (one per engine). Registered by `../register.cpp` (`calibrationQml`) |
+| `CalibrationPanel.qml` | State and every device call through the backend; its header is the cards' contract |
 | `StatusBanner`, `LevelsRow`, `OrientationCard`, `GuidanceCard`, `FileCard`, `OperationCard`, `ApplyDialog` | Drawing only |
 
 ## What it does
