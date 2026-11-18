@@ -84,7 +84,8 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   a custom panel's own file dialogs (the same rules): Esc goes to the dialog
   while it is open, DISARM stays clickable.
 - Custom panels (H2f): module-specific GUI code exists only in
-  `gui/modules/<type name>/`, loaded by the device's type name. A panel uses
+  `gui/modules/<type name>/`, loaded by the device's type name; its logic is
+  typed C++ with QtTest tests, registered through `registerModulePanels()`. A panel uses
   the generic backend surface (live rows, actions by key sent once, action
   results, bounded text files) and adds no backend, wire or safety rule. The
   IMU calibration panel sends `calibration_apply` only after

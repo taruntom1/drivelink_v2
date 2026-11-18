@@ -1,7 +1,7 @@
 import QtQuick
 import DriveLink.Style
 import DriveLink.Shell
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // Live orientation: the isometric preview with the Euler angles and the
 // quaternion beside it. Nothing here is sent anywhere.
@@ -14,7 +14,7 @@ Card {
     readonly property var sensor: panel.sensor
     readonly property string previewState: sensor.state === "live" ? "live" : sensor.state === "stale" ? "stale" : "unavailable"
     readonly property var euler: sensor.euler
-    readonly property string age: Cal.ageText(sensor.ageUs)
+    readonly property string age: ImuCalibration.ageText(sensor.ageUs)
     readonly property string footer: {
         if (previewState === "live")
             return [qsTr("Live"), panel.loopText, qsTr("sample age %1").arg(age)].filter(function(t) { return t.length > 0 }).join(" · ")
@@ -24,7 +24,7 @@ Card {
     readonly property string previewCaption: {
         if (previewState === "stale") return qsTr("Last pose · live updates unavailable")
         if (previewState !== "live" || euler === null) return ""
-        return qsTr("Sensor axes · roll %1 · pitch %2 · yaw %3").arg(Cal.degText(euler.roll)).arg(Cal.degText(euler.pitch)).arg(Cal.degText(euler.yaw))
+        return qsTr("Sensor axes · roll %1 · pitch %2 · yaw %3").arg(ImuCalibration.degText(euler.roll)).arg(ImuCalibration.degText(euler.pitch)).arg(ImuCalibration.degText(euler.yaw))
     }
 
     title: qsTr("Live orientation")
@@ -38,7 +38,7 @@ Card {
             objectName: "orientationPreview"
             width: Math.min(400, Math.max(260, parent.width * 0.5))
             height: parent.height
-            axes: Cal.axes(card.sensor.quat)
+            axes: ImuCalibration.axes(card.sensor.quat)
             state: card.previewState
             caption: card.previewCaption
         }
@@ -62,7 +62,7 @@ Card {
                     Text {
                         objectName: parent.modelData.key + "Value"
                         anchors.right: parent.right
-                        text: Cal.degText(card.euler ? card.euler[parent.modelData.key] : null)
+                        text: ImuCalibration.degText(card.euler ? card.euler[parent.modelData.key] : null)
                         font: Theme.fontMonoDefault
                         color: card.previewState === "live" ? Theme.textPrimary : Theme.textSecondary
                     }
@@ -83,7 +83,7 @@ Card {
                     Text {
                         required property string modelData
                         objectName: "quat_" + modelData
-                        text: Cal.quatText(card.sensor.quat ? card.sensor.quat[modelData] : null)
+                        text: ImuCalibration.quatText(card.sensor.quat ? card.sensor.quat[modelData] : null)
                         font: Theme.fontMonoDefault
                         color: card.previewState === "live" ? Theme.textPrimary : Theme.textSecondary
                     }

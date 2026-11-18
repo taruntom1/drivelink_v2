@@ -3,6 +3,7 @@
 // finding QML items by objectName, and an isolated vdev with a scenario
 // control file.
 #include "connection.hpp"
+#include "register.hpp"
 #include <drivelink/protocol/gen/type_system.hpp>
 #include <QDir>
 #include <QElapsedTimer>
@@ -20,7 +21,7 @@ void qml_register_types_DriveLink_Shell();
 
 namespace drivelink::gui::test {
 inline void registerShellTypes() {
-    static const bool registered=(qml_register_types_DriveLink_Shell(),true);
+    static const bool registered=(qml_register_types_DriveLink_Shell(),drivelink::gui::registerModulePanels(),true);
     (void)registered;
 }
 namespace defs=drivelink::protocol::defs;

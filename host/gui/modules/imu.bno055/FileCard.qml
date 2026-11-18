@@ -1,7 +1,7 @@
 import QtQuick
 import DriveLink.Style
 import DriveLink.Shell
-import "calibration.js" as Cal
+import DriveLink.Modules.ImuBno055
 
 // Calibration on this PC: the file loaded locally, the last read, and the
 // four calibration buttons. Every device call is the panel's; this card only
@@ -20,7 +20,7 @@ Card {
 
     function levelsText(levels) {
         if (!levels) return "—"
-        return Cal.LEVELS.map(function(n) { return levels[n] >= 0 ? levels[n] : "—" }).join("/")
+        return ImuCalibration.levels.map(function(n) { return levels[n] >= 0 ? levels[n] : "—" }).join("/")
     }
     function joined(a, b) { return [a, b].filter(function(t) { return t && t.length > 0 }).join(" · ") }
 

@@ -1,4 +1,5 @@
 #include "connection.hpp"
+#include "register.hpp"
 #include "safety_keys.hpp"
 #include "style.hpp"
 #include <QCommandLineParser>
@@ -22,6 +23,7 @@ int main(int argc,char **argv) {
     Q_INIT_RESOURCE(qmake_DriveLink_Shell);
     Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);
     qml_register_types_DriveLink_Shell();
+    drivelink::gui::registerModulePanels();
     bool render=false;
     for(int i=1;i<argc;++i) {if(qstrcmp(argv[i],"--out")==0 || qstrncmp(argv[i],"--out=",6)==0) {render=true;}}
     if(render) {

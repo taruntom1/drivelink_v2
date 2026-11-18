@@ -575,7 +575,10 @@ gains:
 ## Custom panels (H2f)
 
 Module-specific GUI code lives only in `modules/<type name>/`, matched by the
-type name the device reports; the rest of the GUI stays generic. A panel uses
+type name the device reports; the rest of the GUI stays generic. A panel's QML
+is in the resources; its C++ (typed logic, QML types) is in the
+`drivelink_gui_modules` library and registered by `registerModulePanels()`
+(`modules/register.cpp`), which the app and the tests call once. A panel uses
 the same backend as the generic cards:
 
 - `backend.live`: the selected instance's live signals; each row has `value`
@@ -596,8 +599,7 @@ with a review, Apply (write, then apply) with a confirmation, and the
 versioned calibration file. Its rules and the file format are in
 [modules/imu.bno055/README.md](modules/imu.bno055/README.md).
 `gui_panel_tests` (ctest `gui-panels`) covers the generic surface and the
-panel in the shell on vdev's `imu.mock`; `tst_imu_calibration.qml` the pure
-logic. `benchCalibration` (skipped unless `DRIVELINK_GUI_BENCH_ENDPOINT` and
+panel in the shell on vdev's `imu.mock`, and the panel's C++ logic. `benchCalibration` (skipped unless `DRIVELINK_GUI_BENCH_ENDPOINT` and
 `DRIVELINK_GUI_BENCH_IMU`, type:instance, are set) waits up to
 `DRIVELINK_GUI_BENCH_CAL_WAIT` seconds (300) for 3/3/3/3, then reads,
 exports, imports and applies through the panel and checks the staged

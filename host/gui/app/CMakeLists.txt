@@ -6,7 +6,7 @@ qt_add_qml_module(drivelink_gui_shell URI DriveLink.Shell VERSION 1.0 NO_PLUGIN
   # PlotItem draws Monitor's and Tune's plots (registered by qml_register_types_DriveLink_Shell).
   SOURCES plot_item.cpp plot_item.hpp)
 target_include_directories(drivelink_gui_shell PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(drivelink_gui_shell PUBLIC drivelink_gui_style drivelink_gui_backend Qt6::Qml Qt6::Quick)
+target_link_libraries(drivelink_gui_shell PUBLIC drivelink_gui_style drivelink_gui_backend drivelink_gui_modules Qt6::Qml Qt6::Quick)
 qt_add_executable(drivelink-gui main.cpp)
 # Diagnostics and screenshot failures also need stderr on Windows.
 set_target_properties(drivelink-gui PROPERTIES WIN32_EXECUTABLE FALSE)
