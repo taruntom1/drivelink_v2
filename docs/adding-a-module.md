@@ -26,6 +26,24 @@ where they differ.
       - A group that no value name selects is always open.
       Without a tune-flagged enum, every group is open. A controller appears
       on the page only while it runs in a loop and has a `testgen` f32 input.
+- [ ] For plant identification on the Tune page (H2e-3; a step on an
+      open-loop input, a first-order-plus-dead-time fit and suggested starting
+      gains), follow these names. They are conventions, not wire data:
+      - A gain group is a PID when it has `<prefix>.kp` and `<prefix>.ki`
+        (optionally `<prefix>.kd`), in the parallel form
+        u = kp·e + ki·∫e dt + kd·de/dt. Suggestions go to `kp` and `ki`
+        (SIMC), and `kd` gets 0. Other members such as `d_cutoff` stay as they
+        are.
+      - A response is a signal of the instance with a unit whose name the
+        group's prefix starts (`velocity` for `vel.*`). Every such signal is
+        captured; the one that settles with the smallest fit error is shown
+        first.
+      - The step input is a `testgen` input whose range is finite and includes
+        0, so it returns to 0 afterwards. The first one without a unit is the
+        default (`duty_sp`).
+      - The tune-flagged enum value named `open_loop` is held during the step
+        and the previous value is written back afterwards. The operator can
+        pick another value or leave the mode unchanged.
 - [ ] Add the type's diag codes to `protocol/defs/diag_codes.yaml`. Code 1 is
       its `InitFailed`. Set `blocks_arm` / `disarms` on the faults that need
       them, and use `kind: latched` for recoverable conditions.

@@ -147,3 +147,59 @@ bounded by the sample cap); the per-row "current" scan (200 entries at most).
 - **Bench dry run.** `benchTune` with `DRIVELINK_GUI_BENCH_GAIN` on the sample
   vdev passed (row in [hardware-log.md](hardware-log.md)). Real motor deferred
   (the H2e-1/H2e-2 row in the status file).
+
+## H2e-3 Plant identification
+
+### User decisions (2026-11-18)
+
+| Topic | Decision |
+|---|---|
+| Mode | The step switches the controller's tune-flagged mode to `open_loop` and writes the previous value back afterwards (whatever ends the step), not the user. |
+| Mapping | Naming conventions, no wire change: `<prefix>.kp/.ki/.kd` PID groups, responses named after the prefix, the `open_loop` value, a commandable unitless step input ([adding-a-module.md](../../docs/adding-a-module.md)). |
+| Gains | SIMC PI with Robust / Balanced / Fast (τc 3L / L / L/2, at least four loop periods); kd suggested 0. |
+| Duty from | A pre-level. Built as one square period of the test generator (first half "from", second half "to"), not a manual command, so no new command source and the hold rule unchanged (approved with the plan). |
+| Models | Plan, backend, tests and review fixes on Opus 5.5 (high); the QML cards, the CheckItem Warning state and the screenshot option on a Sonnet 5.5 subagent (high) from a written contract, reviewed by the session; independent review on Opus (high). |
+
+### Scope
+
+- **libdrivelink.** `fitFopdt` (step found in the input; levels from 20 % windows; two-point start, grid over L, golden section on log T, K by least squares; noise-aware `settled`, `steady_start`, error beyond the noise; SNR on the standard error of the two levels), `fopdtValue`, `fitQuality`, `simcPi`.
+- **GUI.** `backend/identify_model.*` (conventions, signal, capture, fits, suggestions), `backend/identify_view.*` (`connection.tune.identify`, the fit on a worker), the run path in `connection_tune.cpp` (mode read from the device, switch, write-back after the signal stops with the hold kept, waits out local blocks), Tune's locks (`TuneView::setIdentifying`, `busy()`), config actions blocked meanwhile, `app/IdentifyCards.qml`, the tabs, `DLCheckItem` Warning, `--identify` and the `tune-identify` scenario.
+
+### Internal choices
+
+- The step is always a square period: from 0 too, because a capture armed just before START may hold no samples before the trigger, and the first half is the baseline.
+- The fit window ends where the input leaves "to": capture times count samples, so the signal's nominal length is not a cut on irregular ticks.
+- The confirmation is cleared by a DISARM (a tick given while disarmed carries into the next ARM).
+- Results stay in memory for their controller, not in session files (format v1 unchanged).
+- The default response is the settled one with the smallest error; suggestions need an open-loop step.
+- A change line back at its starting value is dropped (gains too).
+
+### Review
+
+Independent Opus review at high effort (identification starts a signal that moves a motor and writes the mode). Findings and fixes:
+
+| Finding | Fix |
+|---|---|
+| Gains could be suggested from a closed-loop step (velocity_sp with the mode left at velocity) and applied | Suggestions need an open-loop step (`open_loop` held or already set; no tune enum and a unitless input) |
+| The write-back gave up on a local block (a rename running), and during a disarm-cut capture Save could persist `open_loop` | The write-back waits and retries on the timer; SAVE, REVERT, reboots, rename and OTA are blocked until it ends |
+| The write-back waited for the whole capture | It starts when the signal has stopped |
+| The hold ended before the write-back (the Command card live in open loop) | The hold lasts until the write-back ends; a fresh 0 frame at the signal's end |
+| Disconnect during identification said nothing; the tabs could hide Stop; a re-ARM before START; f32 compare; a bounds check; a moving pre-level; a device change kept the result; a "velocity to velocity" change line | Toast on close; tabs locked while active; ARM epoch checked before the start chain; float compare; bounds check; `steady_start`; result cleared; the line dropped |
+
+A focused re-check of the fixes confirmed the hold balance, that identification always ends, and that no mode write can land while the signal may run. It found:
+
+| Finding | Fix |
+|---|---|
+| The Firmware card's update, Confirm and Roll back ignored the identification block | The block is in `firmwareActionBlocked()`, so the update and the card's actions wait too (test) |
+| Closing after the write-back had finished, while the capture tail still ran, said the mode might not be written back | No toast once the write-back was queued and has ended |
+| A dropped Tune change line removed the param from the changed set while a Layout line still named it | The param stays changed while another line names it |
+
+Accepted, documented: K is per unit of the commanded input (a controller duty limit below "to" lowers it). The ARM epoch is checked before CONFIG, not again before START: a DISARM followed by a new ARM within the CONFIG round trips (milliseconds) is not caught; a DISARM alone still ends the run, and the device refuses START while disarmed. A refused mode write (nothing runs) has no vdev test, since the mock accepts every mode value.
+
+Found while building: on desktop vdev the fit took the return to 0 for the step (sample time lags device time), the aliased velocity failed the noise tests, and a mode change just before Run could be read stale from the snapshot (now read from the device; a start waits for Tune writes).
+
+### Results
+
+- **vdev.** `identifyOperations` (mode switched and written back, input back at 0, K ≈ 10 on the mock, Apply, a pre-level, Stop and disarm mid-step, open_loop already set, Save, Rename and the firmware update blocked), `identifyLogic`, `identifyView`; `benchIdentify` dry run on the sample vdev; scenario `tune-identify` at both sizes and themes.
+- **Gate.** `python tools/validate.py full` passed (gen, native, host-win, host-linux, fw, fw-nolog, fw-hil-app). A first run had one host-win `motor_smoke` stall assertion fail (unrelated to this step); it did not repeat.
+- **Deferred.** `benchIdentify` with a real motor (row in the status file).

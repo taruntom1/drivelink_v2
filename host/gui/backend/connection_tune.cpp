@@ -21,6 +21,15 @@
 // release as a given-up run). Auto re-runs start through startTuneRun like
 // Run, only under the ARM of the user's last Run (m_armEpoch) and only while
 // Tune is shown.
+//
+// H2e-3 (user decisions 2026-11-18): plant identification runs one open-loop
+// step through the same path. The controller is held at 0 from the start; if
+// the chosen mode value differs it is written first (a refused write runs
+// nothing). When the step ends however it ends (completed, Stop, disarm, a
+// failure) and its signal has stopped on the device (the release), the hold
+// ends with a fresh frame and then the previous mode is written back (another
+// live write, at 0). Boot and close write nothing back (a reboot restores the
+// saved mode; a lost link says the mode may still be set).
 #include "connection_internal.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
 #include <QFileInfo>
@@ -39,8 +48,9 @@ bool hasFlag(const ItemDescriptor &d,defs::ItemFlag f) {return (d.flags&uint16_t
 void LocalConnection::setupTune() {
     m_tuneTimer.setInterval(100);
     connect(&m_tuneTimer,&QTimer::timeout,this,[this] {
-        if(!m_tuneRun && !m_tuneRelease) {m_tuneTimer.stop();return;}
+        if(!m_tuneRun && !m_tuneRelease && !m_modeRestore) {m_tuneTimer.stop();return;}
         pollTune();pollTuneRelease();
+        if(m_modeRestore && !m_tuneRelease) {restoreMode();}
     });
     m_tuneRefresh.setSingleShot(true);m_tuneRefresh.setInterval(300);
     connect(&m_tuneRefresh,&QTimer::timeout,this,[this] {refreshConfig();});
@@ -56,6 +66,34 @@ void LocalConnection::setupTune() {
     hooks.armEpoch=[this]()->uint64_t {return m_ownArm && armState()==1?m_armEpoch:0;};
     hooks.autoBlocked=[this] {return m_page==QLatin1String("tune")?QString():tr("Tune is not shown");};
     m_tune.setHooks(std::move(hooks));
+    IdentifyView::Hooks identify;
+    identify.runBlocked=[this]()->QString {
+        if(m_tuneRun) {return tr("A run is in progress");}
+        if(m_modeRestore) {return tr("The last step's mode is being written back");}
+        if(m_tune.writesPending()) {return tr("Wait for the gain and mode writes to finish");}
+        return tuneBlocked();
+    };
+    identify.start=[this] {startIdentify();};
+    identify.stop=[this] {stopTuneRun();};
+    identify.armEpoch=[this]()->uint64_t {return m_ownArm && armState()==1?m_armEpoch:0;};
+    identify.apply=[this](const ResolvedGains &set,const QString &note) {return m_tune.applyGains(set,note);};
+    identify.applyBlocked=[this] {return m_tune.applyBlocked();};
+    m_tune.identifyView().setHooks(std::move(identify));
+}
+
+void LocalConnection::runPhase(TuneView::Phase phase,const QString &text,double progress) {
+    if(m_tuneRun && m_tuneRun->identify) {
+        using P=IdentifyView::Phase;
+        const P p=phase==TuneView::Phase::Starting?P::Starting:phase==TuneView::Phase::Running?P::Running:
+                  phase==TuneView::Phase::Capturing?P::Capturing:phase==TuneView::Phase::Reading?P::Reading:P::Idle;
+        m_tune.identifyView().setPhase(p,text,progress);
+        return;
+    }
+    m_tune.setPhase(phase,text,progress);
+}
+QString LocalConnection::runLabel() const {
+    if(m_tuneRun && m_tuneRun->identify) {return tr("The step");}
+    return tr("Run %1").arg(m_tune.run()["next"].toInt());
 }
 
 QString LocalConnection::tuneBlocked() const {
@@ -86,7 +124,10 @@ void LocalConnection::syncTune() {
 }
 
 void LocalConnection::tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString)> done) {
-    auto fail=[&](const QString &why) {done(why);};
+    tuneWriteEx(std::move(refs),std::move(bits),[done=std::move(done)](QString error,bool) {done(error);});
+}
+void LocalConnection::tuneWriteEx(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString,bool)> done) {
+    auto fail=[&](const QString &why) {done(why,false);};
     if(refs.empty() || refs.size()!=bits.size() || !m_snapshot) {return fail(tr("Not connected"));}
     QString blocked=commonBlock();
     if(blocked.isEmpty() && m_expectReboot) {blocked=tr("The device is rebooting");}
@@ -121,7 +162,8 @@ void LocalConnection::tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits
             if(!result) {
                 const auto &e=result.error();
                 if(e.outcome_unknown) {self->refreshConfig();}
-                done(e.outcome_unknown?tr("No reply in time; the device may have applied it"):layoutRefusal(*snapshot,e,refs.front(),bits.front()));
+                done(e.outcome_unknown?tr("No reply in time; the device may have applied it"):layoutRefusal(*snapshot,e,refs.front(),bits.front()),
+                     e.outcome_unknown);
                 return;
             }
             if(sameBoot) {
@@ -139,19 +181,30 @@ void LocalConnection::tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits
                     const auto at=mine.line.isEmpty()?-1:lines.indexOf(mine.line);
                     if(at>=0) {before=mine.before;lines.removeAt(at);}
                     else if(const auto it=entry->params.find(refs[i].item);it!=entry->params.end()) {before=formatValue(*item,valueBits(it->second));}
-                    mine={tr("%1: %2 to %3").arg(subject,before,formatValue(*item,applied)),before};
+                    const auto after=formatValue(*item,applied);
+                    if(at>=0 && before==after) {
+                        // Back where this line began (a mode written back, a gain undone).
+                        // The param stays changed while another line (Layout's) names it.
+                        mine={};
+                        const auto prefix=subject+": ";
+                        if(std::none_of(lines.begin(),lines.end(),[&](const QString &l) {return l.startsWith(prefix);})) {
+                            self->m_changedParams[id].remove(key);
+                        }
+                        continue;
+                    }
+                    mine={tr("%1: %2 to %3").arg(subject,before,after),before};
                     lines<<mine.line;
                     self->m_changedParams[id].insert(key);
                 }
             }
             // A drag writes every 50 ms: the configuration is read back once it pauses.
             self->m_tuneRefresh.start();
-            done({});
+            done({},false);
             emit self->changed();
         });
     } catch(const Error &e) {
         if(commanded) {m_command.endWrite(instance.first,instance.second);}
-        done(errorText(e));
+        done(errorText(e),false);
     }
 }
 
@@ -172,9 +225,96 @@ void LocalConnection::startTuneRun() {
     if(run.holding) {discardCommands(key.first,key.second);m_command.beginWrite(key.first,key.second);}
     m_tuneRun=std::move(run);
     m_tune.setPhase(TuneView::Phase::Starting,tr("Starting run %1").arg(m_tune.run()["next"].toInt()));
-    const auto loop=setup->controller.loop;
-    const auto capture=setup->capture;
-    const auto config=testgenConfig(setup->signal,loop);
+    startTuneChain();
+}
+
+void LocalConnection::startIdentify() {
+    if(m_tuneRun || m_modeRestore) {return;}
+    QString problem=tuneBlocked();
+    auto &view=m_tune.identifyView();
+    const auto setup=problem.isEmpty()?view.setup(&problem):std::nullopt;
+    if(!setup) {emit notification(tr("Plant identification: %1").arg(problem),2);return;}
+    if(m_tune.phase()!=TuneView::Phase::Idle) {emit notification(tr("Plant identification: a run is in progress"),2);return;}
+    auto c=m_context;auto session=c?c->getSession():nullptr;
+    if(!session || !m_snapshot) {return;}
+    const auto key=setup->run.controller.key;
+    TuneRun run;
+    run.setup=setup->run;run.identify=*setup;run.armEpoch=m_armEpoch;
+    run.generation=m_snapshot->generation;run.loop=setup->run.controller.loop;run.serial=++m_tuneSerial;
+    run.elapsed.start();
+    // The controller stays at 0 from now until the mode is written back.
+    run.holding=m_command.commands(key.first,key.second);
+    if(run.holding) {discardCommands(key.first,key.second);m_command.beginWrite(key.first,key.second);}
+    m_tuneRun=std::move(run);
+    m_tune.setIdentifying(true);
+    const auto &mode=setup->mode;
+    if(!mode) {
+        view.setPhase(IdentifyView::Phase::Starting,tr("Starting the step"));
+        startTuneChain();
+        return;
+    }
+    // The value to write back is read from the device, not the snapshot: a
+    // mode write just before may not have been read back yet. The service
+    // executor runs requests in order, so the read follows any write sent.
+    view.setPhase(IdentifyView::Phase::Switching,tr("Reading %1").arg(mode->label.section(QLatin1Char(':'),0,0)));
+    const auto serial=m_tuneRun->serial;
+    const Ref ref{key.first,key.second,mode->item};
+    const QPointer<LocalConnection> self(this);
+    try {
+        Client(*session).async([ref](Client &client)->std::optional<uint32_t> {
+            const std::array<Ref,1> refs{{ref}};
+            const auto read=client.get(refs);
+            return read.values.empty()?std::nullopt:std::optional<uint32_t>(read.values.front());
+        },[self,c,serial](std::expected<std::optional<uint32_t>,Error> result) {
+            if(!self || !self->current(c) || !self->m_tuneRun || self->m_tuneRun->serial!=serial) {return;}
+            if(!result || !*result) {
+                self->endTuneRun(tr("The mode could not be read: %1. Nothing ran.").arg(result?tr("no value"):errorText(result.error())));
+                return;
+            }
+            self->m_tuneRun->identify->previous=**result;
+            self->identifySwitchMode();
+        });
+    } catch(const Error &e) {endTuneRun(tr("The mode could not be read: %1. Nothing ran.").arg(errorText(e)));}
+}
+
+void LocalConnection::identifySwitchMode() {
+    if(!m_tuneRun || !m_tuneRun->identify || !m_tuneRun->identify->mode) {return;}
+    if(m_tuneRun->stopRequested) {endTuneRun(tr("The step was stopped before it started"));return;}
+    const auto &setup=*m_tuneRun->identify;
+    const auto &mode=*setup.mode;
+    auto &view=m_tune.identifyView();
+    if(setup.previous && *setup.previous==mode.value) {
+        view.setPhase(IdentifyView::Phase::Starting,tr("Starting the step"));
+        startTuneChain();
+        return;
+    }
+    view.setPhase(IdentifyView::Phase::Switching,tr("Setting %1").arg(mode.label));
+    const auto serial=m_tuneRun->serial;
+    const auto key=setup.run.controller.key;
+    const Ref ref{key.first,key.second,mode.item};
+    tuneWriteEx({ref},{mode.value},[this,serial](QString error,bool uncertain) {
+        if(!m_tuneRun || m_tuneRun->serial!=serial) {return;}
+        // An unanswered write may have landed: the previous value goes back.
+        if(error.isEmpty() || uncertain) {m_tuneRun->modeWritten=true;}
+        if(!error.isEmpty()) {endTuneRun(tr("The mode for the step was not set: %1. Nothing ran.").arg(error));return;}
+        if(m_tuneRun->stopRequested || m_tuneRun->cancelRequested) {endTuneRun(tr("The step was stopped before it started"));return;}
+        m_tune.identifyView().setPhase(IdentifyView::Phase::Starting,tr("Starting the step"));
+        startTuneChain();
+    });
+}
+
+void LocalConnection::startTuneChain() {
+    auto c=m_context;auto session=c?c->getSession():nullptr;
+    if(!m_tuneRun) {return;}
+    if(!session || !m_snapshot) {endTuneRun(tr("Not connected"));return;}
+    // The step confirmed under one ARM never starts under another.
+    if(m_tuneRun->identify && (!m_ownArm || armState()!=1 || m_armEpoch!=m_tuneRun->armEpoch)) {
+        endTuneRun(tr("The ARM changed before the step started; nothing ran"));return;
+    }
+    const auto &setup=m_tuneRun->setup;
+    const auto loop=setup.controller.loop;
+    const auto capture=setup.capture;
+    const auto config=testgenConfig(setup.signal,loop);
     const QPointer<LocalConnection> self(this);
     const auto serial=m_tuneRun->serial;
     // One step at a time; a failure after a CONFIG that may have been accepted
@@ -221,7 +361,7 @@ void LocalConnection::startTuneRun() {
                 return;
             }
             self->m_tuneRun->run=result->started->run;
-            self->m_tune.setPhase(TuneView::Phase::Running,tr("Run %1 running").arg(self->m_tune.run()["next"].toInt()),0);
+            self->runPhase(TuneView::Phase::Running,tr("%1 running").arg(self->runLabel()),0);
             self->m_tuneTimer.start();
             if(self->m_tuneRun->cancelRequested) {self->cancelTuneRun();return;}
             if(self->m_tuneRun->stopRequested) {self->stopTuneRun();}
@@ -232,7 +372,7 @@ void LocalConnection::startTuneRun() {
 
 void LocalConnection::stopTuneRun() {
     if(!m_tuneRun) {return;}
-    m_tune.setStopping(true);
+    if(m_tuneRun->identify) {m_tune.identifyView().setStopping(true);} else {m_tune.setStopping(true);}
     if(!m_tuneRun->run) {m_tuneRun->stopRequested=true;return;}
     if(m_tuneRun->signalEnded) {return;}
     auto c=m_context;auto session=c?c->getSession():nullptr;
@@ -249,7 +389,8 @@ void LocalConnection::stopTuneRun() {
 }
 
 void LocalConnection::cancelTuneRun() {
-    if(!m_tuneRun) {return;}
+    // Plant identification locks the gains: nothing cancels its step.
+    if(!m_tuneRun || m_tuneRun->identify) {return;}
     // START not answered yet: cancelled when it is (the chain must not leave
     // a signal running unseen).
     if(!m_tuneRun->run) {
@@ -271,13 +412,22 @@ void LocalConnection::tuneSignalEnded(TestgenReason reason,std::optional<uint32_
     if(run.signalEnded) {return;}
     run.signalEnded=true;
     run.end=reason==TestgenReason::Stopped?RunEnd::Stopped:reason==TestgenReason::Disarmed?RunEnd::Disarmed:RunEnd::Completed;
+    const bool identify=run.identify.has_value();
     if(run.holding) {
-        run.holding=false;
         const auto key=run.setup.controller.key;
-        m_command.endWrite(key.first,key.second);
+        if(identify) {
+            // Identification keeps the controller held until its mode is
+            // written back; a fresh frame returns the step input to 0 now.
+            m_command.zeroInstance(key.first,key.second);
+        } else {
+            run.holding=false;
+            m_command.endWrite(key.first,key.second);
+        }
     }
-    if(run.end==RunEnd::Disarmed) {emit notification(tr("The run was cut by a disarm; the capture keeps recording"),2);}
-    m_tune.setPhase(TuneView::Phase::Capturing,tr("Capture finishing"),-1);
+    if(run.end==RunEnd::Disarmed) {emit notification(tr("%1 was cut by a disarm; the capture keeps recording").arg(runLabel()),2);}
+    runPhase(TuneView::Phase::Capturing,tr("Capture finishing"),-1);
+    // The signal has stopped: the mode goes back now, not after the capture.
+    if(identify) {queueModeRestore();restoreMode();}
     pollTune();
 }
 
@@ -310,8 +460,8 @@ void LocalConnection::pollTune() {
                 self->tuneSignalEnded(TestgenReason::Stopped,std::nullopt);
             } else if(!run.signalEnded) {
                 const double total=signalSeconds(run.setup.signal)*1000;
-                self->m_tune.setPhase(TuneView::Phase::Running,tr("Run %1 · %2 s of %3 s").arg(self->m_tune.run()["next"].toInt())
-                    .arg(QString::number(t.elapsed_ms/1000.0,'f',1),QString::number(total/1000,'f',1)),total>0?std::min(1.0,t.elapsed_ms/total):-1);
+                self->runPhase(TuneView::Phase::Running,tr("%1 · %2 s of %3 s").arg(self->runLabel(),
+                    QString::number(t.elapsed_ms/1000.0,'f',1),QString::number(total/1000,'f',1)),total>0?std::min(1.0,t.elapsed_ms/total):-1);
             }
             const auto &cap=result->capture;
             if(cap.state==CaptureState::Idle || !cap.configured) {
@@ -319,7 +469,7 @@ void LocalConnection::pollTune() {
             }
             if(cap.state==CaptureState::Done && !run.data) {self->readTuneCapture();}
             else if(run.signalEnded && !run.data) {
-                self->m_tune.setPhase(TuneView::Phase::Capturing,tr("Capture %1 of %2 samples").arg(cap.recorded).arg(cap.samples),
+                self->runPhase(TuneView::Phase::Capturing,tr("Capture %1 of %2 samples").arg(cap.recorded).arg(cap.samples),
                     cap.samples?double(cap.recorded)/cap.samples:-1);
             }
             if(run.data && run.signalEnded) {self->finishTuneRun();}
@@ -332,7 +482,7 @@ void LocalConnection::readTuneCapture() {
     auto c=m_context;auto session=c?c->getSession():nullptr;
     if(!session) {return;}
     m_tuneRun->reading=true;
-    m_tune.setPhase(TuneView::Phase::Reading,tr("Reading the capture"),-1);
+    runPhase(TuneView::Phase::Reading,tr("Reading the capture"),-1);
     const auto serial=m_tuneRun->serial;
     const QPointer<LocalConnection> self(this);
     try {
@@ -342,22 +492,29 @@ void LocalConnection::readTuneCapture() {
             if(!result) {self->endTuneRun(tr("The capture could not be read: %1").arg(errorText(result.error())));return;}
             self->m_tuneRun->data=std::move(*result);
             if(self->m_tuneRun->signalEnded) {self->finishTuneRun();}
-            else {self->m_tune.setPhase(TuneView::Phase::Running,tr("Capture done; waiting for the signal to end"),-1);}
+            else {self->runPhase(TuneView::Phase::Running,tr("Capture done; waiting for the signal to end"),-1);}
         });
     } catch(const Error &e) {m_tuneRun->reading=false;endTuneRun(errorText(e));}
 }
 
 void LocalConnection::finishTuneRun() {
     if(!m_tuneRun || !m_tuneRun->data || !m_snapshot) {return;}
-    auto run=std::move(*m_tuneRun);
-    auto record=makeRun(*m_snapshot,*run.data,run.setup.capture,run.setup.signal);
-    record.end=run.end;record.endedUs=run.endedUs;
+    auto record=makeRun(*m_snapshot,*m_tuneRun->data,m_tuneRun->setup.capture,m_tuneRun->setup.signal);
+    record.end=m_tuneRun->end;record.endedUs=m_tuneRun->endedUs;
+    const auto setup=m_tuneRun->setup;
+    const auto identify=m_tuneRun->identify;
     endTuneRun({});
-    m_tune.addRun(std::move(record),run.setup);
+    if(identify) {
+        record.controller=setup.controller.key;
+        m_tune.identifyView().addResult(m_snapshot,std::move(record),*identify);
+    } else {
+        m_tune.addRun(std::move(record),setup);
+    }
 }
 
 void LocalConnection::endTuneRun(const QString &failure,TuneEnd how,int tone) {
     const bool sameBoot=how!=TuneEnd::DeviceGone && m_tuneRun && m_snapshot && m_snapshot->generation==m_tuneRun->generation;
+    std::optional<InstanceKey> identifyHold;
     if(sameBoot) {
         // Given up while the signal may still run (a timeout, a cleared or
         // unreadable capture): STOP it once (idempotent); a timeout also
@@ -378,13 +535,88 @@ void LocalConnection::endTuneRun(const QString &failure,TuneEnd how,int tone) {
         if(stop) {holdUntilStopped(m_tuneRun->quietHold);}
         if(m_tuneRun->holding) {
             const auto key=m_tuneRun->setup.controller.key;
-            m_command.endWrite(key.first,key.second);
+            if(m_tuneRun->identify) {identifyHold=key;}
+            else {m_command.endWrite(key.first,key.second);}
         }
     }
+    const bool identify=m_tuneRun && m_tuneRun->identify;
+    if(identify && sameBoot) {queueModeRestore();}
+    if(identifyHold) {
+        // The hold moves to a pending write-back; with none it ends here.
+        if(m_modeRestore) {m_modeRestore->holding=true;}
+        else {m_command.endWrite(identifyHold->first,identifyHold->second);}
+    }
     m_tuneRun.reset();
-    if(!m_tuneRelease) {m_tuneTimer.stop();}
-    m_tune.setPhase(TuneView::Phase::Idle);
+    if(!m_tuneRelease && !m_modeRestore) {m_tuneTimer.stop();}
+    if(identify) {
+        // Boot and close write nothing back (the snapshot may not show the Boot yet).
+        if(!sameBoot) {dropModeRestore();}
+        if(m_modeRestore) {restoreMode();} else {endIdentify();}
+    } else {
+        m_tune.setPhase(TuneView::Phase::Idle);
+    }
     if(!failure.isEmpty()) {emit notification(failure,tone);}
+}
+
+void LocalConnection::queueModeRestore() {
+    if(!m_tuneRun || !m_tuneRun->identify || m_tuneRun->restoreQueued || !m_snapshot) {return;}
+    const auto &setup=*m_tuneRun->identify;
+    if(!m_tuneRun->modeWritten || !setup.mode || !setup.previous) {return;}
+    m_tuneRun->restoreQueued=true;
+    const auto key=setup.run.controller.key;
+    QString text=setup.mode->label;
+    for(const auto &choice:modeChoices(*m_snapshot,key)) {
+        if(choice.item==setup.mode->item && choice.value==*setup.previous) {text=choice.label;}
+    }
+    m_modeRestore=ModeRestore{{key.first,key.second,setup.mode->item},*setup.previous,text,m_tuneRun->generation};
+}
+
+void LocalConnection::restoreMode() {
+    if(!m_modeRestore || m_modeRestore->sending) {return;}
+    if(!m_snapshot || m_snapshot->generation!=m_modeRestore->generation) {dropModeRestore();return;}
+    auto &view=m_tune.identifyView();
+    // While the capture finishes its phase shows; the write-back's otherwise.
+    const bool show=!m_tuneRun;
+    // After the signal has stopped (and the hold's fresh frame), never before.
+    if(m_tuneRelease) {
+        if(show) {view.setPhase(IdentifyView::Phase::Restoring,tr("Waiting for the signal to stop, then %1").arg(m_modeRestore->text));}
+        return;
+    }
+    // A local block (a configuration action, a reboot) is waited out, never
+    // taken as a refusal: the timer tries again.
+    QString blocked=commonBlock();
+    if(blocked.isEmpty() && m_expectReboot) {blocked=tr("The device is rebooting");}
+    if(!blocked.isEmpty()) {
+        if(show) {view.setPhase(IdentifyView::Phase::Restoring,tr("%1 waits: %2").arg(m_modeRestore->text,blocked));}
+        m_tuneTimer.start();
+        return;
+    }
+    m_modeRestore->sending=true;
+    const auto restore=*m_modeRestore;
+    if(show) {view.setPhase(IdentifyView::Phase::Restoring,tr("Writing back %1").arg(restore.text));}
+    tuneWriteEx({restore.ref},{restore.value},[this,restore](QString error,bool) {
+        if(!m_modeRestore || m_modeRestore->generation!=restore.generation) {return;}
+        const bool holding=m_modeRestore->holding;
+        m_modeRestore.reset();
+        if(holding) {m_command.endWrite(restore.ref.type,restore.ref.instance);}
+        if(!error.isEmpty()) {
+            emit notification(tr("%1 was not written back after the step: %2. Set it by hand.").arg(restore.text,error),2);
+        }
+        if(!m_tuneRun) {endIdentify();}
+    });
+}
+
+void LocalConnection::endIdentify() {
+    m_tune.identifyView().setPhase(IdentifyView::Phase::Idle);
+    m_tune.setIdentifying(false);
+}
+
+void LocalConnection::dropModeRestore() {
+    if(!m_modeRestore) {return;}
+    const auto restore=*m_modeRestore;
+    m_modeRestore.reset();
+    if(restore.holding) {m_command.endWrite(restore.ref.type,restore.ref.instance);}
+    if(!m_tuneRun) {endIdentify();}
 }
 
 void LocalConnection::holdUntilStopped(bool quiet) {
@@ -406,7 +638,7 @@ void LocalConnection::holdUntilStopped(bool quiet) {
 
 void LocalConnection::pollTuneRelease() {
     if(!m_tuneRelease || m_tuneRelease->polling) {return;}
-    if(!m_snapshot || m_snapshot->generation!=m_tuneRelease->generation) {m_tuneRelease.reset();return;}
+    if(!m_snapshot || m_snapshot->generation!=m_tuneRelease->generation) {m_tuneRelease.reset();dropModeRestore();return;}
     auto c=m_context;auto session=c?c->getSession():nullptr;
     if(!session) {return;}
     m_tuneRelease->polling=true;
@@ -424,9 +656,18 @@ void LocalConnection::pollTuneRelease() {
             if(!result && result.error().outcome_unknown) {return;}
             const bool running=result && result->state==TestgenState::Running && (!release.run || result->run==*release.run);
             if(running) {return;}
-            if(release.key) {self->m_command.endWrite(release.key->first,release.key->second);}
+            if(release.key) {
+                if(self->m_modeRestore && !self->m_modeRestore->holding) {
+                    // The write-back takes the hold over; the input returns to 0 now.
+                    self->m_command.zeroInstance(release.key->first,release.key->second);
+                    self->m_modeRestore->holding=true;
+                } else {
+                    self->m_command.endWrite(release.key->first,release.key->second);
+                }
+            }
             self->m_tuneRelease.reset();
             if(!self->m_tuneRun) {self->m_tuneTimer.stop();}
+            if(self->m_modeRestore) {self->restoreMode();}
             self->m_tune.refreshRunState();
         });
     } catch(const Error &) {m_tuneRelease->polling=false;}

@@ -117,6 +117,27 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   and the controller stays at 0 until STATUS shows the signal stopped. Opening
   a session never writes to the device; Restore matches a recorded set by
   controller type, label and gain names, never by item ids alone.
+- Tune plant identification (H2e-3, user decisions 2026-11-18): one
+  open-loop step through the Tune run path (CONFIG, ARM, START once), only
+  with this window's ARM and the operator's "can move freely" confirmation
+  (cleared by DISARM). The step input must be commandable (the hold rule), so
+  it returns to 0. The controller is held at 0 from the start. A
+  tune-flagged mode value (`open_loop` by default) is written first. The
+  value to restore is read from the device, not the snapshot; if the write is
+  refused, nothing runs. Whatever ends the step, once the signal has stopped
+  a fresh frame returns the input to 0. The previous value is then written
+  back with the controller still held; a local block delays that write but
+  never cancels it. The hold ends only after the write-back. Boot and close
+  write nothing back (close says so). A step never starts under another ARM
+  than the one it was confirmed under. Until the write-back ends:
+  - the gains, mode, Restore, Revert, Run and Auto re-run wait, as do SAVE,
+    REVERT, reboots, rename and OTA;
+  - it never grants Auto re-run's permission.
+
+  Suggested gains need an open-loop step, and only the operator's Apply
+  writes them (one live batch, a history entry). The fit runs on a worker
+  thread. Mapping is by the naming conventions in
+  `docs/adding-a-module.md`, never module names.
 - A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never

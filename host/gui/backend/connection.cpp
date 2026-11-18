@@ -241,6 +241,7 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         // The groups and the capture went with the boot: so does a run.
         if(m_tuneRun) {endTuneRun(tr("The device rebooted during the run; nothing was recorded"),TuneEnd::DeviceGone);}
         m_tuneRelease.reset(); // the reboot ended the signal; clearGroups ended the hold
+        dropModeRestore();     // and restored the saved mode
         for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
             if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
         }
@@ -748,8 +749,26 @@ void LocalConnection::finishClose(bool lost) {
     // A lost link keeps the card's inputs for the same device, like Monitor.
     if(lost) {m_command.clearGroups();} else {m_command.reset();}
     m_command.setBlocked(tr("Not connected"));
+    // A lost link during plant identification may leave its mode set (unsaved).
+    // The value it should have gone back to, e.g. "mode: velocity".
+    QString modeBack;
+    if(m_modeRestore) {modeBack=m_modeRestore->text;}
+    // A queued write-back that is gone has ended (written back, or refused with its own toast).
+    else if(m_tuneRun && m_tuneRun->identify && m_tuneRun->modeWritten && !m_tuneRun->restoreQueued && m_tuneRun->identify->mode &&
+            m_tuneRun->identify->previous && m_snapshot) {
+        const auto &id=*m_tuneRun->identify;
+        modeBack=id.mode->label;
+        for(const auto &choice:modeChoices(*m_snapshot,id.run.controller.key)) {
+            if(choice.item==id.mode->item && choice.value==*id.previous) {modeBack=choice.label;}
+        }
+    }
     if(m_tuneRun) {endTuneRun(lost?tr("The link was lost during the run; nothing was recorded"):QString(),TuneEnd::DeviceGone);}
     m_tuneRelease.reset();m_tuneTimer.stop();
+    if(!modeBack.isEmpty()) {
+        dropModeRestore();
+        emit notification(lost?tr("The link was lost before plant identification wrote back %1: check the mode after reconnecting (unsaved)").arg(modeBack)
+                               :tr("Disconnected before plant identification wrote back %1: check the mode when you connect again (unsaved)").arg(modeBack),2);
+    }
     m_tuneRefresh.stop();
     // Runs stay for the same device (H2e-2 saves them); the rest goes.
     m_tune.reset();
@@ -903,7 +922,11 @@ QString LocalConnection::commonBlock() const {
     return {};
 }
 QVariantMap LocalConnection::actionBlocked() const {
-    const auto common=commonBlock();
+    // Plant identification writes its mode back itself: no SAVE (it would
+    // keep the open-loop mode), REVERT, reboot or rename before that.
+    const QString identifying=(m_tuneRun && m_tuneRun->identify) || m_modeRestore
+        ?tr("Wait for plant identification to write the mode back"):QString();
+    const auto common=commonBlock().isEmpty()?identifying:commonBlock();
     auto pick=[&](const QString &why) {return common.isEmpty()?why:common;};
     // The firmware refuses these while armed (LockedWhileArmed).
     const QString armed=armState()==1 || m_arming?tr("Not allowed while armed; disarm first"):QString();

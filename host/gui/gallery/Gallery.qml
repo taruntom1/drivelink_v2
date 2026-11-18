@@ -180,6 +180,7 @@ Window {
                 DLCheckItem { width: 320; status: DLCheckItem.Fail; label: "No fault latched"; detail: "Acknowledge the fault" }
                 DLCheckItem { width: 320; status: DLCheckItem.Active; label: "Load descriptors, layout and status" }
                 DLCheckItem { width: 320; status: DLCheckItem.Pending; label: "Command keepalives are ready" }
+                DLCheckItem { width: 320; status: DLCheckItem.Warning; label: "Open loop: nothing limits the speed but the duty"; tag: "warning" }
             }
             Column {
                 spacing: Theme.space16

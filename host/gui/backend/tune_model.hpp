@@ -142,6 +142,15 @@ StepMetrics runMetrics(const RunRecord &);
 QString changedGains(const DeviceSnapshot &, InstanceKey, const std::map<uint16_t,double> &now,
                      const std::map<uint16_t,double> *previous);
 
+// What a run uses: the controller, the test signal, the capture and the gains
+// at its start (Tune's step runs and plant identification).
+struct RunSetup {
+    TuneController controller;
+    TestSignal signal;
+    CaptureSetup capture;
+    std::map<uint16_t,double> gains;
+};
+
 // The overlay: pinned runs, plus the newest in full and the two before it faded.
 struct OverlayEntry { size_t index=0; bool faded=false; };
 std::vector<OverlayEntry> overlay(const std::vector<RunRecord> &);

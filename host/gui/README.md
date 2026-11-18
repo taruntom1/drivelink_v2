@@ -10,8 +10,8 @@ Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 H2a-1 provides the style layer; H2a-2 adds the application, local device
 backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update,
 H2c-1/H2c-2 Layout, H2d-1/H2d-2 Monitor and its manual command, and H2e-1
-Tune runs (below). Tune's gain history, A/B compare, session files and plant
-identification follow in H2e-2 and H2e-3 ([host-steps.md](../../plans/host-steps.md)).
+to H2e-3 Tune: runs, the session (gain history, A/B compare, session files)
+and plant identification (below; [host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
 |---|---|
@@ -478,6 +478,95 @@ file and the run CSV); the state in `backend/tune_view.*`; the cancel path in
   change mid-run cancels and re-runs, Tune hidden, a new ARM); `benchTune`
   adds `DRIVELINK_GUI_BENCH_GAIN` (a tune gain: +10 % re-runs, back during a
   3 s run cancels and re-runs). Screenshot screen and scenario `tune-ab`.
+
+## Plant identification (H2e-3)
+
+The "Plant identification" tab beside "Step runs" (G5) fits a
+first-order-plus-dead-time model to one open-loop step and suggests starting
+gains:
+
+- **Where the code is.** Pure rules in `backend/identify_model.*` (the naming
+  conventions, the step and its capture, the fit of each response, the
+  suggestions). The page state is `backend/identify_view.*`
+  (`connection.tune.identify`). The run path is in
+  `backend/connection_tune.cpp`, the cards in `app/IdentifyCards.qml`. The
+  math is `drivelink/tuning.hpp` (`fitFopdt`, `simcPi`).
+- **Conventions** ([adding-a-module.md](../../docs/adding-a-module.md), user
+  decision 2026-11-18). These are names, not wire data:
+  - **PID groups.** A group with `<prefix>.kp` and `<prefix>.ki` (optionally
+    `.kd`) is a parallel PID.
+  - **Responses.** The controller's f32 signals with a unit whose name a PID
+    prefix starts (`velocity` maps to `vel.*`).
+  - **Step input.** A commandable `testgen` input, by default the first
+    without a unit.
+  - **Mode.** The tune-flagged enum value `open_loop` is held during the step.
+    The card can pick another value or leave the mode unchanged.
+- **1 · Check.** The operator confirms that the actuator can move freely. A
+  DISARM, another controller or a new connection clears it, while a tick
+  given while disarmed carries into the next ARM. The open-loop caution shows
+  as the CheckItem's new Warning state (neutral icon, "warning" tag).
+- **2 · Run the step.** The card sets the step input, the mode, "from", "to"
+  and the captured length. The signal is one square period: "from" (0
+  included) for the captured length as the baseline, then "to" for as long.
+  It runs with this window's ARM, the confirmation, and no run, write-back or
+  gain or mode write in progress. The sequence:
+  1. The controller's manual commands go to 0.
+  2. The mode is read from the device. If it differs, the open-loop value is
+     written; a refused write runs nothing.
+  3. CONFIG, ARM and START are sent once each, as for a run. START is not sent
+     if the ARM changed since the click.
+  4. When the signal has stopped, whatever ended it (completed, Stop, a
+     disarm, a failure), a fresh frame returns the input to 0 while the
+     controller stays held. This happens before the capture finishes.
+  5. The previous mode is written back. A local block (a configuration action
+     running) delays that write; it is never given up. Then the hold ends.
+     Boot and close write nothing back; a lost link or a Disconnect says the
+     mode may still be set.
+
+  Until the write-back ends:
+  - the gains, mode, Restore, Revert, Run, Auto re-run and Open wait, as do
+    Save, Revert, reboots, Rename, the firmware update and the Firmware
+    card's Confirm and Roll back (a Save would keep the open-loop mode);
+  - the tabs stay where they are.
+
+  Identification never counts as the Run that Auto re-run needs.
+- **3 · Model and suggested gains.** Every captured response is fitted on a
+  worker thread. The fit window ends where the input leaves "to", because
+  capture times count samples and the signal's nominal length is not a
+  reliable cut on irregular ticks. The response shown first is the settled
+  one with the smallest error (velocity over position's ramp). The card
+  shows:
+  - **The model.** K (response per input unit), T, L, and the fit error
+    beyond the noise with good, fair or poor.
+  - **Suggestions.** SIMC PI suggestions at Robust, Balanced or Fast:
+    `kp` and `ki`, `kd` 0, each rounded to three digits and clamped to its
+    range (marked "limited"). There are none for a closed-loop step (the
+    mode left or held at a value other than `open_loop`), an unsettled or
+    poor fit, a start level still moving, a K ≤ 0, or a response without a
+    PID group. K is per unit of the commanded input, so a duty limit below
+    "to" in the controller makes K look smaller.
+
+  Apply writes them as one live batch with a gain history entry
+  ("suggested (Balanced): K …"). "Back to runs" returns to the Step runs tab.
+  The last result stays in memory for its controller (not in session files)
+  until the controller, device or connection changes.
+- **Tests and tools.** `gui_tune_tests`:
+  - `identifyLogic` (pure): conventions, signal, capture, fits including the
+    window cut, suggestions and clamps.
+  - `identifyView` (fake hooks): checks and confirmation, gating, setup,
+    result, plot, Apply, Tune's locks.
+  - `identifyOperations` (vdev): the mode switched and written back, the
+    input back at 0, the fit, Apply, a pre-level, Stop and disarm mid-step,
+    and the mode already open-loop.
+  - `benchIdentify` (env-gated: `DRIVELINK_GUI_BENCH_ENDPOINT`,
+    `DRIVELINK_GUI_BENCH_IDENTIFY`, optional `_INPUT`, `_FROM`, `_TO`,
+    `_DURATION`, `_MIN_GAIN`, `_APPLY`).
+
+  The app's `--identify` option (and the screen `tune-identify`, vdev
+  `tcp://` only) arms, runs a step and waits for the fit;
+  `--identify-response` picks the response shown. A desktop vdev's irregular
+  ticks alias a measured velocity, so the Tune scenarios set the mock
+  encoder's velocity filter to 5 Hz.
 
 ## Theme
 

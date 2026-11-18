@@ -445,6 +445,20 @@ private:
         std::optional<CaptureData> data;
         bool quietHold=false; // a cancel: its own toast says so
         QElapsedTimer elapsed;
+        // H2e-3: plant identification's step (its mode written for it).
+        std::optional<IdentifyView::Setup> identify;
+        bool modeWritten=false; // the mode write may have landed: write the previous value back
+        bool restoreQueued=false;
+        uint64_t armEpoch=0;    // the ARM the step was started under
+    };
+    // H2e-3: the mode to write back once the step's signal has stopped.
+    struct ModeRestore {
+        Ref ref{};
+        uint32_t value=0;
+        QString text; // "mode: velocity"
+        uint64_t generation=0;
+        bool holding=false; // the controller's hold moved here from the run or its release
+        bool sending=false;
     };
     struct TuneLine {QString line,before;};
     // A run given up while its signal may still run: the controller's manual
@@ -463,13 +477,27 @@ private:
     std::optional<TuneRun> m_tuneRun;
     uint64_t m_tuneSerial=0;
     std::optional<TuneRelease> m_tuneRelease;
+    std::optional<ModeRestore> m_modeRestore;
     QTimer m_tuneTimer,m_tuneRefresh;
     // Per device id and item key: the change line a Tune write added last.
     QHash<QString,TuneLine> m_tuneLines;
     void setupTune();
     void syncTune();
     void tuneWrite(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString)> done);
+    // `uncertain`: no reply in time; the device may have applied it.
+    void tuneWriteEx(std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString,bool uncertain)> done);
     void startTuneRun();
+    // H2e-3: the identification step (the mode switched for it), the chain
+    // both share, the phase of whichever runs, and the mode written back.
+    void startIdentify();
+    void identifySwitchMode();
+    void startTuneChain();
+    void runPhase(TuneView::Phase,const QString &text={},double progress=-1);
+    QString runLabel() const;
+    void queueModeRestore();
+    void restoreMode();
+    void endIdentify();
+    void dropModeRestore();
     void stopTuneRun();
     // H2e-2: a gain changed during a run with Auto re-run on: STOP, ABORT, not kept.
     void cancelTuneRun();

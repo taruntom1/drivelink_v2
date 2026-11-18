@@ -292,7 +292,7 @@ out-of-order replies. OTA retains its identical-offset/data retry exception.
 Async cancellation never confirms or repeats REBOOT; if an upload is interrupted,
 inspect OTA status and abort explicitly when cleanup could not complete.
 
-## Tuning math (`drivelink/tuning.hpp`, H2e-1)
+## Tuning math (`drivelink/tuning.hpp`, H2e-1, H2e-3)
 
 `stepMetrics(t, response, step_time, from, to, options)` measures the response
 to one step of the target, relative to the step size so a negative step works
@@ -305,6 +305,37 @@ after the step). `end_time` drops samples after it (a stopped or cut run).
 Each metric is optional: `problem` says why one is missing (no step, too few
 samples after the step, the response never reaches 90 %, it never settles).
 NaN samples are skipped. Pure and device-free; the GUI's Tune page uses it.
+
+Plant identification (H2e-3):
+
+- `fitFopdt(t, input, response, options)` fits
+  y = y0 + K·Δu·(1 − exp(−(t − ts − L)/T)) to one step of an open-loop input.
+  - **The step** is the input's last change to its final value. Its start
+    level is the mean of the last 20 % of the level before it; its final level
+    is the mean of the last 20 % after it.
+  - **The search** starts from the 28.3 % / 63.2 % two-point estimate. It runs
+    on at most 500 samples: a grid over L, a golden-section search on log T,
+    and K by least squares.
+  - **`noise`** is the final window's standard deviation around its trend.
+  - **`error_pct`** is the RMS residual beyond that noise, over |Δy|, so a
+    noisy encoder alone does not make a model poor. `fitQuality` grades it:
+    good up to 5 %, fair up to 15 %, poor above.
+  - **`settled`** is false when the final window drifts by more than 5 % of
+    Δy and by more than its noise explains (three standard errors of the
+    trend), as an integrating response such as a position does.
+  - **`steady_start`** is the same test on the start level; it catches a
+    pre-level that was still moving at the step.
+  - **`problem`** gives the reason when:
+    - there is no step;
+    - the change is not above the noise: it must exceed five standard errors
+      of the two levels, and one sample's noise;
+    - or the response did not settle or fit.
+- `fopdtValue(fit, t)` evaluates the model.
+- `simcPi(fit, speed, loop_period)` gives SIMC PI gains for a parallel PID:
+  - kp = T/(K(τc + L)), ki = kp/min(T, 4(τc + L)), kd = 0.
+  - τc is 3L (Robust), L (Balanced) or L/2 (Fast), and at least four loop
+    periods.
+  - It gives none for no model, an unsettled or poor fit, or K ≤ 0 (polarity).
 
 ## OTA workflow (`drivelink/ota.hpp`)
 

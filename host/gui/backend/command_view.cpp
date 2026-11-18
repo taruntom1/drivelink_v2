@@ -144,6 +144,7 @@ bool CommandView::commands(uint8_t type,uint8_t instance) const {
 }
 void CommandView::beginWrite(uint8_t type,uint8_t instance) {m_model.beginWrite(type,instance);pump();}
 void CommandView::endWrite(uint8_t type,uint8_t instance) {m_model.endWrite(type,instance);pump();}
+void CommandView::zeroInstance(uint8_t type,uint8_t instance) {m_model.zeroInstance(type,instance);pump();}
 void CommandView::add(const QString &key) {
     const int i=index(key);
     if(i<0 || m_model.inputs()[size_t(i)].shown) {return;}
