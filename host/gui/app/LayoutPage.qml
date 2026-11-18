@@ -30,6 +30,10 @@ Item {
     readonly property string panelUrl: info.panel || ""
     // 0 Params, 1 the custom panel.
     property int tab: 0
+    // Where the custom panel parents its dialogs (the shell's page area, under
+    // the status bar), and whether one is open (the shell dims the page).
+    property Item dialogParent
+    readonly property bool panelDialogOpen: panelLoader.item !== null && panelLoader.item.dialogOpen === true
     readonly property string nodeKey: node.key || ""
     onNodeKeyChanged: tab = 0
     onPanelUrlChanged: if (panelUrl.length === 0) tab = 0
@@ -214,18 +218,22 @@ Item {
         }
 
         // A module type's own panel (DriveLink.Modules/<type name>/Panel.qml),
-        // given the backend and the selected node's key.
+        // given the backend, the selected node's key and a dialog parent. It
+        // takes the main column; the generic side column stays beside it (G7).
         Loader {
             id: panelLoader
             objectName: "panelLoader"
             y: tabs.y + tabs.height + Theme.space16
-            width: parent.width; height: parent.height - y
+            width: body.hasSide ? parent.width - page.sideWidth - Theme.space24 : parent.width
+            height: parent.height - y
             visible: page.tab === 1
             active: page.panelUrl.length > 0
             source: page.panelUrl
             onLoaded: {
                 item.backend = Qt.binding(() => page.backend)
                 item.nodeKey = Qt.binding(() => page.nodeKey)
+                if (item.hasOwnProperty("dialogParent"))
+                    item.dialogParent = Qt.binding(() => page.dialogParent)
             }
         }
 
@@ -233,12 +241,12 @@ Item {
             id: body
             y: tabs.y + tabs.height + Theme.space16
             width: parent.width; height: parent.height - y
-            visible: page.tab === 0
             readonly property bool hasSide: page.isLoop || page.wiring.length > 0 || page.liveSignals.length > 0
                                             || page.actionCount > 0
 
             Column {
                 id: mainColumn
+                visible: page.tab === 0
                 width: body.hasSide ? body.width - page.sideWidth - Theme.space24 : body.width
                 height: body.height
                 spacing: Theme.space24

@@ -86,6 +86,11 @@ Q14 representation. `has_sic=false` leaves the hardware SIC matrix unchanged;
 all nine values remain present in the blob. Hardware reads include SIC.
 Wrong versions, lengths, flags or negative radii are rejected before mutation.
 
+The GUI's calibration panel keeps profiles on the PC in a versioned JSON file
+of the decoded fields with provenance (device, instance, levels at read
+time); the format is in
+[host/gui/modules/imu.bno055/README.md](../../host/gui/modules/imu.bno055/README.md).
+
 `calibration.valid` records blob presence. Physical calibration quality is
 reported by the four calibration-status levels. The BNO055 profile should be
 captured after full calibration. Fusion automatically updates offsets/radii,

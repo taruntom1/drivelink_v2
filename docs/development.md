@@ -204,6 +204,9 @@ The backend's QtTest function watchdog is 60 seconds, below CTest's 180-second
 suite limit, so Qt can report a blocked function before the outer timeout.
 The safe-mode/link-loss test records its teardown/reconnect stages in failure logs.
 
+Later steps add `gui-monitor`, `gui-tune` and `gui-panels` (H2f: custom
+panels on vdev) to the same CTest run.
+
 From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
 (or `linux`). The complete post-review vdev campaign and fourteen-scenario render
 command are in [host/gui/README.md](../host/gui/README.md#shell-screenshots).

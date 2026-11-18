@@ -46,10 +46,25 @@ LAYOUT = {
     'layout-signals': ('layout', '114:0', False),
     'layout-action': ('layout', '113:0', False),
     'layout-sources-stale': ('layout', '115:0', False),
+    # H2f: the IMU's calibration panel (the custom tab): levels 0 on the
+    # mock, and 3/3/3/3 after it applied a staged calibration at boot.
+    'layout-calibration': ('layout', '114:0', False),
+    'layout-calibration-applied': ('layout', '114:0', False),
     'layout-review': ('layout-review', '5:2', True),
     'layout-add-instance': ('layout-add-instance', '5:0', False),
     'layout-add-loop': ('layout-add-loop', '5:0', False),
 }
+
+# H2f: imu.mock applies its staged calibration params at boot (items 64..85,
+# docs/protocol/imu.md) and then reports 3/3/3/3: set before the reboot.
+CALIBRATION = ['64=1', '65=1', '66=12', '67=-7', '68=25', '69=1000', '70=-2', '71=1', '72=0',
+               '73=140', '74=-60', '75=310', '76=680',
+               '77=16384', '78=0', '79=0', '80=0', '81=16384', '82=0', '83=0', '84=0', '85=16384']
+CALIBRATED = {
+    'layout-calibration-applied': [['set', *['114:0:' + v for v in CALIBRATION]], ['save']],
+}
+# Scenarios that show the IMU's custom panel tab after the first live sample.
+PANELS = ('layout-calibration', 'layout-calibration-applied')
 
 
 # H2d Monitor on the sample device: loop statistics, the IMU and the
@@ -116,8 +131,11 @@ def cli_run(cli, endpoint, args, attempts=1):
     raise AssertionError((args, result.returncode, result.stdout, result.stderr))
 
 
-def provision(cli, endpoint, staged):
+def provision(cli, endpoint, staged, extra=()):
     for command in SAMPLE:
+        cli_run(cli, endpoint, command)
+    # Provisioning that must be in the saved layout before the reboot.
+    for command in extra:
         cli_run(cli, endpoint, command)
     # vdev closes TCP after the reboot reply; the next command waits for it.
     subprocess.run([cli, '--endpoint', endpoint, 'reboot'], capture_output=True, text=True, timeout=30)
@@ -173,7 +191,7 @@ def render(gui, vdev, destination, scenario, cli=None):
             select = None
             if scenario in LAYOUT:
                 screen, select, staged = LAYOUT[scenario]
-                provision(cli, endpoint, staged)
+                provision(cli, endpoint, staged, CALIBRATED.get(scenario, ()))
             if scenario in MONITOR:
                 provision(cli, endpoint, False)
                 for command in MONITOR[scenario][0]:
@@ -212,6 +230,8 @@ def render(gui, vdev, destination, scenario, cli=None):
                     command += ['--tune-runs', runs]
                 if scenario == 'tune-identify':
                     command += ['--identify-response', 'velocity']
+            if scenario in PANELS:
+                command += ['--panel']
             if scenario in ACTIONS:
                 command += ['--action', ACTIONS[scenario]]
             if scenario.startswith('update'):

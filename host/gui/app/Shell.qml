@@ -20,7 +20,7 @@ Basic.ApplicationWindow {
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
     readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
-    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || overlayOpen
+    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || overlayOpen
     property bool reviewOpen: false
     property alias layoutDialogs: layoutDialogs
     readonly property var pendingChanges: connection.layout.pendingChanges || []
@@ -179,7 +179,9 @@ Basic.ApplicationWindow {
                     onUpdateRequested: shell.chooseFirmware()
                 }
                 LayoutPage {
+                    id: layoutPage
                     anchors.fill: parent
+                    dialogParent: body
                     visible: shell.page === 1
                     backend: shell.backend
                     onAddInstanceRequested: layoutDialogs.openAddInstance()

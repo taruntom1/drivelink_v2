@@ -56,6 +56,7 @@ int main(int argc,char **argv) {
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
     parser.addOption({"settle","Wait this long (ms) after the screen is ready before capturing.","ms","0"});
     parser.addOption({"action","Layout screens: run this action of the selected instance once (an item key, no arguments).","key"});
+    parser.addOption({"panel","Layout screens: show the selected instance's custom panel tab (after its first live sample)."});
     parser.process(app);
     const QString screen=parser.value("screen");
     const QString expected=parser.value("expect-state");
@@ -186,6 +187,12 @@ int main(int argc,char **argv) {
     }
     if(screen=="notice") {
         stages.push_back({[&] {return connection.ready() && connection.rebootNotice().value("visible").toBool();},[] {}});
+    }
+    // The custom panel tab of the selected instance, once it has live data.
+    if(layoutScreen && parser.isSet("panel")) {
+        stages.push_back({[&] {return !connection.layout().value("panel").toString().isEmpty() &&
+                                      connection.live().value("telemetry").toBool();},
+                          [&] {if(auto *page=window->findChild<QObject *>("layoutPage")) {page->setProperty("tab",1);}}});
     }
     // An action with its outcome under the row (sent once, like a click).
     const QString action=parser.value("action");

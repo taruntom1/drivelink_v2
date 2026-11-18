@@ -285,6 +285,34 @@ Window {
         }
 
         Section {
+            title: "SENSOR PANELS: CALIBRATION LEVEL, ORIENTATION PREVIEW"
+            Repeater {
+                model: [0, 1, 2, 3, -1]
+                DLCalibrationLevel {
+                    required property int modelData
+                    width: 220
+                    title: "Sensor"
+                    level: modelData
+                    caption: modelData < 0 ? "No live data" : modelData >= 3 ? "Calibrated" : "Calibrating"
+                }
+            }
+            Repeater {
+                model: [{ state: "live", caption: "Sensor axes · roll 2.4° · pitch −1.2° · yaw 86.0°" },
+                        { state: "stale", caption: "Last pose · live updates unavailable" },
+                        { state: "unavailable", caption: "" }]
+                DLOrientationPreview {
+                    required property var modelData
+                    width: 320
+                    height: 200
+                    state: modelData.state
+                    caption: modelData.caption
+                    axes: [{ axis: "Y", x: -0.6, y: -0.35, depth: -0.7 }, { axis: "X", x: -0.55, y: 0.5, depth: -0.1 },
+                           { axis: "Z", x: 0.02, y: -0.8, depth: 0.8 }]
+                }
+            }
+        }
+
+        Section {
             title: "TOAST, TOOLTIP"
             DLToast { tone: DLToast.Info; text: "Model reloaded: the descriptor hash changed."; timeout: 0 }
             DLToast { tone: DLToast.Ok; text: "Saved to flash."; timeout: 0 }

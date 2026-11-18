@@ -1,6 +1,7 @@
 #include "live_model.hpp"
 #include "device_models.hpp"
 #include "layout_model.hpp"
+#include "monitor_model.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
 #include <drivelink/protocol/gen/type_loop.hpp>
 #include <QCoreApplication>
@@ -130,7 +131,9 @@ QVariantList signalRows(const DeviceSnapshot &s, InstanceKey k, const LivePlan *
         const auto value=sampled(plan,live,ref);
         rows<<QVariantMap{{"key",itemKey(k.first,k.second,id)},{"name",str(item.descriptor.name)},
                           {"unit",str(item.descriptor.unit)},{"subscribed",indexOf(plan,ref).has_value()},
-                          {"value",value?formatValue(item,*value):QString()}};
+                          {"value",value?formatValue(item,*value):QString()},
+                          // The sampled value as a number (custom panels draw with it).
+                          {"number",value?QVariant(sampleValue(item.descriptor.value_type,*value)):QVariant()}};
     }
     return rows;
 }

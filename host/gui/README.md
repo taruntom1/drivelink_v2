@@ -237,8 +237,12 @@ G4/G7b screen. Everything comes from the descriptors: loop masks, item flags,
   running. Results show typed values; a blob out shows size, hex and Copy.
   An action in flight when the link drops raises a "may have run" notice.
 - **Custom panel slot.** A second tab, titled by the panel, when
-  `DriveLink/Modules/<type name>/Panel.qml` is in the resources; it is loaded
-  with `backend` and `nodeKey`. None ships until H2f.
+  `DriveLink/Modules/<type name>/Panel.qml` is in the resources
+  (`modules/<type name>/`, listed in `modules/CMakeLists.txt`); it is loaded
+  with `backend`, `nodeKey` and, if it declares one, `dialogParent`. It takes
+  the main column; Wiring, Signals and Actions stay beside it. A panel that
+  sets `dialogOpen` dims the page like the shell's dialogs. See "Custom
+  panels (H2f)".
 
 ## Monitor (H2d-1)
 
@@ -567,6 +571,37 @@ gains:
   `--identify-response` picks the response shown. A desktop vdev's irregular
   ticks alias a measured velocity, so the Tune scenarios set the mock
   encoder's velocity filter to 5 Hz.
+
+## Custom panels (H2f)
+
+Module-specific GUI code lives only in `modules/<type name>/`, matched by the
+type name the device reports; the rest of the GUI stays generic. A panel uses
+the same backend as the generic cards:
+
+- `backend.live`: the selected instance's live signals; each row has `value`
+  (text) and `number`.
+- `backend.checkAction` / `backend.runAction`: actions by item key (find the
+  key by name in `backend.actions`), sent once, never retried;
+  `backend.actionResults` (key → `{state, text, values, blobHex, rebooted}`)
+  and `backend.actionRunning` follow them. `runAction` emits `changed` before
+  it returns: a panel that reacts to `changed` must not handle its own send
+  re-entrantly.
+- `backend.readTextFile` / `writeTextFile`: a local path or `file://` URL,
+  UTF-8, at most 64 KiB (`{ok, text | path, error}`); writes are atomic.
+- Its own non-modal native file dialogs (allowed while armed, like Tune's).
+
+The first panel is the `imu.bno055` calibration panel (G7), loaded for
+`imu.mock` too: live levels, orientation, guidance, Read and Export, Import
+with a review, Apply (write, then apply) with a confirmation, and the
+versioned calibration file. Its rules and the file format are in
+[modules/imu.bno055/README.md](modules/imu.bno055/README.md).
+`gui_panel_tests` (ctest `gui-panels`) covers the generic surface and the
+panel in the shell on vdev's `imu.mock`; `tst_imu_calibration.qml` the pure
+logic. `benchCalibration` (skipped unless `DRIVELINK_GUI_BENCH_ENDPOINT` and
+`DRIVELINK_GUI_BENCH_IMU`, type:instance, are set) waits up to
+`DRIVELINK_GUI_BENCH_CAL_WAIT` seconds (300) for 3/3/3/3, then reads,
+exports, imports and applies through the panel and checks the staged
+params; it refuses unsaved changes and REVERTs at the end.
 
 ## Theme
 

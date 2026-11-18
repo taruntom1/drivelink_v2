@@ -206,6 +206,12 @@ QVariantMap LocalConnection::live() const {
     return result;
 }
 
+QVariantMap LocalConnection::actionResults() const {
+    QVariantMap result;
+    for(auto it=m_actionResults.begin();it!=m_actionResults.end();++it) {result[it.key()]=it.value();}
+    return result;
+}
+
 void LocalConnection::updateActions() {
     QVariantList rows;
     const auto node=parseNodeKey(m_selected);
@@ -280,7 +286,7 @@ void LocalConnection::runAction(const QString &key,const QStringList &args,const
                 }
             } else if(!sameBoot) {
                 // The reply proves it ran; its results belong to the previous boot.
-                self->m_actionResults[key]={{"state","ok"},{"text",tr("Ran; the device has since rebooted")}};
+                self->m_actionResults[key]={{"state","ok"},{"text",tr("Ran; the device has since rebooted")},{"rebooted",true}};
             } else {
                 const auto blobOut=descriptor.blob_direction==BlobDir::Out || descriptor.blob_direction==BlobDir::Both;
                 const QByteArray bytes(reinterpret_cast<const char *>(result->blob.data()),qsizetype(result->blob.size()));

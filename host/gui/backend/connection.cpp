@@ -5,6 +5,10 @@
 #include <drivelink/protocol/gen/type_loop.hpp>
 #include <drivelink/protocol/gen/type_system.hpp>
 #include <QCoreApplication>
+#include <QFile>
+#include <QSaveFile>
+#include <QStringDecoder>
+#include <QUrl>
 #include <QPointer>
 #include <algorithm>
 #include <atomic>
@@ -821,6 +825,41 @@ void LocalConnection::finishClose(bool lost) {
     // An action in flight may have run; its reply will never arrive.
     if(actionInFlight && c) {emit notification(tr("The connection closed while an action was running; it may have run. It was not retried."),2);}
     emit changed();emit liveChanged();if(c) {emit disconnected();}
+}
+namespace {
+// A path or a local file:// URL; empty for any other URL.
+QString panelFilePath(const QString &fileOrUrl) {
+    if(!fileOrUrl.contains(QLatin1String("://"))) {return fileOrUrl;}
+    const QUrl url(fileOrUrl);
+    return url.isLocalFile()?url.toLocalFile():QString();
+}
+}
+QVariantMap Connection::readTextFile(const QString &fileOrUrl) const {
+    const auto fail=[](const QString &why) {return QVariantMap{{"ok",false},{"error",why}};};
+    const auto path=panelFilePath(fileOrUrl);
+    if(path.isEmpty()) {return fail(tr("Only local files can be read"));}
+    QFile file(path);
+    if(!file.open(QIODevice::ReadOnly)) {return fail(tr("Cannot open %1: %2").arg(path,file.errorString()));}
+    if(file.size()>kPanelFileBytes) {return fail(tr("The file is larger than %1 KiB").arg(kPanelFileBytes/1024));}
+    const auto bytes=file.read(kPanelFileBytes+1);
+    if(bytes.size()>kPanelFileBytes) {return fail(tr("The file is larger than %1 KiB").arg(kPanelFileBytes/1024));}
+    QStringDecoder decode(QStringDecoder::Utf8);
+    const QString text=decode(bytes);
+    if(decode.hasError()) {return fail(tr("The file is not UTF-8 text"));}
+    return {{"ok",true},{"text",text},{"path",path}};
+}
+QVariantMap Connection::writeTextFile(const QString &fileOrUrl,const QString &text) const {
+    const auto fail=[](const QString &why) {return QVariantMap{{"ok",false},{"error",why}};};
+    const auto path=panelFilePath(fileOrUrl);
+    if(path.isEmpty()) {return fail(tr("Only local files can be written"));}
+    const auto bytes=text.toUtf8();
+    if(bytes.size()>kPanelFileBytes) {return fail(tr("The text is larger than %1 KiB").arg(kPanelFileBytes/1024));}
+    // Written to a temporary file and renamed: never a half-written file.
+    QSaveFile file(path);
+    if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit()) {
+        return fail(tr("Cannot write %1: %2").arg(path,file.errorString()));
+    }
+    return {{"ok",true},{"path",path}};
 }
 QString Connection::nameProblem(const QString &name) const {
     const auto bytes=name.toUtf8();

@@ -53,6 +53,8 @@ qt_add_qml_module(drivelink_gui_style
     DLComboBox.qml
     DLCheckItem.qml
     DLProgressBar.qml
+    DLCalibrationLevel.qml
+    DLOrientationPreview.qml
     DLNumberField.qml
     DLSwitch.qml
     DLTabButton.qml
