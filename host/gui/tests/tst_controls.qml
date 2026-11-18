@@ -42,6 +42,8 @@ TestCase {
     Component { id: comboComponent; DLComboBox { width: 200; model: [921600, 460800, 115200] } }
     Component { id: checkComponent; DLCheckItem { width: 300; label: "Command keepalives are ready" } }
     Component { id: progressComponent; DLProgressBar { width: 200 } }
+    Component { id: levelComponent; DLCalibrationLevel { width: 240; title: "Sensor"; caption: "Calibrating" } }
+    Component { id: previewComponent; DLOrientationPreview { width: 320; height: 200; caption: "Sensor axes" } }
     Component {
         id: extraDialogComponent
         DLDialog {
@@ -582,5 +584,63 @@ TestCase {
         control.problem = "Locked while armed"
         compare(note.text, "Locked while armed")
         compare(field.status, DLNumberField.Rejected)
+    }
+
+    function filledSegments(level) {
+        let n = 0
+        for (let i = 0; i < 3; ++i)
+            if (findChild(level, "levelSegment" + i).color.toString() !== Theme.bgSecondary.toString()) ++n
+        return n
+    }
+
+    function test_calibration_level() {
+        const level = createTemporaryObject(levelComponent, testCase, { level: 2 })
+        compare(findChild(level, "levelValue").text, "2 / 3")
+        compare(findChild(level, "levelTitle").text, "Sensor")
+        compare(filledSegments(level), 2)
+        compare(findChild(level, "levelSegment0").color, Theme.accentDefault)
+        level.level = 3
+        compare(findChild(level, "levelValue").text, "3 / 3")
+        compare(filledSegments(level), 3)
+        compare(findChild(level, "levelSegment2").color, Theme.stateOk)
+        level.level = 0
+        compare(filledSegments(level), 0)
+        level.level = -1
+        level.caption = "No live data"
+        compare(findChild(level, "levelValue").text, "— / 3")
+        compare(filledSegments(level), 0)
+        compare(findChild(level, "levelCaption").text, "No live data")
+        compare(findChild(level, "levelCaption").color, Theme.textTertiary)
+        verify(level.height === level.implicitHeight, "a fixed height")
+    }
+
+    readonly property var sampleAxes: [{ axis: "Y", x: -0.6, y: -0.35, depth: -0.7 },
+                                       { axis: "X", x: -0.55, y: 0.5, depth: -0.1 },
+                                       { axis: "Z", x: 0.02, y: -0.8, depth: 0.8 }]
+
+    function test_orientation_preview() {
+        const preview = createTemporaryObject(previewComponent, testCase, { axes: sampleAxes })
+        // Unavailable by default: no drawing, only the empty text.
+        verify(!findChild(preview, "previewDrawing").visible)
+        verify(findChild(preview, "previewEmpty").visible)
+        compare(findChild(preview, "previewEmpty").text, "No orientation data")
+        verify(!findChild(preview, "previewTag").visible)
+        preview.state = "live"
+        verify(findChild(preview, "previewDrawing").visible)
+        verify(!findChild(preview, "previewEmpty").visible)
+        compare(findChild(preview, "previewTag").text, "LIVE")
+        compare(findChild(preview, "previewTag").color, Theme.accentText)
+        let count = 0
+        for (let c of findChild(preview, "previewDrawing").children)
+            if (c.objectName === "axisLabel") ++count
+        compare(count, 3)
+        preview.state = "stale"
+        compare(findChild(preview, "previewTag").text, "STALE")
+        compare(findChild(preview, "previewTag").color, Theme.stateUnsaved)
+        verify(findChild(preview, "previewDrawing").visible)
+        preview.axes = []
+        verify(findChild(preview, "previewEmpty").visible, "no axes: the empty text")
+        verify(!findChild(preview, "previewDrawing").visible)
+        compare(findChild(preview, "previewCaption").text, "Sensor axes")
     }
 }

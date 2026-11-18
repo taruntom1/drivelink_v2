@@ -57,7 +57,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | G5 1080p layouts: A/B card, gain history placement (the Tune plot column settled in H2e-1, Monitor's in H2d-1) | settled in H2e-2 |
 | How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | settled in H2e-2: non-modal native dialogs, allowed while armed (user decision) |
 | How suggested gains map onto tune-flagged params generically (no module names) | settled in H2e-3: naming conventions in `docs/adding-a-module.md` (`<prefix>.kp/.ki/.kd`, responses named after the prefix, the `open_loop` value); no wire change (user decision) |
-| Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | H2f |
+| Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | settled in H2f: versioned JSON of the decoded fields with provenance (`host/gui/modules/imu.bno055/README.md`); Euler as the device reports it, none in the file; nothing re-sent, interruptions recorded as "may have run" |
 | Agent default port, history sizes, retry policy for an offline device | H3a |
 | mDNS library, service name and TXT records | H3b |
 | Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | H3b |

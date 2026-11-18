@@ -25,6 +25,14 @@ target_compile_definitions(gui_tune_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drive
 target_link_libraries(gui_tune_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
 add_dependencies(gui_tune_tests drivelink-vdev)
 
+# Custom panels (H2f): the generic panel surface and the IMU calibration
+# panel in the shell on vdev's imu.mock; benchCalibration for a device.
+qt_add_executable(gui_panel_tests test_panels.cpp test_support.hpp)
+set_target_properties(gui_panel_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+target_compile_definitions(gui_panel_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
+target_link_libraries(gui_panel_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
+add_dependencies(gui_panel_tests drivelink-vdev)
+
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_quick_tests PRIVATE QUICK_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -52,6 +60,9 @@ set_tests_properties(gui-backend PROPERTIES TIMEOUT 300
 add_test(NAME gui-monitor COMMAND gui_monitor_tests)
 set_tests_properties(gui-monitor PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
+add_test(NAME gui-panels COMMAND gui_panel_tests)
+set_tests_properties(gui-panels PROPERTIES TIMEOUT 300
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")
 add_test(NAME gui-tune COMMAND gui_tune_tests)
 set_tests_properties(gui-tune PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")

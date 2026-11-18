@@ -80,8 +80,16 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   and configuration actions; an unknown or Ready OTA state blocks reboots.
   The image picker is non-modal and offered only while disarmed; nothing arms
   while it is open. The only other native dialogs are Tune's session and CSV
-  file dialogs (non-modal, allowed while armed; user decision 2026-11-18): Esc
-  goes to the dialog while it is open, DISARM stays clickable.
+  file dialogs (non-modal, allowed while armed; user decision 2026-11-18) and
+  a custom panel's own file dialogs (the same rules): Esc goes to the dialog
+  while it is open, DISARM stays clickable.
+- Custom panels (H2f): module-specific GUI code exists only in
+  `gui/modules/<type name>/`, loaded by the device's type name. A panel uses
+  the generic backend surface (live rows, actions by key sent once, action
+  results, bounded text files) and adds no backend, wire or safety rule. The
+  IMU calibration panel sends `calibration_apply` only after
+  `calibration_write` replied ok, never re-sends, and records an operation
+  interrupted by unloading as "may have run".
 - GUI loop-statistics subscriptions, the Layout live group and Monitor's groups
   (one per plotted loop) use free slots only, after command setup (live and
   Monitor after loop statistics, one mutation at a time), record intent before

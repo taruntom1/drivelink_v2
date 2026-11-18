@@ -73,6 +73,11 @@ class Connection : public QObject {
     Q_PROPERTY(QVariantMap live READ live NOTIFY liveChanged)
     // The selected instance's actions (ActionTable roles).
     Q_PROPERTY(QAbstractItemModel* actions READ actions CONSTANT)
+    // The same actions' outcomes by item key ({state: running, ok, refused,
+    // invalid or uncertain; text; values; blobHex; rebooted}) and the key of
+    // the one in flight: custom panels follow their own actions with these.
+    Q_PROPERTY(QVariantMap actionResults READ actionResults NOTIFY changed)
+    Q_PROPERTY(QString actionRunning READ actionRunning NOTIFY changed)
     // The Monitor page (MonitorView): plots, rates, link budget.
     Q_PROPERTY(QObject* monitor READ monitor CONSTANT)
     // Monitor's Manual command card (CommandView).
@@ -126,6 +131,8 @@ public:
     virtual QVariantMap layout() const=0;
     virtual QVariantMap live() const=0;
     virtual QAbstractItemModel *actions()=0;
+    virtual QVariantMap actionResults() const=0;
+    virtual QString actionRunning() const=0;
     virtual QObject *monitor()=0;
     virtual QObject *command()=0;
     virtual QObject *tune()=0;
@@ -194,6 +201,11 @@ public:
     Q_INVOKABLE virtual void rollBackFirmware()=0;
     Q_INVOKABLE virtual void abortPreparedUpdate()=0;
     Q_INVOKABLE void copyToClipboard(const QString &text) const;
+    // A custom panel's small UTF-8 text files (calibration files): a path or
+    // a file:// URL, at most kPanelFileBytes. {ok, text} or {ok: false, error}.
+    static constexpr qint64 kPanelFileBytes=64*1024;
+    Q_INVOKABLE QVariantMap readTextFile(const QString &fileOrUrl) const;
+    Q_INVOKABLE QVariantMap writeTextFile(const QString &fileOrUrl,const QString &text) const;
     // Empty when the device would accept the name (SET_NAME rules).
     Q_INVOKABLE QString nameProblem(const QString &name) const;
 signals:
@@ -277,6 +289,8 @@ public:
     // Monitor's subscription groups, one per plotted loop (tests).
     std::vector<uint8_t> monitorSubscriptions() const;
     const ActionTable &actionTable() const {return m_actions;}
+    QVariantMap actionResults() const override;
+    QString actionRunning() const override {return m_actionRunning;}
     void runAction(const QString &itemKey,const QStringList &args,const QString &blobHex) override;
     QVariantMap checkAction(const QString &itemKey,const QStringList &args,const QString &blobHex) const override;
     // The selected node's subscription group, when this GUI configured one (tests).
