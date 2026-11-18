@@ -116,6 +116,12 @@ struct RunRecord {
     std::vector<SampleRing> series;    // per ref
     int64_t startUs=0, endUs=0;        // the capture span around the trigger
     std::map<uint16_t,double> gains;   // the tune-flagged numbers at the start
+    // Portable names (H2e-2 session files): the controller's type name and
+    // label, and each gain's name, so a set can be matched on another device.
+    QString controllerType, controllerLabel;
+    std::map<uint16_t,QString> gainNames;
+    QString device;                    // the device id it was recorded on
+    bool foreign=false;                // recorded on another device than the connected one
     QString changed;                   // gains that differ from the previous run
     RunEnd end=RunEnd::Completed;
     std::optional<int64_t> endedUs;    // Stop or disarm, µs from the trigger

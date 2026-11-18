@@ -78,8 +78,10 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   automatically, never after a roll back or cancel. Without a known candidate
   only the user's explicit Confirm sends CONFIRM. An active update blocks ARM
   and configuration actions; an unknown or Ready OTA state blocks reboots.
-  The image picker is the one non-modal native dialog allowed: offered only
-  while disarmed, and nothing arms while it is open.
+  The image picker is non-modal and offered only while disarmed; nothing arms
+  while it is open. The only other native dialogs are Tune's session and CSV
+  file dialogs (non-modal, allowed while armed; user decision 2026-11-18): Esc
+  goes to the dialog while it is open, DISARM stays clickable.
 - GUI loop-statistics subscriptions, the Layout live group and Monitor's groups
   (one per plotted loop) use free slots only, after command setup (live and
   Monitor after loop statistics, one mutation at a time), record intent before
@@ -104,7 +106,17 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   manual commands at 0 like a live write and ends that hold only after the
   signal has ended on the device (TestgenDone or STATUS, never before STOP has
   landed), so a commandable target returns to 0. Boot, link loss and close end
-  the run without device calls. Gains and the mode are locked during a run.
+  the run without device calls. The mode, Revert and Restore are locked during
+  a run; the gains too while Auto re-run is off.
+- Tune Auto re-run (H2e-2, user decisions 2026-11-18): a run starts by itself
+  only after the user's Run under this window's current ARM (any DISARM,
+  fault, Boot, link loss or controller change needs a new Run), only while
+  Tune is shown, through the same start path as Run, 0.5 s after the gains
+  are still and only when they differ from the last run's. With it on, a gain
+  change during a run cancels it: STOP and ABORT once, the run is not kept,
+  and the controller stays at 0 until STATUS shows the signal stopped. Opening
+  a session never writes to the device; Restore matches a recorded set by
+  controller type, label and gain names, never by item ids alone.
 - A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never

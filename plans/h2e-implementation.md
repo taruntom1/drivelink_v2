@@ -77,3 +77,73 @@ device's snapshot (cleared on a device change).
 - **Deferred.** `benchTune` with a real motor (row in the status file).
 - **Observed.** A long capture READ blocks the serial service executor while it
   reads; desktop vdev ticks irregularly, so its runs show "irregular timing".
+
+## H2e-2 Session
+
+### User decisions (2026-11-18)
+
+| Topic | Decision |
+|---|---|
+| Gain change during a run | With Auto re-run on, the gains stay editable during a run and a change cancels it: STOP and ABORT once, the run is not kept, the gain applies live, the controller stays at 0 until STATUS shows the signal stopped (the H2e-1 release), then the re-run follows. With it off the gains lock during a run (H2e-1). Mode, Restore and Revert stay locked during any run. |
+| Auto re-run permission | Resets on every ARM: a run starts by itself only after the user's Run under this window's current ARM; DISARM, a fault, Boot, link loss or a controller change need a new Run. |
+| File dialogs | Non-modal native dialogs for Save session, Open and Export CSV, allowed while armed (Esc goes to the dialog while it is open; DISARM stays clickable). |
+| Open | Replaces the runs, history, windows and setup; never writes to the device. Another device's runs and entries are marked; Restore matches by controller type and label and gain names. |
+| History entries | When the gain writes have been quiet 0.5 s and the set differs from the controller's last entry; Restore and Revert make entries; first "loaded from device"; 200 per controller. |
+| Unsaved sessions | Autosaved per device id beside the settings and offered on the next connect; recording a run replaces the offer. |
+| Hardware | vdev only; the H2e-1 deferred motor row gains the Auto re-run checks (`DRIVELINK_GUI_BENCH_GAIN`). |
+
+### Scope
+
+- **Pure.** `backend/tune_session.*`: history rules (`recordEntry`,
+  `gainChanges`, `equalGains`, `entryRun`), `resolveGains` (by names),
+  `compareMetrics`, `writeSession`/`readSession` (format
+  `drivelink-tune-session` version 1) and `runCsv`.
+- **View.** `TuneView` gains `history` (`HistoryRows`), `compare`,
+  `autoRerun`, `session`, `recovery`, Restore, A/B, the settle timer, Auto
+  re-run, files and autosave. `RunRecord` carries the controller's type and
+  label, gain names and the device it was recorded on.
+- **Connection.** `cancelTuneRun` (a cancel before START's reply waits for
+  it), `m_armEpoch`, hooks `cancel`, `armEpoch`, `autoBlocked` (Tune shown).
+- **QML.** Gain history card, the Auto re-run chip, the A/B card, the Session
+  card (recovery, inline Open confirmation), run menu Export CSV…, three
+  non-modal `FileDialog`s. Screenshot screen `tune-ab`.
+
+### Review
+
+Independent Opus review at high effort (Auto re-run and the cancel path start
+and stop test signals; session files are parsed from disk), then a focused
+re-check of the fixes. The cancel path and the Auto re-run gating held; the
+findings and their fixes:
+
+| Finding | Fix |
+|---|---|
+| Any small change (a gain tweak, a window, a pin) autosaved over an offered recovery one second later | While an offer shows, only a recorded run replaces it; other changes wait (the banner says so) and are autosaved after Discard |
+| Opening a session (or restoring a recovery) kept Auto re-run's permission, so a gain change could start a signal the user had not run under this ARM | Open and recovery need a Run again |
+| After an Open the newest entry showed "current" with gains that were not live; local sets could join another device's entry | "Current" is the newest entry of this device with the live gains; entries are per device; Open records the live gains when they differ |
+| Restore from an edited file could write an infinite f32 or an out-of-range integer | `resolveGains` refuses values the gain's type cannot hold, and fractions for integers |
+| The whole session was serialized on the GUI thread for every autosave (a large one freezes DISARM's thread) | Autosave writes on a worker from a copy; Save, Open and Discard wait for it before removing the file; sessions above 8 Mi samples are not saved |
+| Run completions matched only the boot generation | A per-connection run serial |
+| Setup setters relied on QML for the run lock | Backend guards while a run is active |
+| Open asked only over unsaved runs; file strings could render as rich text; Restore A/B gave no reason | Asks over any unsaved session; plain text; reasons on the buttons |
+
+Accepted, not changed: Save and Open parse on the GUI thread (user actions,
+bounded by the sample cap); the per-row "current" scan (200 entries at most).
+
+### Results
+
+- **Gate.** `python tools/validate.py full` passed (gen, native, host-win,
+  host-linux, fw, fw-nolog, fw-hil-app). An earlier full run (before the
+  review fixes) failed once in the firmware native test "Configurable loops:
+  pending compatibility" (`revert()` after `start()`); it passed alone and in
+  the final run (no firmware change in this step).
+- **vdev.** `gui_tune_tests`: `tuneSessionLogic` (history, matching and type
+  ranges, A/B, the file round trip and refusals, CSV), `tuneSessionView`
+  (entries, Auto re-run under one ARM, Run within 0.5 s, a waiting re-run,
+  cancel, Restore, A/B, Current, files, recovery and its offer, Open resets
+  the permission), `tuneAuto` (no re-run before Run, a re-run, a cancel
+  mid-run and while START is in flight, Tune hidden, a new ARM, autosave on
+  close), and the H2e-1 tests (`tuneOperations` with Auto re-run off).
+  Scenarios `tune` and `tune-ab` at both sizes and themes.
+- **Bench dry run.** `benchTune` with `DRIVELINK_GUI_BENCH_GAIN` on the sample
+  vdev passed (row in [hardware-log.md](hardware-log.md)). Real motor deferred
+  (the H2e-1/H2e-2 row in the status file).

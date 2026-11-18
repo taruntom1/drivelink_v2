@@ -624,6 +624,7 @@ void LocalConnection::arm() {
         },[self,c,fence](std::expected<SystemResult,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_armPending=false;self->m_armReplied=bool(result);self->m_ownArm=result && c->safety==fence;
+            if(self->m_ownArm) {++self->m_armEpoch;}
             if(c->safety!=fence) {self->m_arming=false;self->disarm();}
             else if(!result) {
                 self->m_arming=false;self->report(result.error());

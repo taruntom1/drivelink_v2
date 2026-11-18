@@ -54,8 +54,8 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | Where the device name is stored (its own NVS key or the A/B config); allowed characters; vdev's stable fake id | H1c |
 | Faults badge: active faults only, or history too | H2b |
 | What the reboot notice lists as lost (the GUI tracks params changed since the last save) | H2b |
-| G5 1080p layouts: A/B card, gain history placement (the Tune plot column settled in H2e-1, Monitor's in H2d-1) | H2e-2 |
-| How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | H2e-2 |
+| G5 1080p layouts: A/B card, gain history placement (the Tune plot column settled in H2e-1, Monitor's in H2d-1) | settled in H2e-2 |
+| How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | settled in H2e-2: non-modal native dialogs, allowed while armed (user decision) |
 | How suggested gains map onto tune-flagged params generically (no module names) | H2e-3 |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | H2f |
 | Agent default port, history sizes, retry policy for an offline device | H3a |
@@ -261,7 +261,12 @@ Split (user decision 2026-11-18), one PR each, each independently reviewed:
   the 1080p plot column. Bare board: v10 smokes and `benchTune` with a mock.
 - **H2e-2 Session:** gain history with restore, A/B compare and its 1080p card,
   Auto re-run, session files (versioned JSON, base64 columns, keyed by device
-  id; how Open/Save pick a file), CSV export per run.
+  id; how Open/Save pick a file), CSV export per run. Done:
+  [h2e-implementation.md](h2e-implementation.md) "H2e-2" (user decisions
+  2026-11-18: with Auto re-run on a gain change cancels the run, off the gains
+  lock; Auto re-run needs the user's Run under each ARM; non-modal native file
+  dialogs allowed while armed; Open never writes to the device and Restore
+  matches by names; autosave with recovery on the next connect).
 - **H2e-3 Plant identification:** first-order-plus-deadtime fit and suggested
   gains in libdrivelink, the identification tab, the CheckItem warning state;
   how suggested gains map onto tune-flagged params generically.

@@ -390,14 +390,16 @@ responses. Pure rules in `backend/tune_model.*`, the QML-facing page in
   signal may run (timeout, cleared or unreadable capture) sends STOP once and
   keeps the controller at 0 until STATUS shows the signal stopped; Run is
   blocked meanwhile. Boot, a lost link and close end the run; nothing is
-  retried. Gains, the mode and Revert are locked while a run is active.
+  retried. The mode, Revert and Restore are locked while a run is active; the
+  gains too while Auto re-run is off (with it on a change cancels the run, see
+  H2e-2).
 - **Runs.** Kept in memory per device (at most 50; the oldest unpinned goes),
   numbered with fixed colours. The overlay shows pinned runs, the newest in
   full and the two before it faded, one plot per unit of the checked signal
   chips. Step runs get rise time (10–90 %), overshoot, settling time (2 %) and
   steady-state error of the response (the first captured same-unit signal);
   other waveforms show "—". A run on irregular device ticks (desktop vdev) says
-  so. Row menu: pin or unpin, remove.
+  so. Row menu: pin or unpin, Export CSV…, remove.
 - **Tests and tools.** `gui_tune_tests` `tuneLogic` (pure), `tuneView`,
   `tuneOperations` (vdev: step run, metrics, read-back 0, Stop, refused START,
   a given-up run, disarm mid-run, Revert), `tuneInShell`, and `benchTune`
@@ -407,6 +409,75 @@ responses. Pure rules in `backend/tune_model.*`, the QML-facing page in
   `--tune-set`, `--signal` and `--tune-runs KEY=V1:V2` build screenshots;
   runs arm, so they accept only a `tcp://` vdev. Scenarios `tune`,
   `tune-running`, `tune-disarm` and `tune-disarmed`.
+
+## Tune session (H2e-2)
+
+Gain history, A/B, Auto re-run and session files. Pure rules in
+`backend/tune_session.*` (history, name matching, A/B metrics, the session
+file and the run CSV); the state in `backend/tune_view.*`; the cancel path in
+`backend/connection_tune.cpp`.
+
+- **Gain history** (left column, under the gains; it scrolls with them at
+  1080p). An entry when the controller's gain writes have been quiet for
+  0.5 s and the set differs from its last entry; Restore and Revert gains to
+  saved make one too (with a note). The first is "loaded from device". A run
+  joins the entry of the gains it ran with (a new entry when they changed
+  elsewhere). At most 200 per controller. Restore writes the gains that differ
+  in one batch (live), only when idle and no gain write is pending; the newest
+  entry of this device with the live gains is "current". A set recorded here
+  never joins another device's entry.
+- **A/B.** The A/B button of an entry with a run marks A, then B (a marked
+  entry unmarks; a further pick replaces B). Both marked: only their newest
+  runs are plotted, the toolbar says so, and the A/B card replaces Run
+  metrics: the gain differences and the equal gains, the four step metrics
+  for A and B with B − A, Restore A, Restore B, Exit A/B. The card puts the
+  differences beside the table and stacks them below 900 px. A new run, a
+  controller change or a removed run ends A/B.
+- **Auto re-run** (toolbar chip, on by default; user decisions 2026-11-18). It
+  starts a run 0.5 s after the gains are still, when they differ from the
+  controller's last run, only after the user's Run under this window's
+  current ARM (a DISARM, fault, Boot, link loss or another controller needs a
+  new Run) and only while Tune is shown; it waits for a run or a release in
+  progress and drops with the reason when the setup is invalid. Run within
+  0.5 s of a change carries it (no second run). With Auto re-run on, the gains
+  stay editable during a run and a change cancels it: STOP and ABORT once,
+  the run is not kept, the controller stays at 0 until STATUS shows the
+  signal stopped, then the re-run follows. Off, the gains lock during a run.
+- **Session files.** Save session…, Open… and Export CSV… use non-modal
+  native file dialogs, allowed while armed (Esc goes to the dialog; DISARM
+  stays clickable). Versioned JSON (`format` `drivelink-tune-session`,
+  `version` 1): the device id and name, runs (capture setup, names, units,
+  base64 columns of little-endian i64 µs and f64 values, signal, gains with
+  names, end, pin, the device each was recorded on), the gain history, typed
+  gain windows by controller and gain name, and the controller, test signal
+  and capture. Reading checks every field, length, range and time order and
+  refuses another format or version. Open (inline confirmation over an
+  unsaved session) replaces the runs, history and windows and never writes to
+  the device; the setup applies only on the device the session was recorded
+  on, and Auto re-run needs a Run again. Strings from a file render as plain
+  text.
+  Runs and entries of another device are marked and draw no gain ticks;
+  their Restore needs a running controller of the same type and label whose
+  gains have the same names, and values the gain's type and range hold. Metrics are recomputed on reading.
+- **CSV per run.** `#` lines with the run, the controller, the test signal,
+  the gains and how it ended, then `time_s` (from the trigger) and a column
+  per captured signal, `name (unit)`.
+- **Autosave.** While the session is unsaved it is written 1 s after a change
+  on a worker thread from a copy (on a device change or close at once) to
+  `tune-recovery/<device id>.tune.json` beside the GUI's settings. On the
+  next connect to that device the Session card offers Restore it or Discard;
+  until then only a recorded run replaces it and other changes are not
+  autosaved (the banner says so; Discard autosaves them). Saving and opening a
+  session run on the GUI thread (user actions, bounded by the sample cap). Saving, opening or discarding
+  waits for a write in flight, then removes it. A session of more than 8 Mi
+  samples is neither saved nor autosaved (remove runs); reading refuses it.
+- **Tests and tools.** `gui_tune_tests` `tuneSessionLogic` (pure: history,
+  matching, A/B, the file round trip and refusals, CSV), `tuneSessionView`
+  (fake hooks: entries, Auto re-run under one ARM, cancel, Restore, A/B,
+  files, recovery), `tuneAuto` (vdev: no re-run before Run, a re-run, a
+  change mid-run cancels and re-runs, Tune hidden, a new ARM); `benchTune`
+  adds `DRIVELINK_GUI_BENCH_GAIN` (a tune gain: +10 % re-runs, back during a
+  3 s run cancels and re-runs). Screenshot screen and scenario `tune-ab`.
 
 ## Theme
 
