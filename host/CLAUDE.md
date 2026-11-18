@@ -98,6 +98,13 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   to 0; Latch survives page changes. A live param write to a commanded
   instance discards its queued values and holds it at 0 until the write ends,
   then sends a fresh frame (user decisions 2026-11-18).
+- Tune (H2e-1): gains are the live params a descriptor flags `tune`, never
+  names. One run at a time, only with this window's accepted ARM; CONFIG, ARM
+  and START are sent once, never retried. The run suspends the controller's
+  manual commands at 0 like a live write and ends that hold only after the
+  signal has ended on the device (TestgenDone or STATUS, never before STOP has
+  landed), so a commandable target returns to 0. Boot, link loss and close end
+  the run without device calls. Gains and the mode are locked during a run.
 - A requested reboot is never
   re-sent: the GUI waits for Boot or reopens the link within a bounded window;
   an unrequested loss waits for the user's Retry. Listing serial ports never

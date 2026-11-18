@@ -12,7 +12,7 @@
 #include <memory>
 
 namespace drivelink::gui {
-class MonitorView final : public QObject {
+class MonitorView final : public QObject, public PlotSource {
     Q_OBJECT
     // Sections {key, title, subtitle, loop, isLoop, rows[{key, name, unit,
     // input, checked, color}]} in browser order.
@@ -117,8 +117,10 @@ public:
     // set and rates stay for the same device.
     void lose();
     std::vector<MonitorPlan> plans() const;
-    const SampleRing *ring(const QString &key) const;
+    const SampleRing *ring(const QString &key) const override;
     int64_t windowStart() const { return m_now-int64_t(m_window)*1000000; }
+    int64_t plotStart() const override { return windowStart(); }
+    int64_t plotEnd() const override { return m_now; }
     void setSnapshotDirectory(const QString &directory) { m_directory=directory; }
     const PlotSet &plotSet() const { return m_set; }
 signals:

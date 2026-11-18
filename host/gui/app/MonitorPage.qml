@@ -638,7 +638,7 @@ Item {
                             id: plot
                             objectName: "monitorPlotItem_" + plotFrame.index
                             anchors.fill: parent
-                            monitor: page.monitor
+                            source: page.monitor
                             keys: plotFrame.series.map(s => s.key)
                             colors: plotFrame.series.map(s => page.colorOf(s.color))
                         }

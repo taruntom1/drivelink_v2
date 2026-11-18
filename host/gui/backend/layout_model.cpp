@@ -16,7 +16,7 @@ namespace loopdefs=protocol::defs::loop;
 namespace {
 QString tr(const char *text) { return QCoreApplication::translate("DriveLink", text); }
 QString str(const std::string &s) { return QString::fromStdString(s); }
-bool flag(const ItemDescriptor &d, defs::ItemFlag f) { return (d.flags & uint8_t(f))!=0; }
+bool flag(const ItemDescriptor &d, defs::ItemFlag f) { return (d.flags & uint16_t(f))!=0; }
 std::optional<uint32_t> paramBits(const ModelInstance *e, uint16_t id) {
     if(!e) {return std::nullopt;}
     const auto it=e->params.find(id);

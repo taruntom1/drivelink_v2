@@ -20,6 +20,7 @@ FLAG_ENUM = {
     "testgen": "Testgen",
     "gpio": "Gpio",
     "ref_ticks_after": "RefTicksAfter",
+    "tune": "Tune",
 }
 LOOP_ENUM = {"realtime": "Realtime", "non_realtime": "NonRealtime"}
 PLACEMENT_ENUM = {None: "None", "loop": "Loop", "paused": "Paused"}

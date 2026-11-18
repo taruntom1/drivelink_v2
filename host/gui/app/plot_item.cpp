@@ -1,5 +1,4 @@
 #include "plot_item.hpp"
-#include "monitor_view.hpp"
 #include <QPainter>
 #include <QQuickWindow>
 #include <QSGFlatColorMaterial>
@@ -13,18 +12,17 @@ PlotItem::PlotItem(QQuickItem *parent):QQuickItem(parent) {
     setFlag(ItemHasContents,true);
 }
 
-QObject *PlotItem::monitor() const { return m_monitor; }
-
-void PlotItem::setMonitor(QObject *object) {
-    auto *view=qobject_cast<MonitorView *>(object);
-    if(view==m_monitor) {return;}
-    if(m_monitor) {disconnect(m_monitor,nullptr,this,nullptr);}
-    m_monitor=view;
-    if(view) {
-        connect(view,&MonitorView::dataChanged,this,&PlotItem::refresh);
-        connect(view,&MonitorView::changed,this,&PlotItem::refresh);
+void PlotItem::setSource(QObject *object) {
+    if(object==m_object) {return;}
+    if(m_object) {disconnect(m_object,nullptr,this,nullptr);}
+    m_object=object;
+    m_source=dynamic_cast<PlotSource *>(object);
+    if(object && m_source) {
+        // Any PlotSource QObject: its own changed() and dataChanged() signals.
+        connect(object,SIGNAL(dataChanged()),this,SLOT(refresh()));
+        connect(object,SIGNAL(changed()),this,SLOT(refresh()));
     }
-    emit monitorChanged();refresh();
+    emit sourceChanged();refresh();
 }
 
 void PlotItem::setKeys(const QStringList &keys) {
@@ -56,11 +54,12 @@ double PlotItem::yOf(double value) const {
 // The axis follows the data (GUI thread, on each poll); the lines follow at
 // the next polish.
 void PlotItem::refresh() {
-    if(!isVisible() || !m_monitor) {return;}
+    const auto *source=source_();
+    if(!isVisible() || !source) {return;}
     std::optional<std::pair<double,double>> range;
-    const auto t1=int64_t(m_monitor->nowUs()),t0=m_monitor->windowStart();
+    const auto t1=source->plotEnd(),t0=source->plotStart();
     for(const auto &key:m_keys) {
-        const auto *ring=m_monitor->ring(key);
+        const auto *ring=source->ring(key);
         if(!ring) {continue;}
         if(const auto r=valueRange(*ring,t0,t1)) {
             if(!range) {range=r;} else {range->first=std::min(range->first,r->first);range->second=std::max(range->second,r->second);}
@@ -79,10 +78,10 @@ void PlotItem::refresh() {
 void PlotItem::updatePolish() {
     m_lines.clear();
     m_software=window() && window()->rendererInterface()->graphicsApi()==QSGRendererInterface::Software;
-    if(m_monitor && width()>0 && height()>0) {
-        const auto t1=int64_t(m_monitor->nowUs()),t0=m_monitor->windowStart();
+    if(const auto *source=source_();source && width()>0 && height()>0) {
+        const auto t1=source->plotEnd(),t0=source->plotStart();
         for(qsizetype i=0;i<m_keys.size();++i) {
-            const auto *ring=m_monitor->ring(m_keys[i]);
+            const auto *ring=source->ring(m_keys[i]);
             if(!ring) {continue;}
             Line line{i<m_colors.size()?m_colors[i]:QColor(Qt::gray),{}};
             for(const auto &p:decimate(*ring,t0,t1,width())) {

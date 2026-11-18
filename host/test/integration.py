@@ -12,6 +12,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart_comm'))
+from protocol import CORE_PROTOCOL_VERSION
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -187,7 +190,7 @@ def main():
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 9' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 10' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
@@ -222,7 +225,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 9
+                assert cli('info')['protocol_version'] == 10
                 assert cli('time-ping')['samples'][0]['accepted']
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
@@ -232,7 +235,7 @@ def main():
                 # Submit REBOOT without draining the filled slave. Its reply
                 # deadline must cancel the effect and recover the same PTY,
                 # rather than close the published path or run a stale handler.
-                payload = bytes((9, 201, 1, 8))
+                payload = bytes((CORE_PROTOCOL_VERSION, 201, 1, 8))
                 header = bytes((1, len(payload), 0))
                 crc = 0
                 for byte in header:
@@ -247,7 +250,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 9
+                assert cli('info')['protocol_version'] == 10
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire

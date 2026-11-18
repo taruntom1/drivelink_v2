@@ -193,18 +193,11 @@ Basic.ApplicationWindow {
                     backend: shell.backend
                     blocked: shell.modalOpen || shell.drawerOpen || shell.armPopoverOpen || shell.reviewOpen
                 }
-                Column {
-                    anchors.fill: parent; anchors.margins: Theme.space24
+                TunePage {
+                    anchors.fill: parent
                     visible: shell.page === 2
-                    spacing: Theme.space24
-                    Text {
-                        text: [qsTr("Device"), qsTr("Layout"), qsTr("Tune"), qsTr("Monitor")][shell.page]
-                        font: Theme.fontTitlePage; color: Theme.textPrimary
-                    }
-                    Text {
-                        text: qsTr("This screen follows in a later step.")
-                        font: Theme.fontBodyDefault; color: Theme.textSecondary
-                    }
+                    backend: shell.backend
+                    blocked: shell.modalOpen || shell.drawerOpen || shell.armPopoverOpen || shell.reviewOpen
                 }
             }
         }

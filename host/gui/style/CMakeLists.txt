@@ -64,6 +64,7 @@ qt_add_qml_module(drivelink_gui_style
     DLParamRow.qml
     DLSlider.qml
     DLCommandControl.qml
+    DLGainControl.qml
 )
 
 qt_add_resources(drivelink_gui_style drivelink_gui_assets

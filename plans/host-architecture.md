@@ -219,6 +219,13 @@ commands) in H3a. Python bindings are not planned.
     2. Choose a test signal and the capture signals.
     3. Run, then overlay the results against earlier runs.
     4. Save or revert.
+
+    Gains are the live params the descriptor flags `tune` (core v10
+    `ItemFlag::Tune`), grouped by dotted prefix under a tune-flagged enum
+    ([adding-a-module.md](../docs/adding-a-module.md)). A run suspends the
+    controller's manual commands at 0 like a live write; when the signal has
+    ended on the device the controller's value group sends a fresh frame, so a
+    commandable target returns to 0 (user decision 2026-11-18).
   - **Monitor:** free-form live plots of any signals, and a manual command panel that sets inputs by hand while armed.
 - **Files on the PC:**
   - Tuning sessions (runs: capture, the params used and the test signal; gain history) are one versioned JSON file each, keyed by device id, with capture columns stored as base64 little-endian arrays. Each run exports to CSV.

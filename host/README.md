@@ -274,7 +274,7 @@ drivelink-cli --endpoint serial://COM3 ota-status
 
 Normal upload preflights/hashes the unsigned ESP32-S3 app, streams bounded
 chunks, prepares it with FINISH, requests the explicit REBOOT commit, reconnects,
-checks GET_INFO/core v9 and full ELF identity, and confirms that image. Progress
+checks GET_INFO/core v10 and full ELF identity, and confirms that image. Progress
 uses stderr; `--json` stdout retains JSON envelopes. `--window 1..4` is bounded
 by the device's advertised limit and chunk size fits its payload cap.
 

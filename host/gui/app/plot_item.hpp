@@ -1,5 +1,6 @@
 #pragma once
-// One Monitor plot: the visible window of some series of the MonitorView,
+// One plot: the visible span of some series of a PlotSource (Monitor's live
+// rings, Tune's runs),
 // drawn as scene-graph line strips. Decimation (at most two points per pixel
 // column) runs on the GUI thread in updatePolish; updatePaintNode only copies
 // the points. The software renderer (offscreen tests and screenshots) draws
@@ -12,13 +13,14 @@
 #include <QQuickItem>
 #include <QtQml/qqmlregistration.h>
 #include <vector>
+#include "monitor_model.hpp"
 
 namespace drivelink::gui {
-class MonitorView;
 class PlotItem : public QQuickItem {
     Q_OBJECT
     QML_ELEMENT
-    Q_PROPERTY(QObject *monitor READ monitor WRITE setMonitor NOTIFY monitorChanged)
+    // A QObject that implements PlotSource.
+    Q_PROPERTY(QObject *source READ source WRITE setSource NOTIFY sourceChanged)
     // Series keys in drawing order, and their colours (same length).
     Q_PROPERTY(QStringList keys READ keys WRITE setKeys NOTIFY keysChanged)
     Q_PROPERTY(QList<QColor> colors READ colors WRITE setColors NOTIFY colorsChanged)
@@ -31,8 +33,8 @@ class PlotItem : public QQuickItem {
     Q_PROPERTY(int vertices READ vertices NOTIFY drawn)
 public:
     explicit PlotItem(QQuickItem *parent=nullptr);
-    QObject *monitor() const;
-    void setMonitor(QObject *);
+    QObject *source() const { return m_object; }
+    void setSource(QObject *);
     QStringList keys() const { return m_keys; }
     void setKeys(const QStringList &);
     QList<QColor> colors() const { return m_colors; }
@@ -42,7 +44,7 @@ public:
     QVariantList ticks() const { return m_ticks; }
     int vertices() const { return m_vertices; }
 signals:
-    void monitorChanged();
+    void sourceChanged();
     void keysChanged();
     void colorsChanged();
     void axisChanged();
@@ -57,7 +59,9 @@ private:
         QColor color;
         std::vector<QPointF> points;
     };
-    QPointer<MonitorView> m_monitor;
+    QPointer<QObject> m_object;
+    PlotSource *m_source=nullptr;
+    const PlotSource *source_() const { return m_object?m_source:nullptr; }
     QStringList m_keys;
     QList<QColor> m_colors;
     double m_min=0,m_max=1;
@@ -66,7 +70,7 @@ private:
     QImage m_image;
     bool m_software=false,m_imageDirty=false;
     int m_vertices=0;
-    void refresh();
+    Q_SLOT void refresh();
     double yOf(double value) const;
 };
 } // namespace drivelink::gui

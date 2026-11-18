@@ -541,8 +541,9 @@ code and records the outcome here; the notes below give the detail.
 | Plot item at 1 kHz on several plots (QtGraphs only if better); `series/2` never beside the arm state | closed by H2d-1: custom `PlotItem`, no QtGraphs (16 series × 10 k samples: decimation ≈ 7 ms, a software frame ≈ 20 ms; line strips on RHI); series colours appear only in plots, chips and browser checkboxes, never in the status bar |
 | G5 1080p: Monitor plot fitting and paused toolbar | closed by H2d-1: plot areas share the column's height, legends and the toolbar wrap (screenshots `monitor`, `monitor-paused`, `monitor-budget` at both sizes) |
 | Manual command card (G5 CommandControl, 344 px) at both sizes | closed by H2d-2: the card is 376 px and scrolls when it outgrows the column; Remove is a small x beside Latch (G5 shows no Remove control); screenshots `monitor` (held and latched) and `monitor-command-disarmed` |
-| G5 1080p: Tune plot column, A/B card, gain history placement; slider ticks at their log-scale values | H2e |
-| CheckItem has no warning state (plant identification caution) | H2e |
+| G5 1080p: Tune plot column; slider ticks at their log-scale values | closed by H2e-1: below 2100 px the gains card is one scrolling column and the plot column keeps its width; ticks sit at their log positions (screenshots `tune`, `tune-running`, `tune-disarm`, `tune-disarmed` at both sizes) |
+| G5 1080p: A/B card, gain history placement | H2e-2 |
+| CheckItem has no warning state (plant identification caution) | H2e-3 |
 | G7 calibration: F6 contract reconciliation, PC file format, provenance, Euler convention, cancel and reconnect | H2f |
 | Remote: live-edit warning opt-out per connection, lease-revoked cancels runs, agent device list | H3b |
 | Rename / `SET_NAME` applies live and sets Unsaved; device name and id in `GET_INFO` | closed by H1c (core v9) |

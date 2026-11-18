@@ -864,7 +864,7 @@ private slots:
         auto *window=qobject_cast<QQuickWindow *>(root.get());QVERIFY(window);
         auto *plot=window->findChild<PlotItem *>("plot");QVERIFY(plot);
         QList<QColor> colors;for(int i=0;i<16;++i) {colors<<QColor::fromHsv(i*22,200,220);}
-        plot->setMonitor(&view);plot->setKeys(keys);plot->setColors(colors);
+        plot->setSource(&view);plot->setKeys(keys);plot->setColors(colors);
         QVERIFY(QTest::qWaitForWindowExposed(window));
         window->grabWindow();
         timer.restart();

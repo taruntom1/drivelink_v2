@@ -1,4 +1,4 @@
-# Core protocol v9 (H1c)
+# Core protocol v10 (H2e-1)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
@@ -6,7 +6,8 @@ the capture family, the core event stream and the status capture state.
 F7b (v7) adds test generation, its completion event and capture trigger.
 F9 (v8) adds OTA, its status/identity query and the OTA ARM gate.
 H1c (v9) adds factory device identity and a live, persisted device name.
-Firmware, host library, CLI and vdev use v9 together; older peers are
+H2e-1 (v10) widens the item descriptor flags to u16 and adds the `Tune` flag.
+Firmware, host library, CLI and vdev use v10 together; older peers are
 incompatible. Diagnostic framing remains v3 and time remains v1. NVS layout
 format 3 includes the name; LP format 2 loads with an empty name.
 F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
@@ -125,7 +126,7 @@ No descriptor is truncated or split. Names/descriptions use UTF-8 byte lengths.
 
 - GET_TYPES (1): `start u16`. Entry: `type u8 | loop_mask u8 | name string`.
 - GET_ITEMS (2): `type u8 | start u16`. Entry: `id u16 | kind u8 |
-  value_type u8 | flags u8 | limits_present u8 | min u32 | max u32 |
+  value_type u8 | flags u16 | limits_present u8 | min u32 | max u32 |
   default u32 | name string | unit string | description string | ref string |
   action_placement u8 | blob_direction u8 | nargs u8 | nresults u8`, then
   each argument/result as `value_type u8 | name string | unit string`.
@@ -138,7 +139,10 @@ GET_TYPES loop_mask bit 0 allows real-time loops, bit 1 allows other loops;
 system and loop have mask zero because they run in no loop.
 
 Kinds/types, loop masks, action placements and item flags use the explicit
-values in `defs.hpp`, including GPIO 0x20 and RefTicksAfter 0x40.
+values in `defs.hpp`, including GPIO 0x20, RefTicksAfter 0x40 and, since v10,
+Tune 0x0100: a live numeric or enum param that the host's Tune screen shows
+(gains, and the enum that selects them; see
+[adding-a-module.md](../adding-a-module.md)). Bits 9..15 are zero.
 Retired definitions are absent. Module diag source IDs are resolved from
 module type YAMLs when referenced by the diagnostic definitions; the retired
 manager sources (`motor_manager` 0x10, `time_sync` 0x11) stay reserved.
@@ -476,7 +480,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=9 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=10 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.

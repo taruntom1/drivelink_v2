@@ -36,13 +36,19 @@ int main(int argc,char **argv) {
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
-                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused or monitor-budget.","name","device"});
+                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running or tune-disarm.","name","device"});
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
     parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
     parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
     parser.addOption({"command","Monitor screens: put these inputs on the Manual command card (comma-separated "
                       "KEY[@LIMIT][=VALUE[:latch]]); with a value the device is armed first and the slider is held there, "
                       "or latched (a vdev only).","inputs"});
+    parser.addOption({"tune","Tune screens: the controller (type:instance).","key"});
+    parser.addOption({"tune-set","Tune screens: set these live params first (comma-separated KEY=VALUE; an enum by its name).","params"});
+    parser.addOption({"signal","Tune screens: test signal fields (comma-separated FIELD=VALUE: target (an item key), waveform "
+                      "(0-5), offset, amplitude, f0, f1, duration, repeat).","fields"});
+    parser.addOption({"tune-runs","Tune screens: arm, then one step run per value of this gain (KEY=V1:V2:...; a vdev only). "
+                      "tune-running starts one more and captures it running; tune-disarm cuts one more with DISARM.","runs"});
     parser.addOption({"select","Layout screens: select this node (type:instance, e.g. 5:0).","key"});
     parser.addOption({"image","Firmware image for the update screens (vdev fixtures).","file"});
     parser.addOption({"expect-state","Capture when ready, fault, safe or lost.","state","ready"});
@@ -55,9 +61,11 @@ int main(int argc,char **argv) {
     // Pages first (their index is the nav index plus one), then shell states.
     const QStringList pages={"connect","device","layout","tune","monitor"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
-                              "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget"};
+                              "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
+                              "tune-running","tune-disarm"};
     const bool layoutScreen=screen.startsWith("layout");
     const bool monitorScreen=screen.startsWith("monitor");
+    const bool tuneScreen=screen.startsWith("tune");
     const bool update=screen.startsWith("update");
     if(update && !parser.isSet("image")) {std::fprintf(stderr,"--screen %s needs --image\n",qPrintable(screen));return 2;}
     if(!pages.contains(screen) && !states.contains(screen)) {std::fprintf(stderr,"Unknown screen\n");return 2;}
@@ -124,7 +132,7 @@ int main(int argc,char **argv) {
         if(expected=="safe" && !connection.safeMode()) {return false;}
         return true;
     },[&] {
-        window->setProperty("page",layoutScreen?1:monitorScreen?3:std::max(0,int(pages.indexOf(screen))-1));
+        window->setProperty("page",layoutScreen?1:monitorScreen?3:tuneScreen?2:std::max(0,int(pages.indexOf(screen))-1));
         if(monitorScreen) {
             // Like the user's clicks: rates first, then each signal (a
             // refused one shows its refusal).
@@ -221,6 +229,53 @@ int main(int argc,char **argv) {
                     if(c.latch) {command.setLatched(c.key,true);command.release(c.key);}
                 }
             }});
+        }
+    }
+    // Tune: the controller, its params and the test signal as typed; then,
+    // armed (a vdev only), one step run per gain value as a user would.
+    auto &tune=connection.tuneView();
+    const auto runs=parser.value("tune-runs");
+    const auto runKey=runs.section(QLatin1Char('='),0,0);
+    const auto runValues=runs.section(QLatin1Char('='),1).split(QLatin1Char(':'),Qt::SkipEmptyParts);
+    const bool extraRun=screen=="tune-running" || screen=="tune-disarm";
+    if((!runValues.isEmpty() || extraRun) && !parser.value("endpoint").startsWith("tcp://")) {
+        std::fprintf(stderr,"--tune-runs and the tune-running/tune-disarm screens arm the device; use a vdev tcp:// endpoint\n");return 2;
+    }
+    if(tuneScreen) {
+        stages.push_back({[&] {return connection.ready() && !tune.controllers().isEmpty();},[&] {
+            if(parser.isSet("tune")) {tune.selectController(parser.value("tune"));}
+            for(const auto &entry:parser.value("tune-set").split(',',Qt::SkipEmptyParts)) {
+                const auto key=entry.section(QLatin1Char('='),0,0),value=entry.section(QLatin1Char('='),1);
+                bool isEnum=false;
+                for(const auto &e:tune.enums()) {
+                    const auto m=e.toMap();
+                    if(m["key"].toString()==key) {isEnum=true;tune.setEnum(key,int(m["options"].toStringList().indexOf(value)));}
+                }
+                if(!isEnum) {tune.gainText(key,value);}
+            }
+            for(const auto &entry:parser.value("signal").split(',',Qt::SkipEmptyParts)) {
+                const auto field=entry.section(QLatin1Char('='),0,0),value=entry.section(QLatin1Char('='),1);
+                if(field=="target") {tune.setTarget(value);}
+                else if(field=="waveform") {tune.setWaveform(value.toInt());}
+                else {tune.setSignalField(field,value);}
+            }
+        }});
+        if(!runValues.isEmpty() || extraRun) {
+            stages.push_back({[&] {return !tune.gainBusy() && connection.armEnabled();},[&] {connection.arm();}});
+            stages.push_back({[&] {return connection.armState()==1 && tune.run().value("canRun").toBool();},[] {}});
+        }
+        for(qsizetype i=0;i<runValues.size();++i) {
+            stages.push_back({[&] {return !connection.tuneRunning() && !tune.gainBusy();},[&,i] {tune.gainText(runKey,runValues[i]);}});
+            stages.push_back({[&] {return !tune.gainBusy() && tune.run().value("canRun").toBool();},[&] {tune.startRun();}});
+            stages.push_back({[&,i] {return !connection.tuneRunning() && tune.runCount()==int(i)+1;},[] {}});
+        }
+        if(extraRun) {
+            stages.push_back({[&] {return tune.run().value("canRun").toBool();},[&] {tune.startRun();}});
+            stages.push_back({[&] {return tune.phase()==drivelink::gui::TuneView::Phase::Running && tune.run().value("progress").toDouble()>0.3;},
+                [&] {if(screen=="tune-disarm") {connection.disarm();}}});
+            if(screen=="tune-disarm") {
+                stages.push_back({[&] {return !connection.tuneRunning() && tune.runCount()==int(runValues.size())+1;},[] {}});
+            }
         }
     }
     // Monitor: data across most of the window, then (paused) freeze it and

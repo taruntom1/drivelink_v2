@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v9](../../../docs/protocol/core.md).
+[core v10](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -106,7 +106,7 @@ REVERT restores the saved name after parameter batches succeed; reset clears it.
 
 Layout format 3 includes the name in its CRC-protected commit record. LP
 format 2 loads with an empty name, preserving records/params. New writes use
-format 3; wire compatibility requires core v9.
+format 3; wire compatibility requires core v10.
 
 - **Blobs** (`config_blob.hpp`, little-endian through `wire::Reader` / `Writer`, closed by a CRC-32):
   - instance: `fmt u8 | gen u32 | count u16 | count × (id u16, value u32) | crc32`, in namespace `t<type>i<inst>` (`t00i00` is the system), keys `p_a` / `p_b`

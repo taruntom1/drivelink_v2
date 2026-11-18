@@ -18,6 +18,13 @@ target_compile_definitions(gui_monitor_tests PRIVATE VDEV_PATH="$<TARGET_FILE:dr
 target_link_libraries(gui_monitor_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
 add_dependencies(gui_monitor_tests drivelink-vdev)
 
+# Tune (H2e): pure rules, the view, runs on vdev and the page in the shell.
+qt_add_executable(gui_tune_tests test_tune.cpp test_support.hpp)
+set_target_properties(gui_tune_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+target_compile_definitions(gui_tune_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
+target_link_libraries(gui_tune_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
+add_dependencies(gui_tune_tests drivelink-vdev)
+
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_quick_tests PRIVATE QUICK_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -45,6 +52,9 @@ set_tests_properties(gui-backend PROPERTIES TIMEOUT 300
 add_test(NAME gui-monitor COMMAND gui_monitor_tests)
 set_tests_properties(gui-monitor PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
+add_test(NAME gui-tune COMMAND gui_tune_tests)
+set_tests_properties(gui-tune PROPERTIES TIMEOUT 300
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME gui-screenshots COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scenarios.py
   --gui $<TARGET_FILE:drivelink-gui> --vdev $<TARGET_FILE:drivelink-vdev>

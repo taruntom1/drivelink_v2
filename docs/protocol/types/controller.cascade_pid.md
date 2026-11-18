@@ -10,17 +10,17 @@ Type id `0x20`. Loops: realtime.
 |---|---|---|---|---|---|---|---|
 | 0x0001 | `actuator` | u32 |  |  |  | reboot_required, persist, ref_ticks_after, ref:actuator |  |
 | 0x0002 | `feedback` | u32 |  |  |  | reboot_required, persist, ref:feedback |  |
-| 0x0010 | `mode` | enum (open_loop=0, velocity=1, position=2) |  |  | open_loop | persist |  |
+| 0x0010 | `mode` | enum (open_loop=0, velocity=1, position=2) |  |  | open_loop | persist, tune |  |
 | 0x0011 | `duty_limit` | f32 |  | 0 .. 1 | 1 | persist |  |
 | 0x0012 | `velocity_limit` | f32 | rad/s | 0.00100000005 .. 1000 | 100 | persist |  |
-| 0x0020 | `vel.kp` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0021 | `vel.ki` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0022 | `vel.kd` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0023 | `vel.d_cutoff` | f32 |  | 0 .. 5000 | 0 | persist |  |
-| 0x0030 | `pos.kp` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0031 | `pos.ki` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0032 | `pos.kd` | f32 |  | 0 .. 1000 | 0 | persist |  |
-| 0x0033 | `pos.d_cutoff` | f32 |  | 0 .. 5000 | 0 | persist |  |
+| 0x0020 | `vel.kp` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0021 | `vel.ki` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0022 | `vel.kd` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0023 | `vel.d_cutoff` | f32 |  | 0 .. 5000 | 0 | persist, tune |  |
+| 0x0030 | `pos.kp` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0031 | `pos.ki` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0032 | `pos.kd` | f32 |  | 0 .. 1000 | 0 | persist, tune |  |
+| 0x0033 | `pos.d_cutoff` | f32 |  | 0 .. 5000 | 0 | persist, tune |  |
 
 ## Signals
 

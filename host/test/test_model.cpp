@@ -27,7 +27,7 @@ Bytes item(uint16_t id, ValueType type, ItemKind kind = ItemKind::Param)
     p::defs::ItemDesc desc{};
     desc.id = id; desc.type = type; desc.kind = kind;
     desc.name = "discovered"; desc.unit = "u"; desc.description = "d"; desc.ref = "";
-    desc.flags = 0x80; // source flag must survive without special module code
+    desc.flags = 0x0180; // source and tune (core v10 u16 flags) survive without special module code
     Bytes out(128);
     p::wire::Writer w(out.data(), out.size()); p::core_wire::item(w, desc);
     out.resize(w.size()); return out;
@@ -205,6 +205,7 @@ TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe m
     CHECK(s.types.at(223).descriptor.name == "unknown.module");
     CHECK(s.types.at(223).items.at(900).enums.at(0).name == "custom_mode");
     CHECK(s.types.at(223).items.at(901).descriptor.isSource());
+    CHECK(s.types.at(223).items.at(901).descriptor.flags == 0x0180);
     CHECK(s.types.at(223).items.at(903).descriptor.kind == ItemKind::Action);
     CHECK(s.codes.at(0).code == 4321);
     CHECK(std::get<uint16_t>(s.system_params.at(1234)) == 456);
