@@ -7,10 +7,14 @@
 
 The full version is the base at a clean checkout of tag v<base>, otherwise
 <base>+g<sha7>, with ".dirty" when tracked files changed. Without git it is the
-base. cmake/DriveLinkVersion.cmake applies the same rules for CMake builds
-(firmware PROJECT_VER, the host). Standard library only.
+base. A DRIVELINK_VERSION_FULL environment variable (<base> or <base>+<suffix>)
+wins: validate.py computes the version on Windows and passes it to builds in
+WSL, whose git cannot read a Windows worktree. cmake/DriveLinkVersion.cmake
+applies the same rules for CMake builds (firmware PROJECT_VER, the host).
+Standard library only.
 """
 import argparse
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -42,9 +46,14 @@ def _git(root, *args):
     return done.stdout.strip() if done.returncode == 0 else None
 
 
-def full(root=ROOT, git=_git):
+def full(root=ROOT, git=_git, environ=os.environ):
     """The base, or base+g<sha7>[.dirty] away from a clean v<base> tag."""
     version = base(root)
+    given = environ.get('DRIVELINK_VERSION_FULL')
+    if given:
+        if not re.fullmatch(re.escape(version) + r'(\+[0-9A-Za-z.]+)?', given):
+            raise ValueError(f'DRIVELINK_VERSION_FULL {given!r} does not extend VERSION {version}')
+        return given
     sha = git(root, 'rev-parse', '--short=7', 'HEAD')
     if not sha:
         return version

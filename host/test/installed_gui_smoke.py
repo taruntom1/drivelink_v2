@@ -3,12 +3,15 @@
     python host/test/installed_gui_smoke.py --installer build/installer/DriveLink-<v>-setup.exe \
         --endpoint serial://COM3 --out <dir>
     python host/test/installed_gui_smoke.py --installer <setup.exe> --vdev --out <dir>
+    sudo python3 host/test/installed_gui_smoke.py --deb build/deb/drivelink_<v>_amd64.deb --vdev --out <dir>
 
-Installs per user into a temporary directory (silent), records the device's
+Windows: installs per user into a temporary directory (silent). Linux (--deb,
+as root, e.g. in a clean ubuntu:26.04 container): apt installs the package with
+its Depends and removes it at the end. It records the device's
 layout and loop rates, adds a mock layout (actuator, feedback and a controller
 in the control loop, imu.mock in the sensor loop), saves and reboots, then
-renders each screen with the installed drivelink-gui.exe (Qt and MinGW off
-PATH), both sizes and themes. Afterwards it removes the mocks, restores the
+renders each screen with the installed drivelink-gui (on Windows with Qt and
+MinGW off PATH), both sizes and themes. Afterwards it removes the mocks, restores the
 rates, saves, reboots and checks the layout, rates and flags match the start;
 then uninstalls. Mock modules only: never run it with motors or sensors
 attached. It refuses a device with unsaved changes, pending edits, safe mode or
@@ -22,6 +25,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -66,11 +70,23 @@ class Cli:
         return self.connected()
 
 
+WINDOWS = sys.platform == 'win32'
+EXE = '.exe' if WINDOWS else ''
+DEB_FILES = ['/usr/bin/drivelink-gui', '/usr/bin/drivelink-cli', '/usr/bin/drivelink-vdev',
+             '/usr/share/doc/drivelink/copyright', '/usr/share/doc/drivelink/THIRD_PARTY_NOTICES.txt',
+             '/usr/share/applications/drivelink.desktop']
+
+
 def clean_env():
-    """No Qt, MinGW or MSYS on PATH: the installed copy must be self-contained."""
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith('QT_')}
-    windows = os.environ.get('SystemRoot', r'C:\Windows')
-    env['PATH'] = f'{windows}\\System32;{windows}'
+    """Windows: no Qt, MinGW or MSYS on PATH (the installed copy must be
+    self-contained). Linux: the system directories, no Qt or loader overrides."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith(('QT_', 'QML', 'LD_LIBRARY'))}
+    if WINDOWS:
+        windows = os.environ.get('SystemRoot', r'C:\Windows')
+        env['PATH'] = f'{windows}\\System32;{windows}'
+    else:
+        env['PATH'] = '/usr/bin:/bin'
     return env
 
 
@@ -82,6 +98,25 @@ def install(setup, directory, log):
                  'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt'):
         assert (directory / name).is_file(), f'{name} missing after install'
     return gui
+
+
+def install_deb(deb):
+    """apt installs the package and its Depends; return the bin directory."""
+    assert os.geteuid() == 0, '--deb installs with apt: run as root (a clean container)'
+    env = dict(os.environ, DEBIAN_FRONTEND='noninteractive')
+    subprocess.run(['apt-get', 'update'], check=True, timeout=300, env=env)
+    subprocess.run(['apt-get', 'install', '-y', '--no-install-recommends', str(Path(deb).resolve())],
+                   check=True, timeout=900, env=env)
+    for name in DEB_FILES:
+        assert Path(name).is_file(), f'{name} missing after install'
+    return Path('/usr/bin')
+
+
+def uninstall_deb():
+    env = dict(os.environ, DEBIAN_FRONTEND='noninteractive')
+    subprocess.run(['apt-get', 'remove', '-y', 'drivelink'], check=True, timeout=300, env=env)
+    left = [name for name in DEB_FILES if Path(name).exists()]
+    assert not left, f'remove left {left} behind'
 
 
 def uninstall(directory):
@@ -130,7 +165,9 @@ def start_vdev(path, work):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--installer', required=True, type=Path)
+    package = parser.add_mutually_exclusive_group(required=True)
+    package.add_argument('--installer', type=Path, help='Windows: the Inno Setup installer')
+    package.add_argument('--deb', type=Path, help='Linux: the .deb (apt installs it; run as root)')
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('--endpoint', help='the device, e.g. serial://COM3')
     target.add_argument('--vdev', action='store_true', help='dry run: the installed drivelink-vdev')
@@ -140,14 +177,21 @@ def main():
     work = Path(tempfile.mkdtemp(prefix='drivelink-installed-'))
     device = None
     directory = work / 'DriveLink'
+    installed = False
     try:
-        gui = install(args.installer, directory, work / 'install.log')
-        print(f'installed {args.installer.name} into {directory}', flush=True)
+        if args.deb:
+            installed = True  # apt may have half-installed it: always remove
+            directory = install_deb(args.deb)
+            gui = directory / 'drivelink-gui'
+            print(f'installed {args.deb.name} with apt', flush=True)
+        else:
+            gui = install(args.installer, directory, work / 'install.log')
+            print(f'installed {args.installer.name} into {directory}', flush=True)
         if args.vdev:
-            device, endpoint = start_vdev(directory / 'drivelink-vdev.exe', work)
+            device, endpoint = start_vdev(directory / f'drivelink-vdev{EXE}', work)
         else:
             endpoint = args.endpoint
-        cli = Cli(directory / 'drivelink-cli.exe', endpoint)
+        cli = Cli(directory / f'drivelink-cli{EXE}', endpoint)
         info = cli.connected()
         # The same refusals as hardware_smoke.py: pending edits, invalid layout
         # or safe mode (info flags), unsaved edits (status flag 8), armed.
@@ -195,7 +239,15 @@ def main():
         print('PASS restored: layout, loop rates, no unsaved changes', flush=True)
     finally:
         try:
-            if directory.exists():
+            if args.deb:
+                if installed:
+                    if device is not None:  # before apt removes its executable
+                        device.kill()
+                        device.communicate(timeout=10)
+                        device = None
+                    uninstall_deb()
+                    print('PASS removed', flush=True)
+            elif directory.exists():
                 uninstall(directory)
                 print('PASS uninstalled', flush=True)
         finally:

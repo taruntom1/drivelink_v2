@@ -15,18 +15,14 @@ import fnmatch
 import json
 import os
 from pathlib import Path
-import queue
 import shutil
-import subprocess
 import sys
-import tempfile
-import threading
-import time
 
 TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 import version  # noqa: E402
+from package_common import Failure, Unavailable, run, say, smoke as smoke_programs  # noqa: E402
 
 QT_ROOT = Path('C:/Qt/6.12.0/mingw_64')
 QT_TOOLS = Path('C:/Qt/Tools')
@@ -42,16 +38,7 @@ QML_DIRS = ['host/gui/app', 'host/gui/style', 'host/gui/modules']
 UNUSED_STYLES = ['FluentWinUI3', 'Fusion', 'Imagine', 'Material', 'Universal', 'Windows']
 NOTICES_DIR = ROOT / 'host/gui/notices'
 SCRIPT = ROOT / 'host/gui/installer/drivelink.iss'
-SCREENSHOT = 'connect-2560x1440-dark.png'
 INSTALL_HINT = 'winget install --id JRSoftware.InnoSetup -e'
-
-
-class Failure(Exception):
-    """A step failed: exit 1."""
-
-
-class Unavailable(Exception):
-    """A prerequisite is missing: exit 2."""
 
 
 # Pure helpers
@@ -124,25 +111,6 @@ def tool_path(env_path=None):
 
 
 # Steps
-
-def say(text):
-    print(text, flush=True)
-
-
-def run(argv, *, env=None, cwd=None, timeout=None, log=None):
-    """Run a command; return the CompletedProcess. A log file collects stdout and stderr."""
-    try:
-        if log:
-            with open(log, 'w', encoding='utf-8', errors='replace') as sink:
-                return subprocess.run([str(a) for a in argv], env=env, cwd=cwd, timeout=timeout,
-                                      stdout=sink, stderr=subprocess.STDOUT)
-        return subprocess.run([str(a) for a in argv], env=env, cwd=cwd, timeout=timeout,
-                              capture_output=True, text=True, errors='replace')
-    except subprocess.TimeoutExpired as error:
-        raise Failure(f'{Path(str(argv[0])).name} timed out after {timeout} s') from error
-    except OSError as error:
-        raise Failure(f'cannot run {argv[0]}: {error}') from error
-
 
 def check_tools():
     missing = [str(d) for d in TOOL_DIRS if not d.is_dir()]
@@ -218,79 +186,13 @@ def check_notices(target):
     say(f'notices: all {len(staged_dlls(target))} staged DLLs are covered')
 
 
-def read_lines(stream, lines):
-    for line in stream:
-        lines.put(line.rstrip())
-    lines.put(None)
-
-
-def stop(process):
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-
-
-def start_vdev(target, env):
-    """Start vdev on an ephemeral port; return (process, endpoint)."""
-    process = subprocess.Popen([str(target / 'drivelink-vdev.exe'), '--port', '0'], env=env,
-                               cwd=tempfile.gettempdir(), stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, text=True, errors='replace')
-    lines = queue.Queue()
-    threading.Thread(target=read_lines, args=(process.stdout, lines), daemon=True).start()
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        try:
-            line = lines.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        if line is None:
-            break
-        if line.startswith('READY '):
-            return process, line.split(None, 1)[1]
-    stop(process)
-    raise Failure('drivelink-vdev did not print READY')
-
-
 def smoke(target):
     """Run the staged programs with Qt and MinGW off PATH, from a scratch directory."""
     # Never start the GUI without the offscreen platform: a WIN32 program's
     # fatal Qt error is a modal message box nobody would close.
     if not (target / 'platforms/qoffscreen.dll').is_file():
         raise Failure('platforms/qoffscreen.dll is not staged; the GUI smoke would open a message box')
-    env = dict(clean_env(os.environ), QT_QPA_PLATFORM='offscreen')
-    with tempfile.TemporaryDirectory(prefix='drivelink-smoke-') as scratch:
-        cli = str(target / 'drivelink-cli.exe')
-        done = run([cli, '--help'], env=env, cwd=scratch, timeout=30)
-        if done.returncode != 0:
-            raise Failure(f'drivelink-cli --help exited {done.returncode}')
-        say('smoke: cli --help ok')
-        process, endpoint = start_vdev(target, env)
-        try:
-            done = run([cli, '--endpoint', endpoint, '--json', 'info'], env=env, cwd=scratch,
-                       timeout=30)
-            if done.returncode != 0:
-                raise Failure(f'drivelink-cli info exited {done.returncode}: {done.stderr.strip()}')
-            try:
-                firmware = json.loads(done.stdout)['data']['firmware_version']
-            except (ValueError, KeyError, TypeError) as error:
-                raise Failure(f'drivelink-cli info gave no data.firmware_version: {error}') from error
-            if not str(firmware).endswith('-vdev'):
-                raise Failure(f'vdev reported firmware_version {firmware!r}, expected *-vdev')
-        finally:
-            stop(process)
-        say(f'smoke: vdev answered the cli ({firmware})')
-        shots = Path(scratch) / 'shots'
-        done = run([target / 'drivelink-gui.exe', '--screen', 'connect', '--out', shots],
-                   env=env, cwd=scratch, timeout=60)
-        if done.returncode != 0:
-            raise Failure(f'drivelink-gui --screen connect exited {done.returncode}')
-        if not (shots / SCREENSHOT).is_file() or (shots / SCREENSHOT).stat().st_size == 0:
-            raise Failure(f'drivelink-gui wrote no {SCREENSHOT}')
-        say('smoke: gui rendered connect')
+    smoke_programs(target, dict(clean_env(os.environ), QT_QPA_PLATFORM='offscreen'), suffix='.exe')
 
 
 def installer(target, out, iscc, full):

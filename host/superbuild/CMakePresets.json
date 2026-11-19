@@ -2,10 +2,11 @@
   "version": 6,
   "configurePresets": [
     {"name":"linux", "generator":"Ninja", "binaryDir":"${sourceDir}/build/linux", "cacheVariables":{"CMAKE_BUILD_TYPE":"Debug"}},
+    {"name":"linux-release", "inherits":"linux", "binaryDir":"${sourceDir}/build/linux-release", "cacheVariables":{"CMAKE_BUILD_TYPE":"Release", "BUILD_TESTING":"OFF"}},
     {"name":"linux-no-gui", "inherits":"linux", "binaryDir":"${sourceDir}/build/linux-no-gui", "cacheVariables":{"DRIVELINK_BUILD_GUI":"OFF"}},
     {"name":"windows-mingw", "generator":"Ninja", "binaryDir":"${sourceDir}/build/windows-mingw", "cacheVariables":{"CMAKE_BUILD_TYPE":"Debug", "CMAKE_CXX_COMPILER":"C:/Qt/Tools/mingw1310_64/bin/g++.exe", "CMAKE_PREFIX_PATH":"C:/Qt/6.12.0/mingw_64"}, "environment":{"PATH":"C:/Qt/Tools/mingw1310_64/bin;$penv{PATH}"}},
     {"name":"windows-mingw-release", "inherits":"windows-mingw", "binaryDir":"${sourceDir}/build/windows-mingw-release", "cacheVariables":{"CMAKE_BUILD_TYPE":"Release", "BUILD_TESTING":"OFF", "DRIVELINK_GUI_WIN32":"ON"}}
   ],
-  "buildPresets": [{"name":"linux","configurePreset":"linux"},{"name":"windows-mingw","configurePreset":"windows-mingw"},{"name":"windows-mingw-release","configurePreset":"windows-mingw-release"}],
+  "buildPresets": [{"name":"linux","configurePreset":"linux"},{"name":"linux-release","configurePreset":"linux-release"},{"name":"windows-mingw","configurePreset":"windows-mingw"},{"name":"windows-mingw-release","configurePreset":"windows-mingw-release"}],
   "testPresets": [{"name":"linux","configurePreset":"linux","output":{"outputOnFailure":true}},{"name":"windows-mingw","configurePreset":"windows-mingw","output":{"outputOnFailure":true}}]
 }

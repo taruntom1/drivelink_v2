@@ -167,7 +167,9 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   bundles (a dependency, Qt module or plugin) needs a `gui/notices/notices.json`
   entry and its licence text; regenerate with `gen_notices.py --write`.
   Staging refuses an unlisted DLL. The installer's AppId never changes. Release
-  installers come from CI's open-source Qt.
+  installers come from CI's open-source Qt. The Linux `.deb` bundles no shared
+  library (Qt comes from Ubuntu's packages); a new `import Qt…` in the GUI
+  needs its `qml6-module-*` package in `tools/package_linux.py` Depends.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

@@ -52,10 +52,22 @@ class VersionTest(unittest.TestCase):
             (dict(tags='v0.1.0-rc'), '0.1.0+gabc1234'),
         ]
         for answers, expected in cases:
-            self.assertEqual(version.full(self.root, git=fake_git(**answers)), expected, answers)
-        self.assertEqual(version.full(self.root, git=lambda root, *args: None), '0.1.0')
+            self.assertEqual(version.full(self.root, git=fake_git(**answers), environ={}), expected, answers)
+        self.assertEqual(version.full(self.root, git=lambda root, *args: None, environ={}), '0.1.0')
         # The longest form fits esp_app_desc_t.version (31 characters).
-        self.assertLessEqual(len(version.full(self.root, git=fake_git(dirty='x'))), 31)
+        self.assertLessEqual(len(version.full(self.root, git=fake_git(dirty='x'), environ={})), 31)
+
+    def test_environment_override(self):
+        # validate.py passes the Windows checkout's version into WSL builds.
+        self.write('VERSION', '0.1.0\n')
+        for given in ('0.1.0', '0.1.0+gabc1234', '0.1.0+gabc1234.dirty'):
+            self.assertEqual(version.full(self.root, git=fake_git(), environ={'DRIVELINK_VERSION_FULL': given}),
+                             given)
+        for wrong in ('0.2.0', '0.1.0-rc', '0.1.0+g abc', '0.1.01'):
+            with self.assertRaises(ValueError, msg=wrong):
+                version.full(self.root, git=fake_git(), environ={'DRIVELINK_VERSION_FULL': wrong})
+        self.assertEqual(version.full(self.root, git=fake_git(), environ={'DRIVELINK_VERSION_FULL': ''}),
+                         '0.1.0+gabc1234')
 
     def test_check_reports_each_mismatch(self):
         self.assertEqual(version.check(self.root), [])

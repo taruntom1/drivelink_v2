@@ -117,6 +117,9 @@ private slots:
         QVERIFY(!s.compiler().isEmpty());
         QVERIFY(s.licence().contains("All rights reserved"));
         QVERIFY(s.notices().size()>0);
+        // LF only, whatever the checkout's line endings (Qt's TextArea drops CR).
+        QVERIFY(!s.notices().contains(QLatin1Char('\r')));
+        QVERIFY(!s.licence().contains(QLatin1Char('\r')));
     }
     // Disconnected: Settings opens from the rail's footer (the page items stay
     // disabled), replaces the Connect page, and Close or the item leads back.

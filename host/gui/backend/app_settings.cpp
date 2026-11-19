@@ -11,9 +11,12 @@ namespace drivelink::gui {
 namespace {
 const QString kThemeKey=QStringLiteral("appearance/theme");
 
+// LF only: a Windows checkout (core.autocrlf) embeds CRLF, and the About
+// text, the copied text and Qt's text areas must all agree.
 QString resourceText(const QString &path) {
     QFile file(path);
-    return file.open(QIODevice::ReadOnly)?QString::fromUtf8(file.readAll()):QString();
+    if(!file.open(QIODevice::ReadOnly)) {return {};}
+    return QString::fromUtf8(file.readAll()).replace(QLatin1String("\r\n"),QLatin1String("\n"));
 }
 }
 

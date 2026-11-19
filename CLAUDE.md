@@ -24,7 +24,7 @@ Before editing an area, read its scoped rules:
 - Edit `protocol/defs/` or the generator, run `python tools/gen/gen.py`, and
   commit generated headers/docs. Never hand-edit generated outputs.
 - One version for the repo: the root `VERSION` (firmware, host, `package.xml`,
-  installer); `tools/version.py --check` enforces it.
+  installer, `.deb`); `tools/version.py --check` enforces it.
 - Before a PR, `python tools/validate.py full` must pass with zero-warning builds.
   Use `quick` while iterating. Update affected API/Kconfig READMEs in the same PR;
   new components need a README. Pure-logic changes need native tests.

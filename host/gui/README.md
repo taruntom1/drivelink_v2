@@ -654,6 +654,22 @@ needs a manifest entry (and its licence text in `notices/licenses/`) before
 the installer builds. Qt's own third-party parts come from the SBOM files of
 the Qt install (`C:/Qt/6.12.0/mingw_64/sbom/`), as a superset.
 
+## Linux package (.deb)
+
+`python3 tools/package_linux.py` (the `deb` check of `validate.py`, through WSL
+on Windows; host-linux-package CI uploads the result) builds the
+`linux-release` preset, stages `/usr/bin/drivelink-{gui,cli,vdev}` (stripped),
+`/usr/share/applications/drivelink.desktop` and
+`/usr/share/doc/drivelink/` (`copyright`, `LICENSE.txt`,
+`THIRD_PARTY_NOTICES.txt`), smokes the staged programs and writes
+`build/deb/drivelink_<version>_<arch>.deb`. It bundles nothing: Qt and the
+C++ runtime come from Ubuntu's packages, so staging fails on any shared
+library. Depends is `dpkg-shlibdeps`' list plus `QML_PACKAGES`, the runtime
+QML modules; a new `import Qt…` in the GUI needs its `qml6-module-*` package
+there (`tools/tests/test_package_linux.py` checks it). The package targets the
+Ubuntu release it was built on (26.04). CI installs it in a clean container
+and renders every screen (`host/test/installed_gui_smoke.py --deb`).
+
 ## Theme
 
 Figma's variables are the source of truth. `tokens.json` holds every variable

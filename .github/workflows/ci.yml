@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main, host_overhaul]
+    # A v<VERSION> tag also publishes a GitHub Release (job release).
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -15,8 +17,10 @@ concurrency:
 # The commands of every check are in tools/validate.py, which is also what
 # runs locally. A job here only provides the toolchain and names its checks.
 jobs:
-  host-windows:
-    name: Host Windows (Qt MinGW 13.1)
+  # Tests and packages are separate jobs: a test failure does not hide the
+  # package's result, and each finishes sooner.
+  host-windows-tests:
+    name: Host Windows tests (Qt MinGW 13.1)
     runs-on: windows-2025
     env:
       CMAKE_PREFIX_PATH: C:/Qt/6.12.0/mingw_64
@@ -25,39 +29,37 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/windows-qt
+      - name: Build (warnings are errors), test (GUI offscreen), check the installed packages
+        timeout-minutes: 45
+        run: python tools/validate.py --only host-win
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.12'
-      - name: Cache the pinned Qt and MinGW kit
-        id: qt-cache
-        uses: actions/cache@v4
-        with:
-          path: C:/Qt
-          key: windows-2025-qt-6.12.0-mingw-13.1.0-aqt-5a49f2b-tools-v1
-      - name: Install Qt 6.12.0 and Qt's build tools
-        if: steps.qt-cache.outputs.cache-hit != 'true'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          # Released aqt 3.3.0 predates the split Windows Qt 6.11+ repositories.
-          # Pin the upstream revision that supports them; never patch vendored code.
-          python -m pip install 'aqtinstall @ https://github.com/miurahr/aqtinstall/archive/5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7.zip'
-          python -m aqt install-qt windows desktop 6.12.0 win64_mingw -O C:/Qt
-          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O C:/Qt
-          python -m aqt install-tool windows desktop tools_cmake qt.tools.cmake -O C:/Qt
-          python -m aqt install-tool windows desktop tools_ninja qt.tools.ninja -O C:/Qt
+          name: host-windows-tests-validation
+          path: build/validate/
+
+  host-windows-package:
+    name: Host Windows package (installer)
+    runs-on: windows-2025
+    env:
+      CMAKE_PREFIX_PATH: C:/Qt/6.12.0/mingw_64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-qt
       - name: Install Inno Setup 6 when the runner lacks it
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe')) {
             choco install innosetup --version 6.7.1 --no-progress -y
           }
-      - name: Build (warnings are errors), test (GUI offscreen), check the installed packages, build the installer
-        timeout-minutes: 45
-        run: |
-          $qtVersion = & 'C:/Qt/6.12.0/mingw_64/bin/qmake.exe' -query QT_VERSION
-          if ($LASTEXITCODE -ne 0 -or $qtVersion -ne '6.12.0') { throw "Expected Qt 6.12.0, found $qtVersion" }
-          python tools/validate.py --only host-win installer
+      - name: Release build, staged smoke with Qt off PATH, Inno Setup installer
+        timeout-minutes: 30
+        run: python tools/validate.py --only installer
       - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
@@ -68,11 +70,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: host-windows-validation
+          name: host-windows-package-validation
           path: build/validate/
 
-  host-linux:
-    name: Host Linux (Ubuntu 26.04)
+  host-linux-tests:
+    name: Host Linux tests (Ubuntu 26.04)
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
@@ -85,6 +87,59 @@ jobs:
         run: sh tools/setup_linux.sh host
       - name: Build (warnings are errors), test against TCP and PTY vdev and the GUI offscreen, check the installed packages
         run: python3 tools/validate.py --only host-linux
+
+  host-linux-package:
+    name: Host Linux package (.deb)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the host packages (compilers, CMake, Ninja, Qt 6.10)
+        run: sh tools/setup_linux.sh host
+      - name: Release build, staged smoke, .deb
+        run: |
+          # The checkout belongs to another user than the container's; the
+          # version (VERSION+g<sha>) needs git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only deb
+      - name: Upload the .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-linux-deb
+          path: build/deb/drivelink_*.deb
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-linux-package-validation
+          path: build/validate/
+
+  host-linux-install:
+    name: Host Linux .deb installed in a clean container
+    needs: host-linux-package
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      # Only git and Python: the package's Depends must bring everything else.
+      - name: Bootstrap git and Python
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-linux-deb
+          path: deb
+      - name: apt install, every screen against the installed vdev, apt remove
+        run: python3 host/test/installed_gui_smoke.py --deb deb/drivelink_*.deb --vdev --out build/installed-gui
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-linux-installed-screens
+          path: build/installed-gui/
+          if-no-files-found: ignore
 
   firmware:
     name: idf.py build (${{ matrix.name }})
@@ -112,6 +167,64 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . "$IDF_PATH/export.sh"
           python3 tools/validate.py --only ${{ matrix.check }}
+
+  firmware-package:
+    name: Firmware package (ESP32-S3)
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconfigure, build (zero warnings), package
+        shell: bash
+        run: |
+          set -eo pipefail
+          # The checkout is owned by another user than the container's; the
+          # version (VERSION+g<sha>) needs git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          python3 tools/validate.py --only fw-package
+      - name: Upload the firmware package
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: build/firmware/drivelink-firmware-*/
+          if-no-files-found: error
+
+  # On a v<VERSION> tag, after every check and package passed: one GitHub
+  # Release with the firmware, the Windows installer and the Linux .deb.
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host-windows-tests, host-windows-package, host-linux-tests, host-linux-package,
+            host-linux-install, firmware, firmware-package, native-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Check the tag against VERSION and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1
+          fi
+          # A tag build carries the plain version; a +g suffix means it was not.
+          firmware="drivelink-firmware-$version"
+          installer="dist/drivelink-windows-installer/DriveLink-$version-setup.exe"
+          deb="dist/drivelink-linux-deb/drivelink_${version}_amd64.deb"
+          test -f "$installer" && test -f "$deb"
+          args=$(find dist/drivelink-firmware -name flash_args.json)
+          test "$(jq -r .version "$args")" = "$version"
+          (cd "$(dirname "$args")" && zip -r "$GITHUB_WORKSPACE/dist/$firmware.zip" .)
+          (cd dist && sha256sum "$firmware.zip" "${installer#dist/}" "${deb#dist/}") > dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes \
+            "dist/$firmware.zip" "$installer" "$deb" dist/SHA256SUMS
 
   native-tests:
     name: Native unit tests

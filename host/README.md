@@ -21,8 +21,8 @@ H2c-1 adds Layout: the instance tree by loop, loop and instance detail with
 typed param editors, wiring and source targets, Add instance/loop, Remove,
 labels, limits and the pending review with Discard all. H2d adds Monitor
 (plots and the manual command), H2e Tune (runs, sessions, plant
-identification), H2f the IMU calibration panel and H2g the Settings page and
-the Windows installer.
+identification), H2f the IMU calibration panel and H2g the Settings page, the
+Windows installer and the Linux `.deb`.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
 ## Using the GUI on Windows (H2g)
@@ -55,6 +55,26 @@ The installed folder also holds `THIRD_PARTY_NOTICES.txt` and `LICENSE.txt`.
 Release installers come from CI, which builds with the open-source Qt; the
 version is the root `VERSION` (with `+g<commit>` on a build that isn't the
 `v<VERSION>` tag).
+
+## Using the GUI on Linux
+
+On Ubuntu 26.04 (amd64), install `drivelink_<version>_amd64.deb`, the
+`drivelink-linux-deb` artifact of the host-linux-package CI job (or
+`build/deb/` after `python3 tools/package_linux.py`):
+
+```bash
+sudo apt install ./drivelink_<version>_amd64.deb
+```
+
+apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. It
+installs `drivelink-gui`, `drivelink-cli` and `drivelink-vdev` in `/usr/bin`
+and a **DriveLink** application entry; the licence and third-party notices are
+in `/usr/share/doc/drivelink/`. Remove it with `sudo apt remove drivelink`.
+The GUI works as on Windows (above). Serial ports need your user in the
+`dialout` group (`sudo usermod -aG dialout $USER`, then log in again). The GUI
+keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. The package is
+built for the Ubuntu release CI builds on (26.04); other releases need a build
+from source ("Build" below).
 
 ## Device identity (H1c)
 

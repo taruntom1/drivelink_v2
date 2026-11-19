@@ -5,7 +5,8 @@
 #   DRIVELINK_VERSION       MAJOR.MINOR.PATCH, for project(VERSION ...)
 #   DRIVELINK_VERSION_FULL  the same at a clean checkout of tag v<version>,
 #                           else <version>+g<sha7>, ".dirty" when tracked
-#                           files changed; the version alone without git.
+#                           files changed; the version alone without git;
+#                           an environment DRIVELINK_VERSION_FULL wins.
 #
 # The rules match tools/version.py. Git is read at configure time; VERSION
 # changes reconfigure.
@@ -21,7 +22,15 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_drivelink_roo
 
 set(DRIVELINK_VERSION_FULL "${DRIVELINK_VERSION}")
 find_program(DRIVELINK_GIT git)
-if(DRIVELINK_GIT)
+# An environment DRIVELINK_VERSION_FULL wins (validate.py passes it to WSL
+# builds of a Windows worktree, which WSL's git cannot read).
+if(NOT "$ENV{DRIVELINK_VERSION_FULL}" STREQUAL "")
+  string(REPLACE "." "\\." _drivelink_base_re "${DRIVELINK_VERSION}")
+  if(NOT "$ENV{DRIVELINK_VERSION_FULL}" MATCHES "^${_drivelink_base_re}(\\+[0-9A-Za-z.]+)?$")
+    message(FATAL_ERROR "DRIVELINK_VERSION_FULL '$ENV{DRIVELINK_VERSION_FULL}' does not extend VERSION ${DRIVELINK_VERSION}")
+  endif()
+  set(DRIVELINK_VERSION_FULL "$ENV{DRIVELINK_VERSION_FULL}")
+elseif(DRIVELINK_GIT)
   execute_process(COMMAND "${DRIVELINK_GIT}" -C "${_drivelink_root}" rev-parse --short=7 HEAD
                   RESULT_VARIABLE _drivelink_rc OUTPUT_VARIABLE _drivelink_sha
                   OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
