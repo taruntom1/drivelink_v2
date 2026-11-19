@@ -115,6 +115,13 @@ Window {
                 footerModel: [{ text: "Settings", icon: "settings" }]
                 onActivated: index => currentIndex = index
             }
+            DLNavRail {
+                height: 420
+                pagesEnabled: false
+                model: [{ text: "Device", icon: "cpu" }, { text: "Layout", icon: "workflow" },
+                        { text: "Tune", icon: "sliders-horizontal" }, { text: "Monitor", icon: "activity" }]
+                footerModel: [{ text: "Settings", icon: "settings" }]
+            }
             DLNavItem { text: "Device"; iconName: "cpu" }
             DLNavItem { text: "Device"; iconName: "cpu"; checked: true }
             DLNavItem { text: "Device"; iconName: "cpu"; enabled: false }

@@ -366,7 +366,7 @@ struct Server
                 info.safe_mode = core->safeMode();
                 info.records_dropped = diag->dropped;
                 info.events_tx_dropped = diag->tx_dropped;
-                info.version = "0.1.0-vdev";
+                info.version = DRIVELINK_VDEV_VERSION;
                 info.version_len = 10;
                 n = dp::encodeInfoBody(info, bytes.data(), bytes.size());
                 result = dp::ResultCode::Ok;
@@ -1004,7 +1004,7 @@ int main(int argc, char **argv)
         p::Sha256Digest baseline_elf{};
         const auto source_id=drivelink::parseHex(DRIVELINK_BUILD_ID);
         std::copy_n(source_id.begin(),std::min(source_id.size(),baseline_elf.size()),baseline_elf.begin());
-        core_os::native::setOtaBaseline(baseline_elf,"0.1.0-vdev");
+        core_os::native::setOtaBaseline(baseline_elf,DRIVELINK_VDEV_VERSION);
         core_os::native::setOtaDirectory(state);
 #ifdef _WIN32
         TimerResolution timer_resolution;

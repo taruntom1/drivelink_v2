@@ -19,8 +19,62 @@ command groups send keepalives only, leaving input values unchanged. H2b-2
 adds the firmware update dialog and the Device page's Firmware update card.
 H2c-1 adds Layout: the instance tree by loop, loop and instance detail with
 typed param editors, wiring and source targets, Add instance/loop, Remove,
-labels, limits and the pending review with Discard all. Tune and Monitor follow.
+labels, limits and the pending review with Discard all. H2d adds Monitor
+(plots and the manual command), H2e Tune (runs, sessions, plant
+identification), H2f the IMU calibration panel and H2g the Settings page, the
+Windows installer and the Linux `.deb`.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
+
+## Using the GUI on Windows (H2g)
+
+Install `DriveLink-<version>-setup.exe`, the `drivelink-windows-installer`
+artifact of the host-windows CI job (or `build/installer/` after
+`python tools/package_win.py`). It is unsigned, so SmartScreen names an unknown
+publisher: choose "More info", then "Run anyway". It installs for the current
+user by default (no administrator rights); the wizard offers an all-users
+install. It puts `drivelink-gui.exe`, `drivelink-cli.exe`, `drivelink-vdev.exe`,
+Qt and the MinGW runtime in one folder, adds a Start-menu entry, and changes
+nothing on PATH. Uninstall from Windows' installed apps.
+
+1. Start **DriveLink** from the Start menu. Connect lists the serial ports
+   without opening them; pick the ESP's port (921600 baud) or type a vdev
+   address (`tcp://127.0.0.1:<port>`). Recent devices are listed by name and id.
+2. After the model loads, the nav rail has Device, Layout, Tune and Monitor
+   (Ctrl+1 to Ctrl+4) and, at the bottom, **Settings**: the theme (Dark,
+   Light or Follow system) and About (the version, Qt, the licence and the
+   third-party notices). Settings also opens before connecting.
+3. **Esc or DISARM** disarms from every page and dialog.
+
+To try it without hardware, run the installed `drivelink-vdev.exe --port 8765`
+in a terminal and connect the GUI to `tcp://127.0.0.1:8765`.
+
+The GUI keeps recent devices, the theme and the command limits in
+`%LOCALAPPDATA%\DriveLink\drivelink-gui.ini`; tuning sessions and calibration
+files go where you save them. Device configuration lives only on the device.
+The installed folder also holds `THIRD_PARTY_NOTICES.txt` and `LICENSE.txt`.
+Release installers come from CI, which builds with the open-source Qt; the
+version is the root `VERSION` (with `+g<commit>` on a build that isn't the
+`v<VERSION>` tag).
+
+## Using the GUI on Linux
+
+On Ubuntu 26.04 (amd64), install `drivelink_<version>_amd64.deb`, the
+`drivelink-linux-deb` artifact of the host-linux-package CI job (or
+`build/deb/` after `python3 tools/package_linux.py`):
+
+```bash
+sudo apt install ./drivelink_<version>_amd64.deb
+```
+
+apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. It
+installs `drivelink-gui`, `drivelink-cli` and `drivelink-vdev` in `/usr/bin`
+and a **DriveLink** application entry; the licence and third-party notices are
+in `/usr/share/drivelink/`. Remove it with `sudo apt remove drivelink`.
+The GUI works as on Windows (above). Serial ports need your user in the
+`dialout` group (`sudo usermod -aG dialout $USER`, then log in again). The GUI
+keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. The package is
+built for the Ubuntu release CI builds on (26.04); other releases need a build
+from source ("Build" below).
 
 ## Device identity (H1c)
 

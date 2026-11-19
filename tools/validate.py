@@ -150,16 +150,29 @@ def idf_build(cwd, *options):
     return plan
 
 
+def plan_fw_package(jobs):
+    """Reconfigure (the version is read at configure time), build, package."""
+    build = idf_build('firmware', 'reconfigure')(jobs)
+    return [*build, Step('package', ['python', 'tools/package_fw.py'], env=build[0].env)]
+
+
 def plan_gen(jobs):
     need_yaml()
     return [
         Step('generated files are current', [python(), 'tools/gen/gen.py', '--check']),
+        Step('versions match VERSION', [python(), 'tools/version.py', '--check']),
         Step('generator tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/gen/tests']),
         Step('validate.py tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/tests']),
         Step('Python frame reference', [python(), 'firmware/test/uart_comm/protocol.py']),
         Step('GUI Theme is current', [python(), 'host/gui/theme/gen_theme.py', '--check']),
         Step('GUI Theme generator tests', [python(), '-m', 'unittest', 'discover',
                                            '-s', 'host/gui/theme', '-p', 'test_*.py']),
+        Step('third-party notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check']),
+        Step('firmware notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check',
+                                              '--manifest', 'firmware/notices/notices.json',
+                                              '--output', 'firmware/notices/THIRD_PARTY_NOTICES.txt']),
+        Step('notices generator tests', [python(), '-m', 'unittest', 'discover',
+                                         '-s', 'host/gui/notices', '-p', 'test_*.py']),
     ]
 
 
@@ -226,6 +239,22 @@ def plan_host_win(jobs):
     return plan_host('windows-mingw', 'windows-mingw', jobs, env)
 
 
+ISCC_DIRS = [Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6',
+             Path('C:/Program Files (x86)/Inno Setup 6')]
+
+
+def plan_installer(jobs):
+    """The Release staging directory, its self-contained smoke and the installer."""
+    plan_host_win(jobs)  # the same Qt MinGW 13.1 prerequisites
+    iscc = shutil.which('ISCC') or next((str(d / 'ISCC.exe') for d in ISCC_DIRS if (d / 'ISCC.exe').is_file()), None)
+    if not iscc:
+        raise Unavailable('Inno Setup 6 not found; run: winget install --id JRSoftware.InnoSetup -e')
+    env = dict(os.environ)
+    env['PATH'] = ';'.join([*map(str, QT_DIRS), env['PATH']])
+    return [Step('package and installer', [python(), 'tools/package_win.py', '--jobs', jobs, '--iscc', iscc],
+                 env=env)]
+
+
 def worktree_key():
     return f'{ROOT.name}-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]}'
 
@@ -234,17 +263,15 @@ LINUX_PACKAGES_HINT = ('Linux host packages missing (compilers, CMake, Ninja, Qt
                        'run: sudo sh tools/setup_linux.sh host')
 
 
-def plan_host_linux(jobs):
+def linux_probe():
+    """Native Linux: None. Windows: (wsl command, env, $HOME) for the WSL distro."""
     if not WINDOWS:
         need('cmake', 'ninja', 'g++')
         probe = subprocess.run(['sh', str(ROOT / 'tools/setup_linux.sh'), '--check', 'host'],
                                capture_output=True, text=True, errors='replace')
         if probe.returncode != 0:
             raise Unavailable(LINUX_PACKAGES_HINT)
-        return plan_host('linux', 'linux', jobs)
-    # From Windows the Linux build runs in WSL. Its build directory is on the
-    # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
-    # RAM and loses whenever the idle VM stops.
+        return None
     distro = os.environ.get('DRIVELINK_WSL_DISTRO')
     wsl = ['wsl.exe', *(['-d', distro] if distro else [])]
     env = dict(os.environ, WSL_UTF8='1')
@@ -255,6 +282,17 @@ def plan_host_linux(jobs):
     home = probe.stdout.strip()
     if probe.returncode != 0 or not home.startswith('/'):
         raise Unavailable(f'WSL: {LINUX_PACKAGES_HINT}')
+    return wsl, env, home
+
+
+def plan_host_linux(jobs):
+    probe = linux_probe()
+    if probe is None:
+        return plan_host('linux', 'linux', jobs)
+    # From Windows the Linux build runs in WSL. Its build directory is on the
+    # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
+    # RAM and loses whenever the idle VM stops.
+    wsl, env, home = probe
     build = f'{home}/.cache/drivelink/{worktree_key()}/host-linux'
 
     def inside(title, cwd, *command):
@@ -271,6 +309,24 @@ def plan_host_linux(jobs):
     ]
 
 
+def plan_deb(jobs):
+    """The Linux release build, its staged smoke and the .deb (build/deb/)."""
+    probe = linux_probe()
+    title = 'package and .deb'
+    if probe is None:
+        return [Step(title, ['python3', 'tools/package_linux.py', '--jobs', jobs])]
+    # WSL's git cannot read a Windows worktree: pass this checkout's version.
+    # The stage needs a Linux filesystem (dpkg-deb checks file modes).
+    wsl, env, home = probe
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import version
+    env = dict(env, DRIVELINK_VERSION_FULL=version.full(),
+               WSLENV=':'.join(filter(None, [env.get('WSLENV'), 'DRIVELINK_VERSION_FULL'])))
+    build = f'{home}/.cache/drivelink/{worktree_key()}/linux-release'
+    return [Step(title, [*wsl, '--cd', str(ROOT), '--exec', 'python3', 'tools/package_linux.py',
+                         '--jobs', jobs, '--build-dir', build], env=env)]
+
+
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
@@ -278,7 +334,10 @@ CHECKS = [
     Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
     Check('native', 'native unit tests (firmware/test/native)', plan_native),
     Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
+    Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,
+          windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
+    Check('deb', 'Linux release, staged smoke and .deb (through WSL on Windows)', plan_deb),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),
@@ -287,6 +346,8 @@ CHECKS = [
           idf_build('firmware', *NOLOG), build_dir=ROOT / 'firmware/build_variant'),
     Check('fw-hil-app', 'HIL test app build, zero warnings', idf_build('firmware/test/uart_comm'),
           build_dir=ROOT / 'firmware/test/uart_comm/build'),
+    Check('fw-package', 'firmware release package (merged image, parts, OTA app, notices)',
+          plan_fw_package),
 ]
 
 

@@ -49,4 +49,5 @@ if(NOT BUILD_ID MATCHES "^[0-9a-fA-F]+$" OR NOT BUILD_ID_LENGTH EQUAL 16)
   # usable Git metadata. Keep the wire identity defined in either case.
   set(BUILD_ID "0000000000000000")
 endif()
-target_compile_definitions(drivelink-vdev PRIVATE DRIVELINK_BUILD_ID="${BUILD_ID}")
+# vdev reports <VERSION>-vdev: deterministic, and the -vdev marker makes physical preflights refuse it.
+target_compile_definitions(drivelink-vdev PRIVATE DRIVELINK_BUILD_ID="${BUILD_ID}" DRIVELINK_VDEV_VERSION="${DRIVELINK_VERSION}-vdev")

@@ -113,7 +113,10 @@ TUNE = {
     'tune-identify': ('tune-identify', '', SIGNAL),
 }
 # Scenarios that render a screen of another name.
-SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune'}
+SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune',
+           'settings-offline': 'settings'}
+# Scenarios that need no device (H2g Settings also renders connected).
+OFFLINE = ('connect', 'settings-offline')
 
 
 # The action each scenario runs (left_enc's `sample`), and the loop stall
@@ -172,7 +175,7 @@ def render(gui, vdev, destination, scenario, cli=None):
         device = None
         endpoint = None
         try:
-            if scenario != 'connect':
+            if scenario not in OFFLINE:
                 args = [vdev, '--port', '0', '--state', str(Path(work) / 'state'),
                         '--scenario-file', str(control)]
                 if scenario == 'safe':
@@ -211,7 +214,7 @@ def render(gui, vdev, destination, scenario, cli=None):
             # Isolated recent devices; let loop run time arrive before capture.
             command = [gui, '--screen', screen, '--out', str(out),
                        '--settings', str(Path(work) / 'gui.ini'),
-                       '--settle', '0' if scenario in ('connect', 'lost') else '1500']
+                       '--settle', '0' if scenario in (*OFFLINE, 'lost') else '1500']
             if endpoint:
                 command += ['--endpoint', endpoint]
             if select:
@@ -303,7 +306,7 @@ def main():
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'device', *LAYOUT, *TUNE, *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                     ['connect', 'settings-offline', 'device', 'settings', *LAYOUT, *TUNE, *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
                       'rename', 'reset', 'unsaved', 'notice',
                       'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:

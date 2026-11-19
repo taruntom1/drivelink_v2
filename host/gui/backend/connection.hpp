@@ -346,6 +346,7 @@ public:
     // (-1 releases). Abort and close still end a held upload.
     void setOtaPauseAt(int percent) {m_otaPause->store(percent);}
     // Tests and screenshots keep their recent devices apart from the user's.
+    QString settingsPath() const {return m_recent.path();}
     void setSettingsPath(const QString &path) {m_recent=RecentDevices(path);m_command.setSettingsPath(m_recent.path());emit recentDevicesChanged();}
     // The reconnect window after a requested reboot (default 30 s).
     void setReconnectWindow(int ms) {m_reconnectWindowMs=ms;}

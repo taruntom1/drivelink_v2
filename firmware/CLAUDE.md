@@ -65,3 +65,6 @@ Build/test commands, ESP-IDF setup, build traps and hardware commands are in
   commands and restoration traps are in [the development guide](../docs/development.md).
 - New pure sources also join `firmware/test/native/CMakeLists.txt`; see
   [test rules](test/CLAUDE.md).
+- Published firmware ships `notices/THIRD_PARTY_NOTICES.txt`: a newly linked
+  third-party library or IDF component under its own licence needs a
+  `notices/notices.json` entry (see [README.md](README.md)).

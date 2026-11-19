@@ -100,11 +100,14 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
-| `gen` | `gen.py --check`, the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests) | The Python that runs the script |
+| `gen` | `gen.py --check`, `version.py --check` (every consumer names the root `VERSION`), the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests), the third-party notices (`gen_notices.py --check` and its tests) | The Python that runs the script |
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
+| `installer` | `tools/package_win.py`: the `windows-mingw-release` preset, the `windeployqt` staging directory, its notices coverage and a self-contained smoke (Qt and MinGW off `PATH`), then the Inno Setup installer in `build/installer/`. Windows only | As `host-win`, plus Inno Setup 6 (`ISCC`): `winget install --id JRSoftware.InnoSetup -e` |
 | `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
+| `deb` | `tools/package_linux.py`: the `linux-release` preset, a stage under `/usr` (stripped GUI, CLI and vdev, desktop entry, licence and notices in `/usr/share/drivelink`, which minimised systems keep, unlike `/usr/share/doc`) that bundles no shared library, a smoke of the staged programs, then `build/deb/drivelink_<version>_<arch>.deb`. Depends is `dpkg-shlibdeps`' list plus the QML modules the GUI imports | As `host-linux` (WSL on Windows; the stage and build are in `~/.cache/drivelink/<worktree>/linux-release` there). Installing it is CI's `host-linux-install` job, or `installed_gui_smoke.py --deb` as root |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
+| `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
 - **Modes.** `quick` is `gen`, `native` and the host check of this OS. `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
 - **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
@@ -152,6 +155,29 @@ One script holds the list of checks and their commands. CI calls it with `--only
   while this field is false. Hardware and toolchain freshness are not certified;
   existing `--force` rules still apply. Reports are replaced atomically.
 
+## Version (`VERSION`)
+
+The root `VERSION` (semver) is the one version of the repository.
+`cmake/DriveLinkVersion.cmake` gives it to every CMake project before
+`project()`: the firmware and HIL app as `PROJECT_VER` (GET_INFO's
+`firmware_version`; `bench_fw.py`'s `-D PROJECT_VER` wins), `protocol/`,
+`libdrivelink/` and the superbuild, the GUI's About, the installer and the
+`.deb`. A build at a clean checkout of tag `v<VERSION>` uses it as is; any
+other build appends `+g<sha7>`, and `.dirty` with modified tracked files (git is
+read at configure time). An environment `DRIVELINK_VERSION_FULL`
+(`<VERSION>[+suffix]`) wins in both: `validate.py` passes the Windows
+checkout's version to the `deb` build in WSL, whose git cannot read a Windows
+worktree. vdev reports `<VERSION>-vdev`. The `package.xml` files repeat it
+literally. `python tools/version.py --check` (in `gen`) fails on any
+mismatch, and `python tools/version.py` prints the full version.
+
+To release: edit `VERSION` and the two `package.xml` files, merge, then push
+tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
+its `release` job checks the tag against `VERSION` and that every package
+carries the plain version, and publishes a GitHub Release with
+`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`,
+`drivelink_<version>_amd64.deb` and their `SHA256SUMS`.
+
 ## Linux packages (`tools/setup_linux.sh`)
 
 The one list of Ubuntu 26.04 packages, for the WSL distro and the CI containers.
@@ -160,7 +186,7 @@ It installs only what is missing and never removes or upgrades anything.
 | Profile | Packages for | Used by |
 |---|---|---|
 | `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
-| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` (WSL and CI) |
+| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` (WSL and CI) |
 
 ```bash
 wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host
@@ -174,15 +200,31 @@ runs it first. Later steps add profiles (ROS in H4a). `.gitattributes` keeps
 
 Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script. The Ubuntu jobs install only git for the checkout; their packages come from `tools/setup_linux.sh` ("Linux packages" below), so `ci.yml` holds no package list.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
+- `firmware-package` runs `fw-package` in the same container (git marked safe,
+  so the version has its `+g<sha7>`) and uploads `drivelink-firmware`.
+- `release` runs only on a pushed `v*` tag, after every other job passed; it
+  is the only job with `contents: write` (see "Version" for what it checks and
+  publishes).
 - `gen` and `native` in an `ubuntu:26.04` container with `tools/setup_linux.sh base`.
-- `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
-- `host-windows` on `windows-2025` with Python 3.12. It caches Qt 6.12.0
-  `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt`, verifies the
-  SDK version and runs `validate.py --only host-win`. The validator and preset
-  enforce the selected compiler; the runner's default compiler cannot replace it.
-  Validation logs and JSON/text summaries are uploaded even on failure.
-  Its build/test/install step has a 30-minute limit, leaving the diagnostic
-  upload step able to run after a timeout.
+- Host tests and host packages are separate jobs, so a test failure never hides
+  the package's result and each job finishes sooner.
+- `host-linux-tests` runs `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
+- `host-linux-package` runs `deb` in the same container (git marked safe, so the
+  version has its `+g<sha7>`) and uploads `drivelink-linux-deb`.
+  `host-linux-install` then takes that artifact into a clean `ubuntu:26.04` with
+  only git and Python, and runs `installed_gui_smoke.py --deb --vdev`: apt
+  installs it with its Depends, the installed GUI renders every screen against
+  the installed vdev, and apt removes it. The screenshots are uploaded as
+  `drivelink-linux-installed-screens`.
+- `host-windows-tests` and `host-windows-package` run on `windows-2025` with
+  Python 3.12. Both use `.github/actions/windows-qt`, which caches Qt 6.12.0
+  `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt` and verifies
+  the SDK version. The tests job runs `host-win` (45-minute limit); the package
+  job installs Inno Setup 6.7.1 with Chocolatey when the runner lacks it, runs
+  `installer` (30-minute limit) and uploads the setup exe as the
+  `drivelink-windows-installer` artifact. The validator and preset enforce the
+  selected compiler; the runner's default compiler cannot replace it. Validation
+  logs and JSON/text summaries are uploaded even on failure or timeout.
 - The Windows installer uses aqtinstall pinned to upstream commit
   `5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7`: released 3.3.0 does not handle
   the split Windows Qt 6.11+ repositories. The workflow names the exact Qt
