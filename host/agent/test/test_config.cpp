@@ -605,3 +605,15 @@ TEST_CASE("config: usage lists every flag and config key")
         CHECK(u.find(s) != std::string::npos);
     }
 }
+
+TEST_CASE("validate: the device list must fit one ListDevices answer")
+{
+    drivelink::agent::AgentConfig config;
+    config.token = "0123456789abcdef";
+    const std::string long_path(200, 'x');
+    for (int i = 0; i < 4; ++i)
+        config.devices.push_back({"dev" + std::to_string(i), "serial:///dev/" + long_path + std::to_string(i), 921600});
+    CHECK_NOTHROW(drivelink::agent::validate(config));
+    config.devices.push_back({"dev4", "serial:///dev/" + long_path + "4", 921600});
+    CHECK_THROWS_AS(drivelink::agent::validate(config), drivelink::agent::ConfigError);
+}

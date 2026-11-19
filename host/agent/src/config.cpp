@@ -424,6 +424,15 @@ void validate(const AgentConfig &config)
         if (!endpoints.insert(d.endpoint).second)
             throw ConfigError("duplicate device endpoint " + single_quoted(d.endpoint));
     }
+    // The ListDevices answer is one frame: agent response header (5), count,
+    // then per device alias, online, id, a name of up to 16 bytes, endpoint,
+    // clients (docs/protocol/agent.md). It must fit MAX_PAYLOAD (1024).
+    size_t list_bytes = 5 + 1;
+    for (const auto &d : config.devices)
+        list_bytes += 1 + d.alias.size() + 1 + 6 + 1 + 16 + 1 + d.endpoint.size() + 1;
+    if (list_bytes > 1024)
+        throw ConfigError("the device list is too long for one ListDevices answer (" + std::to_string(list_bytes) +
+                          " of 1024 bytes): use fewer devices or shorter aliases and endpoints");
 }
 
 std::string usage()

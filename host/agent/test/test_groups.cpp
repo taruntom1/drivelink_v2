@@ -92,8 +92,8 @@ TEST_CASE("GroupMap: each client gets its own slot for the same id")
     REQUIRE(b);
     CHECK(*a == 0);
     CHECK(*b == 1);
-    map.finish(*a, true, 7, false, false);
-    map.finish(*b, true, 9, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 7, false, false);
+    map.finish(*b, map.slot(*b).serial, true, 9, false, false);
     CHECK(map.find(1, 0) == a);
     CHECK(map.find(2, 0) == b);
     // Streams go to the owner only with its current epoch.
@@ -104,7 +104,7 @@ TEST_CASE("GroupMap: each client gets its own slot for the same id")
     CHECK_FALSE(map.route(200, 0));
     // A second CONFIG reuses the slot; its epoch replaces the old one.
     CHECK(map.acquire(1, 0) == a);
-    map.finish(*a, true, 8, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 8, false, false);
     CHECK_FALSE(map.route(*a, 7));
     CHECK(map.route(*a, 8));
     CHECK(map.lastEpoch(1, 0) == 8);
@@ -120,24 +120,24 @@ TEST_CASE("GroupMap: exhaustion, refused and uncertain mutations")
     REQUIRE(b);
     CHECK_FALSE(map.acquire(2, 0)); // pool exhausted
     // A refused CONFIG on a new slot gives it back.
-    map.finish(*b, false, 0, false, false);
+    map.finish(*b, map.slot(*b).serial, false, 0, false, false);
     CHECK_FALSE(map.find(1, 1));
     auto c = map.acquire(2, 0);
     REQUIRE(c);
     CHECK(*c == *b);
     // An unanswered CONFIG keeps the slot: it may be configured on the device.
-    map.finish(*a, false, 0, false, true);
+    map.finish(*a, map.slot(*a).serial, false, 0, false, true);
     CHECK(map.find(1, 0) == a);
     CHECK(map.slot(*a).maybe);
     CHECK_FALSE(map.route(*a, 0));
     // With two in flight, a refusal of the first keeps it for the second.
-    map.finish(*c, false, 0, false, false);
+    map.finish(*c, map.slot(*c).serial, false, 0, false, false);
     auto d = map.acquire(3, 5);
     REQUIRE(d);
     map.begin(*d);
-    map.finish(*d, false, 0, false, false);
+    map.finish(*d, map.slot(*d).serial, false, 0, false, false);
     CHECK(map.find(3, 5) == d);
-    map.finish(*d, true, 2, false, false);
+    map.finish(*d, map.slot(*d).serial, true, 2, false, false);
     CHECK(map.route(*d, 2));
 }
 
@@ -147,18 +147,18 @@ TEST_CASE("GroupMap: CLEAR frees a slot and records the epoch")
     map.reset(1, 0);
     auto a = map.acquire(1, 4);
     REQUIRE(a);
-    map.finish(*a, true, 3, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 3, false, false);
     map.begin(*a);
-    map.finish(*a, true, 4, true, false); // accepted CLEAR
+    map.finish(*a, map.slot(*a).serial, true, 4, true, false); // accepted CLEAR
     CHECK_FALSE(map.find(1, 4));
     CHECK(map.lastEpoch(1, 4) == 4);
     CHECK_FALSE(map.route(*a, 4));
     // A refused CLEAR leaves it configured.
     a = map.acquire(1, 4);
     CHECK(map.slot(*a).epoch == 4);
-    map.finish(*a, true, 5, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 5, false, false);
     map.begin(*a);
-    map.finish(*a, false, 0, true, false);
+    map.finish(*a, map.slot(*a).serial, false, 0, true, false);
     CHECK(map.route(*a, 5));
 }
 
@@ -169,9 +169,9 @@ TEST_CASE("GroupMap: a leaving client's slots stay Dirty until cleared")
     auto a = map.acquire(1, 0);
     auto b = map.acquire(1, 1);
     auto c = map.acquire(2, 0);
-    map.finish(*a, true, 1, false, false);
-    map.finish(*b, false, 0, false, true); // uncertain
-    map.finish(*c, true, 1, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 1, false, false);
+    map.finish(*b, map.slot(*b).serial, false, 0, false, true); // uncertain
+    map.finish(*c, map.slot(*c).serial, true, 1, false, false);
     auto pending = map.acquire(1, 2);
     CHECK_FALSE(pending); // all three in use
     auto dirty = map.release(1);
@@ -182,7 +182,7 @@ TEST_CASE("GroupMap: a leaving client's slots stay Dirty until cleared")
     CHECK_FALSE(map.acquire(3, 0)); // dirty slots are not handed out
     CHECK(map.lastEpoch(1, 0) == 0); // records of the client are gone
     // A late answer for a dirty slot changes nothing.
-    map.finish(*a, true, 9, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 9, false, false);
     CHECK(map.slot(*a).state == GroupMap::State::Dirty);
     map.cleaned(*a);
     CHECK(map.dirty() == std::vector<uint8_t>{*b});
@@ -190,11 +190,54 @@ TEST_CASE("GroupMap: a leaving client's slots stay Dirty until cleared")
     // A client with only an unconfigured, idle slot leaves nothing dirty.
     map.reset(1, 0);
     auto idle = map.acquire(4, 0);
-    map.finish(*idle, false, 0, false, false);
+    map.finish(*idle, map.slot(*idle).serial, false, 0, false, false);
     CHECK(map.release(4).empty());
     map.reset(1, 0);
     idle = map.acquire(4, 0); // still in flight
     CHECK(map.release(4) == std::vector<uint8_t>{0});
+}
+
+TEST_CASE("GroupMap: an answer for an earlier allocation is ignored")
+{
+    GroupMap map;
+    map.reset(1, 0);
+    auto a = map.acquire(1, 0);
+    const auto old = map.slot(*a).serial;
+    map.finish(*a, old, true, 2, false, false);
+    map.begin(*a); // a CONFIG still unanswered when client 1 leaves
+    CHECK(map.release(1) == std::vector<uint8_t>{*a});
+    map.cleaned(*a);
+    auto b = map.acquire(2, 0);
+    REQUIRE(b == a);
+    CHECK(map.slot(*b).serial != old);
+    map.finish(*a, old, false, 0, false, true); // client 1's late timeout
+    CHECK(map.slot(*b).inflight == 1);
+    CHECK_FALSE(map.slot(*b).maybe);
+    map.finish(*b, map.slot(*b).serial, false, 0, false, false); // refused: freed
+    CHECK_FALSE(map.find(2, 0));
+}
+
+TEST_CASE("GroupMap: accepted CLEAR with another request in flight, and markDirty")
+{
+    GroupMap map;
+    map.reset(2, 0);
+    auto a = map.acquire(1, 0);
+    const auto serial = map.slot(*a).serial;
+    map.finish(*a, serial, true, 1, false, false);
+    map.begin(*a);
+    map.begin(*a);
+    map.finish(*a, serial, true, 2, true, false); // CLEAR accepted, one more in flight
+    CHECK(map.find(1, 0) == a);
+    CHECK_FALSE(map.route(*a, 2));
+    map.finish(*a, serial, true, 3, false, false); // the later CONFIG landed
+    CHECK(map.route(*a, 3));
+    map.markDirty(1);
+    CHECK(map.dirty() == std::vector<uint8_t>{1});
+    CHECK_FALSE(map.acquire(2, 0));
+    map.markDirty(*a); // owned: unchanged
+    CHECK(map.route(*a, 3));
+    map.cleaned(1);
+    CHECK(map.acquire(2, 0) == std::optional<uint8_t>{1});
 }
 
 TEST_CASE("synthesizeList: the client's own view, paged")
@@ -203,8 +246,8 @@ TEST_CASE("synthesizeList: the client's own view, paged")
     map.reset(4, 2);
     auto a = map.acquire(1, 2); // client 1 id 2 -> device slot 0
     auto b = map.acquire(2, 0); // client 2 id 0 -> device slot 1
-    map.finish(*a, true, 6, false, false);
-    map.finish(*b, true, 3, false, false);
+    map.finish(*a, map.slot(*a).serial, true, 6, false, false);
+    map.finish(*b, map.slot(*b).serial, true, 3, false, false);
     map.setLastEpoch(1, 3, 9);
     std::vector<GroupEntry> device{configured(0, 6, 2), configured(1, 3), GroupEntry{0, 2, 0, 0xFF, 0, 1, {}},
                                    GroupEntry{0, 3, 0, 0xFF, 0, 1, {}}, GroupEntry{1, 0, 0, 0xFF, 0, 1, {}},

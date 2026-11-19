@@ -7,7 +7,9 @@ and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
 H1a-1 adds typed services/errors and moves JSON formatting into the CLI;
 H1a-2 adds the discovered device snapshot/reload API and Windows host CI.
 H1b adds the asynchronous runtime, live model, group buffers, managed commands
-and timestamp mapping. H1c adds device identity. Still to build: the GUI, agent and ROS.
+and timestamp mapping. H1c adds device identity. H2 built the local GUI. H3a-1 adds
+`drivelink-agent` without its lease ([agent.md](../docs/protocol/agent.md)). Still to build: the
+agent lease, clock model and history (H3a-2), remote mode and ROS.
 
 This file is the design record. The steps that build it (T0, H1a–H6, HW), with
 a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
@@ -192,7 +194,8 @@ commands) in H3a. Python bindings are not planned.
   - **Exclusive operations.** Capture, test signals, actions, `SAVE`, `REVERT`, `FACTORY_RESET`, `SET_NAME`, layout ops and OTA need the lease, or need the device to be disarmed with nobody holding the lease.
   - **Param writes.** Any client may write live params at any time. Batches are atomic on the device. This stays allowed while ROS holds the lease; the GUI warns before such an edit.
   - **History.** The agent keeps recent diag events and arm-state changes (bounded), and sends them to a client when it connects. It keeps no captures.
-- **Agent-only messages** get their own MSG_TYPEs in `protocol/defs/registry.yaml`, allocated in H3a from the free command, response and event values: hello and version, device list, lease request/grant/revoke, clock model, client list, history. They never reach the device. Their spec is `docs/protocol/agent.md`.
+- **Agent-only messages** are `agent_command` 0x30, `agent_response` 0x70 and `agent_event` 0xF0 (H3a-1), with ops and events: hello, device list and the Closing event (H3a-1); lease request/grant/revoke, clock model, client list, history (H3a-2). They never reach the device. Agent refusals use shared Detail values (54..58), which the firmware never sends. Their spec is `docs/protocol/agent.md`.
+- **Built in H3a-1:** one agent thread owns sockets, routing and each device's group map; each device has its own `Session` (seq rewriting, timeouts, a retired-ID quarantine for links that never reconnect). Opening a device sends DISARM and clears every group before clients reach it. Until the H3a-2 lease, ARM and command groups are refused for everyone and DISARM is forwarded from anyone.
 
 ### `drivelink-gui` (Qt/QML)
 

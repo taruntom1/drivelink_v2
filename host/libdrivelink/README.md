@@ -72,6 +72,31 @@ pulse DTR/RTS and reset the board; whether a port is busy shows when opening
 it fails (`Error::os_error`). The sysfs parser is pure and tested
 (`ports_detail::listSysfs`).
 
+## Agent client (`drivelink/agent.hpp`, H3a-1)
+
+A device behind `drivelink-agent` is reached over `tcp://` with
+`SessionOptions::agent = AgentHello{token, device, client_name}` (the device is
+an alias or a 12-hex device id). The Session sends the agent Hello before any
+other traffic and throws `DeviceError` (agent result/detail: `BadToken`,
+`UnknownDevice`, `DeviceOffline`, `AgentVersion` with `peer_version`) on a
+refusal; `Session::agentHello()` returns the accepted Hello and its device
+record. After that the connection carries the device's frames as on a direct
+link. Periodic time pings are off on agent links (the agent owns the clock;
+its model reaches clients in H3a-2). An `agent_event` Closing frame reaches
+observers before the agent closes the socket.
+`listAgentDevices(endpoint, token)` opens a lobby connection and returns the
+device records. `agent.hpp` also holds the pure codec of the agent messages,
+shared with the agent. The contract is
+[docs/protocol/agent.md](../../docs/protocol/agent.md).
+
+Two Session options serve the agent's own long-lived device links, and change
+nothing when left at their defaults: `retire_quarantine` makes a timed-out
+request ID reusable after the given delay instead of only after reconnect (a
+late reply to the old request then fails the family/op correlation), and
+`observe_streams` also delivers subscription frames to `observe()` handlers
+(bounded by `event_capacity`, drops counted). DISARM may reuse a retired ID
+when no other is free, so it goes out even after every ID has timed out.
+
 ## Device identity
 
 File helper `readOtaImage(path)` takes a UTF-8 path and opens the native

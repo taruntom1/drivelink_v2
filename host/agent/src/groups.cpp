@@ -101,16 +101,17 @@ std::optional<uint8_t> GroupMap::acquire(ClientId client, uint8_t vid)
         auto &s = m_slots[i];
         if (s.state != State::Free) { continue; }
         s = Slot{};
-        s.state = State::Owned; s.client = client; s.vid = vid; s.inflight = 1;
+        s.state = State::Owned; s.client = client; s.vid = vid; s.inflight = 1; s.serial = ++m_serial;
         s.epoch = lastEpoch(client, vid);
         return static_cast<uint8_t>(i);
     }
     return std::nullopt;
 }
 
-void GroupMap::finish(uint8_t device_slot, bool accepted, uint8_t epoch, bool cleared, bool uncertain)
+void GroupMap::finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8_t epoch, bool cleared, bool uncertain)
 {
     auto &s = m_slots.at(device_slot);
+    if (s.serial != serial) { return; } // an earlier allocation's answer
     if (s.inflight) { --s.inflight; }
     if (s.state != State::Owned) { return; } // Dirty: the agent's own CLEAR decides
     if (accepted)
@@ -148,8 +149,9 @@ std::vector<uint8_t> GroupMap::release(ClientId client)
         if (s.configured || s.maybe || s.inflight)
         {
             const auto inflight = s.inflight;
+            const auto serial = s.serial;
             s = Slot{};
-            s.state = State::Dirty; s.inflight = inflight;
+            s.state = State::Dirty; s.inflight = inflight; s.serial = serial;
             dirty.push_back(static_cast<uint8_t>(i));
         }
         else
@@ -159,6 +161,12 @@ std::vector<uint8_t> GroupMap::release(ClientId client)
     }
     std::erase_if(m_seen, [client](const Seen &seen) { return seen.client == client; });
     return dirty;
+}
+
+void GroupMap::markDirty(uint8_t device_slot)
+{
+    auto &s = m_slots.at(device_slot);
+    if (s.state == State::Free) { s = Slot{}; s.state = State::Dirty; s.serial = ++m_serial; }
 }
 
 void GroupMap::cleaned(uint8_t device_slot)

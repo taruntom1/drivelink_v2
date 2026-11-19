@@ -36,7 +36,9 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   invalidate traffic; never replay values or arm automatically.
 - Correlate type, sequence, family and op. Retry only known-idempotent reads;
   a mutation timeout has an uncertain outcome. Retire timed-out IDs until
-  reconnect; fail explicitly on exhaustion. Preserve request family/op and
+  reconnect (or an opt-in `retire_quarantine`, for the agent's links that never
+  reconnect); fail explicitly on exhaustion, except DISARM, which may reuse a
+  retired ID. Preserve request family/op and
   outcome_unknown through service parsing and OTA cleanup; malformed mutation
   replies are uncertain, local preflight errors are not. Read classification
   and automatic retry eligibility are separate.
@@ -53,6 +55,17 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
 - vdev uses actual core/mock modules, one config caller, fixed scratch/bounded
   diagnostics and firmware real-time rules. Native storage defaults to in-memory.
   Keep the `-vdev` version marker after simulated OTA so physical preflights refuse it.
+- Agent ([agent/README.md](agent/README.md), contract
+  [agent.md](../docs/protocol/agent.md)): nothing from a device reaches a
+  connection before its Hello is accepted; refuse, then close. One agent
+  thread owns sockets, routing and group maps; Session completions and frames
+  come to it through the dispatcher, guarded by the device's link and map
+  generations. Never close a connection inline while iterating clients. DISARM
+  from any client always goes out on the fast path (one in flight, later ones
+  sent right after it); until H3a-2's lease, ARM, CMD_CONFIG/CMD_CLEAR and
+  command frames never reach a device. On every device open: GET_INFO, DISARM,
+  clear all groups, then accept clients. Keep routing, group map and LIST
+  logic pure in `groups.cpp` with unit tests.
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - GUI ([gui/README.md](gui/README.md)): Qt 6.10 API floor. Figma is the source

@@ -37,7 +37,7 @@ import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'firmware/test/uart_comm'))
-from protocol import CORE_PROTOCOL_VERSION, crc8, crc16_ccitt, encode_frame
+from protocol import CORE_PROTOCOL_VERSION, command_group_payload, crc8, crc16_ccitt, encode_frame
 
 # Result / Detail values (protocol/defs/registry.yaml wire_enums).
 R_OK, R_INVALID, R_NOT_FOUND, R_BUSY = 0, 1, 2, 5
@@ -45,7 +45,10 @@ D_CAPACITY, D_AGENT_VERSION, D_BAD_TOKEN, D_UNKNOWN_DEVICE, D_DEVICE_OFFLINE, D_
 # Message types (docs/protocol/registry.md).
 T_CORE_COMMAND, T_CORE_RESPONSE, T_AGENT_COMMAND, T_AGENT_RESPONSE, T_STATUS, T_SUB0 = 0x01, 0x41, 0x30, 0x70, 0x80, 0x81
 AGENT_VERSION = 1
-FAM_GROUP, OP_SUB_CONFIG, OP_SUB_CLEAR, OP_LIST = 5, 1, 3, 6
+T_DISARM, T_DIAG_EVENT, T_AGENT_EVENT = 0x03, 0xC0, 0xF0
+D_UNKNOWN_REF, D_WRONG_STATE = 1, 46
+FAM_SYSTEM, OP_ARM, OP_DISARM = 1, 2, 3
+FAM_GROUP, OP_SUB_CONFIG, OP_SUB_ENABLE, OP_SUB_CLEAR, OP_CMD_CLEAR, OP_LIST = 5, 1, 2, 3, 5, 6
 
 BASE_ID, ARM_ID = '02444c000001', '02444c000002'
 PROCS = []   # every child, for cleanup and for failure diagnostics
@@ -56,6 +59,10 @@ AGENT_URL = None
 
 class Fail(Exception):
     pass
+
+
+def fail(message, **context):
+    raise Fail(message + ''.join(f'\n    {k} = {v!r}' for k, v in context.items()))
 
 
 def expect(condition, message, **context):
@@ -147,7 +154,10 @@ def cli(endpoint, *command, device=None, token=None, env_token=None, code=0, tim
     env = {k: v for k, v in os.environ.items() if k != 'DRIVELINK_AGENT_TOKEN'}
     if env_token is not None:
         env['DRIVELINK_AGENT_TOKEN'] = env_token
-    run = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    try:
+        run = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        fail(f'{command}: the CLI did not finish within {timeout} s')
     lines = run.stdout.strip().splitlines()
     expect(run.returncode == code, f'{command}: exit {run.returncode}, wanted {code}',
            stdout=run.stdout, stderr=run.stderr)
@@ -203,20 +213,48 @@ class RawClient:
     """A device connection speaking the agent protocol directly, so a group
     slot stays owned for as long as the test wants (a CLI process cannot)."""
 
-    def __init__(self, name, device='base'):
+    def __init__(self, name, device='base', rcvbuf=None, hello=True):
+        """`device=''` makes a lobby connection; `hello=False` only connects."""
         self.name, self.seq = name, 0
         host, port = AGENT_URL[len('tcp://'):].rsplit(':', 1)
-        self.sock = socket.create_connection((host, int(port)), timeout=5)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if rcvbuf:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)   # before connect
+        self.sock.settimeout(5)
+        self.sock.connect((host, int(port)))
         self.buf = bytearray()
         self.frames = collections.defaultdict(lambda: collections.deque(maxlen=1000))
-        body = bytes([CORE_PROTOCOL_VERSION]) + b''.join(
-            bytes([len(s)]) + s for s in (TOKEN.encode(), device.encode(), name.encode()))
-        self.send(T_AGENT_COMMAND, bytes([AGENT_VERSION, self._next(), 1]) + body)
+        self.eof, self.rx_bytes = False, 0
+        if not hello:
+            return
+        self.send_hello(device=device)
         reply = self.take(T_AGENT_RESPONSE, 5)
         expect(reply[0] == AGENT_VERSION and reply[2] == 1, f'{name}: Hello reply header', reply=reply.hex())
         expect(reply[3] == R_OK, f'{name}: Hello refused', result=reply[3], detail=reply[4])
         self.client_id, kind = struct.unpack_from('<HB', reply, 5)
-        expect(kind == 1, f'{name}: expected a device connection', kind=kind)
+        expect(kind == (1 if device else 0), f'{name}: wrong connection kind', kind=kind)
+
+    def send_hello(self, agent_version=AGENT_VERSION, core_version=CORE_PROTOCOL_VERSION, device='base', token=None):
+        token = TOKEN if token is None else token
+        body = bytes([core_version]) + b''.join(
+            bytes([len(s)]) + s for s in (token.encode(), device.encode(), self.name.encode()))
+        seq = self._next()
+        self.send(T_AGENT_COMMAND, bytes([agent_version, seq, 1]) + body)
+        return seq
+
+    def agent_request(self, op, body=b'', timeout=5):
+        seq = self._next()
+        self.send(T_AGENT_COMMAND, bytes([AGENT_VERSION, seq, op]) + body)
+        reply = self.take(T_AGENT_RESPONSE, timeout, lambda f: len(f) >= 5 and f[1] == seq)
+        expect(reply[0] == AGENT_VERSION and reply[2] == op, f'{self.name}: agent response header', reply=reply.hex())
+        return reply[3], reply[4], reply[5:]
+
+    def wait_eof(self, timeout):
+        """Read (keeping frames) until the agent closes; True if it did in time."""
+        deadline = time.monotonic() + timeout
+        while not self.eof and time.monotonic() < deadline:
+            self.pump(min(0.1, max(0.0, deadline - time.monotonic())), eof_ok=True)
+        return self.eof
 
     def _next(self):
         self.seq = self.seq % 250 + 1
@@ -249,15 +287,27 @@ class RawClient:
             self.frames[head[0]].append(bytes(self.buf[7:7 + length]))
             del self.buf[:total]
 
-    def pump(self, seconds):
+    def pump(self, seconds, eof_ok=False):
         deadline = time.monotonic() + seconds
         while True:
             left = deadline - time.monotonic()
+            if self.eof:
+                if not eof_ok:
+                    fail(f'{self.name}: agent closed the connection')
+                time.sleep(max(0.0, min(left, 0.05)))
+                return
             ready, _, _ = select.select([self.sock], [], [], max(0.0, left))
             if ready:
-                chunk = self.sock.recv(65536)
+                try:
+                    chunk = self.sock.recv(65536)
+                except (ConnectionResetError, ConnectionAbortedError):
+                    chunk = b''
                 if not chunk:
-                    fail(f'{self.name}: agent closed the connection')
+                    self.eof = True
+                    if not eof_ok:
+                        fail(f'{self.name}: agent closed the connection')
+                    return
+                self.rx_bytes += len(chunk)
                 self.buf += chunk
                 self._extract()
             if left <= 0:
@@ -271,9 +321,11 @@ class RawClient:
                 if match is None or match(frame):
                     queue_.remove(frame)
                     return frame
+            if self.eof:
+                fail(f'{self.name}: agent closed the connection before frame 0x{msg_type:02x}')
             if time.monotonic() >= deadline:
                 fail(f'{self.name}: no frame 0x{msg_type:02x} within {timeout} s')
-            self.pump(0.05)
+            self.pump(0.05, eof_ok=True)
 
     def request(self, family, op, body=b'', timeout=5):
         seq = self._next()
@@ -515,9 +567,7 @@ def scenario_7_offline_and_back(ctx):
     offline = via('arm', 'info', code=5)
     expect(offline['detail'] == D_DEVICE_OFFLINE and offline['result'] == R_BUSY, 'offline device is refused',
            envelope=offline)
-    ctx['arm'], url = start_vdev('vdev-arm', ctx['vdev'], ctx['arm_state'], port=ctx['arm_port'], device_id=ARM_ID)
-    expect(url == ctx['arm_url'], 'arm restarted on the same endpoint', url=url, wanted=ctx['arm_url'])
-    wait_devices(lambda d: d['arm']['online'], 'arm to come back online', timeout=15)
+    restart_arm(ctx)
     expect(data(via('arm', 'info'))['device_id'] == ARM_ID, 'info --device arm after the restart')
     return 'killing arm marks it offline (base unaffected); restarting it brings it back'
 
@@ -539,11 +589,286 @@ def scenario_8_client_sees_device_loss(ctx):
     return f'a client of arm exits (code {code}) within {time.monotonic() - started:.1f} s of the device dying'
 
 
+def restart_arm(ctx):
+    """Start the arm vdev again on its old endpoint (scenarios 7 and 15)."""
+    ctx['arm'], url = start_vdev('vdev-arm', ctx['vdev'], ctx['arm_state'], port=ctx['arm_port'], device_id=ARM_ID)
+    expect(url == ctx['arm_url'], 'arm restarted on the same endpoint', url=url, wanted=ctx['arm_url'])
+    wait_devices(lambda d: d['arm']['online'], 'arm to come back online', timeout=15)
+
+
+def sub_pool(ctx):
+    return data(via('base', 'get', '0:0:18'))['typed_values'][0]
+
+
+def core_header(frame):
+    """(version, seq, family, op, result, detail) of a six-byte core response."""
+    expect(len(frame) == 6, 'core response is six bytes', frame=frame.hex())
+    return tuple(frame)
+
+
+def scenario_10_hello_edge_cases(ctx):
+    # (a) a first frame that is not agent_command: closed, nothing said.
+    c = RawClient('t10a', hello=False)
+    try:
+        c.send(T_CORE_COMMAND, bytes([CORE_PROTOCOL_VERSION, 1, 1, 1]))
+        expect(c.wait_eof(2), 'a core first frame must close the connection within 2 s')
+        expect(c.rx_bytes == 0, 'a core first frame must get no reply', received=c.rx_bytes, buf=bytes(c.buf).hex())
+    finally:
+        c.close()
+    # (b, e) agent version 2 / core version 9 in the Hello: the AgentVersion refusal
+    # (the agent's own versions 1 and 10, response version byte 1), then close.
+    for what, kwargs in (('agent version 2', dict(agent_version=2)), ('core version 9', dict(core_version=9))):
+        c = RawClient('t10b', hello=False)
+        try:
+            seq = c.send_hello(**kwargs)
+            reply = c.take(T_AGENT_RESPONSE, 3)
+            wanted = bytes([AGENT_VERSION, seq, 1, R_INVALID, D_AGENT_VERSION, AGENT_VERSION, CORE_PROTOCOL_VERSION])
+            expect(reply == wanted, f'{what}: AgentVersion refusal', reply=reply.hex(), wanted=wanted.hex())
+            expect(c.wait_eof(2), f'{what}: the agent must close after the refusal')
+        finally:
+            c.close()
+    # (c) a second Hello is WrongState and changes nothing; ListDevices still works.
+    for device in ('', 'base'):
+        c = RawClient('t10c', device)
+        try:
+            seq = c.send_hello(device=device)
+            reply = c.take(T_AGENT_RESPONSE, 3, lambda f: f[1] == seq)
+            expect(list(reply) == [AGENT_VERSION, seq, 1, R_INVALID, D_WRONG_STATE],
+                   f'second Hello on a {"device" if device else "lobby"} connection', reply=reply.hex())
+            result, detail, body = c.agent_request(2)
+            expect(result == R_OK and detail == 0 and body[0] == 2, 'ListDevices after a refused second Hello',
+                   result=result, detail=detail, body=body.hex())
+            expect(not c.eof, 'the connection stays open')
+        finally:
+            c.close()
+    # (d) no Hello at all, and bytes that never form a frame: closed by the hello timeout
+    # (the agent runs with --hello-timeout-ms 500), nothing said.
+    for what, junk in (('silence', b''), ('bytes that never form a frame', b'not a frame at all, just some bytes')):
+        c = RawClient('t10d', hello=False)
+        try:
+            started = time.monotonic()
+            if junk:
+                c.sock.sendall(junk)
+            expect(c.wait_eof(3), f'{what}: closed within the hello timeout')
+            took = time.monotonic() - started
+            expect(took < 2.5 and c.rx_bytes == 0, f'{what}: prompt close without a reply', seconds=took, received=c.rx_bytes)
+        finally:
+            c.close()
+    return 'first frame not a Hello closes silently; AgentVersion refusal (agent v2, core v9) then close; second Hello WrongState; hello timeout'
+
+
+def scenario_11_disarm_paths(ctx):
+    c = RawClient('t11')
+    try:
+        v = CORE_PROTOCOL_VERSION
+
+        def fast(header_tail, body=b''):
+            seq = c._next()
+            c.send(T_DISARM, bytes([v, seq]) + header_tail + body)
+            return seq, c.take(T_CORE_RESPONSE, 5)
+
+        seq, reply = fast(bytes([FAM_SYSTEM, OP_DISARM]))
+        expect(core_header(reply) == (v, seq, FAM_SYSTEM, OP_DISARM, R_OK, 0), 'fast DISARM', reply=reply.hex(), seq=seq)
+        seq, reply = fast(bytes([FAM_SYSTEM, OP_ARM]))
+        expect(core_header(reply) == (v, seq, 0xFF, 0xFF, R_INVALID, 0), 'fast path with another op (ARM)',
+               reply=reply.hex(), seq=seq)
+        seq, reply = fast(bytes([FAM_SYSTEM, OP_DISARM]), b'\x00')
+        expect(core_header(reply) == (v, seq, FAM_SYSTEM, OP_DISARM, R_INVALID, 0), 'fast DISARM with a body byte',
+               reply=reply.hex(), seq=seq)
+        result, detail, body = c.request(FAM_SYSTEM, OP_DISARM)
+        expect((result, detail, body) == (R_OK, 0, b''), 'system DISARM as a core_command', got=(result, detail, body.hex()))
+        # A wrong core version is answered by the agent as a device would.
+        seq = c._next()
+        c.send(T_CORE_COMMAND, bytes([9, seq, FAM_SYSTEM, 1]))
+        reply = c.take(T_CORE_RESPONSE, 5)
+        # (A device cannot parse a request of another version, so its reply carries seq 0.)
+        expect(core_header(reply) in ((v, seq, 0xFF, 0xFF, R_INVALID, 0), (v, 0, 0xFF, 0xFF, R_INVALID, 0)),
+               'core_command with version byte 9', reply=reply.hex(), seq=seq)
+        expect(c.request(FAM_SYSTEM, OP_DISARM)[0] == R_OK, 'the connection is still usable')
+    finally:
+        c.close()
+    return 'fast DISARM, wrong-op, body byte, system DISARM and a version-9 core_command answered as a device would'
+
+
+def scenario_12_interim_rule_raw(ctx):
+    c = RawClient('t12')
+    try:
+        # Command-group streams (0xA0..0xBF) from a client are dropped: no reply, no close.
+        c.send(0xA0, command_group_payload(0, 0))
+        c.send(0xA0, command_group_payload(1, 7))
+        c.send(0xA5, command_group_payload(0, 0))
+        c.send(0xBF, command_group_payload(0, 0))
+        expect(not c.drain(T_CORE_RESPONSE, 0.5) and not c.drain(T_AGENT_RESPONSE, 0.1), 'command-group frames got a reply')
+        result, detail, _ = c.request(FAM_GROUP, OP_CMD_CLEAR, bytes([0]))
+        expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'cmd-clear over the raw link', got=(result, detail))
+        result, detail, _ = c.request(FAM_SYSTEM, OP_ARM)
+        expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'ARM over the raw link', got=(result, detail))
+        expect(c.request(FAM_SYSTEM, OP_DISARM)[0] == R_OK, 'the connection is still usable')
+    finally:
+        c.close()
+    return 'command-group frames dropped silently (connection usable); cmd-clear and ARM refused with LeaseRequired'
+
+
+def scenario_13_unmapped_groups(ctx):
+    slots = sub_pool(ctx)
+    expect(slots > 3, 'this scenario needs more than 3 subscription groups', slots=slots)
+    c = RawClient('t13')
+    try:
+        result, detail, _ = c.request(FAM_GROUP, OP_SUB_ENABLE, bytes([3, 1]))
+        expect((result, detail) == (R_INVALID, D_UNKNOWN_REF), 'SUB_ENABLE on an id without a slot', got=(result, detail))
+        result, detail, body = c.sub_clear(3)
+        expect((result, detail, body) == (R_OK, 0, bytes([0, 0x84])), 'SUB_CLEAR on an id without a slot',
+               got=(result, detail, body.hex()))
+        for group in (slots, 255):
+            result, detail, _ = c.sub_config(group, 0, 10, [(5, 0, 256)])
+            expect((result, detail) == (R_INVALID, D_CAPACITY), f'SUB_CONFIG with id {group} >= pool size {slots}',
+                   got=(result, detail))
+        view = [e for e in c.list_groups() if e['kind'] == 0]
+        expect(not any(e['flags'] for e in view), 'nothing got configured', view=view)
+    finally:
+        c.close()
+    return f'unmapped ids: ENABLE UnknownRef, CLEAR Ok [epoch 0, 0x84], CONFIG beyond the pool of {slots} Capacity'
+
+
+def scenario_14_device_reboot(ctx):
+    # vdev's reboot closes its TCP link after the reply (host/vdev/README.md; only its PTY
+    # survives a reboot), so the agent sees the link fail rather than a Boot event, which
+    # vdev emits into the rebuilt core with no client attached. What can be shown: the
+    # device connection gets Closing (DeviceOffline) and then EOF, its group stream ends,
+    # the device comes back, and a fresh client's group works with LIST showing only it.
+    # A diag Boot (0xC0, kind 4) is accepted if one does arrive.
+    refs = [(5, 0, 256), (5, 0, 257)]
+    a = RawClient('t14a')
+    try:
+        result, detail, _ = a.sub_config(0, 0, 10, refs)
+        expect(result == R_OK, 'group 0 before the reboot', result=result, detail=detail)
+        expect(len(a.drain(T_SUB0, 0.6)) >= 3, 'frames flow before the reboot')
+        via('base', 'reboot')
+        expect(a.wait_eof(10), 'the connection must close when the device reboots')
+        closing = [bytes(f) for f in a.frames[T_AGENT_EVENT]]
+        expect(bytes([1, 1, 1]) in closing, 'Closing(DeviceOffline) before EOF', events=[f.hex() for f in closing])
+        boot = [bytes(f) for f in a.frames[T_DIAG_EVENT] if len(f) > 3 and f[3] == 4]
+    finally:
+        a.close()
+    wait_devices(lambda d: d['base']['online'], 'base to come back after the reboot', timeout=20)
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            expect(data(via('base', 'info'))['device_id'] == BASE_ID, 'info after the reboot')
+            break
+        except Fail:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.3)
+    b = RawClient('t14b')
+    try:
+        result, detail, _ = b.sub_config(0, 0, 10, refs)
+        expect(result == R_OK, 'a fresh SUB_CONFIG after the reboot', result=result, detail=detail)
+        expect(len(b.drain(T_SUB0, 1.0)) >= 5, 'frames flow again after the reboot')
+        view = [e for e in b.list_groups() if e['kind'] == 0]
+        expect(view[0]['flags'] & 1 and view[0]['refs'] == refs and not any(e['flags'] for e in view[1:]),
+               'LIST shows only the new group', view=view)
+    finally:
+        b.close()
+    wait_devices(lambda d: d['base']['clients'] == 0, 'clients of base to drop to 0', timeout=5)
+    return ('reboot: Closing(DeviceOffline) + EOF, stream stopped, device back, new group streams, LIST shows only it'
+            + (' (a diag Boot arrived too)' if boot else ' (vdev drops TCP, so no diag Boot reaches the client)'))
+
+
+def scenario_15_closing_events(ctx):
+    if not ctx['arm'].alive():     # scenario 8 left it dead
+        restart_arm(ctx)
+    r = RawClient('t15', 'arm')
+    try:
+        ctx['arm'].kill()
+        expect(r.wait_eof(10), 'the connection to a dead device must close')
+        events = [bytes(f) for f in r.frames[T_AGENT_EVENT]]
+        expect(events == [bytes([1, 1, 1])], 'Closing(DeviceOffline) before EOF', events=[f.hex() for f in events])
+    finally:
+        r.close()
+    restart_arm(ctx)
+    return 'a raw client of arm gets agent_event [1, 1, 1] (Closing, DeviceOffline) before EOF when the device dies'
+
+
+def scenario_16_slow_client(ctx):
+    # A client that subscribes to a fast group and never reads while flooding LIST requests
+    # (small SO_RCVBUF so the agent's side fills quickly). The agent must keep serving
+    # everyone else; it may close the slow client or keep it, either is accepted.
+    started = time.monotonic()
+    refs = [(5, 0, 256), (5, 0, 257)] * 4
+    slow = RawClient('t16-slow', rcvbuf=4096)
+    try:
+        result, detail, _ = slow.sub_config(0, 0, 1, refs)
+        if result != R_OK:
+            refs = refs[:2]
+            result, detail, _ = slow.sub_config(0, 0, 1, refs)
+        expect(result == R_OK, 'the slow client subscribes', result=result, detail=detail)
+        slow.sock.setblocking(False)
+        pending, queued, closed_during = b'', 0, False
+        last_check, checks = time.monotonic(), 0
+        while time.monotonic() - started < 8 and not closed_during:
+            if len(pending) < 4096:
+                for _ in range(100):
+                    seq = slow._next()
+                    pending += encode_frame(T_CORE_COMMAND, bytes([CORE_PROTOCOL_VERSION, seq, FAM_GROUP, OP_LIST, 0, 0]))
+                    queued += 1
+            _, writable, _ = select.select([], [slow.sock], [], 0.02)
+            if writable:
+                try:
+                    pending = pending[slow.sock.send(pending):]
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    closed_during = True
+            if time.monotonic() - last_check >= 2:
+                expect(data(via('base', 'info', timeout=10))['device_id'] == BASE_ID, 'info while a client is stuck')
+                expect(len(agent_devices()) == 2, 'agent-devices while a client is stuck')
+                checks += 1
+                last_check = time.monotonic()
+        expect(queued >= 2000 or closed_during, 'enough LIST requests were sent', queued=queued)
+        expect(checks >= 2 or closed_during, 'the agent was probed while flooded', checks=checks)
+        # Read what the agent kept for it, until it closes or 3 s pass.
+        read_until = time.monotonic() + 3
+        while time.monotonic() < read_until and not slow.eof:
+            ready, _, _ = select.select([slow.sock], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = slow.sock.recv(65536)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    chunk = b''
+                if not chunk:
+                    slow.eof = True
+        outcome = 'closed by the agent' if (slow.eof or closed_during) else 'kept'
+        expect(data(via('base', 'info', timeout=10))['device_id'] == BASE_ID, 'info after the flood')
+        expect(len(agent_devices()) == 2, 'agent-devices after the flood')
+    finally:
+        slow.close()
+    wait_devices(lambda d: d['base']['clients'] == 0, 'clients of base to drop to 0', timeout=10)
+    time.sleep(0.5)
+    again = RawClient('t16-again')
+    try:
+        result, detail, _ = again.sub_config(0, 0, 10, [(5, 0, 256)])
+        expect(result == R_OK, 'the stuck client leaked no slot', result=result, detail=detail)
+    finally:
+        again.close()
+    return (f'{queued} LISTs flooded by a client that never reads; agent stayed responsive ({checks} checks); '
+            f'slow client {outcome}')
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
+    lobby = RawClient('t9-lobby', '')
     code = ctx['agent'].terminate()
     expect(code is not None, 'agent stopped')
+    try:
+        expect(lobby.wait_eof(5), 'the lobby connection closes when the agent stops')
+        events = [bytes(f) for f in lobby.frames[T_AGENT_EVENT]]
+        expect(events == [bytes([1, 1, 2])], 'Closing(Shutdown) before EOF', events=[f.hex() for f in events])
+    finally:
+        lobby.close()
     groups = data(direct_retry(ctx['base_url'], 'groups'))['groups']
     expect(not any(g['configured'] for g in groups), 'base has no configured group after the clients left', groups=groups)
     status = data(direct_retry(ctx['base_url'], 'status'))
@@ -553,7 +878,9 @@ def scenario_9_device_clean_after_agent(ctx):
 
 SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_direct, scenario_4_lease_interim,
              scenario_5_groups, scenario_6_status_events, scenario_7_offline_and_back,
-             scenario_8_client_sees_device_loss, scenario_9_device_clean_after_agent]
+             scenario_8_client_sees_device_loss, scenario_10_hello_edge_cases, scenario_11_disarm_paths,
+             scenario_12_interim_rule_raw, scenario_13_unmapped_groups, scenario_14_device_reboot,
+             scenario_15_closing_events, scenario_16_slow_client, scenario_9_device_clean_after_agent]
 
 
 def main():
@@ -578,7 +905,7 @@ def main():
             ctx['arm_port'] = int(ctx['arm_url'].rsplit(':', 1)[1])
             ctx['agent'] = Proc('agent', [args.agent, '--port', '0', '--token', TOKEN,
                                           '--device', f'base={ctx["base_url"]}', '--device', f'arm={ctx["arm_url"]}',
-                                          '--retry-ms', '300'])
+                                          '--retry-ms', '300', '--hello-timeout-ms', '500'])
             AGENT_URL = ctx['agent'].next_line(15, 'READY ')[len('READY '):]
             expect(AGENT_URL.startswith('tcp://127.0.0.1:'), 'agent READY line', line=AGENT_URL)
             for scenario in SCENARIOS:

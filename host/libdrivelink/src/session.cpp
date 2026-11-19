@@ -444,7 +444,14 @@ struct Session::Impl
         if(r->cancellation->cancelled) { complete(r,std::unexpected(error(r,ErrorKind::Cancelled,"request cancelled")));return; }
         unsigned tried=0;
         while(tried<256 && (retiredSeq(static_cast<uint8_t>(sequence%256)) || pending.contains(static_cast<uint8_t>(sequence%256)))) { ++sequence;++tried; }
-        if(tried==256) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"sequence IDs exhausted; reconnect")));return; }
+        if(tried==256 && r->kind==msg::kDisarm) {
+            // DISARM must still go out: reuse a retired ID. A late reply to the
+            // retired request fails DISARM's family/op correlation unless it
+            // was itself a DISARM, whose result is the same stop.
+            while(tried>0 && pending.contains(static_cast<uint8_t>(sequence%256))) { ++sequence;--tried; }
+            if(tried>0) {retired[sequence%256]=false;tried=0;}
+        }
+        if(tried==256 || pending.contains(static_cast<uint8_t>(sequence%256))) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"sequence IDs exhausted; reconnect")));return; }
         r->seq=static_cast<uint8_t>(sequence++%256);
         const bool core=r->kind!=msg::kDiagQuery;
         Bytes payload{static_cast<uint8_t>(core?p::core_wire::kVersion:3),r->seq};

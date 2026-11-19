@@ -19,16 +19,23 @@ agent** (see "Interim rule").
   default; listening on another address is opt-in in its config.
 - Every frame uses the device framing ([framing.md](framing.md)), with the
   agent's own `MAX_PAYLOAD` of 1024.
-- The client's first frame must be an `agent_command` Hello (below). Any other
-  first frame, a malformed frame header, or no Hello within the hello timeout
-  (5 s) closes the connection without a reply. Nothing from a device reaches a
-  client before its Hello is accepted.
+- The client's first frame must be an `agent_command` Hello (below). An
+  `agent_command` with a version byte other than 1 is answered with the version
+  refusal and closed; any other first frame closes the connection without a
+  reply. Bytes that never form a valid frame are discarded, so a client that
+  sends no Hello within the hello timeout (5 s) is closed. Nothing from a
+  device reaches a client before its Hello is accepted.
 - After an accepted Hello the connection is either a **lobby** (the Hello named
   no device: only `agent_command` is allowed, any other frame closes it) or a
   **device connection** (it carries that device's frames, rewritten as
   "Routing" says).
 - The agent closes a device connection when the device goes offline or the
-  agent shuts down, after sending a Closing event when it can.
+  agent shuts down, after sending a Closing event when it can (it waits at
+  most 1 s for the event to drain).
+- Limits: 64 accepted connections (128 including those before their Hello);
+  32 forwarded requests in flight per connection (more are answered
+  `Busy/None`, DISARM excepted); a connection that falls 4 MiB behind on its
+  replies is closed, and stream frames for it are dropped beyond 256 KiB.
 
 ## Agent messages
 
@@ -109,7 +116,7 @@ Frames from the client:
 
 | Frame | What the agent does |
 |---|---|
-| `core_command` 0x01 | Checks the core header (a wrong version is answered as a device would: family and op 0xFF, `InvalidArgument/None`). Then the interim rule, then the group rules below; everything else is forwarded on the device's link with a new `seq`, and the reply is sent back with the client's `seq`. |
+| `core_command` 0x01 | Checks the core header (a wrong version is answered as a device would: seq 0, family and op 0xFF, `InvalidArgument/None`). Then the interim rule, then the group rules below; everything else is forwarded on the device's link with a new `seq`, and the reply is sent back with the client's `seq`. |
 | `disarm` 0x03 | Always forwarded at once on the fast path; the reply goes back with the client's `seq`. |
 | `diag_query` 0x23 | Forwarded with a new `seq`, the reply sent back with the client's. |
 | `time_request` 0x02 | Dropped and counted. The agent alone pings the device; it sends clients its clock model in H3a-2. |
@@ -135,7 +142,10 @@ Frames from the device:
 `ARM` (system op 2), `CMD_CONFIG` and `CMD_CLEAR` are answered
 `Busy/LeaseRequired` without reaching the device, and command-group frames are
 dropped. System DISARM (op 3) and the fast path 0x03 are forwarded from every
-client at once. H3a-2 replaces this with the lease.
+client at once, always on the fast path. One DISARM is on the device link at a
+time: DISARMs that arrive meanwhile are sent as one more DISARM right after it,
+and each client gets the answer to a DISARM sent after its request. H3a-2
+replaces this rule with the lease.
 
 ### Subscription groups
 

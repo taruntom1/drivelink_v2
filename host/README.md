@@ -25,6 +25,11 @@ identification), H2f the IMU calibration panel and H2g the Settings page, the
 Windows installer and the Linux `.deb`.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
+`drivelink-agent` (Linux, H3a-1) owns device ports and shares each device with
+several TCP clients; the CLI reaches it with `--device NAME --token TOKEN`.
+Until the H3a-2 lease no client can arm through it. See
+[the agent](agent/README.md) and [its protocol](../docs/protocol/agent.md).
+
 ## Using the GUI on Windows (H2g)
 
 Install `DriveLink-<version>-setup.exe`, the `drivelink-windows-installer`

@@ -61,6 +61,7 @@ class GroupMap
         bool configured = false; // the owner's last accepted mutation left it configured
         bool maybe = false;      // an unanswered mutation may have configured it
         uint8_t epoch = 0;       // from the owner's last accepted mutation
+        uint64_t serial = 0;     // which allocation of the slot this is
     };
     // Device online or Boot: every slot free, every client record dropped.
     void reset(uint8_t subs, uint8_t cmds);
@@ -75,15 +76,19 @@ class GroupMap
     std::optional<uint8_t> acquire(ClientId client, uint8_t vid);
     // Count one more request in flight on an existing mapping.
     void begin(uint8_t device_slot) { ++m_slots.at(device_slot).inflight; }
-    // A forwarded request on the slot finished. accepted: the device returned
+    // A forwarded request on the slot finished; `serial` is slot().serial when
+    // it was sent, so an answer for an earlier allocation changes nothing. accepted: the device returned
     // epoch; cleared: it was an accepted CLEAR. A refused or unanswered
     // request on a slot that never had an accepted mutation frees it once
     // nothing else is in flight; an accepted CLEAR frees it the same way.
-    void finish(uint8_t device_slot, bool accepted, uint8_t epoch, bool cleared, bool uncertain);
+    void finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8_t epoch, bool cleared, bool uncertain);
     // Stream routing: the owner and its id, when the frame's epoch is current.
     std::optional<std::pair<ClientId, uint8_t>> route(uint8_t device_slot, uint8_t epoch) const;
     // A client left: its slots become Dirty (returned for CLEAR) and its records go.
     std::vector<uint8_t> release(ClientId client);
+    // A Free slot found configured on the device (a mutation that landed after
+    // a Boot reset the map): Dirty until cleared.
+    void markDirty(uint8_t device_slot);
     // CLEAR of a Dirty slot succeeded.
     void cleaned(uint8_t device_slot);
     std::vector<uint8_t> dirty() const;
@@ -94,6 +99,7 @@ class GroupMap
   private:
     std::vector<Slot> m_slots;
     uint8_t m_cmds = 0;
+    uint64_t m_serial = 0;
     struct Seen { ClientId client; uint8_t vid; uint8_t epoch; };
     std::vector<Seen> m_seen;
 };
