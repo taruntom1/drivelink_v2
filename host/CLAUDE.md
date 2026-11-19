@@ -62,10 +62,16 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   come to it through the dispatcher, guarded by the device's link and map
   generations. Never close a connection inline while iterating clients. DISARM
   from any client goes out at once on the fast path (it waits, bounded, only
-  when the Session cannot admit it); until H3a-2's lease, ARM, CMD_CONFIG/CMD_CLEAR and
-  command frames never reach a device. On every device open: GET_INFO, DISARM,
-  clear all groups, then accept clients. Keep routing, group map and LIST
-  logic pure in `groups.cpp` with unit tests.
+  when the Session cannot admit it). ARM, CMD_CONFIG/CMD_CLEAR and command
+  frames reach a device only from the lease holder; exclusive operations
+  only from the holder or while nobody holds it and the device is not armed.
+  A lease end stops the old holder at once, DISARMs, clears its command
+  groups (an ARM still in flight gets another DISARM first), then grants a
+  waiting Take; ARM waits while an earlier holder's command slot remains. On
+  every device open: GET_INFO, DISARM, clear all groups, then accept clients.
+  Keep routing, the group map, LIST, the lease and history pure
+  (`groups.cpp`, `lease.cpp`, `history.cpp`) with unit tests. Agent clients
+  ping the agent, never the device, and compose its ClockModel.
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - GUI ([gui/README.md](gui/README.md)): Qt 6.10 API floor. Figma is the source

@@ -31,30 +31,144 @@ GroupEntry configured(uint8_t group, uint8_t epoch, size_t refs = 1)
 }
 } // namespace
 
-TEST_CASE("classify: the interim rule, DISARM paths and virtualized group ops")
+TEST_CASE("classify: lease routes, DISARM paths and virtualized group ops")
 {
-    CHECK(classify(msg::kCoreCommand, kSystem, 2) == Route::RefuseLease);  // ARM
+    CHECK(classify(msg::kCoreCommand, kSystem, 2) == Route::Arm);          // ARM
     CHECK(classify(msg::kCoreCommand, kSystem, 3) == Route::Disarm);       // system DISARM
     CHECK(classify(msg::kDisarm, kSystem, 3) == Route::Disarm);            // fast path
     CHECK(classify(msg::kDisarm, kSystem, 2) == Route::Malformed);
     CHECK(classify(msg::kDisarm, kGroup, 3) == Route::Malformed);
-    CHECK(classify(msg::kCoreCommand, kSystem, 1) == Route::Forward);      // GET_INFO
-    CHECK(classify(msg::kCoreCommand, kSystem, 5) == Route::Forward);      // SAVE (exclusive in H3a-2)
-    CHECK(classify(msg::kCoreCommand, kGroup, 4) == Route::RefuseLease);   // CMD_CONFIG
-    CHECK(classify(msg::kCoreCommand, kGroup, 5) == Route::RefuseLease);   // CMD_CLEAR
+    CHECK(classify(msg::kCoreCommand, kGroup, 4) == Route::CmdGroup);      // CMD_CONFIG
+    CHECK(classify(msg::kCoreCommand, kGroup, 5) == Route::CmdGroup);      // CMD_CLEAR
     for (uint8_t op : {1, 2, 3, 6}) { CHECK(classify(msg::kCoreCommand, kGroup, op) == Route::Group); }
     CHECK(classify(msg::kCoreCommand, kGroup, 99) == Route::Forward);
-    CHECK(classify(msg::kCoreCommand, kParam, 2) == Route::Forward);
     CHECK(classify(msg::kDiagQuery) == Route::Diag);
     CHECK(classify(msg::kAgentCommand) == Route::Agent);
     CHECK(classify(msg::kTimeRequest) == Route::Drop);
     for (unsigned ch = defs::kCmdGroupChannelFirst; ch < defs::kCmdGroupChannelFirst + defs::kCmdGroupChannelCount; ++ch)
     {
-        CHECK(classify(static_cast<uint8_t>(ch)) == Route::Drop);
+        CHECK(classify(static_cast<uint8_t>(ch)) == Route::CommandFrame);
     }
     CHECK(classify(msg::kCoreResponse) == Route::Drop);
     CHECK(classify(msg::kStatusStream) == Route::Drop);
     CHECK(classify(msg::kAgentResponse) == Route::Drop);
+}
+
+TEST_CASE("classify: every core op is open or exclusive (agent.md, \"The lease\")")
+{
+    using defs::Family;
+    auto route = [](Family f, auto op) { return classify(msg::kCoreCommand, static_cast<uint8_t>(f), static_cast<uint8_t>(op)); };
+    // System
+    CHECK(route(Family::System, defs::SystemOp::GetInfo) == Route::Forward);
+    CHECK(route(Family::System, defs::SystemOp::AckFault) == Route::Forward);
+    CHECK(route(Family::System, defs::SystemOp::BenchStall) == Route::Exclusive);
+    CHECK(route(Family::System, defs::SystemOp::BenchCrash) == Route::Exclusive);
+    for (auto op : {defs::SystemOp::Save, defs::SystemOp::Revert, defs::SystemOp::FactoryReset, defs::SystemOp::Reboot,
+                    defs::SystemOp::ExitSafeMode, defs::SystemOp::SetName})
+    {
+        CHECK(route(Family::System, op) == Route::Exclusive);
+    }
+    // Layout
+    CHECK(route(Family::Layout, defs::LayoutOp::ListInstances) == Route::Forward);
+    for (auto op : {defs::LayoutOp::AddInstance, defs::LayoutOp::RemoveInstance, defs::LayoutOp::SetLabel, defs::LayoutOp::DiscardPending})
+    {
+        CHECK(route(Family::Layout, op) == Route::Exclusive);
+    }
+    // Describe and param: open (live and staged SET alike)
+    for (uint8_t op = 1; op <= 4; ++op) { CHECK(classify(msg::kCoreCommand, static_cast<uint8_t>(Family::Describe), op) == Route::Forward); }
+    for (uint8_t op = 1; op <= 3; ++op) { CHECK(classify(msg::kCoreCommand, kParam, op) == Route::Forward); }
+    // Capture
+    CHECK(route(Family::Capture, defs::CaptureOp::Status) == Route::Forward);
+    CHECK(route(Family::Capture, defs::CaptureOp::Read) == Route::Forward);
+    for (auto op : {defs::CaptureOp::Config, defs::CaptureOp::Arm, defs::CaptureOp::Abort, defs::CaptureOp::Trigger})
+    {
+        CHECK(route(Family::Capture, op) == Route::Exclusive);
+    }
+    // Testgen, action, OTA
+    CHECK(route(Family::Testgen, defs::TestgenOp::Status) == Route::Forward);
+    CHECK(route(Family::Testgen, defs::TestgenOp::Start) == Route::Exclusive);
+    CHECK(route(Family::Testgen, defs::TestgenOp::Stop) == Route::Exclusive);
+    CHECK(route(Family::Action, defs::ActionOp::Run) == Route::Exclusive);
+    CHECK(route(Family::Ota, defs::OtaOp::Status) == Route::Forward);
+    for (auto op : {defs::OtaOp::Begin, defs::OtaOp::Write, defs::OtaOp::Finish, defs::OtaOp::Abort, defs::OtaOp::Confirm})
+    {
+        CHECK(route(Family::Ota, op) == Route::Exclusive);
+    }
+    // An unknown op of a lease-checked family needs the lease; an unknown family is the device's to refuse.
+    CHECK(classify(msg::kCoreCommand, static_cast<uint8_t>(Family::Ota), 99) == Route::Exclusive);
+    CHECK(classify(msg::kCoreCommand, 99, 1) == Route::Forward);
+}
+
+TEST_CASE("GroupMap: command slots are separate from subscription slots")
+{
+    GroupMap map;
+    map.reset(2, 2);
+    CHECK(map.subs() == 2);
+    CHECK(map.cmds() == 2);
+    auto sub = map.acquire(1, 0);
+    auto cmd = map.acquire(1, 0, Kind::Cmd);
+    REQUIRE(sub);
+    REQUIRE(cmd);
+    CHECK(*sub == 0);
+    CHECK(*cmd == 0);
+    map.finish(*sub, map.slot(*sub).serial, true, 3, false, false);
+    map.finish(*cmd, map.slot(*cmd, Kind::Cmd).serial, true, 7, false, false, Kind::Cmd);
+    CHECK(map.lastEpoch(1, 0) == 3);
+    CHECK(map.lastEpoch(1, 0, Kind::Cmd) == 7);
+    CHECK(map.find(1, 0, Kind::Cmd) == 0);
+    CHECK_FALSE(map.find(2, 0, Kind::Cmd));
+    // A second client gets the next command slot; a third finds none left.
+    auto other = map.acquire(2, 0, Kind::Cmd);
+    REQUIRE(other);
+    CHECK(*other == 1);
+    CHECK_FALSE(map.acquire(3, 0, Kind::Cmd));
+    map.finish(*other, map.slot(*other, Kind::Cmd).serial, false, 0, false, false, Kind::Cmd); // refused: freed
+    // Losing the lease releases only the command slots.
+    const auto dirty = map.release(1, Kind::Cmd);
+    REQUIRE(dirty.size() == 1);
+    CHECK(dirty[0] == 0);
+    CHECK(map.dirty(Kind::Cmd) == std::vector<uint8_t>{0});
+    CHECK(map.dirty().empty());
+    CHECK(map.find(1, 0) == 0);              // the subscription stays
+    CHECK(map.lastEpoch(1, 0, Kind::Cmd) == 0); // command records went
+    CHECK(map.lastEpoch(1, 0) == 3);
+    // The Dirty slot is not handed out until cleaned.
+    auto next = map.acquire(2, 0, Kind::Cmd);
+    REQUIRE(next);
+    CHECK(*next == 1);
+    map.cleaned(0, Kind::Cmd);
+    CHECK(map.dirty(Kind::Cmd).empty());
+    CHECK(map.acquire(3, 1, Kind::Cmd) == 0);
+}
+
+TEST_CASE("synthesizeList: the holder sees its command groups")
+{
+    GroupMap map;
+    map.reset(1, 2);
+    auto cmd = map.acquire(5, 1, Kind::Cmd); // client id 1 on device slot 0
+    REQUIRE(cmd);
+    map.finish(*cmd, map.slot(*cmd, Kind::Cmd).serial, true, 9, false, false, Kind::Cmd);
+    GroupEntry device_cmd;
+    device_cmd.kind = 1; device_cmd.group = 0; device_cmd.flags = 3; device_cmd.loop = 0; device_cmd.epoch = 9;
+    device_cmd.refs.push_back({0x70, 0, 1, 2});
+    std::vector<GroupEntry> device{GroupEntry{}, device_cmd, GroupEntry{1, 1, 0, 0xFF, 0, 1, {}}};
+    auto answer = synthesizeList(map, 5, device, 0, 1000);
+    REQUIRE(answer);
+    auto page = parseListPage(answer->body);
+    REQUIRE(page);
+    REQUIRE(page->entries.size() == 3);
+    CHECK(page->entries[1].kind == 1);
+    CHECK(page->entries[1].group == 0);
+    CHECK(page->entries[1].flags == 0); // its id 0 is empty
+    CHECK(page->entries[2].kind == 1);
+    CHECK(page->entries[2].group == 1); // its id 1 is device slot 0
+    CHECK(page->entries[2].flags == 3);
+    CHECK(page->entries[2].epoch == 9);
+    REQUIRE(page->entries[2].refs.size() == 1);
+    // Another client sees both command ids empty.
+    auto other = parseListPage(synthesizeList(map, 6, device, 0, 1000)->body);
+    REQUIRE(other);
+    CHECK(other->entries[2].flags == 0);
 }
 
 TEST_CASE("parseListPage: exact entries")

@@ -125,13 +125,31 @@ error (exit 2). Without `--device` the token is ignored. `--client-name NAME`
 (default `drivelink-cli`) is what the agent shows other clients.
 
 `agent-devices` (no `--device`) lists the agent's devices, one line each:
-`ALIAS online|offline ID NAME ENDPOINT clients=N` (`-` for an unknown ID or an
-empty name). With `--json` the envelope's `data.devices` is an array of
-`{alias, online, device_id, name, endpoint, clients}`; `device_id` is `null`
-until the agent has read it. Agent refusals (bad token, unknown or offline
+`ALIAS online|offline ID NAME ENDPOINT clients=N`, followed by
+` holder=CLIENT_ID:NAME` when a client holds the device's lease (`-` for an
+unknown ID or an empty name). With `--json` the envelope's `data.devices` is an
+array of `{alias, online, device_id, name, endpoint, clients, holder_id,
+holder_name}`; `device_id` is `null` until the agent has read it, `holder_id` is
+0 and `holder_name` empty when nobody holds the lease. Agent refusals (bad token, unknown or offline
 device, a missing lease) are device rejections: exit 5, with the agent's
 `result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
 for a direct endpoint.
+
+`--lease` (a global option before the command, needs `--device`) takes the
+device's control lease before the command runs, preempting the current holder
+(who is disarmed). Arming, command groups and the exclusive operations (SAVE,
+REVERT, FACTORY_RESET, REBOOT, layout edits, capture, test signals, OTA) need
+the lease, or a device nobody holds that is not armed; otherwise they are
+refused `Busy/LeaseRequired` (exit 5, detail 58). The lease ends when the CLI
+process exits: the agent then disarms the device and clears the process's
+command groups, so `--lease arm` disarms again at once; use a long-lived
+client to keep an armed device. A refused take is a device rejection (exit 5).
+`--lease` does not apply to `ota-upload` (it opens its own session), so OTA
+through an agent works only while nobody holds the device's lease.
+
+`agent-clients` (needs `--device`) lists the clients connected to the device,
+one line each, `CLIENT_ID NAME`, with ` [holder]` on the lease holder. With
+`--json`, `data.clients` is an array of `{client_id, name, holder}`.
 
 Each CLI process is one agent client, and the agent clears a client's group
 slots when it disconnects. `sub-config` therefore does not outlive its process:
@@ -173,6 +191,10 @@ dropped event counts. JSON samples additionally expose `mapping_valid`,
 production Session fit; readable output is unchanged. Invalid mappings use null
 host/uncertainty fields. Interrupt stops sampling; no firmware clock is set.
 CLI sessions disable background periodic pings and retain this explicit cadence.
+Through an agent (`--device`) both commands ping the agent: the `esp_*` fields
+are the agent's monotonic times and the estimator fits the agent's clock;
+`mapping_valid` says whether the Session's composed device clock (the agent's
+ClockModel with this fit) is valid, and the mapped host fields stay null.
 Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
 and repeat with `--traffic` for the bare-board stability check. See the
 [time contract](../../docs/protocol/time.md) for the accuracy limits.

@@ -72,7 +72,7 @@ pulse DTR/RTS and reset the board; whether a port is busy shows when opening
 it fails (`Error::os_error`). The sysfs parser is pure and tested
 (`ports_detail::listSysfs`).
 
-## Agent client (`drivelink/agent.hpp`, H3a-1)
+## Agent client (`drivelink/agent.hpp`, H3a, agent protocol v2)
 
 A device behind `drivelink-agent` is reached over `tcp://` with
 `SessionOptions::agent = AgentHello{token, device, client_name}` (the device is
@@ -80,10 +80,27 @@ an alias or a 12-hex device id). The Session sends the agent Hello before any
 other traffic and throws `DeviceError` (agent result/detail: `BadToken`,
 `UnknownDevice`, `DeviceOffline`, `AgentVersion` with `peer_version`) on a
 refusal; `Session::agentHello()` returns the accepted Hello and its device
-record. After that the connection carries the device's frames as on a direct
-link. Periodic time pings are off on agent links (the agent owns the clock;
-its model reaches clients in H3a-2). An `agent_event` Closing frame reaches
-observers before the agent closes the socket.
+record (with the lease holder). After that the connection carries the device's
+frames as on a direct link.
+
+- **Clock.** On a device connection time pings (periodic, and `timePing()`) go
+  to the agent (TimePing) instead of the device. The Session fits its clock to
+  the agent's and composes that fit with the agent's ClockModel event
+  (`agent::composeClock`), so `clockModel()`, mapped frame and reply times and
+  group buffers work as on a direct link, on the agent's host or another one.
+  A device Boot drops the agent's model until the next ClockModel event. A
+  lobby never pings.
+- **Agent events** (Closing, Lease, ClockModel, History) reach `nextEvent()`
+  and observers as `Frame{0xF0}`; decode them with `agent::decodeEvent` and the
+  body decoders (`decodeLease`, `decodeHistory`, ...). The History chunks and
+  one ClockModel event arrive right after the Hello, before any device frame.
+- **Agent ops.** `Session::agentRequest(op, body)` sends one agent command and
+  returns its response (sync; Timeout or Connection on failure).
+  `agentLeaseTake`, `agentLeaseRelease` and `agentClients` wrap the lease and
+  the client list and throw `DeviceError` on a refusal (`Busy/LeaseRequired`,
+  `InvalidArgument/WrongState`). A Take returns once the lease is held, after
+  a previous holder was disarmed and its command groups cleared.
+
 `listAgentDevices(endpoint, token)` opens a lobby connection and returns the
 device records. `agent.hpp` also holds the pure codec of the agent messages,
 shared with the agent. The contract is
@@ -253,7 +270,8 @@ maps to host monotonic microseconds; drift is host-us/device-us, not UTC.
 Session owns periodic pings on I/O: first at 100 ms, then every 200 ms for
 three seconds, then every second. Explicit pings can share an in-flight ping.
 `clockModel()` returns the aged fit; `generation()` identifies its device boot.
-Set `periodic_time=false` for explicit measurement or future agent-owned time.
+Set `periodic_time=false` for explicit measurement. Through an agent the pings
+go to the agent and the model is composed with its ClockModel ("Agent client").
 The CLI uses explicit pings only, preserving its measurement cadence.
 
 `MappedTime` includes device microseconds, boot generation, mapped host time,

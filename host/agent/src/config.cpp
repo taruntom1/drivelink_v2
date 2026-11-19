@@ -22,7 +22,8 @@ namespace
 using json = nlohmann::json;
 
 constexpr int64_t kMinMs = 100, kMaxMs = 60000;
-constexpr std::size_t kMaxDevices = 16;
+constexpr int64_t kMinHistory = 16, kMaxHistory = 4096;
+constexpr std::size_t kMaxDevices = 8;
 
 std::string single_quoted(std::string_view s)
 {
@@ -265,6 +266,8 @@ AgentConfig parseConfig(std::string_view json_text, const std::string &base_dir)
             c.retry = std::chrono::milliseconds(jsonInt(value, key, kMinMs, kMaxMs));
         else if (key == "request_timeout_ms")
             c.request_timeout = std::chrono::milliseconds(jsonInt(value, key, kMinMs, kMaxMs));
+        else if (key == "history_size")
+            c.history_size = static_cast<size_t>(jsonInt(value, key, kMinHistory, kMaxHistory));
         else if (key == "devices")
         {
             if (!value.is_array())
@@ -322,9 +325,9 @@ AgentConfig loadConfig(const std::string &path)
 
 CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig &config)
 {
-    static constexpr std::array<std::string_view, 9> kValueFlags = {
+    static constexpr std::array<std::string_view, 10> kValueFlags = {
         "--config", "--bind", "--port", "--token", "--token-file",
-        "--device", "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms"};
+        "--device", "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms", "--history-size"};
 
     CommandLine cl;
     bool devices_replaced = false, token_flag = false, token_file_flag = false;
@@ -401,6 +404,8 @@ CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig
             config.hello_timeout = std::chrono::milliseconds(flagInt(name, value, kMinMs, kMaxMs));
         else if (name == "--retry-ms")
             config.retry = std::chrono::milliseconds(flagInt(name, value, kMinMs, kMaxMs));
+        else if (name == "--history-size")
+            config.history_size = static_cast<size_t>(flagInt(name, value, kMinHistory, kMaxHistory));
         else // --request-timeout-ms
             config.request_timeout = std::chrono::milliseconds(flagInt(name, value, kMinMs, kMaxMs));
     }
@@ -426,10 +431,11 @@ void validate(const AgentConfig &config)
     }
     // The ListDevices answer is one frame: agent response header (5), count,
     // then per device alias, online, id, a name of up to 16 bytes, endpoint,
-    // clients (docs/protocol/agent.md). It must fit MAX_PAYLOAD (1024).
+    // clients, the holder's id and a client name of up to 32 bytes
+    // (docs/protocol/agent.md). It must fit MAX_PAYLOAD (1024).
     size_t list_bytes = 5 + 1;
     for (const auto &d : config.devices)
-        list_bytes += 1 + d.alias.size() + 1 + 6 + 1 + 16 + 1 + d.endpoint.size() + 1;
+        list_bytes += 1 + d.alias.size() + 1 + 6 + 1 + 16 + 1 + d.endpoint.size() + 1 + 2 + 1 + 32;
     if (list_bytes > 1024)
         throw ConfigError("the device list is too long for one ListDevices answer (" + std::to_string(list_bytes) +
                           " of 1024 bytes): use fewer devices or shorter aliases and endpoints");
@@ -454,6 +460,7 @@ flags:
   --hello-timeout-ms N       time allowed for a client's Hello (default 5000)
   --retry-ms N               device reconnect interval (default 2000)
   --request-timeout-ms N     device request timeout (default 3000)
+  --history-size N           history entries kept per device, 16..4096 (default 256)
   --help                     show this text
   --version                  show the version
   Values may also be given as --flag=value. Durations are 100..60000.
@@ -461,9 +468,9 @@ flags:
 config file keys (unknown keys are errors):
   bind, port, token, token_file (relative to the config file; token and
   token_file are mutually exclusive), hello_timeout_ms, retry_ms,
-  request_timeout_ms, devices: [{alias, endpoint, baud}]
+  request_timeout_ms, history_size, devices: [{alias, endpoint, baud}]
   alias: 1..32 of a-z 0-9 _ -, starting with a letter, not 12 hex digits.
-  1..16 devices with unique aliases and endpoints.
+  1..8 devices with unique aliases and endpoints.
 
 example:
   {

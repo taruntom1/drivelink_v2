@@ -255,6 +255,22 @@ struct Session::Impl
     uint64_t boot_generation=next_clock_generation.fetch_add(1), started_us=monotonicUs();
     ClockEstimator estimator;
     ClockModel clock;
+    // Agent device connection: pings go to the agent; `clock` is the agent's
+    // device model (ClockModel event) composed with this fit of the agent.
+    bool agent_link=false;
+    ClockEstimator agent_estimator;
+    ClockModel agent_clock, device_model;
+    bool have_device_model=false;
+    uint64_t device_model_rx=0;
+    uint8_t agent_ping_seq=0, agent_request_seq=0;
+    struct AgentPending {
+        uint8_t op=0;
+        std::chrono::milliseconds timeout{0};
+        std::promise<agent::Response> promise;
+        asio::steady_timer timer;
+        explicit AgentPending(asio::io_context &i) : timer(i) {}
+    };
+    std::map<uint8_t,std::shared_ptr<AgentPending>> agent_pending;
 
     Impl(const std::string &endpoint,SessionOptions opts) : options(std::move(opts)) {
         if(options.timeout.count()<=0 || options.timeout>std::chrono::seconds(60) ||
@@ -273,9 +289,10 @@ struct Session::Impl
             connectTcp(io, tcp, parseTcpEndpoint(endpoint), options.timeout, ec);
             if (!ec && options.agent)
             {
-                // Clients never ping through an agent: it owns the clock.
-                options.periodic_time = false;
                 hello = performHello(io, tcp, scanner, *options.agent, options.timeout);
+                // A lobby has no device clock; a device connection pings the agent.
+                agent_link = !hello->lobby;
+                if (!agent_link) { options.periodic_time = false; }
             }
         }
         else if (endpoint.starts_with("serial://") && endpoint.size() > 9)
@@ -427,6 +444,9 @@ struct Session::Impl
         // Completing removes entries, so retain ownership of the first one.
         while(!pending.empty()) { auto r=pending.begin()->second;complete(r,std::unexpected(error(r,ErrorKind::Connection,why)),true); }
         if(ping) { finishPing(std::unexpected(Error(ErrorKind::Connection,why)),true); }
+        for(auto &[seq,request]:agent_pending) {(void)seq;request->timer.cancel();
+            request->promise.set_exception(std::make_exception_ptr(Error(ErrorKind::Connection,why)));}
+        agent_pending.clear();
         asio::error_code ec;tcp.close(ec);serial.close(ec);stale.cancel();periodic.cancel();command_tick.cancel();writes.clear();
     }
     void pruneQueued() {
@@ -570,9 +590,17 @@ struct Session::Impl
         unsigned tried=0;while(tried<65536 && ping_retired[ping_sequence%65536]) {++ping_sequence;++tried;}
         if(tried==65536) { finish(std::unexpected(Error(ErrorKind::Connection,"time ping IDs exhausted; reconnect")));return; }
         auto current=std::make_shared<Ping>(io);current->sample.id=static_cast<uint16_t>(ping_sequence++%65536);current->finish=std::move(finish);
+        if(agent_link) {
+            // The agent answers with its own clock (agent.md, TimePing).
+            current->sample.id=++agent_ping_seq;
+            const auto payload=agent::encodeCommand({agent_ping_seq,static_cast<uint8_t>(p::defs::AgentOp::TimePing),{}});
+            current->bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
+            p::encodeFrame(current->bytes->data(),current->bytes->size(),msg::kAgentCommand,payload.data(),payload.size());
+        } else {
         std::array<uint8_t,p::time_wire::kRequestBytes> payload{};p::time_wire::request(payload.data(),payload.size(),current->sample.id);
         current->bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
         p::encodeFrame(current->bytes->data(),current->bytes->size(),msg::kTimeRequest,payload.data(),payload.size());
+        }
         ping=current;
         if(writes.size()>=options.request_capacity+8) { finishPing(std::unexpected(Error(ErrorKind::Connection,"TX queue full")));return; }
         writes.push_back({current->bytes,{},false,true});if(writes.size()==1) {write();}
@@ -631,16 +659,84 @@ struct Session::Impl
             }commandTick();
         });
     }
+    // I/O thread: device time to this host's clock through the agent.
+    void recompose() {
+        ClockModel composed;
+        if(have_device_model) {
+            const auto now=monotonicUs();
+            auto d2a=device_model;d2a.age_us+=now>=device_model_rx?now-device_model_rx:0;
+            auto a2c=agent_clock;a2c.age_us=now>=a2c.updated_us?now-a2c.updated_us:0;
+            composed=agent::composeClock(d2a,a2c);
+        }
+        std::lock_guard lock(mutex);clock=composed;
+    }
+    void agentResponse(const p::Scanner::Frame &f) {
+        auto response=agent::decodeResponse({f.payload,f.len});
+        if(!response || response->version!=agent::kVersion) {return;}
+        if(response->op==static_cast<uint8_t>(p::defs::AgentOp::TimePing)) {
+            if(!agent_link || !ping || !ping->sent || ping->sample.id!=response->seq) {return;}
+            auto agent_us=agent::decodeTimePing(response->body);
+            if(response->result!=static_cast<uint8_t>(p::defs::Result::Ok) || !agent_us) {
+                finishPing(std::unexpected(Error(ErrorKind::Protocol,"invalid agent time ping answer")),true);return;
+            }
+            auto sample=ping->sample;sample.esp_rx_us=*agent_us;sample.esp_tx_us=*agent_us;sample.host_rx_us=monotonicUs();
+            // The agent's clock does not restart with the device: fit it in one
+            // generation, and report the device's generation as a direct ping does.
+            auto fit=sample;fit.boot_generation=0;
+            agent_estimator.add(fit);agent_clock=agent_estimator.model(sample.host_rx_us);recompose();
+            {std::lock_guard lock(mutex);sample.boot_generation=boot_generation;}
+            finishPing(sample);return;
+        }
+        auto it=agent_pending.find(response->seq);
+        if(it==agent_pending.end() || it->second->op!=response->op) {return;}
+        auto request=it->second;agent_pending.erase(it);request->timer.cancel();
+        request->promise.set_value(static_cast<agent::Response>(*response));
+    }
+    void startAgentRequest(const std::shared_ptr<AgentPending> &request,Bytes body) {
+        if(closed) {request->promise.set_exception(std::make_exception_ptr(Error(ErrorKind::Connection,failure)));return;}
+        unsigned tried=0;
+        while(tried<256 && agent_pending.contains(++agent_request_seq)) {++tried;}
+        if(tried==256 || writes.size()>=options.request_capacity+8) {
+            request->promise.set_exception(std::make_exception_ptr(Error(ErrorKind::Connection,"agent request queue full")));return;
+        }
+        const auto seq=agent_request_seq;
+        const auto payload=agent::encodeCommand({seq,request->op,std::move(body)});
+        auto bytes=std::make_shared<Bytes>(p::frameSize(payload.size()));
+        if(!p::encodeFrame(bytes->data(),bytes->size(),msg::kAgentCommand,payload.data(),payload.size())) {
+            request->promise.set_exception(std::make_exception_ptr(Error(ErrorKind::Usage,"agent command too large")));return;
+        }
+        agent_pending[seq]=request;
+        request->timer.expires_after(request->timeout.count()>0?request->timeout:options.timeout);
+        request->timer.async_wait([this,seq,request](auto ec) {
+            if(ec) {return;}
+            auto it=agent_pending.find(seq);if(it==agent_pending.end() || it->second!=request) {return;}
+            agent_pending.erase(it);
+            Error e(ErrorKind::Timeout,"agent did not answer");e.outcome_unknown=true;
+            request->promise.set_exception(std::make_exception_ptr(e));
+        });
+        writes.push_back({bytes,{},false,false});if(writes.size()==1) {write();}
+    }
     void receive(const p::Scanner::Frame &f) {
         if(f.msg_type==msg::kDiagEvent && f.len==17 && f.payload[0]==3 && f.payload[3]==4) {
             {std::lock_guard lock(mutex);boot_generation=next_clock_generation.fetch_add(1);clock={};}
-            estimator.reset();started_us=monotonicUs();
+            estimator.reset();started_us=monotonicUs();have_device_model=false;
             for(auto &[id,buffer]:buffers) {(void)id;buffer->invalidate();}buffers.clear();
             for(auto &[id,weak]:commands) {(void)id;if(auto command=weak.lock()) {command->stop();}}commands.clear();
             if(ping) {Error e(ErrorKind::Protocol,"device reboot during ping");e.boot_changed=true;finishPing(std::unexpected(e),true);}
             while(!pending.empty()) {
                 auto r=pending.begin()->second;auto e=error(r,ErrorKind::Protocol,"device reboot during request");e.boot_changed=true;
                 complete(r,std::unexpected(e),true);
+            }
+        }
+        if(f.msg_type==msg::kAgentResponse) {agentResponse(f);return;}
+        if(f.msg_type==msg::kAgentEvent && agent_link) {
+            // The ClockModel event updates the composed clock, then goes to
+            // consumers like every other agent event.
+            if(auto event=agent::decodeEvent({f.payload,f.len});
+               event && event->event==static_cast<uint8_t>(p::defs::AgentEvent::ClockModel)) {
+                if(auto model=agent::decodeClockModel(event->body)) {
+                    device_model=*model;device_model_rx=monotonicUs();have_device_model=true;recompose();
+                }
             }
         }
         if(f.msg_type==msg::kTimeResponse) {
@@ -903,6 +999,24 @@ void Session::setMaxPayload(uint16_t cap) {
 }
 uint16_t Session::maxPayload() const {return m_impl->maxPayload();}
 std::optional<agent::HelloAccepted> Session::agentHello() const {return m_impl->hello;}
+agent::Response Session::agentRequest(uint8_t op,std::span<const uint8_t> body,std::chrono::milliseconds timeout) {
+    auto &d=*m_impl;
+    if(!d.hello) {throw Error(ErrorKind::Usage,"not an agent connection");}
+    if(op==static_cast<uint8_t>(p::defs::AgentOp::Hello) || op==static_cast<uint8_t>(p::defs::AgentOp::TimePing)) {
+        throw Error(ErrorKind::Usage,"the Session sends Hello and TimePing itself");
+    }
+    if(d.thread.get_id()==std::this_thread::get_id()) {throw Error(ErrorKind::Usage,"sync agent request on I/O thread");}
+    if(timeout.count()<0 || timeout>std::chrono::seconds(60)) {throw Error(ErrorKind::Usage,"invalid agent request timeout");}
+    if(body.size()+3>p::kMaxPayload) {throw Error(ErrorKind::Usage,"agent command too large");}
+    auto request=std::make_shared<Impl::AgentPending>(d.io);request->op=op;request->timeout=timeout;
+    auto future=request->promise.get_future();
+    {
+        std::lock_guard closing(d.close_mutex);
+        {std::lock_guard lock(d.mutex);if(d.closed) {throw Error(ErrorKind::Connection,d.failure);}}
+        asio::post(d.io,[&d,request,body=Bytes(body.begin(),body.end())]() mutable {d.startAgentRequest(request,std::move(body));});
+    }
+    return future.get();
+}
 std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint,const std::string &token,
                                                   std::chrono::milliseconds timeout,const std::string &client_name) {
     if(timeout.count()<=0 || timeout>std::chrono::seconds(60)) {throw Error(ErrorKind::Usage,"invalid timeout");}
@@ -918,6 +1032,24 @@ std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint,co
     if(!devices) {throw devices.error();}
     asio::error_code ignored;tcp.shutdown(asio::ip::tcp::socket::shutdown_both,ignored);tcp.close(ignored);
     return std::move(*devices);
+}
+namespace {
+agent::Response agentOk(Session &session,p::defs::AgentOp op,const char *what,
+                        std::chrono::milliseconds timeout=std::chrono::milliseconds(0)) {
+    auto response=session.agentRequest(static_cast<uint8_t>(op),{},timeout);
+    if(response.result!=static_cast<uint8_t>(p::defs::Result::Ok)) {
+        throw DeviceError(std::string("agent refused ")+what,response.result,response.detail,0,static_cast<uint8_t>(op));
+    }
+    return response;
+}
+} // namespace
+void agentLeaseTake(Session &session) {(void)agentOk(session,p::defs::AgentOp::LeaseTake,"the lease",kAgentLeaseTakeTimeout);}
+void agentLeaseRelease(Session &session) {(void)agentOk(session,p::defs::AgentOp::LeaseRelease,"the lease release");}
+std::vector<agent::ClientRecord> agentClients(Session &session) {
+    auto response=agentOk(session,p::defs::AgentOp::ClientList,"the client list");
+    auto clients=agent::decodeClientList(response.body);
+    if(!clients) {throw clients.error();}
+    return std::move(*clients);
 }
 uint64_t Session::generation() const {std::lock_guard lock(m_impl->mutex);return m_impl->boot_generation;}
 ClockModel Session::clockModel() const {

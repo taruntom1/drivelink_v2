@@ -200,6 +200,21 @@ TEST_CASE("config: durations 100..60000 ms")
     }
 }
 
+TEST_CASE("config: history_size 16..4096, default 256, and its flag")
+{
+    CHECK(AgentConfig{}.history_size == 256);
+    CHECK(parseConfig(R"({"history_size": 16})").history_size == 16);
+    CHECK(parseConfig(R"({"history_size": 4096})").history_size == 4096);
+    CHECK(refusesJson(R"({"history_size": 15})", "history_size"));
+    CHECK(refusesJson(R"({"history_size": 4097})", "history_size"));
+    AgentConfig c;
+    std::vector<std::string_view> args{"--history-size", "1000"};
+    parseCommandLine(args, c);
+    CHECK(c.history_size == 1000);
+    std::vector<std::string_view> bad{"--history-size=5000"};
+    CHECK_THROWS_AS(parseCommandLine(bad, c), ConfigError);
+}
+
 TEST_CASE("config: device alias rules")
 {
     const auto dev = [](const std::string &alias) {
@@ -547,13 +562,13 @@ TEST_CASE("validate: token, device count, uniqueness")
     noDevices.devices.clear();
     CHECK(refuses([&] { validate(noDevices); }, "device"));
 
-    AgentConfig sixteen = validConfig();
-    sixteen.devices.clear();
-    for (int i = 0; i < 16; ++i)
-        sixteen.devices.push_back({"d" + std::to_string(i), "serial:///dev/ttyACM" + std::to_string(i), 921600});
-    CHECK_NOTHROW(validate(sixteen));
-    sixteen.devices.push_back({"d16", "serial:///dev/ttyACM16", 921600});
-    CHECK(refuses([&] { validate(sixteen); }, "16"));
+    AgentConfig eight = validConfig();
+    eight.devices.clear();
+    for (int i = 0; i < 8; ++i)
+        eight.devices.push_back({"d" + std::to_string(i), "serial:///dev/ttyACM" + std::to_string(i), 921600});
+    CHECK_NOTHROW(validate(eight));
+    eight.devices.push_back({"d8", "serial:///dev/ttyACM8", 921600});
+    CHECK(refuses([&] { validate(eight); }, "8"));
 
     AgentConfig dupAlias = validConfig();
     dupAlias.devices.push_back({"base", "serial:///dev/ttyACM1", 921600});
@@ -610,7 +625,7 @@ TEST_CASE("validate: the device list must fit one ListDevices answer")
 {
     drivelink::agent::AgentConfig config;
     config.token = "0123456789abcdef";
-    const std::string long_path(200, 'x');
+    const std::string long_path(170, 'x');
     for (int i = 0; i < 4; ++i)
         config.devices.push_back({"dev" + std::to_string(i), "serial:///dev/" + long_path + std::to_string(i), 921600});
     CHECK_NOTHROW(drivelink::agent::validate(config));

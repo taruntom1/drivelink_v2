@@ -41,14 +41,25 @@ from protocol import CORE_PROTOCOL_VERSION, command_group_payload, crc8, crc16_c
 
 # Result / Detail values (protocol/defs/registry.yaml wire_enums).
 R_OK, R_INVALID, R_NOT_FOUND, R_BUSY = 0, 1, 2, 5
+R_NO_MEMORY = 4
 D_CAPACITY, D_AGENT_VERSION, D_BAD_TOKEN, D_UNKNOWN_DEVICE, D_DEVICE_OFFLINE, D_LEASE_REQUIRED = 30, 54, 55, 56, 57, 58
+D_UNSUPPORTED = 9
 # Message types (docs/protocol/registry.md).
 T_CORE_COMMAND, T_CORE_RESPONSE, T_AGENT_COMMAND, T_AGENT_RESPONSE, T_STATUS, T_SUB0 = 0x01, 0x41, 0x30, 0x70, 0x80, 0x81
-AGENT_VERSION = 1
+AGENT_VERSION = 2
 T_DISARM, T_DIAG_EVENT, T_AGENT_EVENT = 0x03, 0xC0, 0xF0
 D_UNKNOWN_REF, D_WRONG_STATE = 1, 46
+# Agent ops, events, lease reasons, history kinds (docs/protocol/agent.md).
+OP_HELLO, OP_LIST_DEVICES, OP_LEASE_TAKE, OP_LEASE_RELEASE, OP_CLIENT_LIST, OP_TIME_PING = 1, 2, 3, 4, 5, 6
+EV_CLOSING, EV_LEASE, EV_CLOCK, EV_HISTORY = 1, 2, 3, 4
+L_TAKEN, L_RELEASED, L_DISCONNECTED = 1, 2, 3
+H_DIAG, H_ARM, H_LEASE, H_ONLINE, H_OFFLINE = 1, 2, 3, 4, 5
+ARM_DISARMED, ARM_ARMED = 0, 1
+REASON_EXPLICIT, REASON_WATCHDOG = 1, 2
+T_CMD0 = 0xA0
+KIND_SUB, KIND_CMD = 0, 1   # LIST entry kinds
 FAM_SYSTEM, OP_ARM, OP_DISARM = 1, 2, 3
-FAM_GROUP, OP_SUB_CONFIG, OP_SUB_ENABLE, OP_SUB_CLEAR, OP_CMD_CLEAR, OP_LIST = 5, 1, 2, 3, 5, 6
+FAM_GROUP, OP_SUB_CONFIG, OP_SUB_ENABLE, OP_SUB_CLEAR, OP_CMD_CONFIG, OP_CMD_CLEAR, OP_LIST = 5, 1, 2, 3, 4, 5, 6
 
 BASE_ID, ARM_ID = '02444c000001', '02444c000002'
 PROCS = []   # every child, for cleanup and for failure diagnostics
@@ -143,13 +154,18 @@ def start_vdev(name, vdev, state, port=0, device_id=None):
 
 # ---------------------------------------------------------------- CLI helpers
 
-def cli(endpoint, *command, device=None, token=None, env_token=None, code=0, timeout=20):
+def cli(endpoint, *command, device=None, token=None, env_token=None, code=0, timeout=20, lease=False,
+        client_name=None):
     """Run the CLI with --json; return the envelope. Checks the exit code."""
     argv = [CLI, '--endpoint', endpoint]
     if device is not None:
         argv += ['--device', device]
     if token is not None:
         argv += ['--token', token]
+    if client_name is not None:
+        argv += ['--client-name', client_name]
+    if lease:
+        argv += ['--lease']
     argv += ['--json', *command]
     env = {k: v for k, v in os.environ.items() if k != 'DRIVELINK_AGENT_TOKEN'}
     if env_token is not None:
@@ -168,6 +184,25 @@ def cli(endpoint, *command, device=None, token=None, env_token=None, code=0, tim
         fail(f'{command}: stdout is not a JSON envelope', stdout=run.stdout, stderr=run.stderr)
     expect(envelope['ok'] == (code == 0), f'{command}: ok flag', envelope=envelope)
     return envelope
+
+
+def add_actuator(url):
+    """One actuator.mock (type 112, instance 0, loop 0) saved into the vdev, so the
+    lease scenarios have a real commandable input (112:0:512, `duty`). Done on the
+    directly reachable vdev, before the agent starts; base and ref get the same."""
+    cli(url, 'add', '112', 'm0', '0')
+    cli(url, 'save')
+    cli(url, 'reboot')
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            if len(data(cli(url, 'instances'))) == 3:
+                return
+        except Fail:
+            pass
+        if time.monotonic() >= deadline:
+            fail('the actuator instance did not appear after the reboot', url=url)
+        time.sleep(0.3)
 
 
 def direct_retry(endpoint, *command, seconds=8):
@@ -225,6 +260,7 @@ class RawClient:
         self.buf = bytearray()
         self.frames = collections.defaultdict(lambda: collections.deque(maxlen=1000))
         self.eof, self.rx_bytes = False, 0
+        self.order = []      # msg types of the first frames received, in arrival order
         if not hello:
             return
         self.send_hello(device=device)
@@ -285,6 +321,8 @@ class RawClient:
                 del self.buf[:1]
                 continue
             self.frames[head[0]].append(bytes(self.buf[7:7 + length]))
+            if len(self.order) < 64:
+                self.order.append(head[0])
             del self.buf[:total]
 
     def pump(self, seconds, eof_ok=False):
@@ -356,6 +394,57 @@ class RawClient:
             if nxt == 0xFFFF:
                 return entries
             start = nxt
+
+    # -- agent events (0xF0): version | event | body
+    def take_events(self, event, seconds=0.0):
+        """Pump, then remove and return the bodies of agent events of one kind, in order."""
+        if seconds:
+            self.pump(seconds, eof_ok=True)
+        queue_, kept, out = self.frames[T_AGENT_EVENT], [], []
+        for frame in list(queue_):
+            if len(frame) >= 2 and frame[1] == event:
+                out.append(bytes(frame[2:]))
+            else:
+                kept.append(frame)
+        queue_.clear()
+        queue_.extend(kept)
+        return out
+
+    def wait_events(self, event, count, timeout=5):
+        """Wait until `count` events of one kind queued, then take them all."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.pump(0.05, eof_ok=True)
+            if sum(1 for f in self.frames[T_AGENT_EVENT] if len(f) >= 2 and f[1] == event) >= count:
+                return self.take_events(event)
+            if self.eof:
+                break
+        fail(f'{self.name}: wanted {count} agent event(s) of kind {event}', got=self.take_events(event))
+
+    def lease_take(self):
+        return self.agent_request(OP_LEASE_TAKE)
+
+    def lease_release(self):
+        return self.agent_request(OP_LEASE_RELEASE)
+
+    def cmd_config(self, group, loop, refs):
+        body = struct.pack('<BBB', group, loop, len(refs)) + b''.join(struct.pack('<BBH', *r) for r in refs)
+        return self.request(FAM_GROUP, OP_CMD_CONFIG, body)
+
+    def arm(self):
+        return self.request(FAM_SYSTEM, OP_ARM)
+
+    def keepalives(self, epoch, seconds, period=0.05, group=0):
+        """Send prefix-only command frames for a while (also reads what arrives)."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self.counter = (getattr(self, 'counter', 0) + 1) & 0xFFFF
+            self.send(T_CMD0 + group, command_group_payload(epoch, self.counter))
+            self.pump(period)
+
+    def status_frames(self, seconds):
+        """[(arm_state, last_disarm_reason)] of the status frames received over `seconds`."""
+        return [(f[12], f[-1]) for f in self.drain(T_STATUS, seconds)]
 
     def drain(self, msg_type, seconds):
         self.pump(seconds)
@@ -435,7 +524,8 @@ def scenario_3_same_as_direct(ctx):
     return 'info, types, instances, get and set through the agent equal a direct vdev'
 
 
-def scenario_4_lease_interim(ctx):
+def scenario_4_lease_required(ctx):
+    # Nobody holds the lease: ARM, CMD_CONFIG and CMD_CLEAR are holder-only.
     refused = via('base', 'arm', code=5)
     expect(refused['detail'] == D_LEASE_REQUIRED and refused['result'] == R_BUSY, 'arm through the agent', envelope=refused)
     refused = via('base', 'cmd-config', '0', '0', code=5)
@@ -446,7 +536,7 @@ def scenario_4_lease_interim(ctx):
     via('base', 'disarm')
     via('base', 'disarm')
     expect(data(via('base', 'status'))['arm_state'] == 0, 'device is not armed')
-    return 'arm/cmd-config/cmd-clear refused with LeaseRequired; disarm works from two clients'
+    return 'arm/cmd-config/cmd-clear refused with LeaseRequired without the lease; disarm works from two clients'
 
 
 def scenario_5_groups(ctx):
@@ -548,11 +638,13 @@ def watch_pair(device, command, count):
 
 
 def scenario_6_status_events(ctx):
-    for command in ('status', 'events'):
-        for envelopes in watch_pair('base', command, 3):
-            expect(len(envelopes) == 3 and all(e['ok'] for e in envelopes), f'{command} 3 envelopes', envelopes=envelopes)
-            # `status` keeps only the status stream (msg_type 128). `events` does not
-            # filter: on an idle device that stream is what flows, but allow a stray event.
+    # `events` does not filter: after the Hello an agent client first gets its
+    # History and ClockModel events (and ClockModel updates), so watch longer.
+    for command, count in (('status', 3), ('events', 12)):
+        for envelopes in watch_pair('base', command, count):
+            expect(len(envelopes) == count and all(e['ok'] for e in envelopes), f'{command} {count} envelopes',
+                   envelopes=envelopes)
+            # `status` keeps only the status stream (msg_type 128); `events` must see it among the agent events.
             frames = [e['data']['msg_type'] for e in envelopes]
             expect(all(t == 128 for t in frames) if command == 'status' else 128 in frames,
                    f'{command}: status frames', msg_types=frames)
@@ -615,9 +707,9 @@ def scenario_10_hello_edge_cases(ctx):
         expect(c.rx_bytes == 0, 'a core first frame must get no reply', received=c.rx_bytes, buf=bytes(c.buf).hex())
     finally:
         c.close()
-    # (b, e) agent version 2 / core version 9 in the Hello: the AgentVersion refusal
-    # (the agent's own versions 1 and 10, response version byte 1), then close.
-    for what, kwargs in (('agent version 2', dict(agent_version=2)), ('core version 9', dict(core_version=9))):
+    # (b, e) agent version 1 / core version 9 in the Hello: the AgentVersion refusal
+    # (the agent's own versions 2 and 10, response version byte 2), then close.
+    for what, kwargs in (('agent version 1', dict(agent_version=1)), ('core version 9', dict(core_version=9))):
         c = RawClient('t10b', hello=False)
         try:
             seq = c.send_hello(**kwargs)
@@ -654,7 +746,7 @@ def scenario_10_hello_edge_cases(ctx):
             expect(took < 2.5 and c.rx_bytes == 0, f'{what}: prompt close without a reply', seconds=took, received=c.rx_bytes)
         finally:
             c.close()
-    return 'first frame not a Hello closes silently; AgentVersion refusal (agent v2, core v9) then close; second Hello WrongState; hello timeout'
+    return 'first frame not a Hello closes silently; AgentVersion refusal (agent v1, core v9) then close; second Hello WrongState; hello timeout'
 
 
 def scenario_11_disarm_paths(ctx):
@@ -690,10 +782,10 @@ def scenario_11_disarm_paths(ctx):
     return 'fast DISARM, wrong-op, body byte, system DISARM and a version-9 core_command answered as a device would'
 
 
-def scenario_12_interim_rule_raw(ctx):
+def scenario_12_lease_rule_raw(ctx):
     c = RawClient('t12')
     try:
-        # Command-group streams (0xA0..0xBF) from a client are dropped: no reply, no close.
+        # Without the lease, command-group streams (0xA0..0xBF) are dropped: no reply, no close.
         c.send(0xA0, command_group_payload(0, 0))
         c.send(0xA0, command_group_payload(1, 7))
         c.send(0xA5, command_group_payload(0, 0))
@@ -701,12 +793,15 @@ def scenario_12_interim_rule_raw(ctx):
         expect(not c.drain(T_CORE_RESPONSE, 0.5) and not c.drain(T_AGENT_RESPONSE, 0.1), 'command-group frames got a reply')
         result, detail, _ = c.request(FAM_GROUP, OP_CMD_CLEAR, bytes([0]))
         expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'cmd-clear over the raw link', got=(result, detail))
-        result, detail, _ = c.request(FAM_SYSTEM, OP_ARM)
+        result, detail, _ = c.cmd_config(0, 0, [ctx['cmd_ref']])
+        expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'CMD_CONFIG over the raw link', got=(result, detail))
+        result, detail, _ = c.arm()
         expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'ARM over the raw link', got=(result, detail))
+        expect(c.request(FAM_SYSTEM, OP_DISARM)[0] == R_OK, 'DISARM from a non-holder still works')
         expect(c.request(FAM_SYSTEM, OP_DISARM)[0] == R_OK, 'the connection is still usable')
     finally:
         c.close()
-    return 'command-group frames dropped silently (connection usable); cmd-clear and ARM refused with LeaseRequired'
+    return 'without the lease: command frames dropped silently; CMD_CONFIG, cmd-clear and ARM refused with LeaseRequired; DISARM works'
 
 
 def scenario_13_unmapped_groups(ctx):
@@ -746,7 +841,8 @@ def scenario_14_device_reboot(ctx):
         via('base', 'reboot')
         expect(a.wait_eof(10), 'the connection must close when the device reboots')
         closing = [bytes(f) for f in a.frames[T_AGENT_EVENT]]
-        expect(bytes([1, 1, 1]) in closing, 'Closing(DeviceOffline) before EOF', events=[f.hex() for f in closing])
+        expect(bytes([AGENT_VERSION, EV_CLOSING, 1]) in closing, 'Closing(DeviceOffline) before EOF',
+               events=[f.hex() for f in closing])
         boot = [bytes(f) for f in a.frames[T_DIAG_EVENT] if len(f) > 3 and f[3] == 4]
     finally:
         a.close()
@@ -782,12 +878,12 @@ def scenario_15_closing_events(ctx):
     try:
         ctx['arm'].kill()
         expect(r.wait_eof(10), 'the connection to a dead device must close')
-        events = [bytes(f) for f in r.frames[T_AGENT_EVENT]]
-        expect(events == [bytes([1, 1, 1])], 'Closing(DeviceOffline) before EOF', events=[f.hex() for f in events])
+        closing = r.take_events(EV_CLOSING)
+        expect(closing == [bytes([1])], 'Closing(DeviceOffline) before EOF', events=[f.hex() for f in closing])
     finally:
         r.close()
     restart_arm(ctx)
-    return 'a raw client of arm gets agent_event [1, 1, 1] (Closing, DeviceOffline) before EOF when the device dies'
+    return 'a raw client of arm gets agent_event [2, 1, 1] (Closing, DeviceOffline) before EOF when the device dies'
 
 
 def scenario_16_slow_client(ctx):
@@ -857,6 +953,360 @@ def scenario_16_slow_client(ctx):
             f'slow client {outcome}')
 
 
+# ----------------------------------------------------------- lease scenarios
+
+def parse_lease(body):
+    """(holder_id, holder_name, previous_id, reason) of a Lease event body."""
+    holder, = struct.unpack_from('<H', body)
+    n = body[2]
+    name = body[3:3 + n].decode()
+    previous, = struct.unpack_from('<H', body, 3 + n)
+    expect(len(body) == 6 + n, 'Lease event length', body=body.hex())
+    return holder, name, previous, body[5 + n]
+
+
+def leases(c, count, timeout=5):
+    return [parse_lease(b) for b in c.wait_events(EV_LEASE, count, timeout)]
+
+
+def disarmed_with(c, reason, seconds=0.6):
+    """Status frames over `seconds` end disarmed with the given last_disarm_reason."""
+    frames = c.status_frames(seconds)
+    expect(frames and frames[-1] == (ARM_DISARMED, reason), 'the device ends disarmed with the wanted reason',
+           wanted=reason, last_frames=frames[-5:])
+
+
+def settle(ctx, device='base', timeout=10):
+    """No clients, no holder: the previous scenario's handoffs are complete."""
+    wait_devices(lambda d: d[device]['clients'] == 0 and d[device]['holder_id'] == 0,
+                 f'{device} to have no clients or holder', timeout=timeout)
+
+
+def arm_holder(ctx, name, device='base'):
+    """A raw client that takes the lease, configures command group 0 on the
+    scenario's input, and arms with keepalives running. Returns (client, epoch)."""
+    c = RawClient(name, device)
+    result, detail, _ = c.lease_take()
+    expect(result == R_OK, f'{name}: LeaseTake', result=result, detail=detail)
+    leases(c, 1)
+    return c, config_and_arm(ctx, c)
+
+
+def config_and_arm(ctx, c):
+    result, detail, body = c.cmd_config(0, 0, [ctx['cmd_ref']])
+    expect(result == R_OK and body[1] == T_CMD0, f'{c.name}: CMD_CONFIG', result=result, detail=detail, body=body.hex())
+    epoch = body[0]
+    c.keepalives(epoch, 0.15)
+    result, detail, _ = c.arm()
+    expect(result == R_OK, f'{c.name}: ARM', result=result, detail=detail)
+    c.keepalives(epoch, 0.3)
+    return epoch
+
+
+def scenario_A_take_and_arm(ctx):
+    ref = ctx['cmd_ref']
+    a, b = RawClient('lease-a'), RawClient('lease-b')
+    try:
+        result, detail, _ = a.lease_take()
+        expect((result, detail) == (R_OK, 0), 'A LeaseTake', got=(result, detail))
+        for c in (a, b):
+            events = leases(c, 1)
+            expect(events == [(a.client_id, 'lease-a', 0, L_TAKEN)], f'{c.name}: Lease event', events=events)
+        devices = wait_devices(lambda d: d['base']['holder_id'] == a.client_id, 'the holder in ListDevices')
+        expect(devices['base']['holder_name'] == 'lease-a' and devices['arm']['holder_id'] == 0, 'ListDevices holder',
+               devices=devices)
+        result, detail, body = a.cmd_config(0, 0, [ref])
+        expect((result, detail) == (R_OK, 0) and len(body) == 2 and body[1] == T_CMD0, 'A CMD_CONFIG', got=body.hex())
+        epoch = body[0]
+        view = [e for e in a.list_groups() if e['kind'] == KIND_CMD]
+        expect(view and view[0]['flags'] & 1 and view[0]['refs'] == [ref], 'A LIST shows its command group', view=view)
+        view = [e for e in b.list_groups() if e['kind'] == KIND_CMD]
+        expect(not any(e['flags'] for e in view), "B's LIST shows no command group", view=view)
+        a.keepalives(epoch, 0.15)
+        a.drain(T_STATUS, 0)
+        result, detail, _ = a.arm()
+        expect((result, detail) == (R_OK, 0), 'A ARM', got=(result, detail))
+        a.keepalives(epoch, 0.9)
+        frames = a.status_frames(0)
+        states = [f[0] for f in frames]
+        first = states.index(ARM_ARMED) if ARM_ARMED in states else None
+        expect(first is not None and all(x == ARM_ARMED for x in states[first:]) and len(states) - first >= 3,
+               'the status stream shows Armed through 0.9 s of keepalives (watchdog 200 ms)', frames=frames[-12:])
+    finally:
+        a.close()
+        b.close()
+    settle(ctx)
+    return 'A takes the lease (A and observer B get the Lease event), configures a command group, arms and stays armed on keepalives'
+
+
+def scenario_B_take_preempts(ctx):
+    a, epoch_a = arm_holder(ctx, 'pre-a')
+    b = RawClient('pre-b')
+    try:
+        b.drain(T_STATUS, 0)
+        result, detail, _ = b.lease_take()
+        expect((result, detail) == (R_OK, 0), 'B LeaseTake preempts', got=(result, detail))
+        events = leases(a, 2)
+        expect(events == [(0, '', a.client_id, L_TAKEN), (b.client_id, 'pre-b', 0, L_TAKEN)],
+               'A sees the revocation then the grant', events=events)
+        disarmed_with(b, REASON_EXPLICIT)
+        view = [e for e in b.list_groups() if e['kind'] == KIND_CMD]
+        expect(not any(e['flags'] for e in view), "A's command group was cleared: B's LIST shows none", view=view)
+        result, detail, body = b.cmd_config(0, 0, [ctx['cmd_ref']])
+        expect((result, detail) == (R_OK, 0), "B CMD_CONFIG on A's input (A's group is gone, else AlreadyBound)",
+               got=(result, detail))
+        result, detail, _ = a.arm()
+        expect((result, detail) == (R_BUSY, D_LEASE_REQUIRED), 'A ARM after losing the lease', got=(result, detail))
+        epoch = body[0]
+        b.keepalives(epoch, 0.15)
+        result, detail, _ = b.arm()
+        expect((result, detail) == (R_OK, 0), 'B ARM', got=(result, detail))
+        b.drain(T_STATUS, 0)
+        b.keepalives(epoch, 0.6)
+        frames = b.status_frames(0)
+        expect(frames and frames[-1][0] == ARM_ARMED, 'B stays armed on keepalives', frames=frames[-5:])
+    finally:
+        a.close()
+        b.close()
+    settle(ctx)
+    return 'B preempts armed A: A sees revoke+grant, device disarmed (Explicit), A group cleared, A ARM refused, B arms'
+
+
+def scenario_C_holder_disconnect(ctx):
+    a = RawClient('disc-a')
+    b, epoch = arm_holder(ctx, 'disc-b')
+    try:
+        a.drain(T_STATUS, 0)
+        a.take_events(EV_LEASE)
+        b.close()
+        events = leases(a, 1)
+        expect(events == [(0, '', b.client_id, L_DISCONNECTED)], 'A sees Lease Disconnected', events=events)
+        disarmed_with(a, REASON_EXPLICIT, 1.0)
+    finally:
+        a.close()
+        b.close()
+    settle(ctx)
+    return 'armed holder disconnects: observer gets Lease Disconnected; device disarmed with Explicit, not Watchdog'
+
+
+def scenario_D_release(ctx):
+    a = RawClient('rel-a')
+    try:
+        expect(a.lease_take()[:2] == (R_OK, 0), 'LeaseTake')
+        leases(a, 1)
+        result, detail, _ = a.lease_release()
+        expect((result, detail) == (R_OK, 0), 'LeaseRelease', got=(result, detail))
+        events = leases(a, 1)
+        expect(events == [(0, '', a.client_id, L_RELEASED)], 'Lease event Released', events=events)
+        result, detail, _ = a.lease_release()
+        expect((result, detail) == (R_INVALID, D_WRONG_STATE), 'second release', got=(result, detail))
+    finally:
+        a.close()
+    settle(ctx)
+    return 'release gives Ok and Lease(Released); releasing again is WrongState'
+
+
+def scenario_E_exclusive_ops_cli(ctx):
+    a = RawClient('excl-a')
+    try:
+        expect(a.lease_take()[:2] == (R_OK, 0), 'LeaseTake')
+        for command in ('save', 'reboot'):
+            refused = via('base', command, code=5)
+            expect(refused['detail'] == D_LEASE_REQUIRED and refused['result'] == R_BUSY,
+                   f'{command} while another client holds the lease', envelope=refused)
+        original = data(via('base', 'get', '0:0:4'))['typed_values'][0]
+        try:
+            expect(data(via('base', 'set', '0:0:4=300'))['typed_values'] == [300], 'a live param set is open to all')
+        finally:
+            via('base', 'set', f'0:0:4={original}')
+        expect(a.lease_release()[:2] == (R_OK, 0), 'LeaseRelease')
+        a.pump(0.5)     # let the release's DISARM/clear handoff finish (a Take now would wait for it)
+        saved = via('base', 'save', lease=True)
+        expect(saved['ok'], '--lease save', envelope=saved)
+        run = subprocess.run([CLI, '--endpoint', AGENT_URL, '--token', TOKEN, '--lease', 'info'],
+                             capture_output=True, text=True, timeout=20)
+        expect(run.returncode == 2, '--lease without --device is a usage error', rc=run.returncode, stderr=run.stderr)
+        cli(AGENT_URL, 'info', token=TOKEN, lease=True, code=2)
+    finally:
+        a.close()
+    settle(ctx)
+    return 'save/reboot refused (58) while another client holds the lease; live set open; --lease save works; --lease alone is exit 2'
+
+
+def scenario_F_client_list(ctx):
+    a, b = RawClient('list-a'), RawClient('list-b')
+    try:
+        def listed():
+            return data(via('base', 'agent-clients', client_name='list-cli'))['clients']
+        clients = listed()
+        by_name = {c['name']: c for c in clients}
+        expect({'list-a', 'list-b', 'list-cli'} <= set(by_name) and not any(c['holder'] for c in clients),
+               'agent-clients lists both raw clients and the CLI, no holder', clients=clients)
+        expect(by_name['list-a']['client_id'] == a.client_id and by_name['list-b']['client_id'] == b.client_id,
+               'client ids', clients=clients)
+        expect(a.lease_take()[:2] == (R_OK, 0), 'LeaseTake')
+        clients = listed()
+        holders = [c for c in clients if c['holder']]
+        expect(len(holders) == 1 and holders[0]['name'] == 'list-a' and holders[0]['client_id'] == a.client_id,
+               'exactly one holder, A', clients=clients)
+        devices = wait_devices(lambda d: d['base']['holder_id'] == a.client_id, 'holder in agent-devices')
+        expect(devices['base']['holder_name'] == 'list-a', 'agent-devices holder_name', devices=devices)
+        run = subprocess.run([CLI, '--endpoint', AGENT_URL, '--token', TOKEN, 'agent-devices'],
+                             capture_output=True, text=True, timeout=20)
+        expect(run.stdout.splitlines()[0].endswith(f' holder={a.client_id}:list-a'),
+               'readable agent-devices shows the holder', stdout=run.stdout)
+        run = subprocess.run([CLI, '--endpoint', AGENT_URL, '--device', 'base', '--token', TOKEN, 'agent-clients'],
+                             capture_output=True, text=True, timeout=20)
+        expect(f'{a.client_id} list-a [holder]' in run.stdout.splitlines() and run.returncode == 0,
+               'readable agent-clients marks the holder', stdout=run.stdout, stderr=run.stderr)
+        expect(a.lease_release()[:2] == (R_OK, 0), 'LeaseRelease')
+        clients = listed()
+        expect(not any(c['holder'] for c in clients), 'no holder after release', clients=clients)
+        cli(AGENT_URL, 'agent-clients', token=TOKEN, code=2)
+    finally:
+        a.close()
+        b.close()
+    settle(ctx)
+    return 'agent-clients lists raw clients and the CLI with exactly one holder; agent-devices shows holder_id/holder_name'
+
+
+def scenario_G_history_on_connect(ctx):
+    a, _ = arm_holder(ctx, 'hist-a')
+    try:
+        a.request(FAM_SYSTEM, OP_DISARM)
+        a.pump(0.3)
+    finally:
+        a.close()
+    settle(ctx)
+    time.sleep(0.3)
+    c = RawClient('hist-c')
+    try:
+        c.pump(0.5)
+        # Arrival order: Hello answer, History chunks, ClockModel, before any device frame.
+        order = c.order
+        expect(order and order[0] == T_AGENT_RESPONSE, 'first frame is the Hello answer', order=order[:8])
+        events = [bytes(f) for f in c.frames[T_AGENT_EVENT]]
+        kinds = [f[1] for f in events]
+        histories = [f for f in events if f[1] == EV_HISTORY]
+        clock_at = kinds.index(EV_CLOCK)
+        expect(histories and kinds[:len(histories)] == [EV_HISTORY] * len(histories) and clock_at == len(histories),
+               'History chunks, then one ClockModel', kinds=kinds[:12])
+        expect(order[1:clock_at + 2] == [T_AGENT_EVENT] * (clock_at + 1), 'no device frame before the ClockModel',
+               order=order[:12])
+        expect(len(events[clock_at]) == 2 + 69, 'ClockModel body is 69 bytes', length=len(events[clock_at]) - 2)
+        entries = []
+        for n, frame in enumerate(histories):
+            last, count = frame[2], frame[3]
+            expect(last == (1 if n == len(histories) - 1 else 0), 'History last flag', n=n, last=last)
+            at = 4
+            for _ in range(count):
+                kind, _ms, length = struct.unpack_from('<BQB', frame, at)
+                entries.append((kind, bytes(frame[at + 10:at + 10 + length])))
+                at += 10 + length
+            expect(at == len(frame), 'History chunk length', at=at, length=len(frame))
+        kinds_seen = {k for k, _ in entries}
+        expect({H_ONLINE, H_LEASE, H_ARM} <= kinds_seen, 'History has Online, Lease and Arm entries', kinds=sorted(kinds_seen))
+        arms = [(b[0], b[1]) for k, b in entries if k == H_ARM]
+        expect(any(s == ARM_ARMED for s, _ in arms) and arms[-1][0] == ARM_DISARMED, 'Arm entries show arm then disarm',
+               arms=arms[-6:])
+        summary = f'{len(entries)} entries in {len(histories)} chunk(s)'
+    finally:
+        c.close()
+    settle(ctx)
+    return f'a new client first gets History ({summary}) with Online/Lease/Arm entries, then a 69-byte ClockModel, before device frames'
+
+
+def scenario_H_clock(ctx):
+    time.sleep(2.0)
+    c = RawClient('clk-c')
+    lobby = RawClient('clk-lobby', '')
+    try:
+        c.pump(0.3)
+        clock = c.take_events(EV_CLOCK)
+        expect(clock and len(clock[-1]) == 69 and clock[-1][0] & 1, 'ClockModel offset_valid on connect',
+               flags=[b[0] for b in clock])
+        for client in (c, lobby):
+            first = client.agent_request(OP_TIME_PING)
+            time.sleep(0.05)
+            second = client.agent_request(OP_TIME_PING)
+            expect(first[:2] == (R_OK, 0) and second[:2] == (R_OK, 0) and len(first[2]) == 8 and len(second[2]) == 8,
+                   f'{client.name}: TimePing answers', first=first, second=second)
+            t1, t2 = struct.unpack('<Q', first[2])[0], struct.unpack('<Q', second[2])[0]
+            expect(t2 > t1, f'{client.name}: agent time increases', t1=t1, t2=t2)
+        sync = data(via('base', 'time-sync', '2', timeout=30))
+        samples = sync['samples']
+        expect(len(samples) >= 5, 'time-sync took samples through the agent', count=len(samples))
+        last = samples[-1]
+        expect(last['model']['offset_valid'] and last['mapping_valid'],
+               'the composed clock model is valid (library path)', sample=last)
+    finally:
+        c.close()
+        lobby.close()
+    return 'ClockModel valid on connect; TimePing increases (device and lobby); CLI time-sync through the agent maps device time'
+
+
+def scenario_I_per_device(ctx):
+    a = RawClient('dev-a')
+    r = RawClient('dev-r', 'arm')
+    try:
+        expect(a.lease_take()[:2] == (R_OK, 0), 'LeaseTake on base')
+        expect(r.lease_take()[:2] == (R_OK, 0), 'LeaseTake on arm is granted independently')
+        devices = wait_devices(lambda d: d['base']['holder_id'] == a.client_id and d['arm']['holder_id'] == r.client_id,
+                               'both holders in ListDevices')
+        expect(devices['base']['holder_name'] == 'dev-a' and devices['arm']['holder_name'] == 'dev-r',
+               'holder names', devices=devices)
+    finally:
+        a.close()
+        r.close()
+    settle(ctx)
+    settle(ctx, 'arm')
+    return 'a holds base, another client holds arm; both holders show in ListDevices'
+
+
+def scenario_J_lobby_ops(ctx):
+    lobby = RawClient('j-lobby', '')
+    dev = RawClient('j-dev')
+    try:
+        for op in (OP_LEASE_TAKE, OP_LEASE_RELEASE, OP_CLIENT_LIST):
+            result, detail, _ = lobby.agent_request(op)
+            expect((result, detail) == (R_INVALID, D_WRONG_STATE), f'lobby op {op}', got=(result, detail))
+        for client in (lobby, dev):
+            result, detail, _ = client.agent_request(99)
+            expect((result, detail) == (R_INVALID, D_UNSUPPORTED), f'{client.name}: unknown op', got=(result, detail))
+        result, detail, _ = lobby.agent_request(OP_LIST_DEVICES)
+        expect(result == R_OK, 'the lobby is still usable')
+    finally:
+        lobby.close()
+        dev.close()
+    settle(ctx)
+    return 'lobby LeaseTake/LeaseRelease/ClientList are WrongState; an unknown op is Unsupported'
+
+
+def scenario_K_device_connection_cap(ctx):
+    # 16 device connections with 32-byte names: ClientList still fits one
+    # frame; a 17th Hello is refused NoMemory/Capacity before any device frame.
+    clients = [RawClient(f'k{i:02d}-' + 'x' * 28) for i in range(16)]
+    try:
+        result, detail, body = clients[0].agent_request(OP_CLIENT_LIST)
+        expect(result == R_OK, 'ClientList with 16 clients', result=result, detail=detail)
+        expect(body[0] == 16 and len(body) == 1 + 16 * (2 + 1 + 32 + 1), 'all 16 records', count=body[0], size=len(body))
+        extra = RawClient('k-extra', hello=False)
+        try:
+            extra.send_hello()
+            reply = extra.take(T_AGENT_RESPONSE, 5)
+            expect((reply[3], reply[4]) == (R_NO_MEMORY, D_CAPACITY), 'the 17th connection is refused',
+                   result=reply[3], detail=reply[4])
+            expect(extra.wait_eof(3), 'the refused connection is closed')
+            expect(not extra.frames[T_STATUS], 'no device frame reached the refused connection')
+        finally:
+            extra.close()
+    finally:
+        for c in clients:
+            c.close()
+    settle(ctx)
+    return '16 device connections fit one ClientList; a 17th Hello is NoMemory/Capacity'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -866,7 +1316,7 @@ def scenario_9_device_clean_after_agent(ctx):
     try:
         expect(lobby.wait_eof(5), 'the lobby connection closes when the agent stops')
         events = [bytes(f) for f in lobby.frames[T_AGENT_EVENT]]
-        expect(events == [bytes([1, 1, 2])], 'Closing(Shutdown) before EOF', events=[f.hex() for f in events])
+        expect(events == [bytes([AGENT_VERSION, EV_CLOSING, 2])], 'Closing(Shutdown) before EOF', events=[f.hex() for f in events])
     finally:
         lobby.close()
     groups = data(direct_retry(ctx['base_url'], 'groups'))['groups']
@@ -876,11 +1326,15 @@ def scenario_9_device_clean_after_agent(ctx):
     return f'after the agent stopped (exit {code}) vdev base has no configured group and is disarmed'
 
 
-SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_direct, scenario_4_lease_interim,
+SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_direct, scenario_4_lease_required,
              scenario_5_groups, scenario_6_status_events, scenario_7_offline_and_back,
              scenario_8_client_sees_device_loss, scenario_10_hello_edge_cases, scenario_11_disarm_paths,
-             scenario_12_interim_rule_raw, scenario_13_unmapped_groups, scenario_14_device_reboot,
-             scenario_15_closing_events, scenario_16_slow_client, scenario_9_device_clean_after_agent]
+             scenario_12_lease_rule_raw, scenario_13_unmapped_groups, scenario_14_device_reboot,
+             scenario_15_closing_events, scenario_16_slow_client,
+             scenario_A_take_and_arm, scenario_B_take_preempts, scenario_C_holder_disconnect, scenario_D_release,
+             scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
+             scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
+             scenario_9_device_clean_after_agent]
 
 
 def main():
@@ -903,6 +1357,9 @@ def main():
             ctx['arm'], ctx['arm_url'] = start_vdev('vdev-arm', args.vdev, ctx['arm_state'], device_id=ARM_ID)
             ctx['ref'], ctx['ref_url'] = start_vdev('vdev-ref', args.vdev, tmp / 'ref')
             ctx['arm_port'] = int(ctx['arm_url'].rsplit(':', 1)[1])
+            add_actuator(ctx['base_url'])
+            add_actuator(ctx['ref_url'])
+            ctx['cmd_ref'] = (112, 0, 512)
             ctx['agent'] = Proc('agent', [args.agent, '--port', '0', '--token', TOKEN,
                                           '--device', f'base={ctx["base_url"]}', '--device', f'arm={ctx["arm_url"]}',
                                           '--retry-ms', '300', '--hello-timeout-ms', '500'])

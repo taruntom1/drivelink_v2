@@ -3,7 +3,7 @@
 if(WIN32)
   message(FATAL_ERROR "drivelink-agent is Linux-only")
 endif()
-add_library(drivelink_agent_core STATIC src/config.cpp src/groups.cpp src/agent.cpp)
+add_library(drivelink_agent_core STATIC src/config.cpp src/groups.cpp src/lease.cpp src/history.cpp src/agent.cpp)
 target_include_directories(drivelink_agent_core PUBLIC src)
 target_link_libraries(drivelink_agent_core PUBLIC drivelink PRIVATE drivelink_asio nlohmann_json::nlohmann_json Threads::Threads)
 add_executable(drivelink-agent src/main.cpp)
@@ -12,7 +12,7 @@ target_compile_definitions(drivelink-agent PRIVATE DRIVELINK_AGENT_VERSION="${DR
 install(TARGETS drivelink-agent RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(BUILD_TESTING)
-  add_executable(agent_tests test/test_main.cpp test/test_config.cpp test/test_groups.cpp)
+  add_executable(agent_tests test/test_main.cpp test/test_config.cpp test/test_groups.cpp test/test_lease.cpp)
   target_include_directories(agent_tests SYSTEM PRIVATE ../../firmware/test/native/third_party/doctest)
   target_link_libraries(agent_tests PRIVATE drivelink_agent_core)
   add_test(NAME agent-unit COMMAND agent_tests)

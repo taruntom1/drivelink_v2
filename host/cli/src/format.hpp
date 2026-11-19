@@ -57,8 +57,11 @@ template <class T> Json toJson(const std::vector<T> &values)
     return out;
 }
 Json toJson(const agent::DeviceRecord &v);
-// "ALIAS online|offline ID NAME ENDPOINT clients=N" (ID and NAME are "-" when empty)
+Json toJson(const agent::ClientRecord &v);
+// "ALIAS online|offline ID NAME ENDPOINT clients=N [holder=ID:NAME]" (ID and NAME are "-" when empty)
 std::string deviceLine(const agent::DeviceRecord &v);
+// "client_id NAME [holder]"
+std::string clientLine(const agent::ClientRecord &v);
 Json valueJson(ValueType type, uint32_t bits);
 template<class T> Json toJson(const std::optional<T> &value) {
     return value ? toJson(*value) : Json(nullptr);

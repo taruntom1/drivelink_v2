@@ -359,7 +359,17 @@ Json toJson(const agent::DeviceRecord &v)
             {"device_id", has_id ? Json(agent::formatDeviceId(v.device_id)) : Json(nullptr)},
             {"name", v.name},
             {"endpoint", v.endpoint},
-            {"clients", v.clients}};
+            {"clients", v.clients},
+            {"holder_id", v.holder_id},
+            {"holder_name", v.holder_name}};
+}
+Json toJson(const agent::ClientRecord &v)
+{
+    return {{"client_id", v.client_id}, {"name", v.name}, {"holder", v.holder}};
+}
+std::string clientLine(const agent::ClientRecord &v)
+{
+    return std::to_string(v.client_id) + ' ' + (v.name.empty() ? "-" : v.name) + (v.holder ? " [holder]" : "");
 }
 std::string deviceLine(const agent::DeviceRecord &v)
 {
@@ -376,6 +386,7 @@ std::string deviceLine(const agent::DeviceRecord &v)
         name += '"';
     }
     return v.alias + (v.online ? " online " : " offline ") + (has_id ? agent::formatDeviceId(v.device_id) : "-") + ' ' +
-           name + ' ' + v.endpoint + " clients=" + std::to_string(v.clients);
+           name + ' ' + v.endpoint + " clients=" + std::to_string(v.clients) +
+           (v.holder_id ? " holder=" + std::to_string(v.holder_id) + ':' + (v.holder_name.empty() ? "-" : v.holder_name) : "");
 }
 } // namespace cli

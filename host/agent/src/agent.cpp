@@ -1,14 +1,19 @@
 #include "agent.hpp"
 #include "groups.hpp"
+#include "history.hpp"
+#include "lease.hpp"
 #include "drivelink/agent.hpp"
 #include "drivelink/client.hpp"
 #include "drivelink/session.hpp"
+#include "drivelink/time.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include <asio.hpp>
+#include <chrono>
 #include <deque>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -23,12 +28,15 @@ namespace defs = protocol::defs;
 namespace msg = protocol::defs::msg;
 
 constexpr size_t kMaxClients = 64;          // accepted (helloed) connections
+constexpr size_t kMaxDeviceClients = 16;    // device connections per device (a ClientList fits one frame)
 constexpr size_t kMaxConnections = 128;     // including those still before Hello
 constexpr size_t kStreamQueueLimit = 256 * 1024; // drop stream frames above this
 constexpr size_t kQueueLimit = 4 * 1024 * 1024;  // close a client that falls this far behind
 constexpr unsigned kClientInflight = 32;         // forwarded requests per client (DISARM exempt)
 constexpr auto kCloseDeadline = std::chrono::milliseconds(1000); // flush time for a Closing event
 constexpr size_t kMaxListPages = 64;
+constexpr auto kClockPeriod = std::chrono::milliseconds(500); // how often a changed clock model is sent
+constexpr size_t kMaxEventBody = p::kMaxPayload - 2;           // agent_event: version | event | body
 constexpr uint8_t kCoreVersion = p::core_wire::kVersion;
 
 uint8_t u8(defs::Result r) { return static_cast<uint8_t>(r); }
@@ -52,6 +60,12 @@ Bytes coreReply(uint8_t seq, uint8_t family, uint8_t op, uint8_t result, uint8_t
     out.insert(out.end(), body.begin(), body.end());
     return out;
 }
+uint64_t unixMs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+}
+std::string clipped(const std::string &s, size_t max) { return s.size() <= max ? s : s.substr(0, max); }
 } // namespace
 
 struct Device;
@@ -67,6 +81,7 @@ struct Agent::Impl
     std::vector<std::unique_ptr<Device>> devices;
     std::map<uint64_t, std::shared_ptr<Connection>> clients;
     uint64_t next_client = 1;
+    uint16_t next_wire = 0;
     bool stopping = false;
 
     explicit Impl(AgentConfig c) : config(std::move(c)) {}
@@ -76,6 +91,8 @@ struct Agent::Impl
     void shutdown();
     agent::DeviceRecord record(const Device &d) const;
     Device *findDevice(const std::string &name);
+    uint16_t allocWireId(); // nonzero, not used by an open connection
+    Connection *client(uint64_t id) const;
 };
 
 struct Connection : std::enable_shared_from_this<Connection>
@@ -84,6 +101,7 @@ struct Connection : std::enable_shared_from_this<Connection>
     Agent::Impl &agent;
     asio::ip::tcp::socket socket;
     uint64_t id;
+    uint16_t wire_id = 0; // client_id on the wire
     std::string name;
     State state = State::AwaitHello;
     struct Device *device = nullptr;
@@ -126,21 +144,39 @@ struct Device
     std::string name;
     uint16_t max_payload = p::kMaxPayload;
     GroupMap groups;
-    std::set<uint8_t> clearing;
+    std::array<std::set<uint8_t>, 2> clearing; // per Kind: slots with an agent CLEAR in flight
     std::set<std::shared_ptr<Connection>> clients;
-    asio::steady_timer retry, maintenance;
+    asio::steady_timer retry, maintenance, clock_timer;
     std::thread connector;
     std::string last_failure;
     uint64_t dropped = 0;
     // A DISARM goes out at once. Only when the Session cannot admit another
     // (its reserved DISARM slot is taken while ordinary requests fill the
     // queue) does it wait, at most one per connection, and those waiting are
-    // sent together as one DISARM when one in flight completes.
-    struct Waiter { std::weak_ptr<Connection> client; uint8_t seq, family, op; };
+    // sent together as one DISARM when one in flight completes. The agent's
+    // own DISARMs (a lease ending) are waiters with `done` and no client.
+    struct Waiter
+    {
+        std::weak_ptr<Connection> client;
+        uint8_t seq = 0, family = 0, op = 0;
+        std::function<void()> done; // the agent's own: runs once the DISARM completed, answered or not
+    };
     unsigned disarm_inflight = 0;
     std::vector<Waiter> disarm_next;
+    // The lease (docs/protocol/agent.md, "The lease").
+    Lease lease;
+    uint64_t lease_serial = 0; // bumps on every lease end and link change; stale completions compare it
+    LeaseEnd end;              // what an ending lease still waits for
+    bool backstop = false;     // a DISARM for "armed with nobody holding the lease" is in flight
+    struct TakeWaiter { std::weak_ptr<Connection> client; uint8_t seq = 0; };
+    std::optional<TakeWaiter> take_waiter;
+    // Status-stream arm state, history and the clock model sent to clients.
+    std::optional<StatusArm> arm;
+    History history;
+    ClockModel clock_sent;
 
-    Device(Agent::Impl &a, DeviceConfig c) : agent(a), config(std::move(c)), retry(a.io), maintenance(a.io) {}
+    Device(Agent::Impl &a, DeviceConfig c)
+        : agent(a), config(std::move(c)), retry(a.io), maintenance(a.io), clock_timer(a.io), history(a.config.history_size) {}
     ~Device() { if (connector.joinable()) { connector.join(); } }
     void open();
     void connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList list, uint64_t observer_id, std::shared_ptr<bool> lost);
@@ -153,13 +189,33 @@ struct Device
     void cleanDirty();
     void scheduleMaintenance();
     // Forwarding: completions run on the agent thread.
-    void forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body);
+    // false: refused locally (answered Busy) without reaching the device.
+    // `after` runs on completion (answered or not) while the link is the same.
+    bool forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body,
+                     std::function<void()> after = {});
+    void forwardArm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body);
     void forwardDiag(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op, Bytes body);
     void groupOp(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op, Bytes body);
     void listGroups(const std::shared_ptr<Connection> &c, uint8_t seq, uint16_t start);
+    void commandFrame(const std::shared_ptr<Connection> &c, uint8_t vid, std::span<const uint8_t> payload);
     void release(const std::shared_ptr<Connection> &c);
     void disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op);
+    void disarmInternal(std::function<void()> done);
     bool sendDisarm(std::vector<Waiter> waiters); // false: not admitted
+    // Lease
+    void leaseTake(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op);
+    void leaseRelease(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op);
+    void endLease(ClientId old);
+    void advanceEnd(); // CLEARs, then the grant, as `end` allows
+    void finishLease();
+    void announceLease(uint16_t holder, const std::string &holder_name, uint16_t previous, defs::LeaseChange reason);
+    bool commandSlotsLeft() const; // an earlier holder's command slot may still be on the device
+    // Clients
+    void greet(const std::shared_ptr<Connection> &c); // History, then ClockModel
+    void clientList(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op);
+    void record(defs::HistoryKind kind, Bytes body);
+    void broadcastEvent(defs::AgentEvent event, std::span<const uint8_t> body);
+    void scheduleClock();
 };
 
 namespace
@@ -314,7 +370,7 @@ void Connection::hello(const p::Scanner::Frame &f)
     if (!tokenEquals(request->token, agent.config.token)) { refuse(defs::Result::InvalidArgument, defs::Detail::BadToken); return; }
     if (agent.helloed() >= kMaxClients) { refuse(defs::Result::NoMemory, defs::Detail::Capacity); return; }
     HelloAccepted acceptedHello;
-    acceptedHello.client_id = static_cast<uint16_t>(id);
+    acceptedHello.client_id = wire_id;
     if (request->device.empty())
     {
         acceptedHello.lobby = true;
@@ -325,16 +381,18 @@ void Connection::hello(const p::Scanner::Frame &f)
         auto *d = agent.findDevice(request->device);
         if (!d) { refuse(defs::Result::NotFound, defs::Detail::UnknownDevice); return; }
         if (!d->online) { refuse(defs::Result::Busy, defs::Detail::DeviceOffline); return; }
+        if (d->clients.size() >= kMaxDeviceClients) { refuse(defs::Result::NoMemory, defs::Detail::Capacity); return; }
         state = State::Device;
         device = d;
         d->clients.insert(shared_from_this());
         acceptedHello.lobby = false;
-        acceptedHello.device = agent.record(*d);
     }
     name = request->client_name;
+    if (device) { acceptedHello.device = agent.record(*device); }
     hello_timer.cancel();
     sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeHelloAccepted(acceptedHello));
-    log("client " + std::to_string(id) + " (" + (name.empty() ? "unnamed" : name) + ") " +
+    if (device) { device->greet(shared_from_this()); }
+    log("client " + std::to_string(wire_id) + " (" + (name.empty() ? "unnamed" : name) + ") " +
         (device ? "on " + device->config.alias : std::string("in the lobby")));
 }
 
@@ -348,21 +406,45 @@ void Connection::agentCommand(const p::Scanner::Frame &f)
                   encodeVersionRefusal({kVersion, kCoreVersion}));
         return;
     }
-    switch (static_cast<defs::AgentOp>(op))
+    const auto agent_op = static_cast<defs::AgentOp>(op);
+    switch (agent_op)
     {
     case defs::AgentOp::Hello:
         sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::WrongState));
         return;
     case defs::AgentOp::ListDevices:
+    case defs::AgentOp::LeaseTake:
+    case defs::AgentOp::LeaseRelease:
+    case defs::AgentOp::ClientList:
+    case defs::AgentOp::TimePing: break;
+    default: sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::Unsupported)); return;
+    }
+    if (f.len != 3) { sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::None)); return; }
+    switch (agent_op)
     {
-        if (f.len != 3) { sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::None)); return; }
+    case defs::AgentOp::ListDevices:
+    {
         std::vector<DeviceRecord> records;
         for (const auto &d : agent.devices) { records.push_back(agent.record(*d)); }
         sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeDeviceList(records));
         return;
     }
-    default: sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::Unsupported)); return;
+    case defs::AgentOp::TimePing:
+        // The frame was read just now on this thread: its arrival time.
+        sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeTimePing(monotonicUs()));
+        return;
+    default: break;
     }
+    // Device-connection ops.
+    if (state != State::Device || !device || !device->online)
+    {
+        sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::WrongState));
+        return;
+    }
+    auto self = shared_from_this();
+    if (agent_op == defs::AgentOp::LeaseTake) { device->leaseTake(self, seq, op); }
+    else if (agent_op == defs::AgentOp::LeaseRelease) { device->leaseRelease(self, seq, op); }
+    else { device->clientList(self, seq, op); }
 }
 
 void Connection::deviceFrame(const p::Scanner::Frame &f)
@@ -394,8 +476,35 @@ void Connection::deviceFrame(const p::Scanner::Frame &f)
         case Route::Malformed:
             send(msg::kCoreResponse, coreReply(seq, 0xFF, 0xFF, u8(defs::Result::InvalidArgument), u8(defs::Detail::None)));
             return;
-        case Route::RefuseLease:
-            send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::LeaseRequired)));
+        case Route::Arm:
+            if (!d->lease.mayCommand(id))
+            {
+                send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::LeaseRequired)));
+                return;
+            }
+            if (d->commandSlotsLeft())
+            {
+                // An earlier holder's command group would count towards ARM.
+                send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::None)));
+                return;
+            }
+            d->forwardArm(self, seq, family, op, std::move(body));
+            return;
+        case Route::Exclusive:
+            if (!d->lease.mayExclusive(id, d->arm && d->arm->armed()))
+            {
+                send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::LeaseRequired)));
+                return;
+            }
+            d->forwardCore(self, seq, family, op, std::move(body));
+            return;
+        case Route::CmdGroup:
+            if (!d->lease.mayCommand(id))
+            {
+                send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::LeaseRequired)));
+                return;
+            }
+            d->groupOp(self, seq, op, std::move(body));
             return;
         case Route::Group: d->groupOp(self, seq, op, std::move(body)); return;
         case Route::Forward: d->forwardCore(self, seq, family, op, std::move(body)); return;
@@ -409,7 +518,11 @@ void Connection::deviceFrame(const p::Scanner::Frame &f)
         d->forwardDiag(self, f.payload[1], f.payload[2], Bytes(f.payload + 3, f.payload + f.len));
         return;
     case Route::Agent: agentCommand(f); return;
-    default: ++dropped; return; // time pings, command-group frames (interim rule), other types
+    case Route::CommandFrame:
+        if (!d->lease.mayCommand(id)) { ++dropped; return; }
+        d->commandFrame(self, static_cast<uint8_t>(f.msg_type - defs::kCmdGroupChannelFirst), {f.payload, f.len});
+        return;
+    default: ++dropped; return; // time pings, other types
     }
 }
 
@@ -477,10 +590,19 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
     generation = session->generation();
     groups.reset(static_cast<uint8_t>(list.subscription_capacity), static_cast<uint8_t>(list.command_capacity));
     ++map_generation;
-    clearing.clear();
+    for (auto &set : clearing) { set.clear(); }
+    lease.reset();
+    ++lease_serial;
+    end.reset();
+    backstop = false;
+    take_waiter.reset();
+    arm.reset();
+    clock_sent = {};
     log("device " + config.alias + " online: " + formatDeviceId(device_id) + (name.empty() ? "" : " \"" + name + "\"") +
-        ", " + std::to_string(groups.subs()) + " subscription groups");
+        ", " + std::to_string(groups.subs()) + " subscription and " + std::to_string(groups.cmds()) + " command groups");
+    record(defs::HistoryKind::Online, Bytes(device_id.begin(), device_id.end()));
     scheduleMaintenance();
+    scheduleClock();
     if (*lost) { linkLost(); }
 }
 
@@ -500,6 +622,8 @@ void Device::offline(const std::string &why)
     ++link;
     log("device " + config.alias + " offline: " + why);
     maintenance.cancel();
+    clock_timer.cancel();
+    record(defs::HistoryKind::Offline, {});
     auto members = std::move(clients);
     clients.clear();
     for (const auto &c : members) { c->device = nullptr; c->close(static_cast<uint8_t>(defs::AgentCloseReason::DeviceOffline)); }
@@ -511,9 +635,16 @@ void Device::offline(const std::string &why)
     session.reset();
     groups.reset(0, 0);
     ++map_generation;
-    clearing.clear();
+    for (auto &set : clearing) { set.clear(); }
+    // Every connection is closed: the lease ends with them.
+    lease.reset();
+    ++lease_serial;
+    end.reset();
+    backstop = false;
+    take_waiter.reset();
+    arm.reset();
     disarm_inflight = 0;
-    disarm_next.clear();
+    disarm_next.clear(); // the agent's own waiters belong to this link's lease serial
     last_failure = why;
     failed(why);
 }
@@ -521,12 +652,52 @@ void Device::offline(const std::string &why)
 void Device::frame(const Frame &f)
 {
     if (f.type == 0) { linkLost(); return; }
-    if (f.generation != generation) { generation = f.generation; boot(); }
+    const bool booted = f.generation != generation;
+    if (booted) { generation = f.generation; boot(); }
+    if (f.type == msg::kStatusStream)
+    {
+        if (auto now = parseStatusArm(f.payload))
+        {
+            if (arm && arm->state != now->state)
+            {
+                record(defs::HistoryKind::Arm, Bytes{now->state, now->last_disarm_reason});
+            }
+            arm = now;
+            if (now->armed() && lease.phase() != Lease::Phase::Held && !backstop)
+            {
+                // Armed with nobody holding the lease (an old holder's ARM
+                // that landed late): disarm, one at a time. An ending lease
+                // waits for it like for any extra DISARM.
+                log("device " + config.alias + " is armed with no lease holder; disarming");
+                backstop = true;
+                end.redisarmSent();
+                // Per link, not per lease end: the counter spans lease ends.
+                disarmInternal([this, link_id = link] {
+                    if (link != link_id) { return; }
+                    backstop = false;
+                    end.redisarmDone();
+                    advanceEnd();
+                });
+            }
+        }
+    }
+    else if (f.type == msg::kDiagEvent)
+    {
+        record(defs::HistoryKind::DiagEvent, Bytes(f.payload.begin(), f.payload.end()));
+    }
     if (f.type == msg::kStatusStream || f.type == msg::kDiagEvent || f.type == msg::kCoreEvent)
     {
         const bool stream = f.type == msg::kStatusStream;
         const auto members = clients; // send() never closes inline, but stay safe
         for (const auto &c : members) { c->send(f.type, f.payload, stream); }
+        if (booted && session)
+        {
+            // After the Boot event, so a client's own Boot reset does not
+            // discard it: the Session's clock was reset with the Boot.
+            const auto model = session->clockModel();
+            broadcastEvent(defs::AgentEvent::ClockModel, encodeClockModel(model));
+            clock_sent = model;
+        }
         return;
     }
     if (f.type >= defs::kSubGroupChannelFirst && f.type < defs::kSubGroupChannelFirst + defs::kSubGroupChannelCount)
@@ -567,8 +738,10 @@ void Device::boot()
     log("device " + config.alias + " rebooted");
     groups.reset(groups.subs(), groups.cmds());
     ++map_generation;
-    clearing.clear();
+    for (auto &set : clearing) { set.clear(); }
+    arm.reset();
     refreshIdentity();
+    clock_sent = {}; // frame() sends the new model after the Boot event
 }
 
 void Device::refreshIdentity()
@@ -600,42 +773,88 @@ void Device::scheduleMaintenance()
 void Device::cleanDirty()
 {
     if (!session) { return; }
-    for (auto slot : groups.dirty())
+    for (const auto kind : {Kind::Sub, Kind::Cmd})
     {
-        if (clearing.contains(slot)) { continue; }
-        clearing.insert(slot);
-        try
+        // An ending lease clears command slots itself, after its DISARM.
+        if (kind == Kind::Cmd && end.ending()) { continue; }
+        const auto op = kind == Kind::Sub ? defs::GroupOp::SubClear : defs::GroupOp::CmdClear;
+        auto &in_flight = clearing[static_cast<size_t>(kind)];
+        for (auto slot : groups.dirty(kind))
         {
-            session->asyncRequest(static_cast<uint8_t>(defs::Family::Group), static_cast<uint8_t>(defs::GroupOp::SubClear), Bytes{slot},
-                [this, slot, gen = map_generation](std::expected<Reply, Error> reply) {
-                    if (gen != map_generation) { return; }
-                    clearing.erase(slot);
-                    if (reply && accepted(reply->result)) { groups.cleaned(slot); }
-                });
+            if (in_flight.contains(slot)) { continue; }
+            in_flight.insert(slot);
+            try
+            {
+                session->asyncRequest(static_cast<uint8_t>(defs::Family::Group), static_cast<uint8_t>(op), Bytes{slot},
+                    [this, slot, kind, gen = map_generation](std::expected<Reply, Error> reply) {
+                        if (gen != map_generation) { return; }
+                        clearing[static_cast<size_t>(kind)].erase(slot);
+                        if (reply && accepted(reply->result)) { groups.cleaned(slot, kind); }
+                    });
+            }
+            catch (const Error &) { in_flight.erase(slot); }
         }
-        catch (const Error &) { clearing.erase(slot); }
     }
+}
+
+bool Device::commandSlotsLeft() const
+{
+    return !groups.dirty(Kind::Cmd).empty();
 }
 
 void Device::release(const std::shared_ptr<Connection> &c)
 {
     clients.erase(c);
     groups.release(c->id);
+    switch (lease.leave(c->id))
+    {
+    case Lease::Left::Holder:
+        announceLease(0, {}, c->wire_id, defs::LeaseChange::Disconnected);
+        endLease(c->id);
+        break;
+    case Lease::Left::Pending: take_waiter.reset(); break;
+    case Lease::Left::None: break;
+    }
     if (online) { cleanDirty(); }
 }
 
-void Device::forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body)
+void Device::forwardArm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body)
+{
+    const auto client_id = c->id;
+    end.armSent();
+    const bool sent = forwardCore(c, seq, family, op, std::move(body), [this, client_id] {
+        if (!lease.mayCommand(client_id))
+        {
+            // The lease ended while this ARM was in flight: it may have landed
+            // after the lease's DISARM. Disarm again; an ending lease waits
+            // for that DISARM too.
+            end.redisarmSent();
+            disarmInternal([this, link_id = link] {
+                if (link != link_id) { return; }
+                end.redisarmDone();
+                advanceEnd();
+            });
+        }
+        end.armDone();
+        advanceEnd();
+    });
+    if (!sent) { end.armDone(); }
+}
+
+bool Device::forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op, Bytes body,
+                         std::function<void()> after)
 {
     if (c->inflight >= kClientInflight)
     {
         c->send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::None)));
-        return;
+        return false;
     }
     try
     {
         session->asyncRequest(family, op, std::move(body),
-            [this, weak = std::weak_ptr<Connection>(c), seq, family, op, link_id = link](std::expected<Reply, Error> reply) {
+            [this, weak = std::weak_ptr<Connection>(c), seq, family, op, after = std::move(after), link_id = link](std::expected<Reply, Error> reply) {
                 if (link != link_id) { return; }
+                if (after) { after(); }
                 if (reply && accepted(reply->result) && family == static_cast<uint8_t>(defs::Family::System) &&
                     (op == static_cast<uint8_t>(defs::SystemOp::SetName) || op == static_cast<uint8_t>(defs::SystemOp::Revert) ||
                      op == static_cast<uint8_t>(defs::SystemOp::FactoryReset)))
@@ -656,17 +875,19 @@ void Device::forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint
                 // A timeout stays unanswered: the client's own timeout applies.
             });
         ++c->inflight;
+        return true;
     }
     catch (const Error &)
     {
         // The device link's queue is full: refuse without reaching the device.
         c->send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::None)));
+        return false;
     }
 }
 
 void Device::disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op)
 {
-    if (sendDisarm({Waiter{c, seq, family, op}})) { return; }
+    if (sendDisarm({Waiter{c, seq, family, op, {}}})) { return; }
     // Not admitted: wait for the DISARM in flight. One waiter per connection;
     // an earlier one from the same connection is answered Busy.
     for (auto &w : disarm_next)
@@ -674,7 +895,7 @@ void Device::disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t f
         if (w.client.lock() == c)
         {
             c->send(msg::kCoreResponse, coreReply(w.seq, w.family, w.op, u8(defs::Result::Busy), u8(defs::Detail::None)));
-            w = Waiter{c, seq, family, op};
+            w = Waiter{c, seq, family, op, {}};
             return;
         }
     }
@@ -684,7 +905,27 @@ void Device::disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t f
         c->send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::None)));
         return;
     }
-    disarm_next.push_back(Waiter{c, seq, family, op});
+    disarm_next.push_back(Waiter{c, seq, family, op, {}});
+}
+
+void Device::disarmInternal(std::function<void()> done)
+{
+    Waiter own;
+    own.done = std::move(done);
+    if (sendDisarm({own})) { return; }
+    if (disarm_inflight)
+    {
+        // The DISARM in flight may predate what this one must cover: send
+        // another when it completes.
+        disarm_next.push_back(std::move(own));
+        return;
+    }
+    // The Session admits a DISARM whenever none is in flight; only a closed
+    // link refuses one, and the device goes offline with it.
+    log("device " + config.alias + ": the agent's DISARM was not admitted");
+    asio::post(agent.io, [this, link_id = link, done = std::move(own.done)] {
+        if (link == link_id) { done(); }
+    });
 }
 
 bool Device::sendDisarm(std::vector<Waiter> waiters)
@@ -692,7 +933,14 @@ bool Device::sendDisarm(std::vector<Waiter> waiters)
     auto answer = [](const std::vector<Waiter> &to, uint8_t result, uint8_t detail) {
         for (const auto &w : to)
         {
+            if (w.done) { continue; }
             if (auto client = w.client.lock()) { client->send(msg::kCoreResponse, coreReply(w.seq, w.family, w.op, result, detail)); }
+        }
+    };
+    auto finished = [](const std::vector<Waiter> &to) {
+        for (const auto &w : to)
+        {
+            if (w.done) { w.done(); }
         }
     };
     try
@@ -700,7 +948,7 @@ bool Device::sendDisarm(std::vector<Waiter> waiters)
         // The Session's DISARM path: fast-path MSG_TYPE, its own admission
         // slot, ahead of queued requests.
         session->asyncRequest(static_cast<uint8_t>(defs::Family::System), static_cast<uint8_t>(defs::SystemOp::Disarm), {},
-            [this, waiters, answer, link_id = link](std::expected<Reply, Error> reply) {
+            [this, waiters, answer, finished, link_id = link](std::expected<Reply, Error> reply) {
                 if (link != link_id) { return; }
                 if (disarm_inflight) { --disarm_inflight; }
                 if (reply) { answer(waiters, reply->result, reply->detail); }
@@ -708,8 +956,13 @@ bool Device::sendDisarm(std::vector<Waiter> waiters)
                 if (!disarm_next.empty())
                 {
                     auto next = std::exchange(disarm_next, {});
-                    if (!sendDisarm(next)) { answer(next, u8(defs::Result::Busy), u8(defs::Detail::None)); }
+                    if (!sendDisarm(next))
+                    {
+                        answer(next, u8(defs::Result::Busy), u8(defs::Detail::None));
+                        finished(next);
+                    }
                 }
+                finished(waiters);
             });
         ++disarm_inflight;
         return true;
@@ -718,6 +971,180 @@ bool Device::sendDisarm(std::vector<Waiter> waiters)
     {
         return false;
     }
+}
+
+// ---------------------------------------------------------------- Lease ----
+
+void Device::announceLease(uint16_t holder, const std::string &holder_name, uint16_t previous, defs::LeaseChange reason)
+{
+    const auto body = encodeLease({holder, clipped(holder_name, kMaxString), previous, static_cast<uint8_t>(reason)});
+    record(defs::HistoryKind::Lease, body);
+    broadcastEvent(defs::AgentEvent::Lease, body);
+    log("device " + config.alias + ": lease " + (holder ? "held by client " + std::to_string(holder) : std::string("free")));
+}
+
+void Device::leaseTake(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op)
+{
+    auto answer = [&](defs::Result r) { c->sendAgent(seq, op, u8(r), u8(defs::Detail::None)); };
+    const auto previous = lease.holder();
+    switch (lease.take(c->id))
+    {
+    case Lease::Take::AlreadyHolder: answer(defs::Result::Ok); return;
+    case Lease::Take::Busy: answer(defs::Result::Busy); return;
+    case Lease::Take::Granted:
+        answer(defs::Result::Ok);
+        announceLease(c->wire_id, c->name, 0, defs::LeaseChange::Taken);
+        return;
+    case Lease::Take::Revoked:
+    {
+        take_waiter = TakeWaiter{c, seq};
+        const auto *old = agent.client(previous);
+        announceLease(0, {}, old ? old->wire_id : 0, defs::LeaseChange::Taken);
+        endLease(previous);
+        return;
+    }
+    case Lease::Take::Waiting: take_waiter = TakeWaiter{c, seq}; return;
+    }
+}
+
+void Device::leaseRelease(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op)
+{
+    if (!lease.release(c->id))
+    {
+        c->sendAgent(seq, op, u8(defs::Result::InvalidArgument), u8(defs::Detail::WrongState));
+        return;
+    }
+    c->sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None));
+    announceLease(0, {}, c->wire_id, defs::LeaseChange::Released);
+    endLease(c->id);
+}
+
+void Device::endLease(ClientId old)
+{
+    // The old holder's holder-only frames stopped at lease.take/release/leave.
+    // Its command slots become Dirty: nobody else may bind them until cleared.
+    groups.release(old, Kind::Cmd);
+    const auto serial = ++lease_serial;
+    end.start();
+    disarmInternal([this, serial] {
+        if (serial != lease_serial) { return; }
+        end.disarmDone();
+        advanceEnd();
+    });
+}
+
+void Device::advanceEnd()
+{
+    if (lease.phase() != Lease::Phase::Ending || !end.ending()) { return; }
+    if (end.readyToClear())
+    {
+        // CLEAR every Dirty command slot; one already being cleared (a CLEAR
+        // from before this end) is waited for by ARM, not by the grant.
+        const auto serial = lease_serial;
+        unsigned sent = 0;
+        auto &in_flight = clearing[static_cast<size_t>(Kind::Cmd)];
+        for (auto slot : groups.dirty(Kind::Cmd))
+        {
+            if (in_flight.contains(slot)) { continue; }
+            in_flight.insert(slot);
+            try
+            {
+                session->asyncRequest(static_cast<uint8_t>(defs::Family::Group), static_cast<uint8_t>(defs::GroupOp::CmdClear), Bytes{slot},
+                    [this, slot, serial, gen = map_generation, link_id = link](std::expected<Reply, Error> reply) {
+                        if (link != link_id) { return; }
+                        if (gen == map_generation)
+                        {
+                            clearing[static_cast<size_t>(Kind::Cmd)].erase(slot);
+                            if (reply && accepted(reply->result)) { groups.cleaned(slot, Kind::Cmd); }
+                        }
+                        // A failed CLEAR leaves the slot Dirty: maintenance retries
+                        // it and ARM waits for it. The handoff goes on.
+                        if (serial != lease_serial) { return; }
+                        end.clearDone();
+                        advanceEnd();
+                    });
+                ++sent;
+            }
+            catch (const Error &) { in_flight.erase(slot); }
+        }
+        end.clearsStarted(sent);
+    }
+    if (end.readyToFinish())
+    {
+        end.finished();
+        finishLease();
+        cleanDirty(); // command slots left Dirty go to maintenance now
+    }
+}
+
+void Device::finishLease()
+{
+    const auto granted = lease.finish();
+    auto waiter = std::exchange(take_waiter, std::nullopt);
+    if (!granted) { return; }
+    auto c = waiter ? waiter->client.lock() : nullptr;
+    if (!c || c->id != *granted)
+    {
+        // Cannot happen: leave() drops a waiting Take. Stay safe: nobody holds it.
+        log("device " + config.alias + ": a granted lease has no client");
+        lease.reset();
+        return;
+    }
+    c->sendAgent(waiter->seq, static_cast<uint8_t>(defs::AgentOp::LeaseTake), u8(defs::Result::Ok), u8(defs::Detail::None));
+    announceLease(c->wire_id, c->name, 0, defs::LeaseChange::Taken);
+}
+
+// ------------------------------------------------- Clients, history, clock ----
+
+void Device::record(defs::HistoryKind kind, Bytes body)
+{
+    history.push({static_cast<uint8_t>(kind), unixMs(), std::move(body)});
+}
+
+void Device::broadcastEvent(defs::AgentEvent event, std::span<const uint8_t> body)
+{
+    const auto payload = encodeEvent({static_cast<uint8_t>(event), Bytes(body.begin(), body.end())});
+    const auto members = clients;
+    for (const auto &c : members) { c->send(msg::kAgentEvent, payload); }
+}
+
+void Device::greet(const std::shared_ptr<Connection> &c)
+{
+    const auto entries = history.entries();
+    for (const auto &chunk : encodeHistory(entries, kMaxEventBody))
+    {
+        c->send(msg::kAgentEvent, encodeEvent({static_cast<uint8_t>(defs::AgentEvent::History), chunk}));
+    }
+    const auto model = session ? session->clockModel() : ClockModel{};
+    c->send(msg::kAgentEvent, encodeEvent({static_cast<uint8_t>(defs::AgentEvent::ClockModel), encodeClockModel(model)}));
+}
+
+void Device::clientList(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op)
+{
+    std::vector<ClientRecord> records;
+    for (const auto &member : clients)
+    {
+        records.push_back({member->wire_id, clipped(member->name, kMaxString), lease.holder() == member->id});
+    }
+    std::ranges::sort(records, {}, &ClientRecord::client_id);
+    // 16 clients of at most 2 + 33 + 1 bytes fit one frame.
+    c->sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeClientList(records));
+}
+
+void Device::scheduleClock()
+{
+    clock_timer.expires_after(kClockPeriod);
+    clock_timer.async_wait([this, link_id = link](auto ec) {
+        if (ec || link != link_id || !online || !session) { return; }
+        const auto model = session->clockModel();
+        if (model.offset_valid != clock_sent.offset_valid || model.drift_valid != clock_sent.drift_valid ||
+            model.updated_us != clock_sent.updated_us)
+        {
+            broadcastEvent(defs::AgentEvent::ClockModel, encodeClockModel(model));
+            clock_sent = model;
+        }
+        scheduleClock();
+    });
 }
 
 void Device::forwardDiag(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t op, Bytes body)
@@ -766,34 +1193,37 @@ void Device::groupOp(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t 
     }
     if (body.empty()) { reply(defs::Result::InvalidArgument, defs::Detail::None); return; }
     if (c->inflight >= kClientInflight) { reply(defs::Result::Busy, defs::Detail::None); return; }
+    const bool command = gop == defs::GroupOp::CmdConfig || gop == defs::GroupOp::CmdClear;
+    const auto kind = command ? Kind::Cmd : Kind::Sub;
+    const uint8_t channel_first = command ? defs::kCmdGroupChannelFirst : defs::kSubGroupChannelFirst;
     const uint8_t vid = body[0];
-    if (vid >= groups.subs()) { reply(defs::Result::InvalidArgument, defs::Detail::Capacity); return; }
+    if (vid >= groups.count(kind)) { reply(defs::Result::InvalidArgument, defs::Detail::Capacity); return; }
     std::optional<uint8_t> slot;
-    if (gop == defs::GroupOp::SubConfig)
+    if (gop == defs::GroupOp::SubConfig || gop == defs::GroupOp::CmdConfig)
     {
-        slot = groups.acquire(c->id, vid);
+        slot = groups.acquire(c->id, vid, kind);
         if (!slot) { reply(defs::Result::InvalidArgument, defs::Detail::Capacity); return; }
     }
     else
     {
-        slot = groups.find(c->id, vid);
+        slot = groups.find(c->id, vid, kind);
         if (!slot)
         {
             if (gop == defs::GroupOp::SubEnable) { reply(defs::Result::InvalidArgument, defs::Detail::UnknownRef); return; }
             // Clearing an id with no slot: Ok, as clearing an empty device slot is.
             reply(defs::Result::Ok, defs::Detail::None,
-                  Bytes{groups.lastEpoch(c->id, vid), static_cast<uint8_t>(defs::kSubGroupChannelFirst + vid)});
+                  Bytes{groups.lastEpoch(c->id, vid, kind), static_cast<uint8_t>(channel_first + vid)});
             return;
         }
-        groups.begin(*slot);
+        groups.begin(*slot, kind);
     }
     body[0] = *slot;
-    const bool clearing_op = gop == defs::GroupOp::SubClear;
-    const auto serial = groups.slot(*slot).serial;
+    const bool clearing_op = gop == defs::GroupOp::SubClear || gop == defs::GroupOp::CmdClear;
+    const auto serial = groups.slot(*slot, kind).serial;
     try
     {
         session->asyncRequest(family, op, std::move(body),
-            [this, weak = std::weak_ptr<Connection>(c), seq, op, vid, s = *slot, serial, clearing_op,
+            [this, weak = std::weak_ptr<Connection>(c), seq, op, vid, s = *slot, serial, clearing_op, kind, channel_first,
              gen = map_generation, link_id = link](std::expected<Reply, Error> r) {
                 if (link != link_id) { return; }
                 const bool acc = r && accepted(r->result);
@@ -801,13 +1231,13 @@ void Device::groupOp(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t 
                 if (gen == map_generation)
                 {
                     // A malformed accepted reply is uncertain, as an unanswered one is.
-                    groups.finish(s, serial, ok, ok ? r->body[0] : 0, clearing_op && ok, !r || (acc && !ok));
+                    groups.finish(s, serial, ok, ok ? r->body[0] : 0, clearing_op && ok, !r || (acc && !ok), kind);
                 }
                 else if (acc && !clearing_op && session && r->generation == session->generation())
                 {
                     // Accepted after a Boot reset the map: configured on the
                     // device but nobody's now. Clear it.
-                    groups.markDirty(s);
+                    groups.markDirty(s, kind);
                     cleanDirty();
                 }
                 auto client = weak.lock();
@@ -819,16 +1249,29 @@ void Device::groupOp(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t 
                     return;
                 }
                 Bytes b = r->body;
-                if (ok) { b[1] = static_cast<uint8_t>(defs::kSubGroupChannelFirst + vid); }
+                if (ok) { b[1] = static_cast<uint8_t>(channel_first + vid); }
                 client->send(msg::kCoreResponse, coreReply(seq, static_cast<uint8_t>(defs::Family::Group), op, r->result, r->detail, b));
             });
         ++c->inflight;
     }
     catch (const Error &)
     {
-        groups.finish(*slot, serial, false, 0, false, false);
+        groups.finish(*slot, serial, false, 0, false, false, kind);
         reply(defs::Result::Busy, defs::Detail::None);
     }
+}
+
+void Device::commandFrame(const std::shared_ptr<Connection> &c, uint8_t vid, std::span<const uint8_t> payload)
+{
+    // Only the holder's own, mapped command groups; the payload (and so the
+    // epoch the client got from CMD_CONFIG) goes through unchanged.
+    const auto slot = vid < groups.cmds() ? groups.find(c->id, vid, Kind::Cmd) : std::nullopt;
+    if (!slot || !session) { ++c->dropped; return; }
+    try
+    {
+        if (!session->sendCommandGroup(*slot, payload)) { ++c->dropped; }
+    }
+    catch (const Error &) { ++c->dropped; } // a malformed payload, or the link just closed
 }
 
 namespace
@@ -895,7 +1338,7 @@ struct ListJob : std::enable_shared_from_this<ListJob>
         if (parsed->next != kListEnd) { next(parsed->next); return; }
         auto c = client.lock();
         if (!c) { return; }
-        auto result = synthesizeList(device.groups, c->id, entries, start, static_cast<size_t>(device.max_payload) - 6);
+        auto result = synthesizeList(device.groups, c->id, entries, start, std::min<size_t>(device.max_payload, p::kMaxPayload) - 6);
         if (!result) { answer(u8(defs::Result::InvalidArgument), u8(defs::Detail::None)); return; }
         if (result->too_small) { answer(u8(defs::Result::InvalidArgument), u8(defs::Detail::BufferTooSmall)); return; }
         answer(u8(defs::Result::Ok), u8(defs::Detail::None), result->body);
@@ -956,7 +1399,30 @@ DeviceRecord Agent::Impl::record(const Device &d) const
     r.name = d.name.size() <= kMaxString ? d.name : d.name.substr(0, kMaxString);
     r.endpoint = d.config.endpoint.size() <= kMaxString ? d.config.endpoint : d.config.endpoint.substr(0, kMaxString);
     r.clients = static_cast<uint8_t>(std::min<size_t>(d.clients.size(), 255));
+    if (const auto *holder = client(d.lease.holder()))
+    {
+        r.holder_id = holder->wire_id;
+        r.holder_name = clipped(holder->name, kMaxString);
+    }
     return r;
+}
+
+Connection *Agent::Impl::client(uint64_t id) const
+{
+    if (!id) { return nullptr; }
+    auto it = clients.find(id);
+    return it == clients.end() ? nullptr : it->second.get();
+}
+
+uint16_t Agent::Impl::allocWireId()
+{
+    // At most kMaxConnections are open, so a free id is always found.
+    for (;;)
+    {
+        if (++next_wire == 0) { next_wire = 1; }
+        const bool used = std::ranges::any_of(clients, [this](const auto &entry) { return entry.second->wire_id == next_wire; });
+        if (!used) { return next_wire; }
+    }
 }
 
 void Agent::Impl::accept()
@@ -976,6 +1442,7 @@ void Agent::Impl::accept()
                 socket.set_option(asio::ip::tcp::no_delay(true), ignored);
                 const auto id = next_client++;
                 auto client = std::make_shared<Connection>(*this, std::move(socket), id);
+                client->wire_id = allocWireId();
                 clients.emplace(id, client);
                 client->start();
             }
