@@ -65,6 +65,9 @@ struct LocalConnection::Context {
     std::atomic<bool> savedBeforeReboot{false};
     std::atomic<uint64_t> safety{0};
     std::atomic<uint64_t> armedSeen{0};
+    // Remote mode: bumps whenever this window gains or loses the lease, so
+    // a command setup or ARM started under another lease is recognised.
+    std::atomic<uint64_t> leaseEpoch{0};
     std::shared_ptr<Session> getSession() {std::lock_guard lock(mutex);return session;}
     std::shared_ptr<DeviceModel> getModel() {std::lock_guard lock(mutex);return model;}
     bool owns() {std::lock_guard lock(mutex);return !owned.empty();}
@@ -91,6 +94,36 @@ struct LocalConnection::Context {
         return result;
     }
     void stopKeepers() {std::lock_guard lock(mutex);for(auto &o:owned) {if(o.keeper) {o.keeper->stop();}}}
+    // Remote mode, the lease ended: the agent cleared this window's command
+    // groups, but a CMD_CONFIG in flight may still land under a lease held
+    // again by then. The records wait for the next setup, which clears an
+    // exact match first (clearReleased). Guarded by mutex.
+    std::vector<Owned> released;
+    void releaseOwned() {
+        stopKeepers();
+        std::lock_guard lock(mutex);
+        for(auto &o:owned) {o.keeper.reset();released.push_back(std::move(o));}
+        owned.clear();
+    }
+    // Called only on the serial service executor, while this window holds
+    // the lease and the device is disarmed (command setup). One attempt; a
+    // failed LIST or CLEAR never stops the setup (a leftover group of ours
+    // has no keeper, so at worst ARM is refused or the watchdog disarms).
+    void clearReleased(Client &client) {
+        std::vector<Owned> copy;
+        {std::lock_guard lock(mutex);copy.swap(released);}
+        if(copy.empty()) {return;}
+        try {
+            const auto list=client.groups();
+            for(const auto &o:copy) {
+                if(client.session().generation()!=o.generation) {continue;}
+                const auto it=std::find_if(list.groups.begin(),list.groups.end(),[&](const auto &g){return matches(o,g);});
+                if(it!=list.groups.end()) {
+                    try {client.groupClear(o.plan.id,true);} catch(const Error &) {}
+                }
+            }
+        } catch(const Error &) {}
+    }
     // Called only on the serial service executor. Never clears a slot without
     // matching its generation, epoch and complete configuration after a read.
     void clearOwned(Client &client) {

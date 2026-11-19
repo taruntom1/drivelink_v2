@@ -1,16 +1,17 @@
-# Agent protocol v2 (H3a)
+# Agent protocol v3 (H3a, H3b-1)
 
 `drivelink-agent` owns the serial ports of one or more devices on a Linux host
 (the robot's Pi, or WSL on the PC) and lets several clients share each device
 over TCP. This file is the contract between the agent and its clients
-(`libdrivelink`'s agent client, the CLI, later the GUI and the ROS plugin).
+(`libdrivelink`'s agent client, the CLI, the GUI and later the ROS plugin).
 The design and its reasons are in
 [host-architecture.md](../../plans/host-architecture.md), "`drivelink-agent`".
 
 H3a-1 built the connection, access, routing and subscription groups (v1).
 H3a-2 added the control lease, command groups for the lease holder, exclusive
 operations, the clock model with agent time pings, history and the client
-list (v2).
+list (v2). H3b-1 added the client kind, so the GUI can tell ROS and other GUIs
+apart (v3).
 
 ## Connection
 
@@ -19,7 +20,7 @@ list (v2).
 - Every frame uses the device framing ([framing.md](framing.md)), with the
   agent's own `MAX_PAYLOAD` of 1024.
 - The client's first frame must be an `agent_command` Hello (below). An
-  `agent_command` with a version byte other than 2 is answered with the version
+  `agent_command` with a version byte other than 3 is answered with the version
   refusal and closed; any other first frame closes the connection without a
   reply. Bytes that never form a valid frame are discarded, so a client that
   sends no Hello within the hello timeout (5 s) is closed. Nothing from a
@@ -42,7 +43,7 @@ list (v2).
 ## Agent messages
 
 All three MSG_TYPEs are agent-only ([registry.md](registry.md)); the agent
-never forwards them to a device. Version byte `2` is the agent protocol
+never forwards them to a device. Version byte `3` is the agent protocol
 version, independent of core (10), time (1) and diag (3). Strings are
 `length u8 | bytes` (no terminator); integers are little-endian; `f64` is an
 IEEE 754 binary64, little-endian.
@@ -74,13 +75,14 @@ An op on a connection it is not allowed on is answered
 | Event (`AgentEvent`) | Body |
 |---|---|
 | Closing 1 | `reason u8` (`AgentCloseReason`: DeviceOffline 1, Shutdown 2) |
-| Lease 2 | `holder_id u16 \| holder_name str8 \| previous_id u16 \| reason u8` |
+| Lease 2 | `holder_id u16 \| holder_name str8 \| holder_kind u8 \| previous_id u16 \| reason u8` |
 | ClockModel 3 | the device's clock model (below), 69 bytes |
 | History 4 | `last u8 \| count u8 \| count * entry` |
 
 ### Hello (op 1)
 
-Request body: `core_version u8 | token str8 | device str8 | client_name str8`.
+Request body: `core_version u8 | token str8 | device str8 | client_name str8 |
+client_kind u8`.
 
 - `core_version` is the core protocol version the client speaks.
 - `token` is 1..128 bytes, compared in constant time with the agent's token.
@@ -89,19 +91,24 @@ Request body: `core_version u8 | token str8 | device str8 | client_name str8`.
 - `client_name` is 0..32 bytes chosen by the client (for example
   `drivelink-cli`), shown to other clients in ClientList and as the lease
   holder's name.
+- `client_kind` is what the client is (`AgentClientKind`: Other 0, Gui 1,
+  Cli 2, Ros 3), shown with its name. The CLI sends Cli, the GUI Gui and
+  `drivelink_hardware` Ros; the GUI shows a Ros holder as "ROS is driving".
+  It is a label for people, not an authorisation: the lease rules are the
+  same for every kind. A larger value is answered `InvalidArgument/None`.
 
 The agent checks, in this order, and answers the first failure:
 
 | Check | Result / detail | Body |
 |---|---|---|
-| The command's `version` byte is 2 and `core_version` is the agent's core version | `InvalidArgument/AgentVersion` | `agent_version u8 \| core_version u8` (what the agent speaks) |
+| The command's `version` byte is 3 and `core_version` is the agent's core version | `InvalidArgument/AgentVersion` | `agent_version u8 \| core_version u8` (what the agent speaks) |
 | The token matches | `InvalidArgument/BadToken` | empty |
 | The agent has room for another client (64) | `NoMemory/Capacity` | empty |
 | The device names a configured alias or a known device id | `NotFound/UnknownDevice` | empty |
 | That device is online | `Busy/DeviceOffline` | empty |
 | That device has fewer than 16 connections | `NoMemory/Capacity` | empty |
 
-On a version refusal the response's own version byte is still 2. The refusal
+On a version refusal the response's own version byte is still 3. The refusal
 body's layout is the same in every agent version, so a client of any version
 can read what the agent speaks. After any refusal the agent closes the
 connection once the response is sent. A second Hello on an accepted
@@ -118,7 +125,7 @@ are reused after 65535 connections).
 Answer: `count u8 | count * record`, in config order.
 
 Device record: `alias str8 | online u8 | device_id[6] | name str8 |
-endpoint str8 | clients u8 | holder_id u16 | holder_name str8`.
+endpoint str8 | clients u8 | holder_id u16 | holder_name str8 | holder_kind u8`.
 
 - `online` is 1 once the agent has opened the port and read GET_INFO, until the
   link fails.
@@ -129,13 +136,15 @@ endpoint str8 | clients u8 | holder_id u16 | holder_name str8`.
   `tcp://...` for vdev).
 - `clients` counts the device connections to it (at most 16).
 - `holder_id` is the lease holder's `client_id`, 0 when nobody holds it, and
-  `holder_name` its `client_name` (empty when nobody holds it).
+  `holder_name` its `client_name` (empty when nobody holds it), `holder_kind`
+  its `client_kind` (0 when nobody holds it).
 
 ### ClientList (op 5)
 
 Answer: `count u8 | count * client`, the device connections of this
 connection's device in `client_id` order. Client: `client_id u16 | name str8 |
-holder u8` (1 for the lease holder).
+kind u8 | holder u8` (`kind` its `client_kind`; `holder` 1 for the lease
+holder).
 
 ### TimePing (op 6)
 
@@ -163,7 +172,8 @@ lease".
   and clears as on a revocation. A client that does not hold it is answered
   `InvalidArgument/WrongState`.
 - **Lease event (2)** goes to every connection of the device whenever the
-  holder changes: `holder_id` and `holder_name` (0 and empty: nobody),
+  holder changes: `holder_id`, `holder_name` and `holder_kind` (0, empty
+  and 0: nobody),
   `previous_id` (0: nobody) and `reason` (`LeaseChange`: Taken 1, Released 2,
   Disconnected 3). A client whose own id is `previous_id` has lost the lease.
   During a Take two events are sent when there was a holder: first the
@@ -341,3 +351,4 @@ Group ids are device resources; the agent gives each client its own view.
 |---|---|---|
 | 2026-11-19 (H3a-1) | First version: Hello, ListDevices, Closing; routing and subscription groups; an interim rule refusing ARM and command groups | v1 |
 | 2026-11-19 (H3a-2) | The lease (LeaseTake, LeaseRelease, Lease event), command groups for the holder, exclusive operations, ClientList, TimePing, ClockModel and History events; the device record gains the holder | v2 |
+| 2026-11-19 (H3b-1) | The client kind (`AgentClientKind`): `client_kind` in Hello, `kind` in ClientList, `holder_kind` in the device record and the Lease event (and so in Lease history entries) | v3 |

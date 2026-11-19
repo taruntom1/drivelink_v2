@@ -103,6 +103,7 @@ struct Connection : std::enable_shared_from_this<Connection>
     uint64_t id;
     uint16_t wire_id = 0; // client_id on the wire
     std::string name;
+    uint8_t kind = 0; // AgentClientKind from the Hello
     State state = State::AwaitHello;
     struct Device *device = nullptr;
     p::Scanner scanner{p::kMaxPayload};
@@ -208,7 +209,8 @@ struct Device
     void endLease(ClientId old);
     void advanceEnd(); // CLEARs, then the grant, as `end` allows
     void finishLease();
-    void announceLease(uint16_t holder, const std::string &holder_name, uint16_t previous, defs::LeaseChange reason);
+    void announceLease(uint16_t holder, const std::string &holder_name, uint8_t holder_kind, uint16_t previous,
+                       defs::LeaseChange reason);
     bool commandSlotsLeft() const; // an earlier holder's command slot may still be on the device
     // Clients
     void greet(const std::shared_ptr<Connection> &c); // History, then ClockModel
@@ -388,6 +390,7 @@ void Connection::hello(const p::Scanner::Frame &f)
         acceptedHello.lobby = false;
     }
     name = request->client_name;
+    kind = request->client_kind;
     if (device) { acceptedHello.device = agent.record(*device); }
     hello_timer.cancel();
     sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeHelloAccepted(acceptedHello));
@@ -809,7 +812,7 @@ void Device::release(const std::shared_ptr<Connection> &c)
     switch (lease.leave(c->id))
     {
     case Lease::Left::Holder:
-        announceLease(0, {}, c->wire_id, defs::LeaseChange::Disconnected);
+        announceLease(0, {}, 0, c->wire_id, defs::LeaseChange::Disconnected);
         endLease(c->id);
         break;
     case Lease::Left::Pending: take_waiter.reset(); break;
@@ -975,9 +978,11 @@ bool Device::sendDisarm(std::vector<Waiter> waiters)
 
 // ---------------------------------------------------------------- Lease ----
 
-void Device::announceLease(uint16_t holder, const std::string &holder_name, uint16_t previous, defs::LeaseChange reason)
+void Device::announceLease(uint16_t holder, const std::string &holder_name, uint8_t holder_kind, uint16_t previous,
+                           defs::LeaseChange reason)
 {
-    const auto body = encodeLease({holder, clipped(holder_name, kMaxString), previous, static_cast<uint8_t>(reason)});
+    const auto body =
+        encodeLease({holder, clipped(holder_name, kMaxString), holder_kind, previous, static_cast<uint8_t>(reason)});
     record(defs::HistoryKind::Lease, body);
     broadcastEvent(defs::AgentEvent::Lease, body);
     log("device " + config.alias + ": lease " + (holder ? "held by client " + std::to_string(holder) : std::string("free")));
@@ -993,13 +998,13 @@ void Device::leaseTake(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_
     case Lease::Take::Busy: answer(defs::Result::Busy); return;
     case Lease::Take::Granted:
         answer(defs::Result::Ok);
-        announceLease(c->wire_id, c->name, 0, defs::LeaseChange::Taken);
+        announceLease(c->wire_id, c->name, c->kind, 0, defs::LeaseChange::Taken);
         return;
     case Lease::Take::Revoked:
     {
         take_waiter = TakeWaiter{c, seq};
         const auto *old = agent.client(previous);
-        announceLease(0, {}, old ? old->wire_id : 0, defs::LeaseChange::Taken);
+        announceLease(0, {}, 0, old ? old->wire_id : 0, defs::LeaseChange::Taken);
         endLease(previous);
         return;
     }
@@ -1015,7 +1020,7 @@ void Device::leaseRelease(const std::shared_ptr<Connection> &c, uint8_t seq, uin
         return;
     }
     c->sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None));
-    announceLease(0, {}, c->wire_id, defs::LeaseChange::Released);
+    announceLease(0, {}, 0, c->wire_id, defs::LeaseChange::Released);
     endLease(c->id);
 }
 
@@ -1091,7 +1096,7 @@ void Device::finishLease()
         return;
     }
     c->sendAgent(waiter->seq, static_cast<uint8_t>(defs::AgentOp::LeaseTake), u8(defs::Result::Ok), u8(defs::Detail::None));
-    announceLease(c->wire_id, c->name, 0, defs::LeaseChange::Taken);
+    announceLease(c->wire_id, c->name, c->kind, 0, defs::LeaseChange::Taken);
 }
 
 // ------------------------------------------------- Clients, history, clock ----
@@ -1124,10 +1129,10 @@ void Device::clientList(const std::shared_ptr<Connection> &c, uint8_t seq, uint8
     std::vector<ClientRecord> records;
     for (const auto &member : clients)
     {
-        records.push_back({member->wire_id, clipped(member->name, kMaxString), lease.holder() == member->id});
+        records.push_back({member->wire_id, clipped(member->name, kMaxString), member->kind, lease.holder() == member->id});
     }
     std::ranges::sort(records, {}, &ClientRecord::client_id);
-    // 16 clients of at most 2 + 33 + 1 bytes fit one frame.
+    // 16 clients of at most 2 + 33 + 1 + 1 bytes fit one frame.
     c->sendAgent(seq, op, u8(defs::Result::Ok), u8(defs::Detail::None), encodeClientList(records));
 }
 
@@ -1403,6 +1408,7 @@ DeviceRecord Agent::Impl::record(const Device &d) const
     {
         r.holder_id = holder->wire_id;
         r.holder_name = clipped(holder->name, kMaxString);
+        r.holder_kind = holder->kind;
     }
     return r;
 }

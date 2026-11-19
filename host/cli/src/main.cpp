@@ -839,7 +839,7 @@ int main(int argc, char **argv)
             if (!device.empty()) { usage("agent-devices lists devices; omit --device"); }
             if (!tcp) { usage("agent-devices needs a tcp:// agent endpoint"); }
             if (token.empty()) { usage("agent-devices needs --token or DRIVELINK_AGENT_TOKEN"); }
-            const auto devices = listAgentDevices(endpoint, token, options.timeout, client_name);
+            const auto devices = listAgentDevices(endpoint, token, options.timeout, client_name, static_cast<uint8_t>(protocol::defs::AgentClientKind::Cli));
             if (json)
             {
                 Json list = Json::array();
@@ -856,7 +856,7 @@ int main(int argc, char **argv)
         {
             if (!tcp) { usage("--device needs a tcp:// agent endpoint"); }
             if (token.empty()) { usage("--device needs --token or DRIVELINK_AGENT_TOKEN"); }
-            options.agent = AgentHello{token, device, client_name};
+            options.agent = AgentHello{token, device, client_name, static_cast<uint8_t>(protocol::defs::AgentClientKind::Cli)};
         }
         if (args[0]=="ota-upload")
         {

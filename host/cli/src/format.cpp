@@ -1,4 +1,5 @@
 #include "format.hpp"
+#include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <string>
 namespace cli
@@ -361,15 +362,27 @@ Json toJson(const agent::DeviceRecord &v)
             {"endpoint", v.endpoint},
             {"clients", v.clients},
             {"holder_id", v.holder_id},
-            {"holder_name", v.holder_name}};
+            {"holder_name", v.holder_name},
+            {"holder_kind", v.holder_id ? Json(clientKindName(v.holder_kind)) : Json(nullptr)}};
+}
+std::string clientKindName(uint8_t kind)
+{
+    switch (static_cast<protocol::defs::AgentClientKind>(kind))
+    {
+    case protocol::defs::AgentClientKind::Gui: return "gui";
+    case protocol::defs::AgentClientKind::Cli: return "cli";
+    case protocol::defs::AgentClientKind::Ros: return "ros";
+    default: return "other";
+    }
 }
 Json toJson(const agent::ClientRecord &v)
 {
-    return {{"client_id", v.client_id}, {"name", v.name}, {"holder", v.holder}};
+    return {{"client_id", v.client_id}, {"name", v.name}, {"kind", clientKindName(v.kind)}, {"holder", v.holder}};
 }
 std::string clientLine(const agent::ClientRecord &v)
 {
-    return std::to_string(v.client_id) + ' ' + (v.name.empty() ? "-" : v.name) + (v.holder ? " [holder]" : "");
+    return std::to_string(v.client_id) + ' ' + (v.name.empty() ? "-" : v.name) + " (" + clientKindName(v.kind) + ')' +
+           (v.holder ? " [holder]" : "");
 }
 std::string deviceLine(const agent::DeviceRecord &v)
 {
@@ -387,6 +400,8 @@ std::string deviceLine(const agent::DeviceRecord &v)
     }
     return v.alias + (v.online ? " online " : " offline ") + (has_id ? agent::formatDeviceId(v.device_id) : "-") + ' ' +
            name + ' ' + v.endpoint + " clients=" + std::to_string(v.clients) +
-           (v.holder_id ? " holder=" + std::to_string(v.holder_id) + ':' + (v.holder_name.empty() ? "-" : v.holder_name) : "");
+           (v.holder_id ? " holder=" + std::to_string(v.holder_id) + ':' + (v.holder_name.empty() ? "-" : v.holder_name) +
+                                  " (" + clientKindName(v.holder_kind) + ')'
+                            : "");
 }
 } // namespace cli

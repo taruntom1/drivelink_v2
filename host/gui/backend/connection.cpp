@@ -10,6 +10,7 @@
 #include <QStringDecoder>
 #include <QUrl>
 #include <QPointer>
+#include <QSysInfo>
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -50,6 +51,9 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     connect(&m_monitorTimer,&QTimer::timeout,this,[this] {pollMonitor();});
     m_monitorTimer.start();
     setupTune();
+    // Shown to the agent's other clients (at most 32 bytes on the wire).
+    m_clientName=QStringLiteral("drivelink-gui@")+QSysInfo::machineHostName();
+    while(m_clientName.toUtf8().size()>32) {m_clientName.chop(1);}
     m_timer.setInterval(100);
     connect(&m_timer,&QTimer::timeout,this,[this] {
         if(m_closing) {
@@ -79,10 +83,15 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
         }
         if(++m_pollTick%3==0) {pollLoopStats();}
         if(m_pollTick%2==0) {pollLive();}
+        if(m_agent && m_context) {
+            pollAgentEvents();
+            // The client list has no event: read it every 2 s while Device shows it.
+            if(++m_clientsTick%20==0 && m_page==QLatin1String("device")) {refreshClients();}
+        }
     });
     m_timer.start();
 }
-LocalConnection::~LocalConnection() {finishClose();}
+LocalConnection::~LocalConnection() {finishClose();if(m_lister.joinable()) {m_lister.join();}}
 bool LocalConnection::current(const std::shared_ptr<Context> &c) const {return m_context==c && !c->retired;}
 bool LocalConnection::linked() const {return m_context && m_context->getSession() && !m_linkLost && (!m_snapshot || m_snapshot->connected);}
 bool LocalConnection::ready() const {
@@ -105,7 +114,7 @@ QString LocalConnection::reason() const {
     return {};
 }
 bool LocalConnection::armEnabled() const {
-    return ready() && m_groupsReady && !m_arming && !m_armPending && !m_disarmPending && !m_waitingDisarm && !m_expectReboot &&
+    return ready() && (!m_agent || m_lease.mine()) && m_groupsReady && !m_setupPending && !m_arming && !m_armPending && !m_disarmPending && !m_waitingDisarm && !m_expectReboot &&
         !(m_ota && m_ota->active()) &&
         (!m_observingArmed || m_explicitDisarmAcknowledged) &&
         !safeMode() && m_snapshot->status && armState()==0 && !(m_snapshot->status->flags&2) &&
@@ -113,6 +122,7 @@ bool LocalConnection::armEnabled() const {
 }
 QString LocalConnection::armBlockedReason() const {
     if(!ready()) {return tr("Wait for current device metadata and status");}
+    if(m_agent && !m_lease.mine()) {return tr("ARM needs the control lease");}
     if(safeMode()) {return tr("Device is in safe mode");}
     if(m_expectReboot) {return tr("The device is rebooting");}
     if(m_ota && m_ota->active()) {return tr("A firmware update is in progress");}
@@ -136,6 +146,12 @@ void LocalConnection::report(const Error &e) {
 }
 void LocalConnection::connectTo(const QString &endpoint,int baud) {
     if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<=0) {return;}
+    // A direct connection (serial, or TCP to vdev): no agent.
+    m_agent.reset();m_lease.clear();m_agentFailure.clear();
+    open(endpoint,baud);
+}
+void LocalConnection::open(const QString &endpoint,int baud) {
+    if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<=0) {return;}
     // A new connection by the user ends any reboot follow-up of the last one.
     if(!m_reconnecting && !m_afterLoss) {
         clearRebootExpectation();m_previous.reset();m_notice.clear();m_staleSubs.clear();
@@ -148,17 +164,35 @@ void LocalConnection::connectTo(const QString &endpoint,int baud) {
     m_observingArmed=false;m_explicitDisarmAcknowledged=false;
     m_disarmWhenOpened=false;
     m_loops.reset({});m_faults.reset({});
+    // Remote state belongs to one connection; the opt-out of live-edit
+    // questions too (G6).
+    m_lease.clear();m_agentRecord={};m_clients.clear();m_historyEntries.clear();m_agentHistory.clear();
+    m_agentClosing.clear();m_agentFailure.clear();m_liveEditOptOut=false;m_consentKey.clear();m_leasePending=false;m_clientsPending=false;
+    m_clientsAgain=false;m_historyDone=false;m_liveEdit.reset(); // a hold of the last connection never outlives it
+    std::optional<AgentHello> hello;
+    if(m_agent) {
+        hello=AgentHello{m_agent->token.toStdString(),m_agent->device.toStdString(),m_clientName.toStdString(),
+                         uint8_t(protocol::defs::AgentClientKind::Gui)};
+    }
     emit changed();
     const auto queue=m_dispatch;const QPointer<LocalConnection> self(this);const auto address=m_endpoint.toStdString();
     // Start after this GUI turn. Safety requests during opening are retained
     // until publication, including an Esc immediately after Connect.
-    QTimer::singleShot(0,this,[this,c,queue,self,address,baud] {
+    QTimer::singleShot(0,this,[this,c,queue,self,address,baud,hello] {
     if(!current(c)) {return;}
-    m_opener=std::thread([c,queue,self,address,baud] {
+    m_opener=std::thread([c,queue,self,address,baud,hello] {
         try {
             SessionOptions options;options.dispatcher=[queue](Task task){post(queue,std::move(task));};
             options.baud=unsigned(baud);
-            auto session=std::make_shared<Session>(address,options);
+            std::string target=address;
+            if(hello) {
+                // Through drivelink-agent: a typed host name resolves here,
+                // off the GUI thread. Lease and History events arrive on the
+                // event queue (read by the GUI), so give it room.
+                target=resolveTcpEndpoint(address);
+                options.agent=*hello;
+            }
+            auto session=std::make_shared<Session>(target,options);
             // Discovery can outlast an already-armed owner's watchdog. Keep
             // the early status history independently of DeviceModel, which
             // installs its observer only after its initial metadata load.
@@ -177,10 +211,21 @@ void LocalConnection::connectTo(const QString &endpoint,int baud) {
                 if(!session->nextEvent(early,std::chrono::milliseconds(0))) {break;}
                 noteArmed(early);
             }
+            // Agent events (History, Lease) wait in the Session's own agent
+            // queue from the Hello on; the GUI reads them there.
+            const auto accepted=session->agentHello();
             {std::lock_guard lock(c->mutex);c->session=session;}
             if(c->retired) {session->close();return;}
-            post(queue,[self,c] {
+            post(queue,[self,c,accepted] {
                 if(!self || !self->current(c)) {return;}
+                if(accepted) {
+                    // An observer first (G6): the holder named by the Hello's
+                    // device record; Lease events update it from here on.
+                    const auto &d=accepted->device;
+                    self->m_agentRecord=d;self->m_agentSince=QDateTime::currentDateTime();
+                    self->m_lease.reset(accepted->client_id,LeaseHolder{d.holder_id,QString::fromStdString(d.holder_name),d.holder_kind});
+                    self->pollAgentEvents();self->refreshClients();
+                }
                 self->m_loadStep=1;
                 if(self->m_disarmWhenOpened) {self->disarm();}
                 emit self->changed();
@@ -212,7 +257,10 @@ void LocalConnection::connectTo(const QString &endpoint,int baud) {
             Error error=typed?*typed:Error(ErrorKind::Connection,e.what());
             post(queue,[self,c,error] {
                 if(!self || !self->current(c)) {return;}
-                if(error.peer_version) {
+                if(self->m_agent) {
+                    // The Agent tab shows why: unreachable, versions, token, device.
+                    self->m_agentFailure=gui::agentFailure(error);
+                } else if(error.peer_version) {
                     self->m_mismatch={{"device",error.peer_version},{"host",protocol::core_wire::kVersion},
                         {"endpoint",self->m_endpoint}};
                 }
@@ -277,7 +325,11 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
     }
     if(ready() && (!m_recorded || m_recordedName!=deviceName())) {
         const bool first=!m_recorded;m_recorded=true;m_recordedName=deviceName();
-        m_recent.remember(deviceId(),deviceName(),m_endpoint,m_baud,QString::fromStdString(m_snapshot->info.firmware_version));
+        if(m_agent) {
+            m_recentAgents.remember(m_agent->address,m_agent->device,deviceId(),deviceName(),m_agent->token,m_agent->rememberToken);
+        } else {
+            m_recent.remember(deviceId(),deviceName(),m_endpoint,m_baud,QString::fromStdString(m_snapshot->info.firmware_version));
+        }
         emit recentDevicesChanged();
         if(first && (m_reconnecting || m_afterLoss)) {
             // A reconnect after a requested reboot, or a Retry that finds the
@@ -305,17 +357,21 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
        (c->armedSeen==m_snapshot->generation || (m_snapshot->status && armState()==1))) {
         m_observingArmed=true;
     }
-    if(ready() && m_snapshot->status && armState()==0 && !safeMode() && !m_setupPending &&
+    // Through an agent, command groups exist only while this window holds the lease.
+    if(ready() && (!m_agent || m_lease.mine()) && m_snapshot->status && armState()==0 && !safeMode() && !m_setupPending &&
        (!m_observingArmed || m_explicitDisarmAcknowledged) &&
        (!m_setupAttempted || m_setupGeneration!=m_snapshot->generation)) {setupGroups();}
     // Loop statistics follow command setup so the two never interleave
     // group mutations; an observer (no command setup) starts them at once.
     const bool commandsSettled=!m_setupPending &&
-        ((m_setupAttempted && m_setupGeneration==m_snapshot->generation) || m_observingArmed || armState()!=0);
+        ((m_setupAttempted && m_setupGeneration==m_snapshot->generation) || m_observingArmed || armState()!=0 ||
+         // A remote observer sets up no command groups: nothing to wait for.
+         (m_agent && !m_lease.mine()));
     if(ready() && m_snapshot->status && !safeMode() && !m_subsPending && commandsSettled &&
        (!m_subsAttempted || m_subsGeneration!=m_snapshot->generation)) {setupLoopStats();}
     otaRefresh();
     rebuildLayout(metadata);
+    if(m_agent && metadata) {rebuildHistory();}
     // Monitor follows complete metadata only: a reload in progress never prunes its plots.
     if(ready()) {m_monitor.setSnapshot(m_snapshot);}
     syncLive();syncMonitor();
@@ -503,15 +559,20 @@ void LocalConnection::setupGroups() {
     auto c=m_context;auto session=c->getSession();const auto snapshot=m_snapshot;
     m_setupPending=true;m_setupAttempted=true;m_setupGeneration=snapshot->generation;
     m_blocked.clear();const QPointer<LocalConnection> self(this);
+    const auto leaseEpoch=c->leaseEpoch.load();
     try {
-        session->async<OperationResult>([c,session,snapshot] {
+        session->async<OperationResult>([c,session,snapshot,leaseEpoch] {
             Client client(*session);
+            // Remote: a group of ours that landed after a lost lease.
+            if(c->leaseEpoch!=leaseEpoch) {throw Error(ErrorKind::Cancelled,"The control lease changed during command setup");}
+            c->clearReleased(client);
             const auto groups=client.groups();const auto plans=planCommands(*snapshot,groups);
             const auto watchdog=valueBits(snapshot->system_params.at(defs::system::kWatchdogMs));
             if(watchdog<3 || watchdog>65535) {throw Error(ErrorKind::Usage,"Invalid command watchdog");}
             try {
                 for(const auto &plan:plans) {
                     if(c->retired || session->generation()!=snapshot->generation) {throw Error(ErrorKind::Cancelled,"Connection changed during command setup");}
+                    if(c->leaseEpoch!=leaseEpoch) {throw Error(ErrorKind::Cancelled,"The control lease changed during command setup");}
                     const auto before=std::find_if(groups.groups.begin(),groups.groups.end(),[&](const auto &g){return g.kind==GroupKind::Command && g.id==plan.id;});
                     Owned owned{plan,uint8_t(before->epoch+1),snapshot->generation,{}};
                     // Record intent before a sent mutation can time out. Cleanup
@@ -562,9 +623,19 @@ void LocalConnection::setupGroups() {
                 throw;
             }
             return OperationResult{};
-        },[self,c](auto result) {
+        },[self,c,leaseEpoch](auto result) {
             if(!self || !self->current(c)) {return;}
             self->m_setupPending=false;
+            if(self->m_agent && (!self->m_lease.mine() || c->leaseEpoch!=leaseEpoch)) {
+                // The lease ended during setup: the agent cleared this
+                // window's command groups. A CMD_CONFIG that landed under a
+                // lease held again since is cleared by the next setup.
+                c->releaseOwned();
+                self->m_groupsReady=false;self->m_setupAttempted=false;self->m_command.clearGroups();
+                self->m_command.setBlocked(self->commandBlocked());
+                // Held again since: set up afresh under this lease.
+                self->refresh(c);emit self->changed();return;
+            }
             if(self->m_snapshot && self->m_snapshot->generation!=self->m_setupGeneration) {self->refresh(c);return;}
             self->m_groupsReady=bool(result);
             if(result) {self->m_observingArmed=false;self->configureCommands();}
@@ -607,6 +678,7 @@ std::vector<CommandPlan> LocalConnection::commandGroups() const {
 }
 QString LocalConnection::commandBlocked() const {
     if(!ready()) {return tr("Connect and wait for the device");}
+    if(m_agent && !m_lease.mine()) {return tr("Take the control lease to command inputs");}
     if(m_observingArmed && !m_explicitDisarmAcknowledged) {return tr("Another owner armed the device; press DISARM first");}
     if(!m_groupsReady) {return m_blocked.isEmpty()?tr("Preparing command groups"):m_blocked;}
     if(m_disarmPending || m_waitingDisarm) {return tr("Disarming");}
@@ -619,21 +691,41 @@ QString LocalConnection::commandBlocked() const {
 void LocalConnection::arm() {
     if(!armEnabled()) {return;}
     auto c=m_context;auto session=c->getSession();const auto fence=c->safety.load();const auto generation=m_snapshot->generation;
+    const auto leaseEpoch=c->leaseEpoch.load();
     m_arming=true;m_armPending=true;m_armReplied=false;emit changed();const QPointer<LocalConnection> self(this);
     try {
-        Client(*session).async([c,fence,generation](Client &client) {
+        Client(*session).async([c,fence,generation,leaseEpoch](Client &client) {
             if(c->retired || c->safety!=fence || client.session().generation()!=generation) {throw Error(ErrorKind::Cancelled,"ARM cancelled by DISARM or connection change");}
             auto result=client.arm();
-            if(c->retired || c->safety!=fence || client.session().generation()!=generation) {client.disarm();}
+            // Fenced by a lost lease (remote): the agent disarms after it;
+            // a DISARM of ours could reach the new holder's device.
+            const bool leaseMoved=c->leaseEpoch!=leaseEpoch;
+            if(c->retired || client.session().generation()!=generation || (c->safety!=fence && !leaseMoved)) {client.disarm();}
             return result;
-        },[self,c,fence](std::expected<SystemResult,Error> result) {
+        },[self,c,fence,leaseEpoch](std::expected<SystemResult,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_armPending=false;self->m_armReplied=bool(result);self->m_ownArm=result && c->safety==fence;
             if(self->m_ownArm) {++self->m_armEpoch;}
-            if(c->safety!=fence) {self->m_arming=false;self->disarm();}
+            // Fenced by DISARM or a reconnect: disarm once more. Fenced by
+            // a lost lease: the agent already disarmed after the ARM, and a
+            // DISARM of ours now could disarm the new holder.
+            if(c->safety!=fence) {
+                self->m_arming=false;
+                if(!(self->m_agent && c->leaseEpoch!=leaseEpoch)) {self->disarm();}
+            }
             else if(!result) {
-                self->m_arming=false;self->report(result.error());
-                if(result.error().kind==ErrorKind::Rejected) {emit self->armRefused(errorText(result.error()));}
+                self->m_arming=false;
+                const auto &e=result.error();
+                if(self->m_agent && e.kind==ErrorKind::Rejected && e.result==uint8_t(defs::Result::Busy) &&
+                   e.detail==uint8_t(defs::Detail::None)) {
+                    // The agent is still clearing the previous holder's
+                    // command group; ARM is not repeated automatically.
+                    const auto why=tr("The previous holder's command group is still being cleared; press ARM again in a moment");
+                    emit self->notification(why,2);emit self->armRefused(why);
+                } else {
+                    self->report(e);
+                    if(e.kind==ErrorKind::Rejected) {emit self->armRefused(errorText(e));}
+                }
             }
             emit self->changed();
         });
@@ -695,6 +787,7 @@ void LocalConnection::disconnectDevice() {
         m_monitor.reset(); // a lost link kept it for the reconnect
         m_command.reset();
         m_tune.reset();
+        m_agent.reset();m_lease.clear();m_clients.clear();m_agentHistory.clear();m_historyEntries.clear();
         emit changed();emit disconnected();return;
     }
     if(m_closing) {return;}
@@ -702,18 +795,18 @@ void LocalConnection::disconnectDevice() {
     // An observer may have explicitly requested DISARM while opening. Await
     // that admitted request; closing must not turn it into a silent cancel.
     if(m_disarmPending) {return;}
-    if(m_context->owns() || m_setupPending || m_armPending) {disarm();}
+    if((!m_agent || m_lease.mine()) && (m_context->owns() || m_setupPending || m_armPending)) {disarm();}
     // Loop statistics are released without a DISARM: they command nothing.
     else if(m_context->ownsAny() || m_subsPending || m_livePending || m_monitorPending) {clearAndClose();}
     else {finishClose();}
 }
 void LocalConnection::retry() {
     if(m_context || m_closing || m_endpoint.isEmpty()) {return;}
-    m_afterLoss=true;connectTo(m_endpoint,m_baud);
+    m_afterLoss=true;open(m_endpoint,m_baud);
 }
 void LocalConnection::reconnectAfterReboot() {
     if(!m_reconnecting || m_context || m_closing) {return;}
-    connectTo(m_endpoint,m_baud);
+    open(m_endpoint,m_baud);
 }
 void LocalConnection::clearAndClose() {
     auto c=m_context;auto session=c->getSession();const QPointer<LocalConnection> self(this);
@@ -730,6 +823,20 @@ void LocalConnection::finishClose(bool lost) {
     const bool unsentDisarm=m_disarmWhenOpened;
     const bool unconfirmedDisarm=m_disarmPending;
     const bool actionInFlight=!m_actionRunning.isEmpty();
+    // The agent's Closing event usually precedes the link's end by moments:
+    // read its reason for the link-lost overlay before the session goes.
+    if(m_agent && m_context) {
+        if(auto s=m_context->getSession()) {
+            Frame f;
+            while(s->nextAgentEvent(f)) {
+                const auto event=drivelink::agent::decodeEvent(f.payload);
+                if(!event || event->event!=uint8_t(protocol::defs::AgentEvent::Closing)) {continue;}
+                const auto reason=drivelink::agent::decodeClosing(event->body);
+                m_agentClosing=reason && *reason==uint8_t(protocol::defs::AgentCloseReason::Shutdown)
+                    ?tr("The agent is shutting down"):tr("The agent lost the device");
+            }
+        }
+    }
     auto c=std::move(m_context);
     if(c) {
         c->retired=true;++c->safety;c->stopKeepers();
@@ -743,6 +850,7 @@ void LocalConnection::finishClose(bool lost) {
         QCoreApplication::sendPostedEvents(m_dispatch->receiver,QEvent::MetaCall);
         std::this_thread::yield();
     }
+    dropLiveEdit();m_leasePending=false;m_clientsPending=false;m_clients.clear();
     m_loading=false;m_closing=false;m_groupsReady=false;m_setupPending=false;m_arming=false;m_armReplied=false;m_ownArm=false;
     m_armPending=false;m_disarmPending=false;m_disarmAgain=false;m_ackPending=false;m_waitingDisarm=false;
     m_disarmWhenOpened=false;m_subsPending=false;m_configAction.clear();m_loadStep=0;
@@ -822,6 +930,10 @@ void LocalConnection::finishClose(bool lost) {
         Error error(ErrorKind::Connection,"Connection closed before DISARM was confirmed");
         error.family=1;error.op=3;error.has_request_context=true;error.outcome_unknown=true;report(error);
     }
+    // Remote mode ends with the connection, except while a reconnect or the
+    // link-lost overlay (Retry) still needs the agent and its token.
+    if(!m_linkLost && !m_reconnecting) {m_agent.reset();m_lease.clear();m_agentHistory.clear();m_historyEntries.clear();}
+    else if(m_agent) {m_lease.clear();}
     // An action in flight may have run; its reply will never arrive.
     if(actionInFlight && c) {emit notification(tr("The connection closed while an action was running; it may have run. It was not retried."),2);}
     emit changed();emit liveChanged();if(c) {emit disconnected();}
@@ -949,6 +1061,10 @@ QVariantList LocalConnection::armChecks() const {
     checks<<check(tr("No fault latched"),(flags&1)?"fail":"pass",(flags&1)?tr("Acknowledge the fault"):QString());
     checks<<check(tr("No active condition blocks arming"),(flags&2)?"fail":"pass",(flags&2)?tr("See the faults drawer"):QString());
     checks<<check(tr("No reboot pending"),(flags&4)?"fail":"pass",(flags&4)?tr("Save and reboot, or Discard all on Layout"):QString());
+    if(m_agent) {
+        checks<<check(tr("This window holds the control lease"),m_lease.mine()?"pass":"fail",
+                      m_lease.mine()?QString():tr("Take the lease on the Device page (Clients and lease)"));
+    }
     const bool gated=m_observingArmed && !m_explicitDisarmAcknowledged;
     checks<<check(tr("This window owns command keepalives"),gated?"fail":"pass",gated?tr("Another owner armed the device; press DISARM first"):QString());
     checks<<check(tr("Command keepalives are ready"),m_groupsReady?"pass":(m_blocked.isEmpty()?"pending":"fail"),m_blocked);
@@ -965,7 +1081,8 @@ QVariantMap LocalConnection::actionBlocked() const {
     // keep the open-loop mode), REVERT, reboot or rename before that.
     const QString identifying=(m_tuneRun && m_tuneRun->identify) || m_modeRestore
         ?tr("Wait for plant identification to write the mode back"):QString();
-    const auto common=commonBlock().isEmpty()?identifying:commonBlock();
+    const auto exclusive=exclusiveBlocked();
+    const auto common=!commonBlock().isEmpty()?commonBlock():!identifying.isEmpty()?identifying:exclusive;
     auto pick=[&](const QString &why) {return common.isEmpty()?why:common;};
     // The firmware refuses these while armed (LockedWhileArmed).
     const QString armed=armState()==1 || m_arming?tr("Not allowed while armed; disarm first"):QString();

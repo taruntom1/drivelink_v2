@@ -15,11 +15,20 @@ Flickable {
     signal faultsRequested()
     signal loopRequested(int loopId)
     signal updateRequested()
+    // Remote mode (G6): the shell opens the take and release dialogs.
+    signal takeLeaseRequested()
+    signal releaseLeaseRequested()
 
     readonly property bool wide: width >= 1800
     // Loop table column fractions (G7b Device loop table).
     readonly property var loopWidths: [0.24, 0.11, 0.11, 0.13, 0.13, 0.18, 0.10]
     function formatId(id) { return id.length === 12 ? id.match(/../g).join(":") : id }
+    // Scrolls the Clients and lease card into view (the lease chip, the revoked banner).
+    function showClients() {
+        if (!backend.remote) return
+        const top = remoteCards.clientsCard.mapToItem(page.contentItem, 0, 0).y
+        page.contentY = Math.max(0, Math.min(top - Theme.space24, page.contentHeight - page.height))
+    }
     function micros(value) { return value === undefined ? "—" : value >= 1000 ? (value / 1000).toFixed(2) + " ms" : value + " µs" }
 
     contentHeight: grid.implicitHeight + 2 * Theme.space24
@@ -33,6 +42,17 @@ Flickable {
         columns: page.wide ? 3 : 2
         columnSpacing: Theme.space24
         rowSpacing: Theme.space24
+
+        RemoteCards {
+            id: remoteCards
+            Layout.fillWidth: true
+            Layout.columnSpan: grid.columns
+            Layout.alignment: Qt.AlignTop
+            visible: page.backend.remote
+            backend: page.backend
+            onTakeLeaseRequested: page.takeLeaseRequested()
+            onReleaseLeaseRequested: page.releaseLeaseRequested()
+        }
 
         Card {
             objectName: "identityCard"

@@ -148,4 +148,71 @@ TestCase {
         compare(faults.tone, DLBadge.Fault)
         compare(bar.height, Theme.sizeStatusbar)
     }
+
+    function test_lease_chip_hidden_by_default() {
+        const bar = createTemporaryObject(barComponent, testCase, { mode: DLStatusBar.Disarmed })
+        const lease = findChild(bar, "leaseChip")
+        verify(lease, "the chip exists")
+        verify(!bar.leaseVisible)
+        verify(!lease.visible)
+        compare(bar.leaseVariant, DLLeaseChip.Available)
+    }
+
+    function test_lease_chip_beside_device_chip() {
+        const bar = createTemporaryObject(barComponent, testCase, { mode: DLStatusBar.Disarmed, leaseVisible: true })
+        const lease = findChild(bar, "leaseChip")
+        const device = findChild(bar, "deviceChip")
+        verify(lease.visible)
+        bar.leaseVariant = DLLeaseChip.Other
+        bar.leaseHolderName = "bench-laptop"
+        compare(lease.variant, DLLeaseChip.Other)
+        compare(lease.text, "Lease: bench-laptop")
+        const pos = lease.mapToItem(bar, 0, 0)
+        const devicePos = device.mapToItem(bar, 0, 0)
+        fuzzyCompare(pos.x, devicePos.x + device.width + Theme.space8, 1)
+        fuzzyCompare(pos.y + lease.height / 2, bar.height / 2, 1)
+        for (let mode = DLStatusBar.Loading; mode <= DLStatusBar.LinkLost; ++mode) {
+            bar.mode = mode
+            verify(lease.visible, "mode " + mode)
+        }
+    }
+
+    function test_lease_chip_hidden_without_a_device() {
+        const bar = createTemporaryObject(barComponent, testCase, { mode: DLStatusBar.NoDevice, leaseVisible: true })
+        verify(!findChild(bar, "leaseChip").visible)
+        bar.mode = DLStatusBar.Disarmed
+        verify(findChild(bar, "leaseChip").visible)
+        bar.mode = DLStatusBar.NoDevice
+        verify(!findChild(bar, "leaseChip").visible)
+    }
+
+    function test_lease_clicked_is_emitted() {
+        const bar = createTemporaryObject(barComponent, testCase, { mode: DLStatusBar.Armed, leaseVisible: true })
+        const clicks = spy(bar, "leaseClicked")
+        const device = spy(bar, "deviceRequested")
+        mouseClick(findChild(bar, "leaseChip"))
+        compare(clicks.count, 1)
+        compare(device.count, 0)
+    }
+
+    function test_centre_stays_centred_with_the_lease_chip() {
+        const bar = createTemporaryObject(barComponent, testCase, { mode: DLStatusBar.Disarmed, leaseVisible: true,
+                                                                  leaseVariant: DLLeaseChip.Requesting,
+                                                                  reason: "last: watchdog timeout · 18:20:11", unsaved: true })
+        const arm = findChild(bar, "armButton")
+        const left = findChild(bar, "leftZone")
+        const centre = findChild(bar, "centreZone")
+        for (const width of [1920, 2560, 1280]) {
+            bar.width = width
+            fuzzyCompare(centreOffset(bar), 0, 1)
+            const armPos = arm.mapToItem(bar, arm.width / 2, 0)
+            verify(armPos.x > centre.x && armPos.x < centre.x + centre.width, "arm button inside the centre zone")
+            verify(left.x + left.width <= centre.x, "left zone never overlaps the centre")
+        }
+        bar.width = 1920
+        const lease = findChild(bar, "leaseChip")
+        const pos = lease.mapToItem(left, 0, 0)
+        verify(pos.x + lease.width <= left.width, "device and lease chips fit the left zone at 1920")
+        fuzzyCompare(centreOffset(bar), 0, 1)
+    }
 }

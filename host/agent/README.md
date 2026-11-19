@@ -2,11 +2,11 @@
 
 `drivelink-agent` owns the serial ports of one or more DriveLink devices on a
 Linux host (the robot's Pi, or WSL on the PC) and shares each device with
-several clients over TCP: the CLI, the GUI's remote mode (H3b) and the ROS
+several clients over TCP: the CLI, the GUI's remote mode (H3b-1) and the ROS
 plugin (H4a). Linux only; not a colcon package (`COLCON_IGNORE`).
 
 The wire contract is [docs/protocol/agent.md](../../docs/protocol/agent.md)
-(agent protocol v2). The design and its reasons are in
+(agent protocol v3: v2 plus the client kind, H3b-1). The design and its reasons are in
 [host-architecture.md](../../plans/host-architecture.md), "`drivelink-agent`".
 
 Per device, one client at a time holds the **control lease**: only it may ARM,

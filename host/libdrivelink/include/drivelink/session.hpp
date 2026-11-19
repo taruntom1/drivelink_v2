@@ -35,9 +35,12 @@ struct Reply
 };
 // Connect to a device through drivelink-agent (docs/protocol/agent.md).
 // The device is an alias or a 12-hex device id; empty opens a lobby.
+// kind is the client's AgentClientKind (Other 0, Gui 1, Cli 2, Ros 3), shown
+// to other clients with its name.
 struct AgentHello
 {
     std::string token, device, client_name = "drivelink";
+    uint8_t kind = 0;
 };
 struct SessionOptions
 {
@@ -132,6 +135,13 @@ class Session
     bool sendCommandGroup(uint8_t group, std::span<const uint8_t> payload);
     bool nextEvent(Frame &frame, std::chrono::milliseconds timeout);
     uint64_t droppedEvents() const;
+    // Agent events (Frame{0xF0}) also wait in their own bounded queue
+    // (kAgentEventCapacity, oldest dropped), apart from the device's frames,
+    // so a client that reads only these never loses one to stream traffic.
+    // Non-blocking; false when none is waiting.
+    static constexpr size_t kAgentEventCapacity = 4096;
+    bool nextAgentEvent(Frame &frame);
+    uint64_t droppedAgentEvents() const;
     void setMaxPayload(uint16_t cap);
     void close(); // cancels pending requests; idempotent; never waits on a peer
   private:
@@ -141,10 +151,16 @@ class Session
     std::shared_ptr<void> callbackSlot(bool disarm=false);
     void dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task);
 };
+// tcp://host:port with a host name (or a numeric address) as the numeric
+// tcp://ip:port a Session takes: the first IPv4 address, else the first
+// IPv6 one. Blocks for at most the resolver's own time; throws
+// Error{Usage} for a malformed endpoint and Error{Connection} when the name
+// does not resolve. For endpoints people type (the GUI's agent address).
+std::string resolveTcpEndpoint(const std::string &endpoint);
 // Open a lobby connection to an agent and list its devices (ListDevices).
 std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint, const std::string &token,
                                                   std::chrono::milliseconds timeout = std::chrono::milliseconds(3000),
-                                                  const std::string &client_name = "drivelink");
+                                                  const std::string &client_name = "drivelink", uint8_t kind = 0);
 // The lease and the client list on an agent device connection (agent.md).
 // A refusal throws DeviceError with the agent's result and detail and the op.
 // agentLeaseTake returns once the lease is held, after a revoked holder's

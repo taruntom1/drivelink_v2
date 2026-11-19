@@ -60,9 +60,9 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | How suggested gains map onto tune-flagged params generically (no module names) | settled in H2e-3: naming conventions in `docs/adding-a-module.md` (`<prefix>.kp/.ki/.kd`, responses named after the prefix, the `open_loop` value); no wire change (user decision) |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | settled in H2f: versioned JSON of the decoded fields with provenance (`host/gui/modules/imu.bno055/README.md`); Euler as the device reports it, none in the file; nothing re-sent, interruptions recorded as "may have run" |
 | Agent default port, history sizes, retry policy for an offline device | port 47620 and a 2 s fixed retry settled in H3a-1; history 256 entries per device (`history_size`, 16..4096) settled in H3a-2 |
-| mDNS library, service name and TXT records | H3b |
-| Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | H3b |
-| The device-list screen on Connect's Agent tab (not in Figma) | H3b |
+| mDNS library, service name and TXT records | H3b-2 (library: mjansson/mdns, user decision 2026-11-19) |
+| Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | settled in H3b-1: the GUI's INI file, only when "Remember token" is checked (user decision) |
+| The device-list screen on Connect's Agent tab (not in Figma) | settled in H3b-1: built from the G2 components, recorded in `gui-design.md` |
 | Pi UART wiring and how udev rules match each ESP | H3c |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
@@ -334,6 +334,16 @@ Natural cut if large: H3a-1 server, devices, access, routing, events and agent M
 
 **Depends on** H3a, H2g. **Design:** G6 frames and decisions.
 
+**Split (user decision 2026-11-19):** H3b-1 (everything below except mDNS;
+[plan](archive/h3b-1-implementation.md)) and H3b-2 (mDNS: the mjansson/mdns
+library, the agent advertising when LAN listening is on, the library's browse
+and the Agent tab's "found on the network" list, notices). User decisions in
+H3b-1: agent tokens in the GUI's INI file only when "Remember token" is
+checked; ROS is recognised by a client kind in the Hello (`AgentClientKind`:
+Other, Gui, Cli, Ros), so agent protocol v3 carries `client_kind` in Hello,
+`kind` in ClientList and `holder_kind` in the device record and the Lease
+event.
+
 Scope:
 - The remote connection over the library's agent client: observer first, command group only after a lease grant.
 - Connect's Agent tab: typed address and token, recent agents, mDNS browse, then the agent's device list (alias, id, name, online state, lease holder) to pick a device. The device list is not in the G6 frames; design it in code from the G2 components and record it in the GUI design files. The agent advertises over mDNS/DNS-SD when LAN listening is on (a small pinned mDNS library, chosen here).
@@ -363,7 +373,7 @@ Review: self.
 
 Scope:
 - The ros2_control `SystemInterface` as the architecture describes: parameters, configure and activate, the lease, groups, the command mode switch with fresh hold values, ARM on the first claimed interface and DISARM on the last, `noexcept` `read()` / `write()` from the seqlock buffers and the command queue, NaN to hold, timestamps mapped to ROS time, `ERROR` on a disarm.
-- Both connection modes: the agent (address, token and device alias or id), or a serial port directly. One hardware component per device.
+- Both connection modes: the agent (address, token and device alias or id), or a serial port directly. One hardware component per device. Through the agent its Hello sends `client_kind` Ros (agent protocol v3, H3b-1), so the GUI shows "ROS is driving" while it holds the lease.
 - `setup_linux.sh` adds ROS Lyrical, ros2_control and rosdep (skipping what is installed); the `ros` validate check in WSL; the ros CI job in `ros:lyrical`.
 
 Tests: plugin unit tests; integration against vdev through the agent and directly over a PTY.

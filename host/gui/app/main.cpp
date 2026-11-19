@@ -51,11 +51,22 @@ int main(int argc,char **argv) {
     QCommandLineParser parser;parser.addHelpOption();
     parser.addOption({"endpoint","Connect to a serial or TCP endpoint.","url"});
     parser.addOption({"baud","Serial baud rate (default 921600).","rate","921600"});
+    // Remote mode (H3b-1): connect through drivelink-agent as an observer.
+    parser.addOption({"agent","Connect through drivelink-agent at host[:port] (port 47620 by default).","address"});
+    parser.addOption({"token","The agent's token (default: DRIVELINK_AGENT_TOKEN).","token"});
+    parser.addOption({"device","The agent's device: an alias or a 12-hex device id.","device"});
+    parser.addOption({"client-name","The name other agent clients see (default drivelink-gui@<host>).","name"});
+    parser.addOption({"take-lease","Screenshots through an agent: take the control lease once ready (prints GUI LEASE MINE when it is this window's)."});
+    parser.addOption({"live-edit","live-edit screen: change this live param (KEY=VALUE, KEY as type:instance:item) and capture the held confirmation.","edit"});
     parser.addOption({"settings","Keep recent devices in this INI file instead of the user's.","file"});
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, settings (both also without --endpoint), device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
-                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm, tune-ab or tune-identify (a vdev; --identify does the same on tune).","name","device"});
+                      "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm, tune-ab or tune-identify (a vdev; --identify does the same on tune). "
+                      "Remote screens (through --agent): agent-connect (the Agent tab's listing; --agent/--token optional, no --device), agent-failure (the failed connect), "
+                      "lease-take, lease-release (needs --take-lease), live-edit (needs --live-edit; on Tune with --tune, else Layout) and revoked "
+                      "(needs --take-lease; prints GUI LEASE MINE, then waits for another client to take the lease); "
+                      "the lease screens sit on Device, or on Tune with --tune.","name","device"});
     parser.addOption({"plot","Monitor screens: plot these signals in order (comma-separated item keys, type:instance:item).","keys"});
     parser.addOption({"rate","Monitor screens: plot rates before plotting (comma-separated loop:divider).","rates"});
     parser.addOption({"window","Monitor screens: the plot window in seconds.","seconds","10"});
@@ -85,12 +96,25 @@ int main(int argc,char **argv) {
     const QStringList pages={"connect","device","layout","tune","monitor","settings"};
     const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
                               "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
-                              "tune-running","tune-disarm","tune-ab","tune-identify"};
-    const bool layoutScreen=screen.startsWith("layout");
+                              "tune-running","tune-disarm","tune-ab","tune-identify",
+                              "agent-connect","agent-failure","lease-take","lease-release","live-edit","revoked"};
+    // Remote screens: the live edit renders on Tune with --tune, else on Layout.
+    const bool liveEditScreen=screen=="live-edit";
+    const bool lobbyScreen=screen=="agent-connect";
+    const bool agentScreen=lobbyScreen || screen=="agent-failure";
+    const bool remoteScreen=agentScreen || screen=="lease-take" || screen=="lease-release" || liveEditScreen || screen=="revoked";
+    const bool layoutScreen=screen.startsWith("layout") || (liveEditScreen && !parser.isSet("tune"));
     const bool monitorScreen=screen.startsWith("monitor");
-    const bool tuneScreen=screen.startsWith("tune");
+    // The lease dialogs render over the Device page, or over Tune with --tune.
+    const bool leaseDialogScreen=screen=="lease-take" || screen=="lease-release" || screen=="revoked";
+    const bool tuneScreen=screen.startsWith("tune") || ((liveEditScreen || leaseDialogScreen) && parser.isSet("tune"));
     const bool update=screen.startsWith("update");
     if(update && !parser.isSet("image")) {std::fprintf(stderr,"--screen %s needs --image\n",qPrintable(screen));return 2;}
+    const QString liveEditText=parser.value("live-edit");
+    const bool takeLease=parser.isSet("take-lease");
+    if(remoteScreen && !lobbyScreen && !parser.isSet("agent")) {std::fprintf(stderr,"--screen %s needs --agent\n",qPrintable(screen));return 2;}
+    if((screen=="lease-release" || screen=="revoked") && !takeLease) {std::fprintf(stderr,"--screen %s needs --take-lease\n",qPrintable(screen));return 2;}
+    if(liveEditScreen && !liveEditText.contains(QLatin1Char('='))) {std::fprintf(stderr,"--screen live-edit needs --live-edit KEY=VALUE\n");return 2;}
     if(!pages.contains(screen) && !states.contains(screen)) {std::fprintf(stderr,"Unknown screen\n");return 2;}
     bool numeric=false;const int baud=parser.value("baud").toInt(&numeric);
     const int settle=parser.value("settle").toInt();
@@ -117,14 +141,28 @@ int main(int argc,char **argv) {
     QObject::connect(&appSettings,&drivelink::gui::AppSettings::themeChanged,theme,applyTheme);
     auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());
     if(!window) {return 2;}
+    const bool agentLink=parser.isSet("agent");
+    const QString agentAddress=parser.value("agent");
+    QString agentToken;
+    if(agentLink) {
+        agentToken=parser.isSet("token")?parser.value("token"):qEnvironmentVariable("DRIVELINK_AGENT_TOKEN");
+        // The Agent tab's own screens may show an empty or wrong token (the listing refuses it); every other one needs a device.
+        if(parser.isSet("endpoint") || (agentToken.isEmpty() && !agentScreen) || (!parser.isSet("device") && !lobbyScreen)) {
+            std::fprintf(stderr,"--agent needs --device and --token (or DRIVELINK_AGENT_TOKEN), and no --endpoint\n");return 2;
+        }
+        if(parser.isSet("client-name")) {connection.setClientName(parser.value("client-name"));}
+        // agent-connect lists the agent's devices from the Agent tab instead of connecting.
+        if(!lobbyScreen) {connection.connectAgent(agentAddress,agentToken,parser.value("device"),false);}
+    }
     if(parser.isSet("endpoint")) {connection.connectTo(parser.value("endpoint"),baud);}
     if(!render) {return app.exec();}
-    const bool standalone=screen=="connect" || screen=="settings";
-    if(!standalone && !parser.isSet("endpoint")) {
-        std::fprintf(stderr,"This screen needs --endpoint; use host/gui/tests/scenarios.py for isolated vdev fixtures\n");return 2;
+    const bool standalone=screen=="connect" || screen=="settings" || lobbyScreen;
+    const bool linked=parser.isSet("endpoint") || (agentLink && !lobbyScreen);
+    if(!standalone && !linked) {
+        std::fprintf(stderr,"This screen needs --endpoint or --agent; use host/gui/tests/scenarios.py for isolated vdev fixtures\n");return 2;
     }
     // These screens rename (and reboot) the device: vdev only, never a board.
-    if((screen=="unsaved" || screen=="notice" || (update && screen!="update")) && !parser.value("endpoint").startsWith("tcp://")) {
+    if((screen=="unsaved" || screen=="notice" || (update && screen!="update")) && (agentLink || !parser.value("endpoint").startsWith("tcp://"))) {
         std::fprintf(stderr,"--screen %s changes the device; use a vdev tcp:// endpoint\n",qPrintable(screen));return 2;
     }
     QDir directory(parser.value("out"));if(!directory.mkpath(".")) {return 2;}
@@ -158,14 +196,26 @@ int main(int argc,char **argv) {
         if(connection.ready() && connection.snapshot()->status && !announced) {
             announced=true;std::printf("GUI READY\n");std::fflush(stdout);
         }
-        if(standalone && !parser.isSet("endpoint")) {return true;}
+        if(standalone && !linked) {return true;}
         if(screen=="connect") {return true;}
+        if(screen=="agent-failure") {return !connection.agentFailure().isEmpty();}
         if(expected=="lost") {return connection.linkLost();}
         if(!connection.ready() || !connection.snapshot()->status) {return false;}
         if(expected=="fault" && connection.armState()!=2) {return false;}
         if(expected=="safe" && !connection.safeMode()) {return false;}
         return true;
     },[&] {
+        if(agentScreen) {
+            // The Agent tab as a user leaves it: address and token typed, the listing asked for.
+            if(auto *connectPage=window->findChild<QObject *>("connectPage")) {connectPage->setProperty("tab",2);}
+            if(agentLink) {
+                if(auto *field=window->findChild<QObject *>("agentAddress")) {field->setProperty("text",agentAddress);}
+                if(auto *field=window->findChild<QObject *>("agentToken")) {field->setProperty("text",agentToken);}
+            }
+            if(lobbyScreen && agentLink) {connection.listAgent(agentAddress,agentToken);}
+            return;
+        }
+        if(agentLink && takeLease) {connection.takeLease();}
         window->setProperty("page",layoutScreen?1:monitorScreen?3:tuneScreen?2:std::max(0,int(pages.indexOf(screen))-1));
         if(monitorScreen) {
             // Like the user's clicks: rates first, then each signal (a
@@ -198,6 +248,30 @@ int main(int argc,char **argv) {
             }
         }
     }});
+    // Remote screens. The lobby listing ends ok or failed; a failed connect is
+    // captured by the first stage; the others follow the lease: the agent's
+    // Lease events are the truth, so each waits for what it shows.
+    const auto lease=[&] {return connection.lease();};
+    if(lobbyScreen) {
+        stages.push_back({[&] {const auto state=connection.agentListing().value("state").toString();return state=="ok" || state=="failed";},[] {}});
+    }
+    if(takeLease && agentLink && !agentScreen) {
+        stages.push_back({[&] {return lease().value("mine").toBool();},[] {}});
+    }
+    if(screen=="lease-take") {
+        stages.push_back({[&] {return lease().value("holderId").toInt()!=0 && !lease().value("mine").toBool();},[&] {openDialog("takeLeaseDialog");}});
+    }
+    if(screen=="lease-release") {
+        stages.push_back({[&] {return lease().value("mine").toBool();},[&] {openDialog("releaseLeaseDialog");}});
+    }
+    if(screen=="revoked") {
+        // The script makes another client take the lease; the dialog opens by itself.
+        stages.push_back({[&] {return lease().value("revoked").toBool();},[] {}});
+    }
+    // The Device page's Clients card refreshes after the first ClientList.
+    if(agentLink && screen=="device") {
+        stages.push_back({[&] {return !connection.clients().isEmpty();},[] {}});
+    }
     // The update screens wait for the firmware state, then for their phase.
     if(update) {
         stages.insert(stages.begin(),{[&] {return connection.ready() && connection.firmware().value("known").toBool();},[] {}});
@@ -350,6 +424,15 @@ int main(int argc,char **argv) {
             }});
         }
     }
+    // live-edit: another client holds the lease, so one live param edit is
+    // held unsent for the operator's confirmation (the dialog opens by itself).
+    if(liveEditScreen) {
+        const auto key=liveEditText.section(QLatin1Char('='),0,0),value=liveEditText.section(QLatin1Char('='),1);
+        stages.push_back({[&] {return connection.ready() && lease().value("holderId").toInt()!=0 && !lease().value("mine").toBool() &&
+                                      (!layoutScreen || !parser.isSet("select") || !connection.layout().value("selected").toString().isEmpty());},
+                          [&,key,value] {connection.setParamText(key,value);}});
+        stages.push_back({[&] {return !connection.liveEdit().isEmpty();},[] {}});
+    }
     // Monitor: data across most of the window, then (paused) freeze it and
     // place the cursors.
     if(monitorScreen) {
@@ -370,7 +453,12 @@ int main(int argc,char **argv) {
     size_t stage=0;bool captured=false;
     QTimer poll;poll.setInterval(50);
     QObject::connect(&connection,&drivelink::gui::Connection::disconnected,&app,[&] {if(captured) {app.quit();}});
+    bool mineAnnounced=false;
     QObject::connect(&poll,&QTimer::timeout,&app,[&] {
+        // Scripts sequence on this line (the revoked screen waits for it before another client takes the lease).
+        if(agentLink && takeLease && !agentScreen && !mineAnnounced && connection.lease().value("mine").toBool()) {
+            mineAnnounced=true;std::printf("GUI LEASE MINE\n");std::fflush(stdout);
+        }
         while(stage<stages.size() && stages[stage].ready()) {stages[stage].action();++stage;}
         if(stage<stages.size()) {return;}
         poll.stop();

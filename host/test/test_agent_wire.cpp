@@ -20,6 +20,7 @@ DeviceRecord sampleRecord()
     record.clients = 3;
     record.holder_id = 0x0304;
     record.holder_name = "cli";
+    record.holder_kind = 2; // Cli
     return record;
 }
 
@@ -30,6 +31,7 @@ Hello sampleHello()
     hello.token = "abc";
     hello.device = "m1";
     hello.client_name = "cli";
+    hello.client_kind = 2; // Cli
     return hello;
 }
 
@@ -73,6 +75,7 @@ void requireSameRecord(const DeviceRecord &a, const DeviceRecord &b)
     CHECK(a.clients == b.clients);
     CHECK(a.holder_id == b.holder_id);
     CHECK(a.holder_name == b.holder_name);
+    CHECK(a.holder_kind == b.holder_kind);
 }
 } // namespace
 
@@ -80,7 +83,7 @@ TEST_CASE("agent envelopes round trip")
 {
     Command command{7, 2, {1, 2, 3}};
     auto bytes = encodeCommand(command);
-    CHECK(bytes == Bytes{2, 7, 2, 1, 2, 3});
+    CHECK(bytes == Bytes{3, 7, 2, 1, 2, 3});
     auto decoded = decodeCommand(bytes);
     REQUIRE(decoded.has_value());
     CHECK(decoded->seq == 7);
@@ -89,7 +92,7 @@ TEST_CASE("agent envelopes round trip")
 
     Response response{9, 1, 3, 4, {5, 6}};
     bytes = encodeResponse(response);
-    CHECK(bytes == Bytes{2, 9, 1, 3, 4, 5, 6});
+    CHECK(bytes == Bytes{3, 9, 1, 3, 4, 5, 6});
     auto decodedResponse = decodeResponse(bytes);
     REQUIRE(decodedResponse.has_value());
     CHECK(decodedResponse->version == kVersion);
@@ -101,7 +104,7 @@ TEST_CASE("agent envelopes round trip")
 
     Event event{1, {2}};
     bytes = encodeEvent(event);
-    CHECK(bytes == Bytes{2, 1, 2});
+    CHECK(bytes == Bytes{3, 1, 2});
     auto decodedEvent = decodeEvent(bytes);
     REQUIRE(decodedEvent.has_value());
     CHECK(decodedEvent->event == 1);
@@ -119,7 +122,7 @@ TEST_CASE("agent envelopes refuse short input and wrong versions")
     requireEveryPrefixRefused(encodeResponse(Response{}), [](auto p) { return decodeResponse(p); });
     requireEveryPrefixRefused(encodeEvent(Event{}), [](auto p) { return decodeEvent(p); });
 
-    for (const uint8_t version : {uint8_t{0}, uint8_t{1}, uint8_t{255}})
+    for (const uint8_t version : {uint8_t{0}, uint8_t{1}, uint8_t{2}, uint8_t{255}})
     {
         INFO("version " << int(version));
         auto command = encodeCommand(Command{1, 2, {9}});
@@ -149,15 +152,17 @@ TEST_CASE("agent envelopes refuse short input and wrong versions")
 
 TEST_CASE("agent Hello golden bytes and round trip")
 {
-    const Bytes golden{0x02, 0x05, 0x01, // version, seq, op
+    const Bytes golden{0x03, 0x05, 0x01, // version, seq, op
                        0x0a,             // core_version
                        0x03, 'a', 'b', 'c', // token
                        0x00,             // device (lobby)
-                       0x03, 'c', 'l', 'i'}; // client_name
+                       0x03, 'c', 'l', 'i', // client_name
+                       0x01};            // client_kind: Gui
     Hello hello;
     hello.core_version = 10;
     hello.token = "abc";
     hello.client_name = "cli";
+    hello.client_kind = 1;
     CHECK(encodeCommand(Command{5, 1, encodeHello(hello)}) == golden);
 
     auto command = decodeCommand(golden);
@@ -168,11 +173,13 @@ TEST_CASE("agent Hello golden bytes and round trip")
     CHECK(decoded->token == "abc");
     CHECK(decoded->device.empty());
     CHECK(decoded->client_name == "cli");
+    CHECK(decoded->client_kind == 1);
 
     auto full = decodeHello(encodeHello(sampleHello()));
     REQUIRE(full.has_value());
     CHECK(full->device == "m1");
     CHECK(full->client_name == "cli");
+    CHECK(full->client_kind == 2);
 
     // The token content is not checked, only its length; bytes are arbitrary.
     Hello binary = sampleHello();
@@ -210,6 +217,7 @@ TEST_CASE("agent Hello bounds")
             out.push_back(static_cast<uint8_t>(size));
             out.insert(out.end(), size, 'x');
         }
+        out.push_back(0); // client_kind Other
         return out;
     };
     CHECK_FALSE(decodeHello(raw(0, 0, 0)).has_value());
@@ -227,6 +235,52 @@ TEST_CASE("agent Hello refuses truncation and trailing bytes")
     requireTrailingByteRefused(body, [](auto p) { return decodeHello(p); });
 }
 
+TEST_CASE("agent client kinds: every AgentClientKind round trips, a larger one is refused")
+{
+    for (uint8_t kind = 0; kind <= kMaxClientKind; ++kind)
+    {
+        INFO("kind " << int(kind));
+        auto hello = sampleHello();
+        hello.client_kind = kind;
+        CHECK(decodeHello(encodeHello(hello))->client_kind == kind);
+        auto record = sampleRecord();
+        record.holder_kind = kind;
+        CHECK(decodeDeviceList(encodeDeviceList(std::vector{record}))->front().holder_kind == kind);
+        CHECK(decodeClientList(encodeClientList(std::vector{ClientRecord{1, "n", kind, false}}))->front().kind == kind);
+        LeaseEvent lease;
+        lease.holder_id = 1;
+        lease.holder_kind = kind;
+        CHECK(decodeLease(encodeLease(lease))->holder_kind == kind);
+    }
+    const uint8_t bad = kMaxClientKind + 1;
+    auto hello = sampleHello();
+    hello.client_kind = bad;
+    CHECK(throwsUsage([&] { encodeHello(hello); }));
+    auto helloBody = encodeHello(sampleHello());
+    helloBody.back() = bad;
+    CHECK_FALSE(decodeHello(helloBody).has_value());
+
+    auto record = sampleRecord();
+    record.holder_kind = bad;
+    CHECK(throwsUsage([&] { encodeDeviceList(std::vector{record}); }));
+    Bytes list{1};
+    appendDeviceRecord(list, sampleRecord());
+    list.back() = bad;
+    CHECK_FALSE(decodeDeviceList(list).has_value());
+
+    CHECK(throwsUsage([&] { encodeClientList(std::vector{ClientRecord{1, "n", bad, false}}); }));
+    auto clients = encodeClientList(std::vector{ClientRecord{1, "n", 0, false}});
+    clients[clients.size() - 2] = bad;
+    CHECK_FALSE(decodeClientList(clients).has_value());
+
+    LeaseEvent lease;
+    lease.holder_kind = bad;
+    CHECK(throwsUsage([&] { encodeLease(lease); }));
+    auto leaseBody = encodeLease(LeaseEvent{});
+    leaseBody[3] = bad; // holder_id u16, empty name, then holder_kind
+    CHECK_FALSE(decodeLease(leaseBody).has_value());
+}
+
 TEST_CASE("agent HelloAccepted device golden bytes and round trip")
 {
     HelloAccepted accepted;
@@ -242,7 +296,8 @@ TEST_CASE("agent HelloAccepted device golden bytes and round trip")
                        0x04, 't', 'c', 'p', ':',                 // endpoint
                        0x03,                                     // clients
                        0x04, 0x03,                               // holder_id
-                       0x03, 'c', 'l', 'i'};                     // holder_name
+                       0x03, 'c', 'l', 'i',                      // holder_name
+                       0x02};                                    // holder_kind: Cli
     CHECK(encodeHelloAccepted(accepted) == golden);
 
     auto decoded = decodeHelloAccepted(golden);
@@ -374,7 +429,7 @@ TEST_CASE("agent device record appends and rejects a bad online flag")
 {
     Bytes out{0x7f};
     appendDeviceRecord(out, sampleRecord());
-    CHECK(out.size() == 1 + 3 + 1 + 6 + 2 + 5 + 1 + 2 + 4);
+    CHECK(out.size() == 1 + 3 + 1 + 6 + 2 + 5 + 1 + 2 + 4 + 1);
     CHECK(out[0] == 0x7f);
     Bytes list{1};
     appendDeviceRecord(list, sampleRecord());
@@ -488,19 +543,21 @@ HistoryEntry entry(uint8_t kind, uint64_t unix_ms, Bytes body)
 }
 } // namespace
 
-TEST_CASE("agent device record v2 golden bytes")
+TEST_CASE("agent device record v3 golden bytes")
 {
     Bytes out;
     appendDeviceRecord(out, sampleRecord());
     const Bytes golden{0x02, 'm', '1', 0x01, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 'x',
-                       0x04, 't', 'c', 'p', ':', 0x03, 0x04, 0x03, 0x03, 'c', 'l', 'i'};
+                       0x04, 't', 'c', 'p', ':', 0x03, 0x04, 0x03, 0x03, 'c', 'l', 'i', 0x02};
     CHECK(out == golden);
     DeviceRecord none = sampleRecord();
     none.holder_id = 0;
     none.holder_name.clear();
+    none.holder_kind = 0;
     Bytes noneOut;
     appendDeviceRecord(noneOut, none);
     CHECK(noneOut.size() == golden.size() - 3);
+    CHECK(noneOut[noneOut.size() - 4] == 0);
     CHECK(noneOut[noneOut.size() - 3] == 0);
     CHECK(noneOut[noneOut.size() - 2] == 0);
     CHECK(noneOut.back() == 0);
@@ -509,16 +566,18 @@ TEST_CASE("agent device record v2 golden bytes")
 TEST_CASE("agent ClientList golden bytes, bounds and refusals")
 {
     CHECK(encodeClientList({}) == Bytes{0});
-    std::vector<ClientRecord> clients{{0x0102, "cli", true}, {7, "", false}};
-    const Bytes golden{0x02, 0x02, 0x01, 0x03, 'c', 'l', 'i', 0x01, 0x07, 0x00, 0x00, 0x00};
+    std::vector<ClientRecord> clients{{0x0102, "cli", 2, true}, {7, "", 3, false}};
+    const Bytes golden{0x02, 0x02, 0x01, 0x03, 'c', 'l', 'i', 0x02, 0x01, 0x07, 0x00, 0x00, 0x03, 0x00};
     CHECK(encodeClientList(clients) == golden);
     auto decoded = decodeClientList(golden);
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->size() == 2);
     CHECK((*decoded)[0].client_id == 0x0102);
     CHECK((*decoded)[0].name == "cli");
+    CHECK((*decoded)[0].kind == 2);
     CHECK((*decoded)[0].holder);
     CHECK((*decoded)[1].client_id == 7);
+    CHECK((*decoded)[1].kind == 3);
     CHECK((*decoded)[1].name.empty());
     CHECK_FALSE((*decoded)[1].holder);
     requireEveryPrefixRefused(golden, [](auto p) { return decodeClientList(p); });
@@ -530,12 +589,12 @@ TEST_CASE("agent ClientList golden bytes, bounds and refusals")
     longer[0] = 3;
     CHECK_FALSE(decodeClientList(longer).has_value());
 
-    std::vector<ClientRecord> many(255, ClientRecord{1, "n", false});
+    std::vector<ClientRecord> many(255, ClientRecord{1, "n", 0, false});
     CHECK(decodeClientList(encodeClientList(many))->size() == 255);
     many.push_back(ClientRecord{});
     CHECK(throwsUsage([&] { encodeClientList(many); }));
-    CHECK(throwsUsage([] { encodeClientList(std::vector{ClientRecord{1, std::string(256, 'x'), false}}); }));
-    CHECK(decodeClientList(encodeClientList(std::vector{ClientRecord{1, std::string(255, 'x'), true}})).has_value());
+    CHECK(throwsUsage([] { encodeClientList(std::vector{ClientRecord{1, std::string(256, 'x'), 0, false}}); }));
+    CHECK(decodeClientList(encodeClientList(std::vector{ClientRecord{1, std::string(255, 'x'), 0, true}})).has_value());
 }
 
 TEST_CASE("agent TimePing golden bytes")
@@ -554,20 +613,22 @@ TEST_CASE("agent Lease golden bytes, bounds and refusals")
     LeaseEvent event;
     event.holder_id = 0x0102;
     event.holder_name = "cli";
+    event.holder_kind = 3; // Ros
     event.previous_id = 0x0304;
     event.reason = 1;
-    const Bytes golden{0x02, 0x01, 0x03, 'c', 'l', 'i', 0x04, 0x03, 0x01};
+    const Bytes golden{0x02, 0x01, 0x03, 'c', 'l', 'i', 0x03, 0x04, 0x03, 0x01};
     CHECK(encodeLease(event) == golden);
     auto decoded = decodeLease(golden);
     REQUIRE(decoded.has_value());
     CHECK(decoded->holder_id == 0x0102);
     CHECK(decoded->holder_name == "cli");
+    CHECK(decoded->holder_kind == 3);
     CHECK(decoded->previous_id == 0x0304);
     CHECK(decoded->reason == 1);
     requireEveryPrefixRefused(golden, [](auto p) { return decodeLease(p); });
     requireTrailingByteRefused(golden, [](auto p) { return decodeLease(p); });
 
-    CHECK(encodeLease(LeaseEvent{}) == Bytes{0, 0, 0, 0, 0, 0});
+    CHECK(encodeLease(LeaseEvent{}) == Bytes{0, 0, 0, 0, 0, 0, 0});
     event.holder_name.assign(255, 'n');
     CHECK(decodeLease(encodeLease(event)).has_value());
     event.holder_name.assign(256, 'n');

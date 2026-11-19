@@ -729,3 +729,33 @@ TEST_CASE("GET_INFO requires complete identity and validates name bytes")
     CHECK(hex(result.device_id)=="020406080a0c");CHECK(result.name=="robot");
     for(int i=0;i<4;++i) {CHECK_THROWS_AS(client.info(),Error);}
 }
+
+TEST_CASE("resolveTcpEndpoint keeps numeric addresses, resolves names and refuses malformed endpoints")
+{
+    CHECK(drivelink::resolveTcpEndpoint("tcp://127.0.0.1:47620") == "tcp://127.0.0.1:47620");
+    CHECK(drivelink::resolveTcpEndpoint("tcp://[::1]:9") == "tcp://::1:9");
+    const auto local = drivelink::resolveTcpEndpoint("tcp://localhost:47620");
+    CHECK((local == "tcp://127.0.0.1:47620" || local == "tcp://::1:47620"));
+    for (const char *bad : {"127.0.0.1:1", "tcp://:1", "tcp://host", "tcp://host:0", "tcp://host:70000", "tcp://host:1x"})
+    {
+        INFO(bad);
+        try
+        {
+            (void)drivelink::resolveTcpEndpoint(bad);
+            CHECK(false);
+        }
+        catch (const drivelink::Error &e)
+        {
+            CHECK(e.kind == drivelink::ErrorKind::Usage);
+        }
+    }
+    try
+    {
+        (void)drivelink::resolveTcpEndpoint("tcp://name.invalid:1");
+        CHECK(false);
+    }
+    catch (const drivelink::Error &e)
+    {
+        CHECK(e.kind == drivelink::ErrorKind::Connection);
+    }
+}

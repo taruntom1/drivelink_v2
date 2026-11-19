@@ -22,6 +22,26 @@ commands are in [development.md](development.md).
   also flashes the board through DTR/RTS.
 - **COM4** is the native USB port, the console.
 
+## The board through the agent (WSL)
+
+`drivelink-agent` is Linux only. To put the board behind it, lend COM3's
+adapter to WSL with `tools/wsl_serial.py` (one-time setup: `usbipd bind` in an
+admin shell and the `dialout` group in WSL; see
+[development.md](development.md), "Serial adapter in WSL"). `run` attaches it
+(it shows up as `/dev/ttyACM0`), runs the command and always gives it back:
+
+```
+python tools/wsl_serial.py run -- wsl.exe --exec bash -c 'drivelink-agent --port 47620 --token <token> --device "bench=serial://$DRIVELINK_WSL_TTY@921600"'
+```
+
+Windows reaches the agent at `127.0.0.1:47620` (WSL forwards localhost).
+While it is attached, COM3 is gone from Windows. Stop the agent (Ctrl+C) to
+give the adapter back before flashing or a direct check. The GUI's PC check
+`gui_remote_tests benchRemote` (`DRIVELINK_GUI_BENCH_AGENT=127.0.0.1:47620`,
+`_TOKEN`, `_DEVICE=bench`, `_CLI=<drivelink-cli.exe>`) runs against it and
+writes nothing to the board. Over serial the agent keeps the port across a
+REBOOT, so its Boot path runs here (a TCP vdev looks like device loss).
+
 ## Serial traps
 
 - **First open resets the board.** The first time the adapter's port is opened

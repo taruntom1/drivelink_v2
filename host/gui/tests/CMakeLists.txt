@@ -40,6 +40,18 @@ target_compile_definitions(gui_settings_tests PRIVATE VDEV_PATH="$<TARGET_FILE:d
 target_link_libraries(gui_settings_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
 add_dependencies(gui_settings_tests drivelink-vdev)
 
+# Remote mode (H3b-1): the pure rules on both OSes; through drivelink-agent
+# and vdev where the agent builds (Linux).
+qt_add_executable(gui_remote_tests test_remote.cpp test_support.hpp)
+set_target_properties(gui_remote_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+target_compile_definitions(gui_remote_tests PRIVATE VDEV_PATH="$<TARGET_FILE:drivelink-vdev>")
+target_link_libraries(gui_remote_tests PRIVATE drivelink_gui_backend drivelink_gui_shell Qt6::Test)
+add_dependencies(gui_remote_tests drivelink-vdev)
+if(DRIVELINK_BUILD_AGENT)
+  target_compile_definitions(gui_remote_tests PRIVATE AGENT_PATH="$<TARGET_FILE:drivelink-agent>")
+  add_dependencies(gui_remote_tests drivelink-agent)
+endif()
+
 qt_add_executable(gui_quick_tests tst_main.cpp)
 set_target_properties(gui_quick_tests PROPERTIES WIN32_EXECUTABLE FALSE)
 target_compile_definitions(gui_quick_tests PRIVATE QUICK_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -69,6 +81,9 @@ set_tests_properties(gui-monitor PROPERTIES TIMEOUT 300
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:60000")
 add_test(NAME gui-panels COMMAND gui_panel_tests)
 set_tests_properties(gui-panels PROPERTIES TIMEOUT 300
+  ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")
+add_test(NAME gui-remote COMMAND gui_remote_tests)
+set_tests_properties(gui-remote PROPERTIES TIMEOUT 240
   ENVIRONMENT_MODIFICATION "${gui_test_env};QTEST_FUNCTION_TIMEOUT=set:90000")
 add_test(NAME gui-settings COMMAND gui_settings_tests)
 set_tests_properties(gui-settings PROPERTIES TIMEOUT 120
