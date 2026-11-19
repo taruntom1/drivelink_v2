@@ -73,7 +73,8 @@ class Cli:
 WINDOWS = sys.platform == 'win32'
 EXE = '.exe' if WINDOWS else ''
 DEB_FILES = ['/usr/bin/drivelink-gui', '/usr/bin/drivelink-cli', '/usr/bin/drivelink-vdev',
-             '/usr/share/doc/drivelink/copyright', '/usr/share/doc/drivelink/THIRD_PARTY_NOTICES.txt',
+             '/usr/share/doc/drivelink/copyright', '/usr/share/drivelink/THIRD_PARTY_NOTICES.txt',
+             '/usr/share/drivelink/LICENSE.txt',
              '/usr/share/applications/drivelink.desktop']
 
 

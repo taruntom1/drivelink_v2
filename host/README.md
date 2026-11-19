@@ -69,7 +69,7 @@ sudo apt install ./drivelink_<version>_amd64.deb
 apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. It
 installs `drivelink-gui`, `drivelink-cli` and `drivelink-vdev` in `/usr/bin`
 and a **DriveLink** application entry; the licence and third-party notices are
-in `/usr/share/doc/drivelink/`. Remove it with `sudo apt remove drivelink`.
+in `/usr/share/drivelink/`. Remove it with `sudo apt remove drivelink`.
 The GUI works as on Windows (above). Serial ports need your user in the
 `dialout` group (`sudo usermod -aG dialout $USER`, then log in again). The GUI
 keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. The package is

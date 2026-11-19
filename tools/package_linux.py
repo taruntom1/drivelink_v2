@@ -137,14 +137,18 @@ def stage(build_dir):
         shutil.copyfile(source, bin_dir / program)
         run_logged(['strip', '--strip-unneeded', bin_dir / program], build_dir / 'deb/strip.log')
         (bin_dir / program).chmod(0o755)
+    # The licence and notices live in /usr/share/drivelink: minimised systems
+    # (Ubuntu's container images) drop /usr/share/doc except `copyright`.
+    data = root / f'usr/share/{PACKAGE}'
+    data.mkdir(parents=True)
+    licence = lf((ROOT / 'LICENSE').read_text(encoding='utf-8'))
+    (data / 'LICENSE.txt').write_text(licence, encoding='utf-8')
+    (data / 'THIRD_PARTY_NOTICES.txt').write_text(lf(NOTICES.read_text(encoding='utf-8')), encoding='utf-8')
     docs = root / f'usr/share/doc/{PACKAGE}'
     docs.mkdir(parents=True)
-    licence = lf((ROOT / 'LICENSE').read_text(encoding='utf-8'))
-    (docs / 'LICENSE.txt').write_text(licence, encoding='utf-8')
-    (docs / 'THIRD_PARTY_NOTICES.txt').write_text(lf(NOTICES.read_text(encoding='utf-8')), encoding='utf-8')
     (docs / 'copyright').write_text(
         f'DriveLink\n\n{licence.rstrip()}\n\nThird-party software: see '
-        f'/usr/share/doc/{PACKAGE}/THIRD_PARTY_NOTICES.txt. Qt and the C++ runtime are '
+        f'/usr/share/{PACKAGE}/THIRD_PARTY_NOTICES.txt. Qt and the C++ runtime are '
         'not bundled; they come from the Ubuntu packages this package depends on.\n',
         encoding='utf-8')
     applications = root / 'usr/share/applications'

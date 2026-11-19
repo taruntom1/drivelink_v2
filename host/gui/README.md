@@ -660,8 +660,9 @@ the Qt install (`C:/Qt/6.12.0/mingw_64/sbom/`), as a superset.
 on Windows; host-linux-package CI uploads the result) builds the
 `linux-release` preset, stages `/usr/bin/drivelink-{gui,cli,vdev}` (stripped),
 `/usr/share/applications/drivelink.desktop` and
-`/usr/share/doc/drivelink/` (`copyright`, `LICENSE.txt`,
-`THIRD_PARTY_NOTICES.txt`), smokes the staged programs and writes
+`/usr/share/drivelink/` (`LICENSE.txt`, `THIRD_PARTY_NOTICES.txt`; not under
+`/usr/share/doc`, which minimised systems drop) with
+`/usr/share/doc/drivelink/copyright` pointing there, smokes the staged programs and writes
 `build/deb/drivelink_<version>_<arch>.deb`. It bundles nothing: Qt and the
 C++ runtime come from Ubuntu's packages, so staging fails on any shared
 library. Depends is `dpkg-shlibdeps`' list plus `QML_PACKAGES`, the runtime
