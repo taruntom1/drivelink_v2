@@ -88,8 +88,10 @@ Through the agent the CLI adds `--device NAME --token TOKEN` (or
 - `groups.cpp` is the pure logic: the routing policy, each device's virtual
   subscription-group map (allocation serials, Dirty slots cleared after a
   client leaves) and LIST synthesis. It has no I/O and is unit tested.
-- DISARM always uses the Session's fast path. One is on the link at a time;
-  DISARMs that arrive meanwhile go out together right after it.
+- DISARM always goes out at once on the Session's fast path. Only when the
+  Session cannot admit another (ordinary requests fill its queue and a DISARM
+  is in flight) does one wait, at most one per connection; those waiting go
+  out as one DISARM when the one in flight completes.
 
 ## Tests
 

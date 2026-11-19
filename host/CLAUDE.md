@@ -61,8 +61,8 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   thread owns sockets, routing and group maps; Session completions and frames
   come to it through the dispatcher, guarded by the device's link and map
   generations. Never close a connection inline while iterating clients. DISARM
-  from any client always goes out on the fast path (one in flight, later ones
-  sent right after it); until H3a-2's lease, ARM, CMD_CONFIG/CMD_CLEAR and
+  from any client goes out at once on the fast path (it waits, bounded, only
+  when the Session cannot admit it); until H3a-2's lease, ARM, CMD_CONFIG/CMD_CLEAR and
   command frames never reach a device. On every device open: GET_INFO, DISARM,
   clear all groups, then accept clients. Keep routing, group map and LIST
   logic pure in `groups.cpp` with unit tests.

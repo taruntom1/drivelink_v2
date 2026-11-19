@@ -132,10 +132,12 @@ struct Device
     std::thread connector;
     std::string last_failure;
     uint64_t dropped = 0;
-    // One DISARM at a time on the link; DISARMs that arrive meanwhile are sent
-    // together right after it, so each is a fresh DISARM after its request.
+    // A DISARM goes out at once. Only when the Session cannot admit another
+    // (its reserved DISARM slot is taken while ordinary requests fill the
+    // queue) does it wait, at most one per connection, and those waiting are
+    // sent together as one DISARM when one in flight completes.
     struct Waiter { std::weak_ptr<Connection> client; uint8_t seq, family, op; };
-    bool disarm_inflight = false;
+    unsigned disarm_inflight = 0;
     std::vector<Waiter> disarm_next;
 
     Device(Agent::Impl &a, DeviceConfig c) : agent(a), config(std::move(c)), retry(a.io), maintenance(a.io) {}
@@ -156,7 +158,7 @@ struct Device
     void listGroups(const std::shared_ptr<Connection> &c, uint8_t seq, uint16_t start);
     void release(const std::shared_ptr<Connection> &c);
     void disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op);
-    void sendDisarm(std::vector<Waiter> waiters);
+    bool sendDisarm(std::vector<Waiter> waiters); // false: not admitted
 };
 
 namespace
@@ -460,7 +462,7 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
 {
     connecting = false;
     observer = observer_id;
-    disarm_inflight = false;
+    disarm_inflight = 0;
     disarm_next.clear();
     if (agent.stopping) { s->close(); return; }
     session = std::move(s);
@@ -508,7 +510,7 @@ void Device::offline(const std::string &why)
     groups.reset(0, 0);
     ++map_generation;
     clearing.clear();
-    disarm_inflight = false;
+    disarm_inflight = 0;
     disarm_next.clear();
     last_failure = why;
     failed(why);
@@ -642,12 +644,28 @@ void Device::forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint
 
 void Device::disarm(const std::shared_ptr<Connection> &c, uint8_t seq, uint8_t family, uint8_t op)
 {
-    Waiter waiter{c, seq, family, op};
-    if (disarm_inflight) { disarm_next.push_back(std::move(waiter)); return; }
-    sendDisarm({std::move(waiter)});
+    if (sendDisarm({Waiter{c, seq, family, op}})) { return; }
+    // Not admitted: wait for the DISARM in flight. One waiter per connection;
+    // an earlier one from the same connection is answered Busy.
+    for (auto &w : disarm_next)
+    {
+        if (w.client.lock() == c)
+        {
+            c->send(msg::kCoreResponse, coreReply(w.seq, w.family, w.op, u8(defs::Result::Busy), u8(defs::Detail::None)));
+            w = Waiter{c, seq, family, op};
+            return;
+        }
+    }
+    if (disarm_inflight == 0)
+    {
+        // Nothing in flight to wait for: the queue is full of other work.
+        c->send(msg::kCoreResponse, coreReply(seq, family, op, u8(defs::Result::Busy), u8(defs::Detail::None)));
+        return;
+    }
+    disarm_next.push_back(Waiter{c, seq, family, op});
 }
 
-void Device::sendDisarm(std::vector<Waiter> waiters)
+bool Device::sendDisarm(std::vector<Waiter> waiters)
 {
     auto answer = [](const std::vector<Waiter> &to, uint8_t result, uint8_t detail) {
         for (const auto &w : to)
@@ -655,24 +673,28 @@ void Device::sendDisarm(std::vector<Waiter> waiters)
             if (auto client = w.client.lock()) { client->send(msg::kCoreResponse, coreReply(w.seq, w.family, w.op, result, detail)); }
         }
     };
-    disarm_inflight = true;
     try
     {
-        // Through the Session's DISARM path: fast-path MSG_TYPE, its own
-        // admission slot, ahead of queued requests.
+        // The Session's DISARM path: fast-path MSG_TYPE, its own admission
+        // slot, ahead of queued requests.
         session->asyncRequest(static_cast<uint8_t>(defs::Family::System), static_cast<uint8_t>(defs::SystemOp::Disarm), {},
             [this, waiters, answer, link_id = link](std::expected<Reply, Error> reply) {
                 if (link != link_id) { return; }
-                disarm_inflight = false;
+                if (disarm_inflight) { --disarm_inflight; }
                 if (reply) { answer(waiters, reply->result, reply->detail); }
                 else if (localFailure(reply.error())) { answer(waiters, u8(defs::Result::Busy), u8(defs::Detail::None)); }
-                if (!disarm_next.empty()) { sendDisarm(std::exchange(disarm_next, {})); }
+                if (!disarm_next.empty())
+                {
+                    auto next = std::exchange(disarm_next, {});
+                    if (!sendDisarm(next)) { answer(next, u8(defs::Result::Busy), u8(defs::Detail::None)); }
+                }
             });
+        ++disarm_inflight;
+        return true;
     }
     catch (const Error &)
     {
-        disarm_inflight = false;
-        answer(waiters, u8(defs::Result::Busy), u8(defs::Detail::None));
+        return false;
     }
 }
 
@@ -831,7 +853,13 @@ struct ListJob : std::enable_shared_from_this<ListJob>
     }
     void page(std::expected<Reply, Error> r)
     {
-        if (device.link != link || !r) { return; } // unanswered: the client's timeout applies
+        if (device.link != link) { return; }
+        if (!r)
+        {
+            // A timeout stays unanswered; a local failure is answered Busy.
+            if (localFailure(r.error())) { answer(u8(defs::Result::Busy), u8(defs::Detail::None)); }
+            return;
+        }
         if (!accepted(r->result)) { answer(r->result, r->detail); return; }
         auto parsed = parseListPage(r->body);
         // A malformed or non-advancing device listing is left unanswered.

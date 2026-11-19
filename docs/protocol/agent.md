@@ -142,10 +142,11 @@ Frames from the device:
 `ARM` (system op 2), `CMD_CONFIG` and `CMD_CLEAR` are answered
 `Busy/LeaseRequired` without reaching the device, and command-group frames are
 dropped. System DISARM (op 3) and the fast path 0x03 are forwarded from every
-client at once, always on the fast path. One DISARM is on the device link at a
-time: DISARMs that arrive meanwhile are sent as one more DISARM right after it,
-and each client gets the answer to a DISARM sent after its request. H3a-2
-replaces this rule with the lease.
+client at once, always on the fast path. Only if the agent's link cannot take
+another DISARM (ordinary requests fill its queue and a DISARM is already in
+flight) does one wait, at most one per connection, and those waiting go out as
+one DISARM when the one in flight completes. H3a-2 replaces this rule with the
+lease.
 
 ### Subscription groups
 
