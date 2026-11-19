@@ -1,4 +1,6 @@
 #include "format.hpp"
+#include <algorithm>
+#include <string>
 namespace cli
 {
 namespace
@@ -348,5 +350,32 @@ Json toJson(const Frame &v)
 Json toJson(const Event &v)
 {
     return std::visit([](const auto &x) { return toJson(x); }, v);
+}
+Json toJson(const agent::DeviceRecord &v)
+{
+    const bool has_id = std::any_of(v.device_id.begin(), v.device_id.end(), [](uint8_t b) { return b != 0; });
+    return {{"alias", v.alias},
+            {"online", v.online},
+            {"device_id", has_id ? Json(agent::formatDeviceId(v.device_id)) : Json(nullptr)},
+            {"name", v.name},
+            {"endpoint", v.endpoint},
+            {"clients", v.clients}};
+}
+std::string deviceLine(const agent::DeviceRecord &v)
+{
+    const bool has_id = std::any_of(v.device_id.begin(), v.device_id.end(), [](uint8_t b) { return b != 0; });
+    std::string name = "-";
+    if (!v.name.empty())
+    {
+        name = "\"";
+        for (const char c : v.name)
+        {
+            if (c == '"' || c == '\\') { name += '\\'; }
+            name += c;
+        }
+        name += '"';
+    }
+    return v.alias + (v.online ? " online " : " offline ") + (has_id ? agent::formatDeviceId(v.device_id) : "-") + ' ' +
+           name + ' ' + v.endpoint + " clients=" + std::to_string(v.clients);
 }
 } // namespace cli

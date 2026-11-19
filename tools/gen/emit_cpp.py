@@ -9,7 +9,8 @@ from model import KINDS, SEVERITIES, pascal, descriptor_min_payload
 
 GEN_DIR = "protocol/include/drivelink/protocol/gen"
 
-DIRECTION_TEXT = {"host_to_esp": "host to ESP", "esp_to_host": "ESP to host", "both": "either way"}
+DIRECTION_TEXT = {"host_to_esp": "host to ESP", "esp_to_host": "ESP to host", "both": "either way",
+                  "host_to_agent": "host to agent", "agent_to_host": "agent to host"}
 KIND_ENUM = {"param": "Param", "signal": "Signal", "input": "Input", "action": "Action"}
 TYPE_ENUM = {"bool": "Bool", "u8": "U8", "u16": "U16", "u32": "U32", "i32": "I32", "f32": "F32", "enum": "Enum", "none": "None"}
 FLAG_ENUM = {

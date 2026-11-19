@@ -3,6 +3,8 @@
 #include "time.hpp"
 #include "error.hpp"
 #include "async.hpp"
+#include "agent.hpp"
+#include <optional>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -31,6 +33,12 @@ struct Reply
     ClockModel clock{};
     uint64_t generation=0;
 };
+// Connect to a device through drivelink-agent (docs/protocol/agent.md).
+// The device is an alias or a 12-hex device id; empty opens a lobby.
+struct AgentHello
+{
+    std::string token, device, client_name = "drivelink";
+};
 struct SessionOptions
 {
     unsigned baud = 921600;
@@ -40,6 +48,16 @@ struct SessionOptions
     size_t request_capacity = 64;
     Dispatcher dispatcher{};
     bool periodic_time = true;
+    // tcp:// only: send the agent Hello before any other traffic. A refusal
+    // throws DeviceError (agent result/detail; AgentVersion sets peer_version).
+    // Periodic time pings are off: the agent distributes its clock model.
+    std::optional<AgentHello> agent{};
+    // A timed-out request ID is reusable after this delay instead of only
+    // after reconnect (0 = never). For long-lived links such as the agent's.
+    std::chrono::milliseconds retire_quarantine{0};
+    // Also deliver subscription-group frames to observe() handlers (bounded,
+    // drops counted in droppedNotifications()). Group buffers still work.
+    bool observe_streams = false;
 };
 // One Asio I/O thread; sync waiters serialize except emergency DISARM.
 // Timed-out IDs retire until reconnect. Callbacks only use the dispatcher.
@@ -78,6 +96,8 @@ class Session
         });} catch(...) {std::lock_guard lock(state->mutex);state->terminate={};state->interrupt={};state->reservation.reset();throw;}
         return RequestHandle(state);
     }
+    // The agent's accepted Hello (set only when options.agent was given).
+    std::optional<agent::HelloAccepted> agentHello() const;
     ClockModel clockModel() const;
     uint64_t generation() const;
     uint16_t maxPayload() const;
@@ -112,4 +132,8 @@ class Session
     std::shared_ptr<void> callbackSlot(bool disarm=false);
     void dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task);
 };
+// Open a lobby connection to an agent and list its devices (ListDevices).
+std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint, const std::string &token,
+                                                  std::chrono::milliseconds timeout = std::chrono::milliseconds(3000),
+                                                  const std::string &client_name = "drivelink");
 } // namespace drivelink

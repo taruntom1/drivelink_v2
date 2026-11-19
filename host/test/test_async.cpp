@@ -124,6 +124,48 @@ TEST_CASE("DISARM bypasses a stalled service and reserves admission when ordinar
     REQUIRE(done.wait_for(std::chrono::seconds(2))==std::future_status::ready);CHECK(done.get().has_value());
     session.close();REQUIRE(pending.wait_for(std::chrono::seconds(2))==std::future_status::ready);
 }
+TEST_CASE("DISARM goes out after every sequence ID is retired, and a quarantine frees them") {
+    // The peer answers only system ops 1 (as a ping-free probe) and 3; mutations time out.
+    std::atomic<bool> answer_probe{false};
+    Peer peer([&](Socket &s) {
+        try {
+            for(;;) {
+                auto packet=read(s);
+                if(packet.payload.size()<4) {continue;}
+                if(packet.payload[2]==1 && (packet.payload[3]==3 || (packet.payload[3]==1 && answer_probe))) {answer(s,packet);}
+            }
+        } catch(const asio::system_error &) {}
+    });
+    auto options=testOptions();options.timeout=std::chrono::milliseconds(30);options.read_retries=0;
+    options.request_capacity=128;options.retire_quarantine=std::chrono::milliseconds(1500);
+    Session session(peer.endpoint(),options);
+    auto exhaust=[&] {
+        for(int round=0;round<2;++round) {
+            std::vector<std::future<void>> waits;
+            for(int i=0;i<128;++i) {
+                auto done=std::make_shared<std::promise<void>>();waits.push_back(done->get_future());
+                session.asyncRequest(4,2,Bytes{1,0,0,0,0,0,0,0},[done](auto r){CHECK_FALSE(r);done->set_value();});
+            }
+            for(auto &w:waits) {REQUIRE(w.wait_for(std::chrono::seconds(5))==std::future_status::ready);}
+        }
+    };
+    exhaust();
+    // Ordinary requests have no ID left...
+    std::promise<std::expected<Reply,Error>> refused;auto refusal=refused.get_future();
+    session.asyncRequest(1,1,{},[&](auto r){refused.set_value(std::move(r));});
+    REQUIRE(refusal.wait_for(std::chrono::seconds(2))==std::future_status::ready);
+    auto r=refusal.get();REQUIRE_FALSE(r);CHECK(r.error().kind==ErrorKind::Connection);CHECK_FALSE(r.error().outcome_unknown);
+    // ...but DISARM still reaches the peer and is answered.
+    std::promise<std::expected<Reply,Error>> disarmed;auto stop=disarmed.get_future();
+    session.asyncRequest(1,3,{},[&](auto reply){disarmed.set_value(std::move(reply));});
+    REQUIRE(stop.wait_for(std::chrono::seconds(2))==std::future_status::ready);CHECK(stop.get().has_value());
+    // After the quarantine the retired IDs are reusable.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1600));answer_probe=true;
+    std::promise<std::expected<Reply,Error>> later;auto again=later.get_future();
+    session.asyncRequest(1,1,{},[&](auto reply){later.set_value(std::move(reply));});
+    REQUIRE(again.wait_for(std::chrono::seconds(2))==std::future_status::ready);CHECK(again.get().has_value());
+    session.close();
+}
 TEST_CASE("DISARM reserves a TX entry when ordinary requests and command frames fill the queue") {
     using namespace drivelink_test;
     std::promise<void> trigger,drained;auto start=trigger.get_future().share();auto all_sent=drained.get_future();

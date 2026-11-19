@@ -104,12 +104,13 @@ One script holds the list of checks and their commands. CI calls it with `--only
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
 | `installer` | `tools/package_win.py`: the `windows-mingw-release` preset, the `windeployqt` staging directory, its notices coverage and a self-contained smoke (Qt and MinGW off `PATH`), then the Inno Setup installer in `build/installer/`. Windows only | As `host-win`, plus Inno Setup 6 (`ISCC`): `winget install --id JRSoftware.InnoSetup -e` |
-| `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest, `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
+| `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest (not label `agent`), `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
+| `agent` | The `linux-no-gui` preset (GUI off): build `drivelink-agent`, then ctest with label `agent` (`agent-unit`, `agent-integration`: the agent against the vdev and the CLI). `host-linux` skips that label (`-LE agent`), so the tests run once | As `host-linux` (WSL on Windows, build in `~/.cache/drivelink/<worktree>/agent`), but it runs `tools/setup_linux.sh --check agent`: no Qt needed. Part of `quick` on Linux only |
 | `deb` | `tools/package_linux.py`: the `linux-release` preset, a stage under `/usr` (stripped GUI, CLI and vdev, desktop entry, licence and notices in `/usr/share/drivelink`, which minimised systems keep, unlike `/usr/share/doc`) that bundles no shared library, a smoke of the staged programs, then `build/deb/drivelink_<version>_<arch>.deb`. Depends is `dpkg-shlibdeps`' list plus the QML modules the GUI imports | As `host-linux` (WSL on Windows; the stage and build are in `~/.cache/drivelink/<worktree>/linux-release` there). Installing it is CI's `host-linux-install` job, or `installed_gui_smoke.py --deb` as root |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 | `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
-- **Modes.** `quick` is `gen`, `native` and the host check of this OS. `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
+- **Modes.** `quick` is `gen`, `native` and the host check of this OS (on Linux also `agent`). `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
 - **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
 - **Unchanged checks are skipped.** A check that passed shows as `pass (unchanged)` until a file it covers changes. `--force` runs it anyway.
   - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns only `gen`. Any other change reruns every check.
@@ -186,13 +187,14 @@ It installs only what is missing and never removes or upgrades anything.
 | Profile | Packages for | Used by |
 |---|---|---|
 | `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
+| `agent` | the `base` packages (the GUI-less superbuild; no Qt) | `agent` (WSL and CI) |
 | `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` (WSL and CI) |
 
 ```bash
 wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host
 ```
 
-`sh tools/setup_linux.sh --check host` only reports what is missing; `host-linux`
+`sh tools/setup_linux.sh --check <profile>` only reports what is missing; `host-linux`
 runs it first. Later steps add profiles (ROS in H4a). `.gitattributes` keeps
 `*.sh` at LF, because WSL runs the scripts from the Windows checkout.
 
@@ -209,6 +211,7 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 - Host tests and host packages are separate jobs, so a test failure never hides
   the package's result and each job finishes sooner.
 - `host-linux-tests` runs `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
+- `agent` runs `agent` in an `ubuntu:26.04` container with `tools/setup_linux.sh agent` (no Qt), and uploads `agent-validation` on failure. `host-linux-tests` skips the `agent` ctest label, so each test runs once.
 - `host-linux-package` runs `deb` in the same container (git marked safe, so the
   version has its `+g<sha7>`) and uploads `drivelink-linux-deb`.
   `host-linux-install` then takes that artifact into a clean `ubuntu:26.04` with

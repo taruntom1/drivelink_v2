@@ -36,7 +36,8 @@ logs its internal choices.
 | H2e | Tune screen: runs and metrics (H2e-1), session (H2e-2), plant identification (H2e-3) | H2d | vdev; H2e-1 also bare board (wire change); deferred: motor | independent |
 | H2f | IMU calibration custom panel | H2c; may run beside H2d/H2e | vdev; deferred: IMU | self |
 | H2g | Inno Setup installer (unsigned), root `VERSION`, third-party notices, local GUI close-out | H2e, H2f | bare board: installed GUI | self |
-| H3a | Agent for several devices: server, access, per-device arbitration and lease, clock model, history, agent MSG_TYPEs; library agent client; agent check and CI | H1b (planned after H2g) | vdev | independent |
+| H3a-1 | Agent for several devices: server, access, routing, subscription groups, events, agent MSG_TYPEs; library agent client; agent check and CI. Interim: nobody can arm through it | H1b (planned after H2g) | vdev | independent |
+| H3a-2 | Agent lease (Take preempts), exclusive operations, clock model, history, client list; CLI lease commands | H3a-1 | vdev | independent |
 | H3b | GUI remote mode with the agent's device list, mDNS, `wsl_serial.py` | H3a, H2g | PC: agent in WSL owns the bench board | independent |
 | H3c | Pi deployment: install script, systemd unit, udev rule, config | H3a; may run beside H3b | deferred: Pi | self |
 | H4a | `drivelink_hardware` (ros2_control), ROS in `setup_linux.sh`, ros check and CI | H3a | vdev; deferred: robot | independent |
@@ -58,7 +59,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | How Open/Save pick a session file (a native dialog cannot pass Esc to DISARM) | settled in H2e-2: non-modal native dialogs, allowed while armed (user decision) |
 | How suggested gains map onto tune-flagged params generically (no module names) | settled in H2e-3: naming conventions in `docs/adding-a-module.md` (`<prefix>.kp/.ki/.kd`, responses named after the prefix, the `open_loop` value); no wire change (user decision) |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | settled in H2f: versioned JSON of the decoded fields with provenance (`host/gui/modules/imu.bno055/README.md`); Euler as the device reports it, none in the file; nothing re-sent, interruptions recorded as "may have run" |
-| Agent default port, history sizes, retry policy for an offline device | H3a |
+| Agent default port, history sizes, retry policy for an offline device | port 47620 and a 2 s fixed retry settled in H3a-1; history sizes H3a-2 |
 | mDNS library, service name and TXT records | H3b |
 | Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | H3b |
 | The device-list screen on Connect's Agent tab (not in Figma) | H3b |
@@ -307,6 +308,8 @@ Review: self.
 ## H3a Agent
 
 **Depends on** H1b; planned after H2g by the build order. **Architecture:** "`drivelink-agent`".
+
+**Split (user decision 2026-11-19):** H3a-1 (merged scope below without the lease, exclusive operations, clock model and history; [plan](archive/h3a-1-implementation.md)) and H3a-2 (those). Until H3a-2, ARM, CMD_CONFIG/CMD_CLEAR are refused with `Busy/LeaseRequired` and command frames dropped. Take preempts in H3a-2: fast-path DISARM, revoke, grant. Agent refusals use shared Detail values 54..58; core stays v10. H3a-2 bumps the agent protocol to v2.
 
 Scope:
 - `host/agent/` (`drivelink-agent`, Linux only, `COLCON_IGNORE`): serves several devices, each with its own session, I/O, model, lease, groups, clock model and history; reconnects a lost port without affecting the others; keeps running without clients; config file (bind, token, device list with aliases) plus flags.

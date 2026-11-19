@@ -289,6 +289,7 @@ class DescriptorHash(TempCase):
         changes = [
             ("registry.yaml", "{name: fx_event,     value: 0xC0,", "{name: fx_event,     value: 0xC2,"),
             ("registry.yaml", "value: 0x20, direction: both}", "value: 0x20, direction: host_to_esp}"),
+            ("registry.yaml", "value: 0x20, direction: both}", "value: 0x20, direction: host_to_agent}"),
             ("registry.yaml", 'description: "A command."', 'description: "A command!"'),
             ("registry.yaml", "first: 0x81, last: 0x8F", "first: 0x81, last: 0x8E"),
             ("diag_codes.yaml", "name: Broken", "name: Broken2"),

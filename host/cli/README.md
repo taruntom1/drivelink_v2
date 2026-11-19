@@ -105,6 +105,39 @@ sample of a done capture and adds typed rows; `capture-read --csv` prints
 `index,time_us,REF...`, where time is relative to the trigger sample
 (`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.
 
+## Through an agent
+
+`drivelink-agent` (Linux; [agent protocol](../../docs/protocol/agent.md)) owns
+the device ports and shares each device with several clients. Point the CLI at
+the agent's `tcp://` endpoint and name the device:
+
+```sh
+export DRIVELINK_AGENT_TOKEN=...            # or --token TOKEN
+drivelink-cli --endpoint tcp://127.0.0.1:47620 agent-devices
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base info
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device 02444c000001 --json get 0:0:4
+```
+
+`--device` takes an alias or a 12-hex device id; with it every command above
+works through the agent. It needs a `tcp://` endpoint and a token (`--token`,
+else the `DRIVELINK_AGENT_TOKEN` environment variable); otherwise it is a usage
+error (exit 2). Without `--device` the token is ignored. `--client-name NAME`
+(default `drivelink-cli`) is what the agent shows other clients.
+
+`agent-devices` (no `--device`) lists the agent's devices, one line each:
+`ALIAS online|offline ID NAME ENDPOINT clients=N` (`-` for an unknown ID or an
+empty name). With `--json` the envelope's `data.devices` is an array of
+`{alias, online, device_id, name, endpoint, clients}`; `device_id` is `null`
+until the agent has read it. Agent refusals (bad token, unknown or offline
+device, a missing lease) are device rejections: exit 5, with the agent's
+`result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
+for a direct endpoint.
+
+Each CLI process is one agent client, and the agent clears a client's group
+slots when it disconnects. `sub-config` therefore does not outlive its process:
+`sub-stream` and `cmd-send` in a later process find the group unconfigured.
+Use a long-lived client (the GUI, a script on the agent protocol) for groups.
+
 ## Test signals (F7b)
 
 `testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT`
