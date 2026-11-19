@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x6B288C95;
+inline constexpr uint32_t kDescriptorHash = 0x2FFC359C;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -248,15 +248,36 @@ enum class OtaStage : uint8_t {
 enum class AgentOp : uint8_t {
     Hello = 1,
     ListDevices = 2,
+    LeaseTake = 3,
+    LeaseRelease = 4,
+    ClientList = 5,
+    TimePing = 6,
 };
 
 enum class AgentEvent : uint8_t {
     Closing = 1,
+    Lease = 2,
+    ClockModel = 3,
+    History = 4,
 };
 
 enum class AgentCloseReason : uint8_t {
     DeviceOffline = 1,
     Shutdown = 2,
+};
+
+enum class LeaseChange : uint8_t {
+    Taken = 1,
+    Released = 2,
+    Disconnected = 3,
+};
+
+enum class HistoryKind : uint8_t {
+    DiagEvent = 1,
+    Arm = 2,
+    Lease = 3,
+    Online = 4,
+    Offline = 5,
 };
 
 inline constexpr size_t kDescriptorMinPayload = 150;
@@ -269,7 +290,7 @@ inline constexpr uint8_t kTimeRequest = 0x02;
 inline constexpr uint8_t kDisarm = 0x03;
 /// command, host to ESP. diag query: GetInfo, GetEntries, Clear.
 inline constexpr uint8_t kDiagQuery = 0x23;
-/// command, host to agent. Agent command (op): hello, device list. Answered by the agent, never forwarded.
+/// command, host to agent. Agent command (op): hello, device list, lease, client list, time ping. Answered by the agent, never forwarded.
 inline constexpr uint8_t kAgentCommand = 0x30;
 /// response, ESP to host. Answer to a core command.
 inline constexpr uint8_t kCoreResponse = 0x41;
@@ -285,7 +306,7 @@ inline constexpr uint8_t kStatusStream = 0x80;
 inline constexpr uint8_t kDiagEvent = 0xC0;
 /// event, ESP to host. Core events: capture done, test signal done, layout applied, OTA state, arm state change.
 inline constexpr uint8_t kCoreEvent = 0xC1;
-/// event, agent to host. Agent events: the connection is closing.
+/// event, agent to host. Agent events: closing, lease change, clock model, history.
 inline constexpr uint8_t kAgentEvent = 0xF0;
 } // namespace msg
 

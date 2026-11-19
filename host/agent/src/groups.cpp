@@ -17,32 +17,55 @@ Route classify(uint8_t msg_type, uint8_t family, uint8_t op)
                    ? Route::Disarm
                    : Route::Malformed;
     }
-    if (msg_type == msg::kCoreCommand)
+    if (msg_type >= defs::kCmdGroupChannelFirst && msg_type < defs::kCmdGroupChannelFirst + defs::kCmdGroupChannelCount)
     {
-        if (family == static_cast<uint8_t>(Family::System))
-        {
-            if (op == static_cast<uint8_t>(defs::SystemOp::Arm)) { return Route::RefuseLease; }
-            if (op == static_cast<uint8_t>(defs::SystemOp::Disarm)) { return Route::Disarm; }
-            return Route::Forward;
-        }
-        if (family == static_cast<uint8_t>(Family::Group))
-        {
-            switch (static_cast<defs::GroupOp>(op))
-            {
-            case defs::GroupOp::CmdConfig:
-            case defs::GroupOp::CmdClear: return Route::RefuseLease;
-            case defs::GroupOp::SubConfig:
-            case defs::GroupOp::SubEnable:
-            case defs::GroupOp::SubClear:
-            case defs::GroupOp::List: return Route::Group;
-            default: return Route::Forward; // the device answers Unsupported
-            }
-        }
-        return Route::Forward;
+        return Route::CommandFrame;
     }
     if (msg_type == msg::kDiagQuery) { return Route::Diag; }
     if (msg_type == msg::kAgentCommand) { return Route::Agent; }
-    return Route::Drop; // time pings, command-group frames, anything else
+    if (msg_type != msg::kCoreCommand) { return Route::Drop; } // time pings, anything else
+    switch (static_cast<Family>(family))
+    {
+    case Family::System:
+        switch (static_cast<defs::SystemOp>(op))
+        {
+        case defs::SystemOp::Arm: return Route::Arm;
+        case defs::SystemOp::Disarm: return Route::Disarm;
+        case defs::SystemOp::Save:
+        case defs::SystemOp::Revert:
+        case defs::SystemOp::FactoryReset:
+        case defs::SystemOp::Reboot:
+        case defs::SystemOp::ExitSafeMode:
+        case defs::SystemOp::SetName:
+        case defs::SystemOp::BenchStall: // test builds only; they stall a loop or crash
+        case defs::SystemOp::BenchCrash: return Route::Exclusive;
+        default: return Route::Forward; // GET_INFO, ACK_FAULT, unknown
+        }
+    case Family::Group:
+        switch (static_cast<defs::GroupOp>(op))
+        {
+        case defs::GroupOp::CmdConfig:
+        case defs::GroupOp::CmdClear: return Route::CmdGroup;
+        case defs::GroupOp::SubConfig:
+        case defs::GroupOp::SubEnable:
+        case defs::GroupOp::SubClear:
+        case defs::GroupOp::List: return Route::Group;
+        default: return Route::Forward; // the device answers Unsupported
+        }
+    // In these families the reads are open and every other op needs the lease.
+    case Family::Layout:
+        return op == static_cast<uint8_t>(defs::LayoutOp::ListInstances) ? Route::Forward : Route::Exclusive;
+    case Family::Capture:
+        return op == static_cast<uint8_t>(defs::CaptureOp::Status) || op == static_cast<uint8_t>(defs::CaptureOp::Read)
+                   ? Route::Forward
+                   : Route::Exclusive;
+    case Family::Testgen:
+        return op == static_cast<uint8_t>(defs::TestgenOp::Status) ? Route::Forward : Route::Exclusive;
+    case Family::Action: return Route::Exclusive;
+    case Family::Ota:
+        return op == static_cast<uint8_t>(defs::OtaOp::Status) ? Route::Forward : Route::Exclusive;
+    default: return Route::Forward; // describe, param (GET, SET, GET_PENDING), unknown families
+    }
 }
 
 std::expected<ListPage, std::string> parseListPage(std::span<const uint8_t> body)
@@ -74,43 +97,45 @@ std::expected<ListPage, std::string> parseListPage(std::span<const uint8_t> body
 
 void GroupMap::reset(uint8_t subs, uint8_t cmds)
 {
-    m_slots.assign(subs, Slot{});
-    m_cmds = cmds;
+    m_slots[0].assign(subs, Slot{});
+    m_slots[1].assign(cmds, Slot{});
     m_seen.clear();
 }
 
-std::optional<uint8_t> GroupMap::find(ClientId client, uint8_t vid) const
+std::optional<uint8_t> GroupMap::find(ClientId client, uint8_t vid, Kind kind) const
 {
-    for (size_t i = 0; i < m_slots.size(); ++i)
+    const auto &slots = pool(kind);
+    for (size_t i = 0; i < slots.size(); ++i)
     {
-        const auto &s = m_slots[i];
+        const auto &s = slots[i];
         if (s.state == State::Owned && s.client == client && s.vid == vid) { return static_cast<uint8_t>(i); }
     }
     return std::nullopt;
 }
 
-std::optional<uint8_t> GroupMap::acquire(ClientId client, uint8_t vid)
+std::optional<uint8_t> GroupMap::acquire(ClientId client, uint8_t vid, Kind kind)
 {
-    if (auto existing = find(client, vid))
+    auto &slots = pool(kind);
+    if (auto existing = find(client, vid, kind))
     {
-        ++m_slots[*existing].inflight;
+        ++slots[*existing].inflight;
         return existing;
     }
-    for (size_t i = 0; i < m_slots.size(); ++i)
+    for (size_t i = 0; i < slots.size(); ++i)
     {
-        auto &s = m_slots[i];
+        auto &s = slots[i];
         if (s.state != State::Free) { continue; }
         s = Slot{};
         s.state = State::Owned; s.client = client; s.vid = vid; s.inflight = 1; s.serial = ++m_serial;
-        s.epoch = lastEpoch(client, vid);
+        s.epoch = lastEpoch(client, vid, kind);
         return static_cast<uint8_t>(i);
     }
     return std::nullopt;
 }
 
-void GroupMap::finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8_t epoch, bool cleared, bool uncertain)
+void GroupMap::finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8_t epoch, bool cleared, bool uncertain, Kind kind)
 {
-    auto &s = m_slots.at(device_slot);
+    auto &s = pool(kind).at(device_slot);
     if (s.serial != serial) { return; } // an earlier allocation's answer
     if (s.inflight) { --s.inflight; }
     if (s.state != State::Owned) { return; } // Dirty: the agent's own CLEAR decides
@@ -119,7 +144,7 @@ void GroupMap::finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8
         s.epoch = epoch;
         s.configured = !cleared;
         s.maybe = false;
-        setLastEpoch(s.client, s.vid, epoch);
+        setLastEpoch(s.client, s.vid, epoch, kind);
     }
     else if (uncertain)
     {
@@ -133,18 +158,20 @@ void GroupMap::finish(uint8_t device_slot, uint64_t serial, bool accepted, uint8
 
 std::optional<std::pair<ClientId, uint8_t>> GroupMap::route(uint8_t device_slot, uint8_t epoch) const
 {
-    if (device_slot >= m_slots.size()) { return std::nullopt; }
-    const auto &s = m_slots[device_slot];
+    const auto &slots = pool(Kind::Sub);
+    if (device_slot >= slots.size()) { return std::nullopt; }
+    const auto &s = slots[device_slot];
     if (s.state != State::Owned || !s.configured || s.epoch != epoch) { return std::nullopt; }
     return std::pair{s.client, s.vid};
 }
 
-std::vector<uint8_t> GroupMap::release(ClientId client)
+std::vector<uint8_t> GroupMap::release(ClientId client, Kind kind)
 {
     std::vector<uint8_t> dirty;
-    for (size_t i = 0; i < m_slots.size(); ++i)
+    auto &slots = pool(kind);
+    for (size_t i = 0; i < slots.size(); ++i)
     {
-        auto &s = m_slots[i];
+        auto &s = slots[i];
         if (s.state != State::Owned || s.client != client) { continue; }
         if (s.configured || s.maybe || s.inflight)
         {
@@ -159,48 +186,49 @@ std::vector<uint8_t> GroupMap::release(ClientId client)
             s = Slot{};
         }
     }
-    std::erase_if(m_seen, [client](const Seen &seen) { return seen.client == client; });
+    std::erase_if(m_seen, [client, kind](const Seen &seen) { return seen.client == client && seen.kind == kind; });
     return dirty;
 }
 
-void GroupMap::markDirty(uint8_t device_slot)
+void GroupMap::markDirty(uint8_t device_slot, Kind kind)
 {
-    auto &s = m_slots.at(device_slot);
+    auto &s = pool(kind).at(device_slot);
     if (s.state == State::Free) { s = Slot{}; s.state = State::Dirty; s.serial = ++m_serial; }
 }
 
-void GroupMap::cleaned(uint8_t device_slot)
+void GroupMap::cleaned(uint8_t device_slot, Kind kind)
 {
-    auto &s = m_slots.at(device_slot);
+    auto &s = pool(kind).at(device_slot);
     if (s.state == State::Dirty) { s = Slot{}; }
 }
 
-std::vector<uint8_t> GroupMap::dirty() const
+std::vector<uint8_t> GroupMap::dirty(Kind kind) const
 {
     std::vector<uint8_t> out;
-    for (size_t i = 0; i < m_slots.size(); ++i)
+    const auto &slots = pool(kind);
+    for (size_t i = 0; i < slots.size(); ++i)
     {
-        if (m_slots[i].state == State::Dirty) { out.push_back(static_cast<uint8_t>(i)); }
+        if (slots[i].state == State::Dirty) { out.push_back(static_cast<uint8_t>(i)); }
     }
     return out;
 }
 
-uint8_t GroupMap::lastEpoch(ClientId client, uint8_t vid) const
+uint8_t GroupMap::lastEpoch(ClientId client, uint8_t vid, Kind kind) const
 {
     for (const auto &seen : m_seen)
     {
-        if (seen.client == client && seen.vid == vid) { return seen.epoch; }
+        if (seen.client == client && seen.kind == kind && seen.vid == vid) { return seen.epoch; }
     }
     return 0;
 }
 
-void GroupMap::setLastEpoch(ClientId client, uint8_t vid, uint8_t epoch)
+void GroupMap::setLastEpoch(ClientId client, uint8_t vid, uint8_t epoch, Kind kind)
 {
     for (auto &seen : m_seen)
     {
-        if (seen.client == client && seen.vid == vid) { seen.epoch = epoch; return; }
+        if (seen.client == client && seen.kind == kind && seen.vid == vid) { seen.epoch = epoch; return; }
     }
-    m_seen.push_back({client, vid, epoch});
+    m_seen.push_back({client, kind, vid, epoch});
 }
 
 std::optional<ListAnswer> synthesizeList(const GroupMap &map, ClientId client,
@@ -213,20 +241,19 @@ std::optional<ListAnswer> synthesizeList(const GroupMap &map, ClientId client,
         GroupEntry e;
         const bool sub = index < map.subs();
         e.kind = sub ? 0 : 1;
-        e.group = static_cast<uint8_t>(sub ? index : index - map.subs());
-        if (sub)
+        const auto kind = sub ? Kind::Sub : Kind::Cmd;
+        const auto vid = static_cast<uint8_t>(sub ? index : index - map.subs());
+        e.group = vid;
+        e.epoch = map.lastEpoch(client, vid, kind);
+        if (auto slot = map.find(client, vid, kind))
         {
-            e.epoch = map.lastEpoch(client, e.group);
-            if (auto slot = map.find(client, e.group))
+            for (const auto &d : device_entries)
             {
-                for (const auto &d : device_entries)
+                if (d.kind == e.kind && d.group == *slot)
                 {
-                    if (d.kind == 0 && d.group == *slot)
-                    {
-                        e = d;
-                        e.group = static_cast<uint8_t>(index);
-                        break;
-                    }
+                    e = d;
+                    e.group = vid;
+                    break;
                 }
             }
         }

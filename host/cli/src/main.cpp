@@ -34,7 +34,9 @@ struct InterruptScope {
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
   [--device ALIAS|ID12 --token TOKEN [--client-name NAME]]   (through drivelink-agent)
-  agent-devices                Through an agent: list its devices (needs --token, no --device)
+  [--lease]                    Through an agent: take the control lease first (needs --device)
+  agent-devices                Through an agent: list its devices and lease holders (needs --token, no --device)
+  agent-clients                Through an agent: list the device's clients and the lease holder (needs --device)
   time-ping | time-sync [DURATION_S]
   ota-status | ota-abort | ota-confirm
   ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]
@@ -71,6 +73,9 @@ Writes are never retried. A write timeout has an unknown outcome.
 JSON is one envelope per command or one per watched event (NDJSON).
 Through an agent: --endpoint tcp://HOST:47620 --device NAME_OR_12HEX --token TOKEN.
 The token may come from DRIVELINK_AGENT_TOKEN; --client-name defaults to drivelink-cli.
+--lease takes the device's control lease (preempting a holder) before the command; it
+ends when this process exits, and the agent then disarms the device and clears this
+client's command groups. Exclusive operations (arm, save, reboot, ...) need the lease.
 Exit: 0 success, 1 internal, 2 usage, 3 connection, 4 timeout, 5 rejection, 6 protocol.
 )";
 [[noreturn]] void usage(const std::string &message)
@@ -340,6 +345,9 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 const auto prediction=before.drift_valid?before.map(s.esp_rx_us):0.0;
                 const bool accepted=estimator.add(s);
                 const auto m=estimator.model(s.host_rx_us);
+                // Through an agent the sample measures the agent's clock (esp_* are agent
+                // times): report whether the composed device clock is valid, map nothing.
+                const bool via_agent=session.agentHello().has_value();
                 auto mapped=mapTime(session.clockModel(),s.esp_rx_us,s.boot_generation);
                 if(session.generation()!=s.boot_generation) {mapped.valid=false;}
                 samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
@@ -353,8 +361,8 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                         {"min_rtt_us",m.min_rtt_us},{"max_rtt_us",m.max_rtt_us}}}});
                 if(json) {
                     auto &sample=samples.back();sample["mapping_valid"]=mapped.valid;sample["mapping_generation"]=mapped.generation;
-                    sample["mapped_host_us"]=mapped.valid?Json(mapped.host_us):Json(nullptr);
-                    sample["mapped_uncertainty_us"]=mapped.valid?Json(mapped.uncertainty_us):Json(nullptr);
+                    sample["mapped_host_us"]=mapped.valid && !via_agent?Json(mapped.host_us):Json(nullptr);
+                    sample["mapped_uncertainty_us"]=mapped.valid && !via_agent?Json(mapped.uncertainty_us):Json(nullptr);
                 }
             } catch(const Error &e) { if(e.kind!=ErrorKind::Timeout || !duration) { throw; } ++timeouts; }
             if(!duration || interrupted) { break; }
@@ -745,7 +753,7 @@ int main(int argc, char **argv)
         argc = wide_count; argv = pointers.data();
 #endif
         std::string endpoint, token, device, client_name = "drivelink-cli";
-        bool have_token = false;
+        bool have_token = false, lease = false;
         SessionOptions options;
         // Short CLI commands own their explicit time measurement; background
         // pings would alter recorded/replayed wire conversations.
@@ -784,6 +792,10 @@ int main(int argc, char **argv)
                 device = value();
                 if (device.empty()) { usage("--device needs an alias or device id"); }
             }
+            else if (args.empty() && arg == "--lease")
+            {
+                lease = true;
+            }
             else if (args.empty() && arg == "--client-name")
             {
                 client_name = value();
@@ -819,6 +831,8 @@ int main(int argc, char **argv)
             if (const char *env = std::getenv("DRIVELINK_AGENT_TOKEN")) { token = env; }
         }
         const bool tcp = endpoint.rfind("tcp://", 0) == 0;
+        if (lease && device.empty()) { usage("--lease needs --device"); }
+        if (args[0] == "agent-clients" && device.empty()) { usage("agent-clients needs --device"); }
         if (args[0] == "agent-devices")
         {
             if (args.size() != 1) { usage("agent-devices takes no arguments"); }
@@ -844,10 +858,31 @@ int main(int argc, char **argv)
             if (token.empty()) { usage("--device needs --token or DRIVELINK_AGENT_TOKEN"); }
             options.agent = AgentHello{token, device, client_name};
         }
-        if (args[0]=="ota-upload") { emit(upload(args,endpoint,options),json);return 0; }
+        if (args[0]=="ota-upload")
+        {
+            if (lease) { usage("--lease does not apply to ota-upload"); }
+            emit(upload(args,endpoint,options),json);return 0;
+        }
         Session session(endpoint, options);
         Client client(session);
         client.info();
+        if (lease) { agentLeaseTake(session); }
+        if (args[0] == "agent-clients")
+        {
+            if (args.size() != 1) { usage("agent-clients takes no arguments"); }
+            const auto clients = agentClients(session);
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &record : clients) { list.push_back(toJson(record)); }
+                emit({{"clients", list}}, true);
+            }
+            else
+            {
+                for (const auto &record : clients) { std::cout << cli::clientLine(record) << '\n'; }
+            }
+            return 0;
+        }
         auto result = run(client, session, args, json);
         if (!result.is_null())
         {

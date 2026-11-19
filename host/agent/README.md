@@ -6,15 +6,17 @@ several clients over TCP: the CLI, the GUI's remote mode (H3b) and the ROS
 plugin (H4a). Linux only; not a colcon package (`COLCON_IGNORE`).
 
 The wire contract is [docs/protocol/agent.md](../../docs/protocol/agent.md)
-(agent protocol v1). The design and its reasons are in
+(agent protocol v2). The design and its reasons are in
 [host-architecture.md](../../plans/host-architecture.md), "`drivelink-agent`".
 
-**H3a-1 state.** Access, devices, routing and subscription groups exist. The
-control lease does not yet (H3a-2), so **no client can arm or command a device
-through the agent**: ARM, CMD_CONFIG and CMD_CLEAR are refused with
-`Busy/LeaseRequired` and command-group frames are dropped. DISARM is forwarded
-from every client. Time pings from clients are dropped; the clock model comes
-in H3a-2, so a client's mapped timestamps are not valid through the agent yet.
+Per device, one client at a time holds the **control lease**: only it may ARM,
+configure command groups and send command frames, and the exclusive operations
+(SAVE, REVERT, FACTORY_RESET, REBOOT, EXIT_SAFE_MODE, SET_NAME, layout,
+capture, testgen, actions, OTA) need it, or a disarmed device that nobody
+holds. Take preempts. When a lease ends (release, a Take, the holder
+disconnecting) the agent disarms the device and clears the old holder's
+command groups. DISARM is forwarded from every client. Reads, param writes,
+ACK_FAULT and subscriptions stay open to all.
 
 ## Build
 
@@ -64,10 +66,13 @@ lists them all. A config file:
   list must fit one ListDevices answer (1024 bytes); the agent refuses to start
   otherwise.
 - `hello_timeout_ms` (5000), `retry_ms` (2000) and `request_timeout_ms` (3000)
-  tune the timings.
+  tune the timings; `history_size` (256, 16..4096) is the history kept per
+  device. At most 8 devices.
 
 Through the agent the CLI adds `--device NAME --token TOKEN` (or
-`DRIVELINK_AGENT_TOKEN`); `agent-devices` lists the devices
+`DRIVELINK_AGENT_TOKEN`); `--lease` takes the lease for one command (it ends
+when the CLI exits, which disarms the device); `agent-devices` lists the
+devices and their lease holders and `agent-clients` a device's clients
 ([cli/README.md](../cli/README.md)).
 
 ## How it works
@@ -85,22 +90,38 @@ Through the agent the CLI adds `--device NAME --token TOKEN` (or
   with its own `seq`. Its Sessions use `retire_quarantine` (30 s or 10× the
   request timeout) because they never reconnect to reclaim IDs, and
   `observe_streams` to forward subscription frames.
-- `groups.cpp` is the pure logic: the routing policy, each device's virtual
-  subscription-group map (allocation serials, Dirty slots cleared after a
-  client leaves) and LIST synthesis. It has no I/O and is unit tested.
+- The pure logic has no I/O and is unit tested: `groups.cpp` (the routing
+  policy, each device's virtual group map of subscription and command slots
+  with allocation serials and Dirty slots, LIST synthesis), `lease.cpp` (free,
+  held, ending with a waiting Take) and `history.cpp` (the bounded ring and
+  the status-stream arm state).
 - DISARM always goes out at once on the Session's fast path. Only when the
   Session cannot admit another (ordinary requests fill its queue and a DISARM
   is in flight) does one wait, at most one per connection; those waiting go
-  out as one DISARM when the one in flight completes.
+  out as one DISARM when the one in flight completes. The agent's own DISARM
+  at a lease end uses the same path.
+- A lease end: the old holder's frames stop at once; fast-path DISARM; when it
+  completes (and any of the old holder's ARMs in flight completed, each
+  followed by another DISARM) CMD_CLEAR of its command slots; then a waiting
+  Take is granted. A failed CLEAR leaves the slot Dirty for the 2 s
+  maintenance, and ARM is answered `Busy/None` until it is gone.
+- Clock: the device's Session pings it (periodic time); every 500 ms a
+  changed model goes to the device's clients as a ClockModel event, and at
+  once after a Boot. Clients' TimePing is answered with the agent's
+  monotonic clock when the frame is read.
 
 ## Tests
 
-- `agent_tests` (`agent-unit`): config and flags, the routing policy, the
-  group map and LIST synthesis.
+- `agent_tests` (`agent-unit`): config and flags, the routing policy (every
+  core op open or exclusive), the group map of both kinds, LIST synthesis, the
+  lease state machine, history and the status arm parse.
 - `test/agent_integration.py` (`agent-integration`): the agent with vdevs and
-  CLI or raw clients: access refusals, the same results as a direct vdev, the
-  interim rule, DISARM from several clients, isolated groups and pool
-  exhaustion, status to every client, device loss and return, Hello edge
-  cases, a device reboot, Closing events and a slow client.
+  CLI or raw clients: access refusals, the same results as a direct vdev,
+  refusals without the lease, DISARM from several clients, isolated groups and
+  pool exhaustion, status to every client, device loss and return, Hello edge
+  cases, a device reboot, Closing events, a slow client; arming through the
+  lease, a Take that preempts an armed holder, a holder's disconnect and
+  release, exclusive operations through the CLI, the client list, history and
+  the clock model on connect, a lease per device and lobby refusals.
 - Both carry the ctest label `agent`; `validate.py agent` runs them and
   `host-linux` skips them.

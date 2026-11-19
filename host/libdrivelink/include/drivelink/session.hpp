@@ -50,7 +50,9 @@ struct SessionOptions
     bool periodic_time = true;
     // tcp:// only: send the agent Hello before any other traffic. A refusal
     // throws DeviceError (agent result/detail; AgentVersion sets peer_version).
-    // Periodic time pings are off: the agent distributes its clock model.
+    // On a device connection time pings (periodic and timePing()) go to the
+    // agent (TimePing), and clockModel() composes that fit with the agent's
+    // ClockModel event. A lobby never pings.
     std::optional<AgentHello> agent{};
     // A timed-out request ID is reusable after this delay instead of only
     // after reconnect (0 = never). For long-lived links such as the agent's.
@@ -98,6 +100,13 @@ class Session
     }
     // The agent's accepted Hello (set only when options.agent was given).
     std::optional<agent::HelloAccepted> agentHello() const;
+    // An agent command on an agent connection (docs/protocol/agent.md); the
+    // response whatever its result. Throws Usage off an agent connection, for
+    // Hello or TimePing (the Session sends those) and on the I/O thread;
+    // Timeout (outcome_unknown: the agent may still act on it) after `timeout`
+    // (0: the session timeout), or Connection.
+    agent::Response agentRequest(uint8_t op, std::span<const uint8_t> body = {},
+                                 std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
     ClockModel clockModel() const;
     uint64_t generation() const;
     uint16_t maxPayload() const;
@@ -136,4 +145,14 @@ class Session
 std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint, const std::string &token,
                                                   std::chrono::milliseconds timeout = std::chrono::milliseconds(3000),
                                                   const std::string &client_name = "drivelink");
+// The lease and the client list on an agent device connection (agent.md).
+// A refusal throws DeviceError with the agent's result and detail and the op.
+// agentLeaseTake returns once the lease is held, after a revoked holder's
+// DISARM and cleanup (it waits up to kAgentLeaseTakeTimeout). On Timeout
+// (outcome_unknown) the Take may still be granted later: the Lease events
+// tell, and closing the connection ends it.
+inline constexpr std::chrono::milliseconds kAgentLeaseTakeTimeout{15000};
+void agentLeaseTake(Session &session);
+void agentLeaseRelease(Session &session);
+std::vector<agent::ClientRecord> agentClients(Session &session);
 } // namespace drivelink
