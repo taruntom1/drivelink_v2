@@ -41,6 +41,7 @@ qt_add_qml_module(drivelink_gui_style
     DLStateChip.qml
     DLBadge.qml
     DLDeviceChip.qml
+    DLLeaseChip.qml
     DLNavItem.qml
     DLNavRail.qml
     DLStatusBar.qml

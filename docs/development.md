@@ -249,8 +249,10 @@ The backend's QtTest function watchdog is 60 seconds, below CTest's 180-second
 suite limit, so Qt can report a blocked function before the outer timeout.
 The safe-mode/link-loss test records its teardown/reconnect stages in failure logs.
 
-Later steps add `gui-monitor`, `gui-tune` and `gui-panels` (H2f: custom
-panels on vdev) to the same CTest run.
+Later steps add `gui-monitor`, `gui-tune`, `gui-panels` (H2f: custom
+panels on vdev), `gui-settings` and `gui-remote` (H3b-1: the remote rules on
+both OSes; on Linux also through `drivelink-agent` and vdev, so `host-linux`
+runs the remote integration) to the same CTest run.
 
 From `host/superbuild`, run `ctest --preset windows-mingw -R '^gui-'`
 (or `linux`). The complete post-review vdev campaign and fourteen-scenario render
@@ -318,6 +320,27 @@ bench commands. XiP measurements are in
 [the F7b record](../plans/archive/f7b-implementation.md).
 OTA commands and recovery are in [host/README.md](../host/README.md#ota-f9)
 and [the OTA spec](protocol/ota.md).
+
+## Serial adapter in WSL (`tools/wsl_serial.py`)
+
+`drivelink-agent` is Linux only, so hardware tests lend the board's CH343
+(1a86:55d3) to WSL through usbipd-win. Once, in an admin shell, run
+`usbipd bind --busid <id>` (`python tools/wsl_serial.py status` shows the id),
+and once in WSL add your user to `dialout` (`sudo usermod -aG dialout $USER`;
+without it the tty refuses to open: "Permission denied"). The tool never
+binds and needs no admin. Never part of `validate.py`.
+
+| Subcommand | Purpose |
+|---|---|
+| `status [--json]` | Matching adapters: busid, state (not connected, not shared, shared on Windows, attached to WSL) and the WSL tty. Exit 3 if none is plugged in. |
+| `attach` | Refuses (exit 2) when the adapter is missing, ambiguous without `--busid`, or not bound; else attaches and prints the Linux tty. |
+| `detach` | Detaches and waits until Windows has it back; a no-op when it is not attached. |
+| `run [--] CMD...` | Attaches, runs `CMD` with `DRIVELINK_WSL_TTY` set (passed into `wsl.exe` through `WSLENV`), then always detaches, also on Ctrl+C or when `CMD` fails. Returns `CMD`'s exit code, or 4 if the detach failed. |
+
+Options (before `CMD`): `--busid`, `--vid-pid`, `--distro`, `--timeout`,
+`--usbipd`, and `--dry-run`, which prints the commands that would change
+anything and runs none. Give the board back with `detach` before flashing or
+using the host on Windows.
 
 ## Loop-affinity checks
 

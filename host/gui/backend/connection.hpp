@@ -6,6 +6,7 @@
 #include "models.hpp"
 #include "monitor_view.hpp"
 #include "ota_model.hpp"
+#include "remote_model.hpp"
 #include "tune_view.hpp"
 #include <drivelink/buffers.hpp>
 #include <QElapsedTimer>
@@ -84,6 +85,29 @@ class Connection : public QObject {
     Q_PROPERTY(QObject* command READ command CONSTANT)
     // The Tune page (TuneView): gains, test signal, capture, runs.
     Q_PROPERTY(QObject* tune READ tune CONSTANT)
+    // Remote mode (H3b-1): a connection through drivelink-agent.
+    Q_PROPERTY(bool remote READ remote NOTIFY changed)
+    // {chip (DLLeaseChip.Variant), holderId, holderName, holderKind,
+    // holderKindText, mine, requesting, revoked, revokedBy, revokedAt, ros,
+    // takeBlocked, releaseBlocked}
+    Q_PROPERTY(QVariantMap lease READ lease NOTIFY changed)
+    // {address, device, deviceId, deviceName, link, clientId, since,
+    // protocol, closing}: the agent and the device as the Hello named them.
+    Q_PROPERTY(QVariantMap agent READ agent NOTIFY changed)
+    // ClientList rows (remote_model.hpp clientRows), refreshed on lease
+    // changes and every 2 s while the Device page is shown.
+    Q_PROPERTY(QVariantList clients READ clients NOTIFY changed)
+    // The agent's history sent at connect, newest first (historyRows).
+    Q_PROPERTY(QVariantList agentHistory READ agentHistory NOTIFY changed)
+    // The Agent tab's lobby listing: {state: idle, listing, ok, failed;
+    // address; devices (agentDeviceRows); failure (agentFailure)}.
+    Q_PROPERTY(QVariantMap agentListing READ agentListing NOTIFY changed)
+    // Why the last agent connection failed (agentFailure), empty otherwise.
+    Q_PROPERTY(QVariantMap agentFailure READ agentFailure NOTIFY changed)
+    Q_PROPERTY(QVariantList recentAgents READ recentAgents NOTIFY recentDevicesChanged)
+    // A live param edit held for confirmation while another client holds
+    // the lease: {key, what, holder, ros}; empty when none.
+    Q_PROPERTY(QVariantMap liveEdit READ liveEdit NOTIFY changed)
 public:
     using QObject::QObject;
     virtual bool linked() const=0;
@@ -136,6 +160,34 @@ public:
     virtual QObject *monitor()=0;
     virtual QObject *command()=0;
     virtual QObject *tune()=0;
+    virtual bool remote() const=0;
+    virtual QVariantMap lease() const=0;
+    virtual QVariantMap agent() const=0;
+    virtual QVariantList clients() const=0;
+    virtual QVariantList agentHistory() const=0;
+    virtual QVariantMap agentListing() const=0;
+    virtual QVariantMap agentFailure() const=0;
+    virtual QVariantList recentAgents() const=0;
+    virtual QVariantMap liveEdit() const=0;
+    // Remote mode. listAgent opens a lobby and lists the agent's devices
+    // (agentListing); connectAgent opens the device connection as an
+    // observer. The address is host[:port] (port 47620 by default); the token
+    // is stored with the recent agent only when rememberToken.
+    Q_INVOKABLE virtual void listAgent(const QString &address,const QString &token)=0;
+    // Re-lists the answered list's agent quietly (the Agent tab, every 2 s).
+    Q_INVOKABLE virtual void refreshAgentList()=0;
+    Q_INVOKABLE virtual void connectAgent(const QString &address,const QString &token,const QString &device,bool rememberToken)=0;
+    Q_INVOKABLE virtual void forgetAgent(const QString &address)=0;
+    // The lease: Take preempts another holder (the agent disarms the device
+    // first); Release disarms. Neither ever arms.
+    Q_INVOKABLE virtual void takeLease()=0;
+    Q_INVOKABLE virtual void releaseLease()=0;
+    Q_INVOKABLE virtual void acknowledgeRevoked()=0;
+    Q_INVOKABLE virtual void refreshClients()=0;
+    // The held live edit: send it (dontAskAgain: no more questions on this
+    // connection), or drop it unsent.
+    Q_INVOKABLE virtual void applyLiveEdit(bool dontAskAgain)=0;
+    Q_INVOKABLE virtual void cancelLiveEdit()=0;
     // The page the shell shows (device, layout, tune, monitor): the Layout
     // live group is set up only while Layout is shown.
     Q_INVOKABLE virtual void setPage(const QString &page)=0;
@@ -220,6 +272,9 @@ signals:
     // Dialogs show a refusal next to their button and close on success.
     void layoutResult(QString op,bool ok,QString message);
     void liveChanged();
+    // This window lost the lease to another client's Take (the agent
+    // disarmed the device): by is the new holder's name when known.
+    void leaseRevoked(QString by);
 };
 
 class LocalConnection final : public Connection {
@@ -278,6 +333,31 @@ public:
     CommandView &commandView() {return m_command;}
     QObject *tune() override {return &m_tune;}
     TuneView &tuneView() {return m_tune;}
+    bool remote() const override {return m_agent.has_value();}
+    QVariantMap lease() const override;
+    QVariantMap agent() const override;
+    QVariantList clients() const override {return m_clients;}
+    QVariantList agentHistory() const override {return m_agentHistory;}
+    QVariantMap agentListing() const override {return m_listing;}
+    QVariantMap agentFailure() const override {return m_agentFailure;}
+    QVariantList recentAgents() const override {return m_recentAgents.list();}
+    QVariantMap liveEdit() const override;
+    void listAgent(const QString &address,const QString &token) override;
+    void refreshAgentList() override;
+    void connectAgent(const QString &address,const QString &token,const QString &device,bool rememberToken) override;
+    void forgetAgent(const QString &address) override;
+    void takeLease() override;
+    void releaseLease() override;
+    void acknowledgeRevoked() override;
+    void refreshClients() override;
+    void applyLiveEdit(bool dontAskAgain) override;
+    void cancelLiveEdit() override;
+    const LeaseTracker &leaseTracker() const {return m_lease;}
+    // The client name this window sends in its Hello (tests set their own).
+    void setClientName(const QString &name) {m_clientName=name;}
+    // Why exclusive operations are refused now (the agent's lease rule);
+    // empty on a direct connection.
+    QString exclusiveBlocked() const;
     // Why a Tune run cannot start now (empty when it can).
     QString tuneBlocked() const;
     bool tuneRunning() const {return m_tuneRun.has_value();}
@@ -347,7 +427,10 @@ public:
     void setOtaPauseAt(int percent) {m_otaPause->store(percent);}
     // Tests and screenshots keep their recent devices apart from the user's.
     QString settingsPath() const {return m_recent.path();}
-    void setSettingsPath(const QString &path) {m_recent=RecentDevices(path);m_command.setSettingsPath(m_recent.path());emit recentDevicesChanged();}
+    void setSettingsPath(const QString &path) {
+        m_recent=RecentDevices(path);m_recentAgents=RecentAgents(m_recent.path());
+        m_command.setSettingsPath(m_recent.path());emit recentDevicesChanged();
+    }
     // The reconnect window after a requested reboot (default 30 s).
     void setReconnectWindow(int ms) {m_reconnectWindowMs=ms;}
     std::shared_ptr<const DeviceSnapshot> snapshot() const {return m_snapshot;}
@@ -361,6 +444,42 @@ public:
     bool runOnDevice(std::function<void(Client &)> operation,std::function<void(QString)> done);
 private:
     struct Context;
+    // Remote mode (connection_remote.cpp).
+    struct AgentTarget {QString address,endpoint,token,device;bool rememberToken=true;};
+    std::optional<AgentTarget> m_agent; // set for a remote connection, kept for Retry
+    LeaseTracker m_lease;
+    drivelink::agent::DeviceRecord m_agentRecord;
+    QDateTime m_agentSince;
+    QString m_clientName,m_agentClosing;
+    QVariantList m_clients,m_agentHistory;
+    std::vector<drivelink::agent::HistoryEntry> m_historyEntries;
+    QVariantMap m_listing,m_agentFailure;
+    RecentAgents m_recentAgents;
+    std::thread m_lister;
+    uint64_t m_listSerial=0;
+    bool m_listBusy=false,m_listQueued=false; // a lister thread runs / an explicit list waits for it
+    std::pair<QString,QString> m_listTarget; // address, token of the last list
+    void startList(bool quiet);
+    QDateTime m_revokedAt;
+    bool m_leasePending=false,m_clientsPending=false,m_historyDone=false;
+    uint64_t m_liveEditSerial=0;
+    bool m_clientsAgain=false; // a Lease event came while a ClientList read was out
+    int m_clientsTick=0;
+    struct LiveEditHold {QString key,what;std::function<void()> send,cancel;};
+    std::optional<LiveEditHold> m_liveEdit;
+    bool m_liveEditOptOut=false;
+    QString m_consentKey;
+    QElapsedTimer m_consentSeen;
+    // A live param edit while another client holds the lease waits for the
+    // operator (G6); true when it was held.
+    bool holdLiveEdit(const QString &key,const QString &what,std::function<void()> send,std::function<void()> cancel);
+    void dropLiveEdit();
+    void open(const QString &endpoint,int baud);
+    void pollAgentEvents();
+    void agentEvent(const Frame &frame);
+    void leaseGained();
+    void leaseLost(bool revoked);
+    void rebuildHistory();
     enum class Op {Rename,Save,Revert,Reboot,SaveAndReboot,FactoryReset,ExitSafeMode};
     // Firmware update state (connection_ota.cpp).
     std::optional<OtaJob> m_ota;

@@ -229,7 +229,8 @@ void LocalConnection::updateActions() {
 QString LocalConnection::actionCommon() const {
     if(const auto common=commonBlock();!common.isEmpty()) {return common;}
     if(m_expectReboot) {return tr("The device is rebooting");}
-    return {};
+    // RUN is exclusive through an agent (calibration actions included).
+    return exclusiveBlocked();
 }
 
 QVariantMap LocalConnection::checkAction(const QString &key,const QStringList &args,const QString &blobHex) const {

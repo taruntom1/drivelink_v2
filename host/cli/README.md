@@ -122,15 +122,17 @@ drivelink-cli --endpoint tcp://127.0.0.1:47620 --device 02444c000001 --json get 
 works through the agent. It needs a `tcp://` endpoint and a token (`--token`,
 else the `DRIVELINK_AGENT_TOKEN` environment variable); otherwise it is a usage
 error (exit 2). Without `--device` the token is ignored. `--client-name NAME`
-(default `drivelink-cli`) is what the agent shows other clients.
+(default `drivelink-cli`) is what the agent shows other clients; the CLI's
+Hello names its kind `cli` (agent protocol v3).
 
 `agent-devices` (no `--device`) lists the agent's devices, one line each:
 `ALIAS online|offline ID NAME ENDPOINT clients=N`, followed by
-` holder=CLIENT_ID:NAME` when a client holds the device's lease (`-` for an
-unknown ID or an empty name). With `--json` the envelope's `data.devices` is an
-array of `{alias, online, device_id, name, endpoint, clients, holder_id,
-holder_name}`; `device_id` is `null` until the agent has read it, `holder_id` is
-0 and `holder_name` empty when nobody holds the lease. Agent refusals (bad token, unknown or offline
+` holder=CLIENT_ID:NAME (KIND)` when a client holds the device's lease (`-`
+for an unknown ID or an empty name; KIND is `gui`, `cli`, `ros` or `other`).
+With `--json` the envelope's `data.devices` is an array of `{alias, online,
+device_id, name, endpoint, clients, holder_id, holder_name, holder_kind}`;
+`device_id` is `null` until the agent has read it, `holder_id` is 0,
+`holder_name` empty and `holder_kind` `null` when nobody holds the lease. Agent refusals (bad token, unknown or offline
 device, a missing lease) are device rejections: exit 5, with the agent's
 `result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
 for a direct endpoint.
@@ -148,8 +150,8 @@ client to keep an armed device. A refused take is a device rejection (exit 5).
 through an agent works only while nobody holds the device's lease.
 
 `agent-clients` (needs `--device`) lists the clients connected to the device,
-one line each, `CLIENT_ID NAME`, with ` [holder]` on the lease holder. With
-`--json`, `data.clients` is an array of `{client_id, name, holder}`.
+one line each, `CLIENT_ID NAME (KIND)`, with ` [holder]` on the lease holder.
+With `--json`, `data.clients` is an array of `{client_id, name, kind, holder}`.
 
 Each CLI process is one agent client, and the agent clears a client's group
 slots when it disconnects. `sub-config` therefore does not outlive its process:

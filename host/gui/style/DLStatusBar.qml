@@ -20,6 +20,13 @@ Rectangle {
     property string deviceId
     property string connection
 
+    // Figma's optional Lease boolean: the lease chip beside the device
+    // identity, for remote sessions. Off by default, so local screens are
+    // unchanged.
+    property bool leaseVisible: false
+    property int leaseVariant: DLLeaseChip.Available
+    property string leaseHolderName
+
     // Last-disarm reason, loading progress, fault code: Caption beside the chip.
     property string reason
     // Disarmed: false shows "Arm disabled" with armBlockedReason in a tooltip.
@@ -56,6 +63,7 @@ Rectangle {
     signal revertRequested()
     signal faultsRequested()
     signal deviceRequested()
+    signal leaseClicked()
 
     implicitWidth: 1920
     implicitHeight: Theme.sizeStatusbar
@@ -96,15 +104,28 @@ Rectangle {
             }
         }
 
-        DLDeviceChip {
-            objectName: "deviceChip"
+        Row {
             anchors.verticalCenter: parent.verticalCenter
             visible: bar.hasDevice
-            link: bar.link
-            name: bar.deviceName
-            deviceId: bar.deviceId
-            connection: bar.connection
-            onClicked: bar.deviceRequested()
+            spacing: Theme.space8
+
+            DLDeviceChip {
+                objectName: "deviceChip"
+                anchors.verticalCenter: parent.verticalCenter
+                link: bar.link
+                name: bar.deviceName
+                deviceId: bar.deviceId
+                connection: bar.connection
+                onClicked: bar.deviceRequested()
+            }
+            DLLeaseChip {
+                objectName: "leaseChip"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: bar.leaseVisible
+                variant: bar.leaseVariant
+                holderName: bar.leaseHolderName
+                onClicked: bar.leaseClicked()
+            }
         }
     }
 

@@ -12,7 +12,8 @@ backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update,
 H2c-1/H2c-2 Layout, H2d-1/H2d-2 Monitor and its manual command, and H2e-1
 to H2e-3 Tune: runs, the session (gain history, A/B compare, session files)
 and plant identification, H2f custom panels, and H2g Settings, the notices
-and the Windows installer (below; [host-steps.md](../../plans/host-steps.md)).
+and the Windows installer, and H3b-1 remote mode through drivelink-agent
+(below; [host-steps.md](../../plans/host-steps.md)).
 
 | Path | What |
 |---|---|
@@ -22,7 +23,7 @@ and the Windows installer (below; [host-steps.md](../../plans/host-steps.md)).
 | `installer/` | the Inno Setup script (H2g) |
 | `style/` | QML module `DriveLink.Style` (static library `drivelink_gui_style`) |
 | `gallery/` | `drivelink-style-gallery`: every control state, Dark and Light |
-| `backend/` | `Connection`, `LocalConnection`, `SafetyKeys`, generic Qt models and command planning |
+| `backend/` | `Connection`, `LocalConnection` (direct or through drivelink-agent), `SafetyKeys`, generic Qt models and command planning |
 | `app/` | `drivelink-gui`, static QML module `DriveLink.Shell`, screenshot mode |
 | `tests/` | `gui-quick`, `gui-gallery`, real-vdev `gui-backend`, `gui-screenshots`, scenario script |
 
@@ -671,6 +672,80 @@ there (`tools/tests/test_package_linux.py` checks it). The package targets the
 Ubuntu release it was built on (26.04). CI installs it in a clean container
 and renders every screen (`host/test/installed_gui_smoke.py --deb`).
 
+## Remote mode (H3b-1)
+
+A connection through `drivelink-agent` ([agent.md](../../docs/protocol/agent.md),
+agent protocol v3) is the same `LocalConnection` on a TCP link that sent the
+agent Hello (`client_kind` Gui, the name `drivelink-gui@<host>`, `--client-name`
+to change it): Layout, Monitor, Tune and OTA run through the agent unchanged.
+`backend/connection_remote.cpp` adds the lease, the agent's events and the
+client list; `backend/remote_model.*` holds the pure rules (tested in
+`gui-remote`). Run `drivelink-gui --agent host[:port] --device ALIAS --token T`
+(or `DRIVELINK_AGENT_TOKEN`), or use Connect's Agent tab.
+
+- **Agent tab.** A typed address (`host` or `host:port`, port 47620 by default;
+  a host name resolves through `resolveTcpEndpoint`) and token; *List devices*
+  opens a lobby (`listAgentDevices`) and shows the agent's device list (alias,
+  name, id, online, clients, lease holder); *Connect* names one device. The
+  list is not in the G6 frames; it is built from the G2 components
+  ([gui-design.md](../../plans/gui-design.md)). Refusals show as unreachable,
+  version mismatch, bad token, unknown device or no device (offline). Recent
+  agents (address, device, last device id and name) live in the GUI's INI
+  file (`recentAgents`); the token is stored there only when *Remember token*
+  is checked (it is by default; user decision 2026-11-19), and never
+  otherwise. Unchecking it or forgetting the agent removes a stored token.
+- **Observer first.** The connection starts with the holder named by the
+  Hello's device record and follows the agent's Lease events (the truth: a
+  Take that timed out may still be granted later). Command groups are set up
+  only while this window holds the lease; ARM, manual commands and Tune runs
+  say "needs the control lease" otherwise. DISARM, ACK, reads, live params and
+  Monitor/Layout subscriptions stay open to an observer. Take preempts another
+  holder after the operator confirms it is safe to stop it (unchecked box);
+  with nobody holding it, Take goes at once. A grant leaves the device
+  disarmed (the agent disarmed it for the handoff) and never arms. ARM answered
+  `Busy/None` right after a handoff (the previous holder's command group is
+  still being cleared) is reported, not repeated.
+- **Losing the lease.** On a release or a revocation (a Lease event naming
+  this window as `previous_id`) the agent has already stopped this window's
+  command frames, disarmed the device and cleared its command groups: the GUI
+  forgets them without CMD_CLEAR, cancels an ARM in flight, returns manual
+  values to 0, and a run ends on the disarm as on any DISARM (Auto re-run
+  needs a new Run). A revocation shows the Revoked chip, a banner and the
+  *Control lease revoked* dialog until acknowledged.
+- **Exclusive operations** (SAVE, REVERT, reboots, factory reset, safe-mode
+  exit, rename, layout ops, actions including calibration, OTA) follow the
+  agent's rule: this window holds the lease, or nobody does and the device is
+  not armed (`exclusiveBlocked()`); otherwise they are disabled with the
+  holder's name.
+- **Live edits while another client holds the lease** (G6): a param write from
+  Layout or Tune waits unsent in `liveEdit` until *Apply live* (or Cancel).
+  The confirmed param keeps going without a question while its edit continues
+  (writes at most 1.5 s apart, a drag); *Don't ask again for this connection*
+  lasts until the next connection. While a question is open another edit is
+  dropped unsent. The holder is never asked.
+- **Lease chip and banners.** The status bar's `DLLeaseChip` (Available, Mine,
+  ROS, Other, Requesting, Revoked; a holder whose `client_kind` is Ros is ROS)
+  leads to Device > Clients and lease. An observer sees "driven by <holder>"
+  or "ARM needs lease" beside the arm state, and a ROS holder raises the
+  *ROS is driving* banner with *Take lease…*.
+- **Device page.** Agent and device, Remote access, Clients and lease
+  (ClientList, read at connect, on every Lease event and every 2 s while
+  Device is shown; Take, Release, Refresh) and Recent agent history.
+- **History.** The History events sent right after the Hello (read from the
+  Session's event queue, which a remote connection drains for agent events)
+  are shown newest first in the Device card and the faults drawer, labelled
+  Agent history beside This connection's entries; diag entries are named from
+  the device's code table.
+- **Device loss.** The agent's Closing event names the cause on the link-lost
+  overlay; Retry reconnects through the agent (a device still offline shows
+  "no device"). Through an agent a vdev reboot is a device loss (vdev drops
+  its TCP link); a serial device keeps its port and its Boot reloads in place.
+
+`gui_remote_tests` (ctest `gui-remote`): the pure rules on both OSes; on Linux
+also through `drivelink-agent` and vdev (observer, take/arm/release, revocation
+and DISARM from an observer, exclusive operations, live-edit confirmation,
+history, client list, refusals, device loss).
+
 ## Theme
 
 Figma's variables are the source of truth. `tokens.json` holds every variable
@@ -835,6 +910,20 @@ isolates recent devices. It does not inject faults or provision a supplied
 device; `unsaved` and `notice` rename (and reboot) the device, so they accept
 only a `tcp://` vdev endpoint, as do the `update-*` screens (they install
 firmware).
+
+Remote screens (H3b-1) go through `drivelink-agent`: `--agent HOST:PORT
+--token T --device ALIAS` (`--client-name`, `--take-lease`) with `device`,
+`tune`, `monitor` or `drawer`, and `agent-connect` (the Agent tab's device
+listing; `--agent`/`--token` optional), `agent-failure` (the failed connect),
+`lease-take`, `lease-release`, `revoked` (these sit on Device, or on Tune with
+`--tune`) and `live-edit` (`--live-edit KEY=VALUE`, on Tune with `--tune`,
+else Layout). With `--take-lease` the app prints `GUI LEASE MINE` once the
+lease is this window's so a script can sequence another client. The Linux-only
+`host/gui/tests/remote_scenarios.py` (not a ctest) provisions one sample vdev,
+starts the agent and raw clients that play ROS or a second GUI
+(`agent_integration.RawClient`) and renders sixteen G6 states into
+`OUT/<scenario>/`; in WSL:
+`python3 host/gui/tests/remote_scenarios.py --gui $B/gui/app/drivelink-gui --vdev $B/vdev/drivelink-vdev --agent $B/agent/drivelink-agent --out DIR [--only NAME...]`.
 
 From the repo root, the isolated Windows vdev campaign is:
 

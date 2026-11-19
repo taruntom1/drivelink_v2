@@ -106,6 +106,17 @@ Window {
         }
 
         Section {
+            title: "LEASE CHIP"
+            Repeater {
+                model: 6
+                DLLeaseChip { required property int index; variant: index }
+            }
+            DLLeaseChip { variant: DLLeaseChip.Other; holderName: "bench-laptop" }
+            DLLeaseChip { variant: DLLeaseChip.Ros; holderName: "ros_bridge" }
+            DLLeaseChip { variant: DLLeaseChip.Mine; down: true }
+        }
+
+        Section {
             title: "NAV RAIL, NAV ITEM"
             DLNavRail {
                 id: rail
@@ -159,6 +170,20 @@ Window {
                         revertEnabled: modelData.saveEnabled !== false
                         pendingReboot: modelData.pending === true
                     }
+                }
+                DLStatusBar {
+                    width: parent.width
+                    mode: DLStatusBar.Disarmed
+                    deviceName: "bench-rig"
+                    deviceId: "a4cf123e9b01"
+                    link: DLDeviceChip.Agent
+                    connection: "pi5.local:7300"
+                    reason: "ARM needs lease"
+                    armEnabled: false
+                    faultsVisible: true
+                    faultsText: "0 active"
+                    leaseVisible: true
+                    leaseVariant: DLLeaseChip.Other
                 }
             }
         }

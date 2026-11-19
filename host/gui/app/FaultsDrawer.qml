@@ -3,6 +3,7 @@ import DriveLink.Style
 
 // G3 faults drawer: the device's diag entries with the code names, flags and
 // counts it serves; active entries first. Acknowledge says why it is refused.
+// A remote connection (G6) adds the agent's history after the device's entries.
 Rectangle {
     id: drawer
     objectName: "faultsDrawer"
@@ -62,6 +63,78 @@ Rectangle {
         clip: true
         spacing: Theme.space8
         model: drawer.backend.faults
+        // Remote: "This connection" labels the device's own entries.
+        header: Column {
+            width: list.width
+            spacing: Theme.space8
+            bottomPadding: visible ? Theme.space8 : 0
+            visible: list.count === 0 || drawer.backend.remote
+            height: visible ? implicitHeight : 0
+            Text {
+                objectName: "connectionHeader"
+                visible: drawer.backend.remote
+                text: qsTr("This connection")
+                font: Theme.fontLabelCaps; color: Theme.textSecondary
+            }
+            Text {
+                visible: list.count === 0
+                width: parent.width
+                wrapMode: Text.Wrap
+                text: qsTr("No diagnostic entries since boot")
+                font: Theme.fontBodyDefault; color: Theme.textSecondary
+            }
+        }
+        // Remote: the agent's history, newest first, after the device's entries.
+        footer: Column {
+            objectName: "agentHistory"
+            width: list.width
+            visible: drawer.backend.remote
+            height: visible ? implicitHeight : 0
+            spacing: Theme.space8
+            topPadding: Theme.space16
+            Text {
+                text: qsTr("Agent history")
+                font: Theme.fontLabelCaps; color: Theme.textSecondary
+            }
+            Text {
+                objectName: "agentHistoryEmpty"
+                width: parent.width
+                wrapMode: Text.Wrap
+                visible: (drawer.backend.agentHistory || []).length === 0
+                text: qsTr("The agent has reported no history yet")
+                font: Theme.fontBodyDefault; color: Theme.textSecondary
+            }
+            Repeater {
+                model: drawer.backend.agentHistory || []
+                Rectangle {
+                    id: historyEntry
+                    required property var modelData
+                    objectName: "agentHistoryEntry_" + modelData.kind
+                    width: parent.width
+                    height: historyColumn.implicitHeight + 2 * Theme.space12
+                    radius: Theme.radiusMd
+                    color: Theme.bgSecondary
+                    Column {
+                        id: historyColumn
+                        x: Theme.space12; y: Theme.space12
+                        width: parent.width - 2 * Theme.space12
+                        spacing: Theme.space4
+                        Text {
+                            width: parent.width
+                            wrapMode: Text.Wrap
+                            text: historyEntry.modelData.text
+                            font: Theme.fontBodyDefault; color: Theme.textPrimary
+                        }
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: Qt.formatTime(historyEntry.modelData.time, "HH:mm:ss") + " · " + qsTr("Agent history")
+                            font: Theme.fontCaption; color: Theme.textSecondary
+                        }
+                    }
+                }
+            }
+        }
         delegate: Rectangle {
             id: entry
             required property string name
@@ -119,13 +192,6 @@ Rectangle {
                     font: Theme.fontCaption; color: Theme.textSecondary
                 }
             }
-        }
-        Text {
-            visible: list.count === 0
-            width: list.width
-            wrapMode: Text.Wrap
-            text: qsTr("No diagnostic entries since boot")
-            font: Theme.fontBodyDefault; color: Theme.textSecondary
         }
     }
 }

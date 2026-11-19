@@ -57,6 +57,8 @@ template <class T> Json toJson(const std::vector<T> &values)
     return out;
 }
 Json toJson(const agent::DeviceRecord &v);
+// AgentClientKind as text: gui, cli, ros, other.
+std::string clientKindName(uint8_t kind);
 Json toJson(const agent::ClientRecord &v);
 // "ALIAS online|offline ID NAME ENDPOINT clients=N [holder=ID:NAME]" (ID and NAME are "-" when empty)
 std::string deviceLine(const agent::DeviceRecord &v);

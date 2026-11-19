@@ -57,6 +57,25 @@ void LocalConnection::setupTune() {
     connect(&m_tune,&TuneView::notification,this,&Connection::notification);
     TuneView::Hooks hooks;
     hooks.write=[this](std::vector<Ref> refs,std::vector<uint32_t> bits,std::function<void(QString)> done) {
+        // A gain or mode the operator changes while another client holds the
+        // lease waits for confirmation (G6); the view keeps newer values local.
+        if(!refs.empty() && m_snapshot) {
+            QStringList parts;
+            for(size_t i=0;i<refs.size() && i<bits.size();++i) {
+                const auto *item=findTuneItem(*m_snapshot,refs[i]);
+                const auto *entry=anyEntry(*m_snapshot,{refs[i].type,refs[i].instance});
+                if(item && entry) {
+                    parts<<QStringLiteral("%1.%2 to %3").arg(QString::fromStdString(entry->instance.label),
+                        QString::fromStdString(item->descriptor.name),formatValue(*item,bits[i]));
+                }
+            }
+            const auto key=itemKey(refs.front().type,refs.front().instance,refs.front().item);
+            auto shared=std::make_shared<std::function<void(QString)>>(std::move(done));
+            if(holdLiveEdit(key,parts.join(QStringLiteral(", ")),
+                            [this,refs,bits,shared] {tuneWrite(refs,bits,*shared);},
+                            [shared] {(*shared)(tr("Not sent: the live edit was cancelled"));})) {return;}
+            done=std::move(*shared);
+        }
         tuneWrite(std::move(refs),std::move(bits),std::move(done));
     };
     hooks.runBlocked=[this] {return tuneBlocked();};
@@ -100,6 +119,8 @@ QString LocalConnection::tuneBlocked() const {
     if(const auto common=commonBlock();!common.isEmpty()) {return common;}
     if(m_expectReboot) {return tr("The device is rebooting");}
     if(m_tuneRelease) {return tr("The last run's signal has not shown it stopped yet; DISARM stops it");}
+    // Runs need ARM, ARM needs the lease (G6 "Run needs lease").
+    if(m_agent && !m_lease.mine()) {return tr("Run needs the control lease");}
     // G5: Run is disabled while disarmed, pointing to ARM in the status bar.
     if(armState()==0 && !m_arming && !m_armPending && !m_waitingDisarm && !m_disarmPending) {
         return tr("Arm first: ARM is in the status bar");

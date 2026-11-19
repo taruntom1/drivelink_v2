@@ -1,5 +1,5 @@
 #pragma once
-// Agent protocol v2 (docs/protocol/agent.md): the messages between a host
+// Agent protocol v3 (docs/protocol/agent.md): the messages between a host
 // client and drivelink-agent. Pure codecs shared by the agent and its clients;
 // payloads only (framing is protocol/framing.hpp). Decoders validate exact
 // lengths and string bounds and return Error{ErrorKind::Protocol} otherwise.
@@ -16,7 +16,9 @@
 namespace drivelink::agent
 {
 using Bytes = std::vector<uint8_t>;
-inline constexpr uint8_t kVersion = 2;
+inline constexpr uint8_t kVersion = 3;
+// AgentClientKind (registry): Other 0, Gui 1, Cli 2, Ros 3; decoders refuse a larger value.
+inline constexpr uint8_t kMaxClientKind = 3;
 inline constexpr uint16_t kDefaultPort = 47620;
 inline constexpr size_t kMaxToken = 128, kMaxDevice = 64, kMaxClientName = 32, kMaxString = 255;
 
@@ -53,16 +55,18 @@ std::expected<DecodedResponse, Error> decodeResponse(std::span<const uint8_t> pa
 std::expected<Event, Error> decodeEvent(std::span<const uint8_t> payload);
 
 // Hello (op 1) request body: core_version u8 | token str8 | device str8 | client_name str8
+// Hello body: core_version u8 | token str8 | device str8 | client_name str8 | client_kind u8
 struct Hello
 {
     uint8_t core_version = 0;
     std::string token, device, client_name;
+    uint8_t client_kind = 0; // AgentClientKind
 };
 Bytes encodeHello(const Hello &hello);           // throws Error{Usage} on a bound violation
 std::expected<Hello, Error> decodeHello(std::span<const uint8_t> body);
 
 // Device record: alias str8 | online u8 | device_id[6] | name str8 | endpoint str8 | clients u8 |
-//                holder_id u16 | holder_name str8   (holder_id 0: nobody holds the lease)
+//                holder_id u16 | holder_name str8 | holder_kind u8   (holder_id 0: nobody holds the lease)
 struct DeviceRecord
 {
     std::string alias;
@@ -72,6 +76,7 @@ struct DeviceRecord
     uint8_t clients = 0;
     uint16_t holder_id = 0;
     std::string holder_name;
+    uint8_t holder_kind = 0; // AgentClientKind (0 when nobody holds it)
 };
 void appendDeviceRecord(Bytes &out, const DeviceRecord &record); // throws Error{Usage} if a string > 255
 // Hello accepted body: client_id u16 | kind u8 (0 lobby, 1 device) | record (device only)
@@ -97,11 +102,12 @@ std::expected<VersionRefusal, Error> decodeVersionRefusal(std::span<const uint8_
 Bytes encodeClosing(uint8_t reason);
 std::expected<uint8_t, Error> decodeClosing(std::span<const uint8_t> body);
 
-// ClientList answer: count u8 | count * (client_id u16 | name str8 | holder u8)
+// ClientList answer: count u8 | count * (client_id u16 | name str8 | kind u8 | holder u8)
 struct ClientRecord
 {
     uint16_t client_id = 0;
     std::string name;
+    uint8_t kind = 0; // AgentClientKind
     bool holder = false;
 };
 Bytes encodeClientList(std::span<const ClientRecord> clients); // throws Error{Usage} if > 255 or a string > 255
@@ -111,11 +117,12 @@ Bytes encodeTimePing(uint64_t agent_us);
 std::expected<uint64_t, Error> decodeTimePing(std::span<const uint8_t> body);
 
 // Lease event body (also a Lease history entry's body):
-// holder_id u16 | holder_name str8 | previous_id u16 | reason u8 (LeaseChange)
+// holder_id u16 | holder_name str8 | holder_kind u8 | previous_id u16 | reason u8 (LeaseChange)
 struct LeaseEvent
 {
     uint16_t holder_id = 0; // 0: nobody holds it now
     std::string holder_name;
+    uint8_t holder_kind = 0;  // AgentClientKind (0 when nobody holds it)
     uint16_t previous_id = 0; // 0: nobody held it before
     uint8_t reason = 0;
 };

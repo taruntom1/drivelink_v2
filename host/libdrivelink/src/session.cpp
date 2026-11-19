@@ -123,7 +123,7 @@ agent::DecodedResponse agentExchange(asio::io_context &io,asio::ip::tcp::socket 
 agent::HelloAccepted performHello(asio::io_context &io,asio::ip::tcp::socket &tcp,p::Scanner &scanner,
                                 const AgentHello &hello,std::chrono::milliseconds timeout) {
     agent::Command command{1,static_cast<uint8_t>(p::defs::AgentOp::Hello),
-                           agent::encodeHello({p::core_wire::kVersion,hello.token,hello.device,hello.client_name})};
+                           agent::encodeHello({p::core_wire::kVersion,hello.token,hello.device,hello.client_name,hello.kind})};
     const auto response=agentExchange(io,tcp,scanner,command,timeout);
     const auto op=static_cast<uint8_t>(p::defs::AgentOp::Hello);
     if(response.version!=agent::kVersion) {
@@ -208,6 +208,8 @@ struct Session::Impl
     std::deque<std::shared_ptr<detail::DeliverySlot>> deliveries;
     std::vector<std::weak_ptr<detail::Cancellation>> service_states;
     std::deque<Frame> events;
+    std::deque<Frame> agent_events;
+    uint64_t agent_dropped=0;
     uint64_t dropped=0;
     struct Observer { std::recursive_mutex mutex;bool active=true;EventHandler handler; };
     struct Mailbox {
@@ -618,7 +620,11 @@ struct Session::Impl
     void notify(Frame frame) {
         bool schedule=false;
         if(frame.type) {std::lock_guard lock(mutex);
-          if(events.size()==options.event_capacity) {events.pop_front();++dropped;}events.push_back(frame);}
+          if(events.size()==options.event_capacity) {events.pop_front();++dropped;}events.push_back(frame);
+          if(frame.type==msg::kAgentEvent) {
+              if(agent_events.size()==Session::kAgentEventCapacity) {agent_events.pop_front();++agent_dropped;}
+              agent_events.push_back(frame);
+          }}
         if(!options.observe_streams && frame.type>=p::defs::kSubGroupChannelFirst && frame.type<p::defs::kSubGroupChannelFirst+p::defs::kSubGroupChannelCount) {cv.notify_all();return;}
         {std::lock_guard lock(mailbox->mutex);
           if(!mailbox->observers.empty()) {
@@ -962,6 +968,12 @@ bool Session::nextEvent(Frame &frame,std::chrono::milliseconds timeout) {
     if(d.events.empty()) {return false;}frame=std::move(d.events.front());d.events.pop_front();return true;
 }
 uint64_t Session::droppedEvents() const {std::lock_guard lock(m_impl->mutex);return m_impl->dropped;}
+bool Session::nextAgentEvent(Frame &frame) {
+    std::lock_guard lock(m_impl->mutex);
+    if(m_impl->agent_events.empty()) {return false;}
+    frame=std::move(m_impl->agent_events.front());m_impl->agent_events.pop_front();return true;
+}
+uint64_t Session::droppedAgentEvents() const {std::lock_guard lock(m_impl->mutex);return m_impl->agent_dropped;}
 uint64_t Session::droppedNotifications() const {auto box=m_impl->mailbox;std::lock_guard lock(box->mutex);return box->dropped;}
 std::shared_ptr<GroupBuffer> Session::subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity,uint64_t configured_generation) {
     auto buffer=std::make_shared<GroupBuffer>(group,epoch,width,capacity);auto &d=*m_impl;
@@ -1017,13 +1029,40 @@ agent::Response Session::agentRequest(uint8_t op,std::span<const uint8_t> body,s
     }
     return future.get();
 }
+std::string resolveTcpEndpoint(const std::string &endpoint) {
+    const auto colon=endpoint.rfind(':');
+    if(!endpoint.starts_with("tcp://") || colon==std::string::npos || colon<=6) {throw Error(ErrorKind::Usage,"expected tcp://host:port");}
+    std::string host=endpoint.substr(6,colon-6);const auto port=endpoint.substr(colon+1);
+    if(host.size()>=2 && host.front()=='[' && host.back()==']') {host=host.substr(1,host.size()-2);}
+    size_t used=0;unsigned long number=0;
+    try {number=std::stoul(port,&used);} catch(...) {throw Error(ErrorKind::Usage,"invalid TCP port");}
+    if(host.empty() || used!=port.size() || !number || number>65535) {throw Error(ErrorKind::Usage,"invalid TCP endpoint");}
+    asio::error_code ec;
+    if(const auto numeric=asio::ip::make_address(host,ec);!ec) {
+        return "tcp://"+numeric.to_string()+":"+port;
+    }
+    asio::io_context io;asio::ip::tcp::resolver resolver(io);
+    const auto results=resolver.resolve(host,port,ec);
+    if(ec || results.empty()) {
+        Error e(ErrorKind::Connection,"cannot resolve "+host+(ec?": "+ec.message():std::string()));
+        throw e;
+    }
+    std::optional<asio::ip::address> chosen;
+    for(const auto &r:results) {
+        const auto address=r.endpoint().address();
+        if(address.is_v4()) {chosen=address;break;}
+        if(!chosen) {chosen=address;}
+    }
+    // The Session's parser takes an IPv6 address without brackets (it splits at the last ':').
+    return "tcp://"+chosen->to_string()+":"+port;
+}
 std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint,const std::string &token,
-                                                  std::chrono::milliseconds timeout,const std::string &client_name) {
+                                                  std::chrono::milliseconds timeout,const std::string &client_name,uint8_t kind) {
     if(timeout.count()<=0 || timeout>std::chrono::seconds(60)) {throw Error(ErrorKind::Usage,"invalid timeout");}
     asio::io_context io;asio::ip::tcp::socket tcp(io);p::Scanner scanner{p::kMaxPayload};asio::error_code ec;
     connectTcp(io,tcp,parseTcpEndpoint(endpoint),timeout,ec);
     if(ec) {Error e(ErrorKind::Connection,"open: "+ec.message());if(ec.category()==asio::error::get_system_category()) {e.os_error=ec.value();}throw e;}
-    performHello(io,tcp,scanner,AgentHello{token,{},client_name},timeout);
+    performHello(io,tcp,scanner,AgentHello{token,{},client_name,kind},timeout);
     const auto op=static_cast<uint8_t>(p::defs::AgentOp::ListDevices);
     const auto response=agentExchange(io,tcp,scanner,agent::Command{2,op,{}},timeout);
     if(response.version!=agent::kVersion) {Error e(ErrorKind::Protocol,"incompatible agent protocol version");e.peer_version=response.version;throw e;}

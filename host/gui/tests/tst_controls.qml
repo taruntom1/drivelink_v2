@@ -16,6 +16,7 @@ TestCase {
     Component { id: chipComponent; DLStateChip {} }
     Component { id: badgeComponent; DLBadge { text: "badge" } }
     Component { id: deviceComponent; DLDeviceChip {} }
+    Component { id: leaseComponent; DLLeaseChip {} }
     Component { id: navItemComponent; DLNavItem { text: "Device"; iconName: "cpu" } }
     Component {
         id: railComponent
@@ -250,6 +251,71 @@ TestCase {
     }
 
     // DeviceChip --------------------------------------------------------------
+
+    function test_lease_chip_variants() {
+        const chip = createTemporaryObject(leaseComponent, testCase)
+        const expected = [
+            [DLLeaseChip.Available, "Lease: available", "lock-open", false],
+            [DLLeaseChip.Mine, "Lease: this GUI", "key-round", true],
+            [DLLeaseChip.Ros, "Lease: ROS", "lock", false],
+            [DLLeaseChip.Other, "Lease: other GUI", "users", false],
+            [DLLeaseChip.Requesting, "Lease: requesting…", "loader-circle", true],
+            [DLLeaseChip.Revoked, "Lease: revoked", "key-round", false]
+        ]
+        const icon = findChild(chip, "leaseIcon")
+        const label = findChild(chip, "leaseLabel")
+        for (const row of expected) {
+            chip.variant = row[0]
+            compare(chip.text, row[1], "variant " + row[0])
+            compare(label.text, row[1])
+            compare(icon.name, row[2])
+            compare(label.color, row[3] ? Theme.accentDefault : Theme.textSecondary, "variant " + row[0])
+            verify(chip.width > 0 && chip.height > 0, "variant " + row[0])
+            compare(chip.height, 16 + 2 * Theme.space4 + 2 * Theme.borderWidth)
+        }
+        compare(chip.Accessible.name, "Lease: revoked")
+    }
+
+    function test_lease_chip_holder_name() {
+        const chip = createTemporaryObject(leaseComponent, testCase, { holderName: "bench-laptop" })
+        chip.variant = DLLeaseChip.Other
+        compare(chip.text, "Lease: bench-laptop")
+        chip.variant = DLLeaseChip.Ros
+        compare(chip.text, "Lease: bench-laptop")
+        chip.variant = DLLeaseChip.Mine
+        compare(chip.text, "Lease: this GUI")
+        chip.variant = DLLeaseChip.Available
+        compare(chip.text, "Lease: available")
+    }
+
+    function test_lease_chip_activation() {
+        const chip = createTemporaryObject(leaseComponent, testCase, { variant: DLLeaseChip.Mine })
+        const clicks = createTemporaryObject(spyComponent, testCase, { target: chip, signalName: "clicked" })
+        mouseClick(chip)
+        compare(clicks.count, 1)
+        chip.forceActiveFocus()
+        verify(chip.activeFocus)
+        keyClick(Qt.Key_Space)
+        compare(clicks.count, 2)
+        chip.enabled = false
+        mouseClick(chip)
+        compare(clicks.count, 2)
+    }
+
+    function test_lease_chip_spinner_only_while_requesting_and_visible() {
+        const chip = createTemporaryObject(leaseComponent, testCase)
+        const icon = findChild(chip, "leaseIcon")
+        verify(!icon.spinning)
+        chip.variant = DLLeaseChip.Requesting
+        verify(icon.spinning)
+        chip.variant = DLLeaseChip.Revoked
+        verify(!icon.spinning)
+        chip.variant = DLLeaseChip.Requesting
+        chip.visible = false
+        verify(!icon.visible, "an invisible chip hides its icon, which stops the animation")
+        chip.visible = true
+        verify(icon.spinning)
+    }
 
     function test_device_chip_identity() {
         const chip = createTemporaryObject(deviceComponent, testCase,

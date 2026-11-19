@@ -46,7 +46,8 @@ D_CAPACITY, D_AGENT_VERSION, D_BAD_TOKEN, D_UNKNOWN_DEVICE, D_DEVICE_OFFLINE, D_
 D_UNSUPPORTED = 9
 # Message types (docs/protocol/registry.md).
 T_CORE_COMMAND, T_CORE_RESPONSE, T_AGENT_COMMAND, T_AGENT_RESPONSE, T_STATUS, T_SUB0 = 0x01, 0x41, 0x30, 0x70, 0x80, 0x81
-AGENT_VERSION = 2
+AGENT_VERSION = 3
+KIND_OTHER, KIND_GUI, KIND_CLI, KIND_ROS = 0, 1, 2, 3   # AgentClientKind
 T_DISARM, T_DIAG_EVENT, T_AGENT_EVENT = 0x03, 0xC0, 0xF0
 D_UNKNOWN_REF, D_WRONG_STATE = 1, 46
 # Agent ops, events, lease reasons, history kinds (docs/protocol/agent.md).
@@ -248,10 +249,11 @@ class RawClient:
     """A device connection speaking the agent protocol directly, so a group
     slot stays owned for as long as the test wants (a CLI process cannot)."""
 
-    def __init__(self, name, device='base', rcvbuf=None, hello=True):
+    def __init__(self, name, device='base', rcvbuf=None, hello=True, kind=KIND_OTHER):
         """`device=''` makes a lobby connection; `hello=False` only connects."""
         self.name, self.seq = name, 0
         host, port = AGENT_URL[len('tcp://'):].rsplit(':', 1)
+        self.kind = kind
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if rcvbuf:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)   # before connect
@@ -273,7 +275,7 @@ class RawClient:
     def send_hello(self, agent_version=AGENT_VERSION, core_version=CORE_PROTOCOL_VERSION, device='base', token=None):
         token = TOKEN if token is None else token
         body = bytes([core_version]) + b''.join(
-            bytes([len(s)]) + s for s in (token.encode(), device.encode(), self.name.encode()))
+            bytes([len(s)]) + s for s in (token.encode(), device.encode(), self.name.encode())) + bytes([self.kind])
         seq = self._next()
         self.send(T_AGENT_COMMAND, bytes([agent_version, seq, 1]) + body)
         return seq
@@ -960,9 +962,14 @@ def parse_lease(body):
     holder, = struct.unpack_from('<H', body)
     n = body[2]
     name = body[3:3 + n].decode()
-    previous, = struct.unpack_from('<H', body, 3 + n)
-    expect(len(body) == 6 + n, 'Lease event length', body=body.hex())
-    return holder, name, previous, body[5 + n]
+    previous, = struct.unpack_from('<H', body, 4 + n)
+    expect(len(body) == 7 + n, 'Lease event length', body=body.hex())
+    return holder, name, previous, body[6 + n]
+
+
+def lease_kind(body):
+    """holder_kind (AgentClientKind) of a Lease event body."""
+    return body[3 + body[2]]
 
 
 def leases(c, count, timeout=5):
@@ -1134,7 +1141,7 @@ def scenario_E_exclusive_ops_cli(ctx):
 
 
 def scenario_F_client_list(ctx):
-    a, b = RawClient('list-a'), RawClient('list-b')
+    a, b = RawClient('list-a', kind=KIND_ROS), RawClient('list-b', kind=KIND_GUI)
     try:
         def listed():
             return data(via('base', 'agent-clients', client_name='list-cli'))['clients']
@@ -1144,20 +1151,26 @@ def scenario_F_client_list(ctx):
                'agent-clients lists both raw clients and the CLI, no holder', clients=clients)
         expect(by_name['list-a']['client_id'] == a.client_id and by_name['list-b']['client_id'] == b.client_id,
                'client ids', clients=clients)
+        expect((by_name['list-a']['kind'], by_name['list-b']['kind'], by_name['list-cli']['kind']) == ('ros', 'gui', 'cli'),
+               'agent-clients reports each Hello kind', clients=clients)
         expect(a.lease_take()[:2] == (R_OK, 0), 'LeaseTake')
+        grant = [parse_lease(e) + (lease_kind(e),) for e in b.wait_events(EV_LEASE, 1, 5)]
+        expect(grant[-1][0] == a.client_id and grant[-1][4] == KIND_ROS, 'the Lease event carries the holder kind',
+               grant=grant)
         clients = listed()
         holders = [c for c in clients if c['holder']]
         expect(len(holders) == 1 and holders[0]['name'] == 'list-a' and holders[0]['client_id'] == a.client_id,
                'exactly one holder, A', clients=clients)
         devices = wait_devices(lambda d: d['base']['holder_id'] == a.client_id, 'holder in agent-devices')
-        expect(devices['base']['holder_name'] == 'list-a', 'agent-devices holder_name', devices=devices)
+        expect(devices['base']['holder_name'] == 'list-a' and devices['base']['holder_kind'] == 'ros',
+               'agent-devices holder_name and holder_kind', devices=devices)
         run = subprocess.run([CLI, '--endpoint', AGENT_URL, '--token', TOKEN, 'agent-devices'],
                              capture_output=True, text=True, timeout=20)
-        expect(run.stdout.splitlines()[0].endswith(f' holder={a.client_id}:list-a'),
+        expect(run.stdout.splitlines()[0].endswith(f' holder={a.client_id}:list-a (ros)'),
                'readable agent-devices shows the holder', stdout=run.stdout)
         run = subprocess.run([CLI, '--endpoint', AGENT_URL, '--device', 'base', '--token', TOKEN, 'agent-clients'],
                              capture_output=True, text=True, timeout=20)
-        expect(f'{a.client_id} list-a [holder]' in run.stdout.splitlines() and run.returncode == 0,
+        expect(f'{a.client_id} list-a (ros) [holder]' in run.stdout.splitlines() and run.returncode == 0,
                'readable agent-clients marks the holder', stdout=run.stdout, stderr=run.stderr)
         expect(a.lease_release()[:2] == (R_OK, 0), 'LeaseRelease')
         clients = listed()
@@ -1289,7 +1302,7 @@ def scenario_K_device_connection_cap(ctx):
     try:
         result, detail, body = clients[0].agent_request(OP_CLIENT_LIST)
         expect(result == R_OK, 'ClientList with 16 clients', result=result, detail=detail)
-        expect(body[0] == 16 and len(body) == 1 + 16 * (2 + 1 + 32 + 1), 'all 16 records', count=body[0], size=len(body))
+        expect(body[0] == 16 and len(body) == 1 + 16 * (2 + 1 + 32 + 1 + 1), 'all 16 records', count=body[0], size=len(body))
         extra = RawClient('k-extra', hello=False)
         try:
             extra.send_hello()

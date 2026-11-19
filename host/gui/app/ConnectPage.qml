@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import DriveLink.Style
 
-// G3 Connect: serial port or TCP (vdev), recent devices by id, model loading
-// steps and the protocol-mismatch refusal. The Agent tab arrives in H3b.
+// G3 Connect: serial port, TCP (vdev) or a remote agent (G6, AgentTab), recent
+// devices by id, model loading steps and the protocol-mismatch refusal.
 Item {
     id: page
     objectName: "connectPage"
@@ -107,18 +107,14 @@ Item {
                 Row {
                     spacing: Theme.space8
                     Repeater {
-                        model: [qsTr("Serial"), qsTr("TCP (vdev)"), qsTr("Agent")]
-                        DLReasonHover {
+                        model: [qsTr("Serial"), qsTr("TCP (vdev)"), qsTr("Agent (remote)")]
+                        DLButton {
                             required property string modelData
                             required property int index
-                            reason: qsTr("Remote agents arrive with remote mode")
-                            DLButton {
-                                objectName: "tab" + parent.index
-                                text: parent.modelData
-                                kind: page.tab === parent.index ? DLButton.Secondary : DLButton.Ghost
-                                enabled: parent.index < 2
-                                onClicked: page.tab = parent.index
-                            }
+                            objectName: "tab" + index
+                            text: modelData
+                            kind: page.tab === index ? DLButton.Secondary : DLButton.Ghost
+                            onClicked: page.tab = index
                         }
                     }
                 }
@@ -234,8 +230,15 @@ Item {
                         onAccepted: page.connectSelected()
                     }
                 }
+                AgentTab {
+                    objectName: "agentTab"
+                    width: parent.width
+                    visible: page.tab === 2
+                    backend: page.backend
+                }
                 DLButton {
                     objectName: "connectButton"
+                    visible: page.tab < 2
                     kind: DLButton.Primary
                     text: qsTr("Connect")
                     enabled: !page.backend.closing && (page.tab === 1 ? tcp.text.length > 0 : page.selectedPort.length > 0)
@@ -244,7 +247,7 @@ Item {
                 Text {
                     objectName: "connectError"
                     width: parent.width
-                    visible: text.length > 0 && page.backend.mismatch.device === undefined
+                    visible: page.tab < 2 && text.length > 0 && page.backend.mismatch.device === undefined
                     wrapMode: Text.Wrap
                     // Win32 ERROR_ACCESS_DENIED, Linux EBUSY, from the failed open.
                     text: page.backend.lastError.osError === (Qt.platform.os === "windows" ? 5 : 16) && page.backend.endpoint.startsWith("serial://")

@@ -431,11 +431,11 @@ void validate(const AgentConfig &config)
     }
     // The ListDevices answer is one frame: agent response header (5), count,
     // then per device alias, online, id, a name of up to 16 bytes, endpoint,
-    // clients, the holder's id and a client name of up to 32 bytes
+    // clients, the holder's id, a client name of up to 32 bytes and its kind
     // (docs/protocol/agent.md). It must fit MAX_PAYLOAD (1024).
     size_t list_bytes = 5 + 1;
     for (const auto &d : config.devices)
-        list_bytes += 1 + d.alias.size() + 1 + 6 + 1 + 16 + 1 + d.endpoint.size() + 1 + 2 + 1 + 32;
+        list_bytes += 1 + d.alias.size() + 1 + 6 + 1 + 16 + 1 + d.endpoint.size() + 1 + 2 + 1 + 32 + 1;
     if (list_bytes > 1024)
         throw ConfigError("the device list is too long for one ListDevices answer (" + std::to_string(list_bytes) +
                           " of 1024 bytes): use fewer devices or shorter aliases and endpoints");

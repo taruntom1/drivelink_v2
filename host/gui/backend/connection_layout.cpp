@@ -88,7 +88,10 @@ QVariantMap LocalConnection::layout() const {
     if(!ready() || !m_snapshot) {return result;}
     const auto &s=*m_snapshot;
     const auto counts=layoutCounts(s);
-    const auto blocked=layoutBlocked();
+    // Layout ops are exclusive through an agent (its lease rule); reboot
+    // params are shown with the same block, although the agent forwards them.
+    auto blocked=layoutBlocked();
+    if(blocked.isEmpty()) {blocked=exclusiveBlocked();}
     result["blocked"]=blocked;
     // Live params: only the common blocks (reboot params use `blocked`).
     QString paramBlocked=commonBlock();
@@ -286,6 +289,15 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
                           :formatValue(*item,valueBits(it->second));
     }
     const auto after=d.isSource()?sourceText(*m_snapshot,bits):isWiring(d)?wiringText(*m_snapshot,bits):formatValue(*item,bits);
+    // Another client holds the lease: the operator confirms first (G6);
+    // nothing is sent until then.
+    if(holdLiveEdit(key,tr("%1: %2 to %3").arg(subject,before.isEmpty()?tr("(unset)"):before,after),
+                    [this,ref,bits,text,generation=m_snapshot->generation] {
+                        if(m_snapshot && m_snapshot->generation==generation && findItem(*m_snapshot,ref)) {sendParam(ref,bits,text);}
+                    },
+                    [this,key] {m_edits.remove(key);updateParams();emit changed();})) {
+        return;
+    }
     auto c=m_context;auto session=c?c->getSession():nullptr;
     if(!session) {return;}
     const QPointer<LocalConnection> self(this);
@@ -343,7 +355,9 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
 
 void LocalConnection::runLayoutOp(const QString &op,std::function<int(Client &)> work,std::function<QString(int)> done,
                                   std::optional<InstanceKey> removed) {
-    if(const auto blocked=layoutBlocked();!blocked.isEmpty()) {emit layoutResult(op,false,blocked);return;}
+    if(const auto blocked=layoutBlocked().isEmpty()?exclusiveBlocked():layoutBlocked();!blocked.isEmpty()) {
+        emit layoutResult(op,false,blocked);return;
+    }
     auto c=m_context;auto session=c?c->getSession():nullptr;
     if(!session || !m_snapshot) {emit layoutResult(op,false,tr("Not connected"));return;}
     const QPointer<LocalConnection> self(this);

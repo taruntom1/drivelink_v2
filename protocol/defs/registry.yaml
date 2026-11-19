@@ -42,7 +42,7 @@ msg_types:
   - {name: time_request, value: 0x02, direction: host_to_esp, description: "Host time ping, answered directly in RX."}
   - {name: time_response, value: 0x42, direction: esp_to_host, description: "Time reply with monotonic RX and TX-submission timestamps."}
 
-  # -- agent protocol v2 (H3a): between a host client and drivelink-agent only,
+  # -- agent protocol v3 (H3a, H3b-1): between a host client and drivelink-agent only,
   #    never forwarded to a device. docs/protocol/agent.md.
   - {name: agent_command,  value: 0x30, direction: host_to_agent, description: "Agent command (op): hello, device list, lease, client list, time ping. Answered by the agent, never forwarded."}
   - {name: agent_response, value: 0x70, direction: agent_to_host, description: "Answer to an agent command."}
@@ -258,6 +258,13 @@ wire_enums:
     Taken: 1
     Released: 2
     Disconnected: 3
+  # What kind of client a connection is (agent Hello, client list, lease
+  # holder): the GUI shows ROS and other GUIs differently (agent v3, H3b-1).
+  AgentClientKind:
+    Other: 0
+    Gui: 1
+    Cli: 2
+    Ros: 3
   # Agent history entry kinds.
   HistoryKind:
     DiagEvent: 1

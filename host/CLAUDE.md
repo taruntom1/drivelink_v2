@@ -72,6 +72,16 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   Keep routing, the group map, LIST, the lease and history pure
   (`groups.cpp`, `lease.cpp`, `history.cpp`) with unit tests. Agent clients
   ping the agent, never the device, and compose its ClockModel.
+- GUI remote mode (H3b-1, [gui/README.md](gui/README.md) "Remote mode"): a
+  `LocalConnection` through the agent with its Hello's `client_kind` Gui. It
+  observes first and sets up command groups only while it holds the lease;
+  the agent's Lease events are the truth. Losing the lease forgets the
+  command groups without CMD_CLEAR (the agent cleared them) and cancels an
+  ARM in flight; a grant never arms. Take from another holder needs the
+  operator's explicit safe-to-stop confirmation. Exclusive operations follow
+  the agent's rule (`exclusiveBlocked()`). A live param edit while another
+  client holds the lease is held unsent until the operator applies it (the
+  opt-out lasts one connection). A token is stored only when the user asks.
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - GUI ([gui/README.md](gui/README.md)): Qt 6.10 API floor. Figma is the source

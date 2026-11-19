@@ -55,7 +55,7 @@ bool getString(Reader &reader, const uint8_t *data, size_t min, size_t max, std:
 size_t recordSize(const DeviceRecord &record)
 {
     return strSize(record.alias) + 1 + record.device_id.size() + strSize(record.name) + strSize(record.endpoint) + 1 + 2 +
-           strSize(record.holder_name);
+           strSize(record.holder_name) + 1;
 }
 
 void checkRecord(const DeviceRecord &record)
@@ -64,6 +64,8 @@ void checkRecord(const DeviceRecord &record)
     checkString(record.name, 0, kMaxString, "agent device name too long");
     checkString(record.endpoint, 0, kMaxString, "agent device endpoint too long");
     checkString(record.holder_name, 0, kMaxString, "agent device holder name too long");
+    if (record.holder_kind > kMaxClientKind)
+        usage("agent device holder kind is not an AgentClientKind");
 }
 
 void writeRecord(Writer &writer, const DeviceRecord &record)
@@ -76,6 +78,7 @@ void writeRecord(Writer &writer, const DeviceRecord &record)
     writer.appendU8(record.clients);
     writer.appendU16Le(record.holder_id);
     putString(writer, record.holder_name);
+    writer.appendU8(record.holder_kind);
 }
 
 bool readRecord(Reader &reader, const uint8_t *data, DeviceRecord &record)
@@ -92,7 +95,10 @@ bool readRecord(Reader &reader, const uint8_t *data, DeviceRecord &record)
         return false;
     record.clients = reader.readU8();
     record.holder_id = reader.readU16Le();
-    return reader.ok() && getString(reader, data, 0, kMaxString, record.holder_name);
+    if (!reader.ok() || !getString(reader, data, 0, kMaxString, record.holder_name))
+        return false;
+    record.holder_kind = reader.readU8();
+    return reader.ok() && record.holder_kind <= kMaxClientKind;
 }
 
 void putF64(Writer &writer, double value)
@@ -204,12 +210,15 @@ Bytes encodeHello(const Hello &hello)
     checkString(hello.token, 1, kMaxToken, "agent hello token must be 1..128 bytes");
     checkString(hello.device, 0, kMaxDevice, "agent hello device is longer than 64 bytes");
     checkString(hello.client_name, 0, kMaxClientName, "agent hello client name is longer than 32 bytes");
-    Bytes out(1 + strSize(hello.token) + strSize(hello.device) + strSize(hello.client_name));
+    if (hello.client_kind > kMaxClientKind)
+        usage("agent hello client kind is not an AgentClientKind");
+    Bytes out(1 + strSize(hello.token) + strSize(hello.device) + strSize(hello.client_name) + 1);
     Writer writer(out.data(), out.size());
     writer.appendU8(hello.core_version);
     putString(writer, hello.token);
     putString(writer, hello.device);
     putString(writer, hello.client_name);
+    writer.appendU8(hello.client_kind);
     return out;
 }
 
@@ -220,7 +229,10 @@ std::expected<Hello, Error> decodeHello(std::span<const uint8_t> body)
     hello.core_version = reader.readU8();
     if (!reader.ok() || !getString(reader, body.data(), 1, kMaxToken, hello.token) ||
         !getString(reader, body.data(), 0, kMaxDevice, hello.device) ||
-        !getString(reader, body.data(), 0, kMaxClientName, hello.client_name) || !reader.done())
+        !getString(reader, body.data(), 0, kMaxClientName, hello.client_name))
+        return bad("malformed agent Hello body");
+    hello.client_kind = reader.readU8();
+    if (!reader.ok() || hello.client_kind > kMaxClientKind || !reader.done())
         return bad("malformed agent Hello body");
     return hello;
 }
@@ -331,16 +343,21 @@ Bytes encodeClientList(std::span<const ClientRecord> clients)
     if (clients.size() > 255)
         usage("agent client list has more than 255 entries");
     for (const auto &client : clients)
+    {
         checkString(client.name, 0, kMaxString, "agent client name too long");
+        if (client.kind > kMaxClientKind)
+            usage("agent client kind is not an AgentClientKind");
+    }
     Bytes out;
     out.push_back(static_cast<uint8_t>(clients.size()));
     for (const auto &client : clients)
     {
         const size_t start = out.size();
-        out.resize(start + 2 + strSize(client.name) + 1);
+        out.resize(start + 2 + strSize(client.name) + 1 + 1);
         Writer writer(out.data() + start, out.size() - start);
         writer.appendU16Le(client.client_id);
         putString(writer, client.name);
+        writer.appendU8(client.kind);
         writer.appendU8(client.holder ? 1 : 0);
     }
     return out;
@@ -360,8 +377,9 @@ std::expected<std::vector<ClientRecord>, Error> decodeClientList(std::span<const
         client.client_id = reader.readU16Le();
         if (!reader.ok() || !getString(reader, body.data(), 0, kMaxString, client.name))
             return bad("malformed agent client record");
+        client.kind = reader.readU8();
         const uint8_t holder = reader.readU8();
-        if (!reader.ok() || holder > 1)
+        if (!reader.ok() || client.kind > kMaxClientKind || holder > 1)
             return bad("malformed agent client record");
         client.holder = holder == 1;
         clients.push_back(std::move(client));
@@ -391,10 +409,13 @@ std::expected<uint64_t, Error> decodeTimePing(std::span<const uint8_t> body)
 Bytes encodeLease(const LeaseEvent &event)
 {
     checkString(event.holder_name, 0, kMaxString, "agent lease holder name too long");
-    Bytes out(2 + strSize(event.holder_name) + 2 + 1);
+    if (event.holder_kind > kMaxClientKind)
+        usage("agent lease holder kind is not an AgentClientKind");
+    Bytes out(2 + strSize(event.holder_name) + 1 + 2 + 1);
     Writer writer(out.data(), out.size());
     writer.appendU16Le(event.holder_id);
     putString(writer, event.holder_name);
+    writer.appendU8(event.holder_kind);
     writer.appendU16Le(event.previous_id);
     writer.appendU8(event.reason);
     return out;
@@ -406,6 +427,9 @@ std::expected<LeaseEvent, Error> decodeLease(std::span<const uint8_t> body)
     LeaseEvent event;
     event.holder_id = reader.readU16Le();
     if (!reader.ok() || !getString(reader, body.data(), 0, kMaxString, event.holder_name))
+        return bad("malformed agent Lease body");
+    event.holder_kind = reader.readU8();
+    if (!reader.ok() || event.holder_kind > kMaxClientKind)
         return bad("malformed agent Lease body");
     event.previous_id = reader.readU16Le();
     event.reason = reader.readU8();

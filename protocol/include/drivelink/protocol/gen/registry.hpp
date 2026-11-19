@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x2FFC359C;
+inline constexpr uint32_t kDescriptorHash = 0x7FB5CC36;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -270,6 +270,13 @@ enum class LeaseChange : uint8_t {
     Taken = 1,
     Released = 2,
     Disconnected = 3,
+};
+
+enum class AgentClientKind : uint8_t {
+    Other = 0,
+    Gui = 1,
+    Cli = 2,
+    Ros = 3,
 };
 
 enum class HistoryKind : uint8_t {

@@ -72,11 +72,13 @@ pulse DTR/RTS and reset the board; whether a port is busy shows when opening
 it fails (`Error::os_error`). The sysfs parser is pure and tested
 (`ports_detail::listSysfs`).
 
-## Agent client (`drivelink/agent.hpp`, H3a, agent protocol v2)
+## Agent client (`drivelink/agent.hpp`, H3a, agent protocol v3)
 
 A device behind `drivelink-agent` is reached over `tcp://` with
-`SessionOptions::agent = AgentHello{token, device, client_name}` (the device is
-an alias or a 12-hex device id). The Session sends the agent Hello before any
+`SessionOptions::agent = AgentHello{token, device, client_name, kind}` (the
+device is an alias or a 12-hex device id; `kind` is the `AgentClientKind` other
+clients see beside the name: the CLI sends Cli, the GUI Gui, the ROS plugin
+Ros, H3b-1). The Session sends the agent Hello before any
 other traffic and throws `DeviceError` (agent result/detail: `BadToken`,
 `UnknownDevice`, `DeviceOffline`, `AgentVersion` with `peer_version`) on a
 refusal; `Session::agentHello()` returns the accepted Hello and its device
@@ -91,7 +93,9 @@ frames as on a direct link.
   A device Boot drops the agent's model until the next ClockModel event. A
   lobby never pings.
 - **Agent events** (Closing, Lease, ClockModel, History) reach `nextEvent()`
-  and observers as `Frame{0xF0}`; decode them with `agent::decodeEvent` and the
+  and observers as `Frame{0xF0}`, and also `nextAgentEvent()`, their own
+  bounded queue (4096, `droppedAgentEvents()`), which stream traffic never
+  pushes them out of (the GUI reads them there, H3b-1); decode them with `agent::decodeEvent` and the
   body decoders (`decodeLease`, `decodeHistory`, ...). The History chunks and
   one ClockModel event arrive right after the Hello, before any device frame.
 - **Agent ops.** `Session::agentRequest(op, body)` sends one agent command and
@@ -101,8 +105,10 @@ frames as on a direct link.
   `InvalidArgument/WrongState`). A Take returns once the lease is held, after
   a previous holder was disarmed and its command groups cleared.
 
-`listAgentDevices(endpoint, token)` opens a lobby connection and returns the
-device records. `agent.hpp` also holds the pure codec of the agent messages,
+`listAgentDevices(endpoint, token, timeout, client_name, kind)` opens a lobby
+connection and returns the device records. `resolveTcpEndpoint("tcp://host:port")`
+turns a host name into the numeric `tcp://ip:port` a Session takes (IPv4
+first), for addresses people type (the GUI's Agent tab). `agent.hpp` also holds the pure codec of the agent messages,
 shared with the agent. The contract is
 [docs/protocol/agent.md](../../docs/protocol/agent.md).
 

@@ -20,7 +20,16 @@ Basic.ApplicationWindow {
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
     readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
-    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || overlayOpen
+    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || leaseDialogs.anyOpen || overlayOpen
+    // Remote mode (H3b-1): the lease as the status bar and banners show it.
+    readonly property var lease: connection.lease || ({})
+    readonly property bool remote: connection.remote
+    // Shows the Clients and lease card (the lease chip, the revoked banner).
+    function showClients() {
+        if (!connection.ready || shell.modalOpen) return
+        shell.page = 0
+        devicePage.showClients()
+    }
     property bool reviewOpen: false
     property alias layoutDialogs: layoutDialogs
     readonly property var pendingChanges: connection.layout.pendingChanges || []
@@ -48,7 +57,7 @@ Basic.ApplicationWindow {
 
     function cancelOverlay() {
         drawerOpen = false; armPopoverOpen = false; reviewOpen = false
-        dialog.reject(); renameDialog.reject(); resetDialog.reject(); layoutDialogs.cancel()
+        dialog.reject(); renameDialog.reject(); resetDialog.reject(); layoutDialogs.cancel(); leaseDialogs.closeAll()
         // Esc closes the image choice; a running update is never aborted by Esc.
         if (otaDialog.choosing) otaDialog.cancel()
     }
@@ -88,10 +97,23 @@ Basic.ApplicationWindow {
             : shell.backend.armState === 2 ? DLStatusBar.Fault : DLStatusBar.Disarmed
         deviceName: shell.backend.deviceName
         deviceId: shell.backend.deviceId
-        connection: shell.backend.endpoint
-        // While an update runs the centre names its step (G3 frames).
+        link: shell.remote ? DLDeviceChip.Agent : DLDeviceChip.Serial
+        connection: shell.remote ? qsTr("%1 · %2").arg((connection.agent || {}).address || "").arg((connection.agent || {}).device || "")
+                                 : shell.backend.endpoint
+        // G6: the lease chip beside the device identity; it leads to Device > Clients and lease.
+        leaseVisible: shell.remote
+        leaseVariant: shell.lease.chip !== undefined ? shell.lease.chip : DLLeaseChip.Available
+        // G6: "Lease: ROS" for ROS; another GUI by its name.
+        leaseHolderName: shell.lease.chip === DLLeaseChip.Other ? (shell.lease.holderName || "") : ""
+        onLeaseClicked: shell.showClients()
+        // While an update runs the centre names its step (G3 frames); remote
+        // observers see who drives, or that ARM needs the lease (G6).
         reason: shell.backend.ota.active === true ? qsTr("Firmware update · %1").arg(shell.backend.ota.phase)
-                                                  : shell.backend.reason
+              : shell.remote && !shell.lease.mine && shell.lease.holderId && shell.backend.armState === 1
+                ? qsTr("driven by %1").arg(shell.lease.holderName)
+              : shell.remote && !shell.lease.mine && shell.backend.armState === 0 && shell.backend.ready
+                ? qsTr("ARM needs lease")
+              : shell.backend.reason
         armEnabled: shell.backend.armEnabled
         armBlockedReason: shell.backend.armBlockedReason
         ackEnabled: shell.backend.ackEnabled
@@ -134,6 +156,8 @@ Basic.ApplicationWindow {
             id: content
             anchors.left: nav.right; anchors.right: parent.right; height: parent.height
             enabled: !shell.modalOpen
+            // Both banners stack above the page.
+            readonly property real bannersHeight: (banner.visible ? banner.height : 0) + (remoteBanner.visible ? remoteBanner.height : 0)
             DLBanner {
                 id: banner
                 objectName: "shellBanner"
@@ -158,6 +182,26 @@ Basic.ApplicationWindow {
                     else connection.reboot()
                 }
             }
+            // G6: lease revoked (until acknowledged), else ROS driving.
+            DLBanner {
+                id: remoteBanner
+                objectName: "remoteBanner"
+                width: parent.width
+                y: banner.visible ? banner.height : 0
+                visible: connection.ready && shell.remote && (shell.lease.revoked === true || shell.lease.ros === true)
+                tone: shell.lease.revoked ? DLBanner.Info : DLBanner.Armed
+                iconName: shell.lease.revoked ? "info" : "radio"
+                title: shell.lease.revoked ? qsTr("Lease revoked") : qsTr("ROS is driving")
+                message: shell.lease.revoked
+                    ? (shell.lease.revokedBy ? qsTr("%1 now holds the lease. This GUI can still observe.").arg(shell.lease.revokedBy)
+                                             : qsTr("Another client took the lease. This GUI can still observe."))
+                    : qsTr("Param edits apply live while %1 controls the robot.").arg(shell.lease.holderName || qsTr("ROS"))
+                action1Text: shell.lease.revoked ? qsTr("Clients and lease") : qsTr("Take lease…")
+                onActionTriggered: function(index) {
+                    if (shell.lease.revoked) { connection.acknowledgeRevoked(); shell.showClients() }
+                    else leaseDialogs.requestTake()
+                }
+            }
             ConnectPage {
                 id: connectPage
                 anchors.fill: parent
@@ -178,7 +222,7 @@ Basic.ApplicationWindow {
             Loader {
                 id: settingsLoader
                 anchors.fill: parent
-                anchors.topMargin: banner.visible ? banner.height : 0
+                anchors.topMargin: content.bannersHeight
                 active: shell.page === shell.settingsPage
                 sourceComponent: SettingsPage {
                     onCloseRequested: shell.toggleSettings()
@@ -187,9 +231,10 @@ Basic.ApplicationWindow {
             }
             Item {
                 anchors.fill: parent
-                anchors.topMargin: banner.visible ? banner.height : 0
+                anchors.topMargin: content.bannersHeight
                 visible: connection.ready && shell.page !== shell.settingsPage
                 DevicePage {
+                    id: devicePage
                     anchors.fill: parent
                     visible: shell.page === 0
                     backend: shell.backend
@@ -199,6 +244,8 @@ Basic.ApplicationWindow {
                     // A loop is an instance of the built-in loop type (0x05).
                     onLoopRequested: function(loopId) { shell.layoutLoop = loopId; connection.selectNode("5:" + loopId); shell.page = 1 }
                     onUpdateRequested: shell.chooseFirmware()
+                    onTakeLeaseRequested: leaseDialogs.requestTake()
+                    onReleaseLeaseRequested: leaseDialogs.requestRelease()
                 }
                 LayoutPage {
                     id: layoutPage
@@ -435,6 +482,13 @@ Basic.ApplicationWindow {
             id: layoutDialogs
             backend: shell.backend
             dialogParent: body
+        }
+        // G6 take, release, live-edit and revoked dialogs (not Qt modal: DISARM stays live).
+        LeaseDialogs {
+            id: leaseDialogs
+            anchors.fill: parent
+            backend: shell.backend
+            onViewClientsRequested: shell.showClients()
         }
         DLDialog {
             id: dialog
