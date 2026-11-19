@@ -21,7 +21,7 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(validate.select('quick', None, None, windows=True)[0],
                          ['gen', 'native', 'host-win'])
         self.assertEqual(validate.select('quick', None, None, windows=False)[0],
-                         ['gen', 'native', 'host-linux'])
+                         ['gen', 'native', 'host-linux', 'agent'])
 
     def test_full_is_every_check_of_this_os(self):
         chosen, left_out = validate.select('full', None, None, windows=True)

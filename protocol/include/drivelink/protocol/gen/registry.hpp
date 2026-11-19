@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x6AA7C924;
+inline constexpr uint32_t kDescriptorHash = 0x6B288C95;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -88,6 +88,11 @@ enum class Detail : uint8_t {
     OtaImage = 51,
     OtaBackend = 52,
     OtaCommitted = 53,
+    AgentVersion = 54,
+    BadToken = 55,
+    UnknownDevice = 56,
+    DeviceOffline = 57,
+    LeaseRequired = 58,
 };
 
 enum class Family : uint8_t {
@@ -240,6 +245,20 @@ enum class OtaStage : uint8_t {
     Confirm = 8,
 };
 
+enum class AgentOp : uint8_t {
+    Hello = 1,
+    ListDevices = 2,
+};
+
+enum class AgentEvent : uint8_t {
+    Closing = 1,
+};
+
+enum class AgentCloseReason : uint8_t {
+    DeviceOffline = 1,
+    Shutdown = 2,
+};
+
 inline constexpr size_t kDescriptorMinPayload = 150;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
@@ -250,32 +269,41 @@ inline constexpr uint8_t kTimeRequest = 0x02;
 inline constexpr uint8_t kDisarm = 0x03;
 /// command, host to ESP. diag query: GetInfo, GetEntries, Clear.
 inline constexpr uint8_t kDiagQuery = 0x23;
+/// command, host to agent. Agent command (op): hello, device list. Answered by the agent, never forwarded.
+inline constexpr uint8_t kAgentCommand = 0x30;
 /// response, ESP to host. Answer to a core command.
 inline constexpr uint8_t kCoreResponse = 0x41;
 /// response, ESP to host. Time reply with monotonic RX and TX-submission timestamps.
 inline constexpr uint8_t kTimeResponse = 0x42;
 /// response, ESP to host. Answer to a diag query.
 inline constexpr uint8_t kDiagQueryResponse = 0x63;
+/// response, agent to host. Answer to an agent command.
+inline constexpr uint8_t kAgentResponse = 0x70;
 /// stream, ESP to host. System status stream, also the heartbeat.
 inline constexpr uint8_t kStatusStream = 0x80;
 /// event, ESP to host. diag events: Record, CounterDelta, Cleared, Boot.
 inline constexpr uint8_t kDiagEvent = 0xC0;
 /// event, ESP to host. Core events: capture done, test signal done, layout applied, OTA state, arm state change.
 inline constexpr uint8_t kCoreEvent = 0xC1;
+/// event, agent to host. Agent events: the connection is closing.
+inline constexpr uint8_t kAgentEvent = 0xF0;
 } // namespace msg
 
 /// Every MSG_TYPE in the registry, by value.
-inline constexpr std::array<uint8_t, 10> kAllMsgTypes = {{
+inline constexpr std::array<uint8_t, 13> kAllMsgTypes = {{
     msg::kCoreCommand,
     msg::kTimeRequest,
     msg::kDisarm,
     msg::kDiagQuery,
+    msg::kAgentCommand,
     msg::kCoreResponse,
     msg::kTimeResponse,
     msg::kDiagQueryResponse,
+    msg::kAgentResponse,
     msg::kStatusStream,
     msg::kDiagEvent,
     msg::kCoreEvent,
+    msg::kAgentEvent,
 }};
 
 /// Stream channel ranges: the first channel and the channel count.
@@ -316,12 +344,15 @@ static_assert(isCommand(msg::kCoreCommand), "core_command is outside its class r
 static_assert(isCommand(msg::kTimeRequest), "time_request is outside its class range");
 static_assert(isCommand(msg::kDisarm), "disarm is outside its class range");
 static_assert(isCommand(msg::kDiagQuery), "diag_query is outside its class range");
+static_assert(isCommand(msg::kAgentCommand), "agent_command is outside its class range");
 static_assert(isResponse(msg::kCoreResponse), "core_response is outside its class range");
 static_assert(isResponse(msg::kTimeResponse), "time_response is outside its class range");
 static_assert(isResponse(msg::kDiagQueryResponse), "diag_query_response is outside its class range");
+static_assert(isResponse(msg::kAgentResponse), "agent_response is outside its class range");
 static_assert(isStream(msg::kStatusStream), "status_stream is outside its class range");
 static_assert(isEvent(msg::kDiagEvent), "diag_event is outside its class range");
 static_assert(isEvent(msg::kCoreEvent), "core_event is outside its class range");
+static_assert(isEvent(msg::kAgentEvent), "agent_event is outside its class range");
 static_assert(kSubGroupChannelFirst >= kStreamMin && kSubGroupChannelFirst + kSubGroupChannelCount - 1 <= kStreamMax, "sub_groups is outside the stream class");
 static_assert(detail::channelsClear(kSubGroupChannelFirst, kSubGroupChannelCount), "a registry entry lies in sub_groups");
 static_assert(kCmdGroupChannelFirst >= kStreamMin && kCmdGroupChannelFirst + kCmdGroupChannelCount - 1 <= kStreamMax, "cmd_groups is outside the stream class");

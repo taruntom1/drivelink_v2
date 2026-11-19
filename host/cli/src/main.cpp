@@ -5,6 +5,7 @@
 #include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -32,6 +33,8 @@ struct InterruptScope {
 };
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
+  [--device ALIAS|ID12 --token TOKEN [--client-name NAME]]   (through drivelink-agent)
+  agent-devices                Through an agent: list its devices (needs --token, no --device)
   time-ping | time-sync [DURATION_S]
   ota-status | ota-abort | ota-confirm
   ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]
@@ -66,6 +69,8 @@ REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
 JSON is one envelope per command or one per watched event (NDJSON).
+Through an agent: --endpoint tcp://HOST:47620 --device NAME_OR_12HEX --token TOKEN.
+The token may come from DRIVELINK_AGENT_TOKEN; --client-name defaults to drivelink-cli.
 Exit: 0 success, 1 internal, 2 usage, 3 connection, 4 timeout, 5 rejection, 6 protocol.
 )";
 [[noreturn]] void usage(const std::string &message)
@@ -739,7 +744,8 @@ int main(int argc, char **argv)
         for (auto &arg : utf8) { pointers.push_back(arg.data()); }
         argc = wide_count; argv = pointers.data();
 #endif
-        std::string endpoint;
+        std::string endpoint, token, device, client_name = "drivelink-cli";
+        bool have_token = false;
         SessionOptions options;
         // Short CLI commands own their explicit time measurement; background
         // pings would alter recorded/replayed wire conversations.
@@ -768,6 +774,20 @@ int main(int argc, char **argv)
             {
                 options.baud = parseUnsigned(value(), 4000000);
             }
+            else if (args.empty() && arg == "--token")
+            {
+                token = value();
+                have_token = true;
+            }
+            else if (args.empty() && arg == "--device")
+            {
+                device = value();
+                if (device.empty()) { usage("--device needs an alias or device id"); }
+            }
+            else if (args.empty() && arg == "--client-name")
+            {
+                client_name = value();
+            }
             else if (args.empty() && arg == "--timeout-ms")
             {
                 options.timeout = std::chrono::milliseconds(parseUnsigned(value(), 60000));
@@ -792,6 +812,37 @@ int main(int argc, char **argv)
         if (args.empty() || endpoint.empty())
         {
             usage("--endpoint and COMMAND required; use --help");
+        }
+        if (!have_token)
+        {
+            // The environment is only a fallback for an absent option.
+            if (const char *env = std::getenv("DRIVELINK_AGENT_TOKEN")) { token = env; }
+        }
+        const bool tcp = endpoint.rfind("tcp://", 0) == 0;
+        if (args[0] == "agent-devices")
+        {
+            if (args.size() != 1) { usage("agent-devices takes no arguments"); }
+            if (!device.empty()) { usage("agent-devices lists devices; omit --device"); }
+            if (!tcp) { usage("agent-devices needs a tcp:// agent endpoint"); }
+            if (token.empty()) { usage("agent-devices needs --token or DRIVELINK_AGENT_TOKEN"); }
+            const auto devices = listAgentDevices(endpoint, token, options.timeout, client_name);
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &record : devices) { list.push_back(toJson(record)); }
+                emit({{"devices", list}}, true);
+            }
+            else
+            {
+                for (const auto &record : devices) { std::cout << cli::deviceLine(record) << '\n'; }
+            }
+            return 0;
+        }
+        if (!device.empty())
+        {
+            if (!tcp) { usage("--device needs a tcp:// agent endpoint"); }
+            if (token.empty()) { usage("--device needs --token or DRIVELINK_AGENT_TOKEN"); }
+            options.agent = AgentHello{token, device, client_name};
         }
         if (args[0]=="ota-upload") { emit(upload(args,endpoint,options),json);return 0; }
         Session session(endpoint, options);

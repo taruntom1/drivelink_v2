@@ -71,6 +71,100 @@ ClockModel aged(ClockModel model) {
     const auto now=monotonicUs();model.age_us=now>=model.updated_us?now-model.updated_us:0;
     if(model.age_us>5000000) {model.offset_valid=false;model.drift_valid=false;}return model;
 }
+// One agent command and its response on a connected socket, before the I/O
+// thread starts (docs/protocol/agent.md). Bytes after the response stay in
+// the scanner for the session's reader. Bounded by one deadline.
+agent::DecodedResponse agentExchange(asio::io_context &io,asio::ip::tcp::socket &tcp,p::Scanner &scanner,
+                                     const agent::Command &command,std::chrono::milliseconds timeout) {
+    const auto payload=agent::encodeCommand(command);
+    Bytes frame(p::frameSize(payload.size()));
+    p::encodeFrame(frame.data(),frame.size(),msg::kAgentCommand,payload.data(),payload.size());
+    bool expired=false;
+    asio::steady_timer deadline(io,timeout);
+    deadline.async_wait([&](auto ec) {if(!ec) {expired=true;asio::error_code ignored;tcp.cancel(ignored);}});
+    // Run handlers until `done`; the deadline keeps the context busy until then.
+    auto runUntil=[&](const bool &done) {io.restart();while(!done && io.run_one()) {}};
+    auto drain=[&] {deadline.cancel();io.restart();io.run();io.restart();};
+    auto finish=[&](Error error)->Error {drain();return error;};
+    asio::error_code ec;bool written=false;
+    asio::async_write(tcp,asio::buffer(frame),[&](auto error,size_t) {ec=error;written=true;});
+    runUntil(written);
+    if(ec || !written) {throw finish(Error(expired?ErrorKind::Timeout:ErrorKind::Connection,expired?"agent did not answer":"agent: "+ec.message()));}
+    std::array<uint8_t,2048> input{};
+    for(;;) {
+        p::Scanner::Frame f;
+        while(scanner.next(f)) {
+            if(f.msg_type==msg::kAgentResponse) {
+                auto response=agent::decodeResponse({f.payload,f.len});
+                if(!response) {throw finish(response.error());}
+                if(response->version==agent::kVersion && (response->seq!=command.seq || response->op!=command.op)) {
+                    throw finish(Error(ErrorKind::Protocol,"agent response does not match the command"));
+                }
+                drain();return *response;
+            }
+            if(f.msg_type==msg::kAgentEvent) {throw finish(Error(ErrorKind::Connection,"agent closed the connection"));}
+            throw finish(Error(ErrorKind::Protocol,"unexpected frame before the agent's response"));
+        }
+        size_t n=0;ec={};bool got=false;
+        tcp.async_read_some(asio::buffer(input),[&](auto error,size_t count) {ec=error;n=count;got=true;});
+        runUntil(got);
+        if(ec || !n) {
+            if(expired) {throw finish(Error(ErrorKind::Timeout,"agent did not answer"));}
+            throw finish(Error(ErrorKind::Connection,ec==asio::error::eof?"agent closed the connection":"agent: "+ec.message()));
+        }
+        for(size_t offset=0;offset<n;) {
+            size_t space=0;auto *dst=scanner.writable(space);const auto count=std::min(space,n-offset);
+            if(!count) {throw finish(Error(ErrorKind::Protocol,"scanner made no progress"));}
+            std::copy_n(input.data()+offset,count,dst);scanner.commit(count);offset+=count;
+        }
+    }
+}
+// Hello on a connected socket; throws DeviceError on a refusal.
+agent::HelloAccepted performHello(asio::io_context &io,asio::ip::tcp::socket &tcp,p::Scanner &scanner,
+                                const AgentHello &hello,std::chrono::milliseconds timeout) {
+    agent::Command command{1,static_cast<uint8_t>(p::defs::AgentOp::Hello),
+                           agent::encodeHello({p::core_wire::kVersion,hello.token,hello.device,hello.client_name})};
+    const auto response=agentExchange(io,tcp,scanner,command,timeout);
+    const auto op=static_cast<uint8_t>(p::defs::AgentOp::Hello);
+    if(response.version!=agent::kVersion) {
+        Error e(ErrorKind::Protocol,"incompatible agent protocol version "+std::to_string(response.version));
+        e.peer_version=response.version;throw e;
+    }
+    if(response.result!=static_cast<uint8_t>(p::defs::Result::Ok)) {
+        std::string why="agent refused the connection";
+        uint8_t peer=0;
+        if(response.detail==static_cast<uint8_t>(p::defs::Detail::AgentVersion)) {
+            if(auto v=agent::decodeVersionRefusal(response.body)) {
+                peer=v->agent_version!=agent::kVersion?v->agent_version:v->core_version;
+                why+=": it speaks agent v"+std::to_string(v->agent_version)+" and core v"+std::to_string(v->core_version);
+            }
+        }
+        DeviceError e(why,response.result,response.detail,0,op);e.peer_version=peer;throw e;
+    }
+    auto accepted=agent::decodeHelloAccepted(response.body);
+    if(!accepted) {throw accepted.error();}
+    if(accepted->lobby!=hello.device.empty()) {throw Error(ErrorKind::Protocol,"agent opened the wrong kind of connection");}
+    return *accepted;
+}
+asio::ip::tcp::endpoint parseTcpEndpoint(const std::string &endpoint) {
+    const auto colon=endpoint.rfind(':');
+    if(!endpoint.starts_with("tcp://") || colon==std::string::npos || colon<=6) {throw Error(ErrorKind::Usage,"expected tcp://numeric-ip:port");}
+    asio::error_code ec;
+    auto address=asio::ip::make_address(endpoint.substr(6,colon-6),ec);
+    if(ec) {throw Error(ErrorKind::Usage,"TCP address must be numeric");}
+    const auto port=endpoint.substr(colon+1);size_t used=0;unsigned long number=0;
+    try {number=std::stoul(port,&used);} catch(...) {throw Error(ErrorKind::Usage,"invalid TCP port");}
+    if(used!=port.size() || !number || number>65535) {throw Error(ErrorKind::Usage,"invalid TCP port");}
+    return {address,static_cast<uint16_t>(number)};
+}
+void connectTcp(asio::io_context &io,asio::ip::tcp::socket &tcp,const asio::ip::tcp::endpoint &target,
+                std::chrono::milliseconds timeout,asio::error_code &ec) {
+    // A timer bounds connect as well as subsequent requests.
+    asio::steady_timer deadline(io,timeout);
+    deadline.async_wait([&](auto error) {if(!error) {tcp.cancel();}});
+    tcp.async_connect(target,[&](auto error) {ec=error;deadline.cancel();});
+    io.run();io.restart();
+}
 }
 void RequestHandle::cancel() const {
     if(!m_state) { return; }
@@ -141,6 +235,8 @@ struct Session::Impl
     std::map<uint8_t,std::shared_ptr<GroupBuffer>> buffers;
     std::map<uint8_t,std::weak_ptr<CommandGroup>> commands;
     std::array<bool,256> retired{};
+    std::array<uint64_t,256> retired_at{};
+    std::optional<agent::HelloAccepted> hello;
     unsigned sequence=0;
     struct Write { std::shared_ptr<Bytes> bytes;std::shared_ptr<Pending> request;bool stream=false;bool ping=false;std::weak_ptr<CommandGroup> command={};bool managed=false;uint64_t command_generation=0; };
     std::deque<Write> writes;
@@ -167,52 +263,20 @@ struct Session::Impl
             throw Error(ErrorKind::Usage,"invalid session limits");
         }
         asio::error_code ec;
+        if (options.agent && !endpoint.starts_with("tcp://"))
+        {
+            throw Error(ErrorKind::Usage, "an agent connection needs a tcp:// endpoint");
+        }
         if (endpoint.starts_with("tcp://"))
         {
             use_tcp = true;
-            const auto colon = endpoint.rfind(':');
-            if (colon == std::string::npos || colon <= 6)
+            connectTcp(io, tcp, parseTcpEndpoint(endpoint), options.timeout, ec);
+            if (!ec && options.agent)
             {
-                throw Error(ErrorKind::Usage, "expected tcp://numeric-ip:port");
+                // Clients never ping through an agent: it owns the clock.
+                options.periodic_time = false;
+                hello = performHello(io, tcp, scanner, *options.agent, options.timeout);
             }
-            auto address = asio::ip::make_address(endpoint.substr(6, colon - 6), ec);
-            if (ec)
-            {
-                throw Error(ErrorKind::Usage, "TCP address must be numeric");
-            }
-            const auto port = endpoint.substr(colon + 1);
-            size_t used = 0;
-            unsigned long number = 0;
-            try
-            {
-                number = std::stoul(port, &used);
-            }
-            catch (...)
-            {
-                throw Error(ErrorKind::Usage, "invalid TCP port");
-            }
-            if (used != port.size() || !number || number > 65535)
-            {
-                throw Error(ErrorKind::Usage, "invalid TCP port");
-            }
-            // A timer bounds connect as well as subsequent requests.
-            asio::steady_timer deadline(io, options.timeout);
-            deadline.async_wait(
-                [&](auto error)
-                {
-                    if (!error)
-                    {
-                        tcp.cancel();
-                    }
-                });
-            tcp.async_connect({address, static_cast<uint16_t>(number)},
-                              [&](auto error)
-                              {
-                                  ec = error;
-                                  deadline.cancel();
-                              });
-            io.run();
-            io.restart();
         }
         else if (endpoint.starts_with("serial://") && endpoint.size() > 9)
         {
@@ -301,6 +365,8 @@ struct Session::Impl
 
         work.emplace(asio::make_work_guard(io));
         read();
+        // Frames that arrived with the agent's Hello response are already buffered.
+        if(hello) { asio::post(io,[this]{ p::Scanner::Frame f;while(scanner.next(f)) {receive(f);} }); }
         if(options.periodic_time) { schedulePing(std::chrono::milliseconds(100)); }
         thread=std::thread([this]{io.run();});
     }
@@ -338,7 +404,7 @@ struct Session::Impl
         if(r->completed) { return; }
         r->completed=true;r->timer.cancel();
         {std::lock_guard lock(r->cancellation->mutex);r->cancellation->done=true;r->cancellation->interrupt={};}
-        if(retire) { retired[r->seq]=true; }
+        if(retire) { retireSeq(r->seq); }
         if(auto it=pending.find(r->seq);it!=pending.end() && it->second==r) { pending.erase(it); }
         if(writes.size()>1) {
             auto first=std::next(writes.begin());
@@ -377,7 +443,7 @@ struct Session::Impl
         if(closed) { complete(r,std::unexpected(error(r,ErrorKind::Connection,failure)));return; }
         if(r->cancellation->cancelled) { complete(r,std::unexpected(error(r,ErrorKind::Cancelled,"request cancelled")));return; }
         unsigned tried=0;
-        while(tried<256 && (retired[sequence%256] || pending.contains(static_cast<uint8_t>(sequence%256)))) { ++sequence;++tried; }
+        while(tried<256 && (retiredSeq(static_cast<uint8_t>(sequence%256)) || pending.contains(static_cast<uint8_t>(sequence%256)))) { ++sequence;++tried; }
         if(tried==256) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"sequence IDs exhausted; reconnect")));return; }
         r->seq=static_cast<uint8_t>(sequence++%256);
         const bool core=r->kind!=msg::kDiagQuery;
@@ -398,12 +464,20 @@ struct Session::Impl
         r->timer.expires_after(options.timeout);
         r->timer.async_wait([this,r](auto ec) {
             if(ec || r->completed) { return; }
-            retired[r->seq]=true;pending.erase(r->seq);
+            retireSeq(r->seq);pending.erase(r->seq);
             // A timed-out frame still queued for TX must never be sent later.
             if(r->read_only && r->attempts++<options.read_retries && !r->cancellation->cancelled) {
                 r->bytes.reset();begin(r);
             } else { complete(r,std::unexpected(error(r,ErrorKind::Timeout,"request timed out; query device after an uncertain mutation")),true); }
         });
+    }
+    void retireSeq(uint8_t seq) { retired[seq]=true;retired_at[seq]=monotonicUs(); }
+    // I/O thread only. With a quarantine, a timed-out ID is reusable after it;
+    // a late reply to the old request then fails the family/op correlation.
+    bool retiredSeq(uint8_t seq) {
+        if(retired[seq] && options.retire_quarantine.count()>0 &&
+           monotonicUs()-retired_at[seq]>=static_cast<uint64_t>(options.retire_quarantine.count())*1000U) {retired[seq]=false;}
+        return retired[seq];
     }
     uint16_t maxPayload() const { std::lock_guard lock(mutex);return max_payload; }
     RequestHandle submit(uint8_t kind,uint8_t family,uint8_t op,Bytes body,Completion<Bytes> finish,
@@ -510,7 +584,7 @@ struct Session::Impl
         bool schedule=false;
         if(frame.type) {std::lock_guard lock(mutex);
           if(events.size()==options.event_capacity) {events.pop_front();++dropped;}events.push_back(frame);}
-        if(frame.type>=p::defs::kSubGroupChannelFirst && frame.type<p::defs::kSubGroupChannelFirst+p::defs::kSubGroupChannelCount) {cv.notify_all();return;}
+        if(!options.observe_streams && frame.type>=p::defs::kSubGroupChannelFirst && frame.type<p::defs::kSubGroupChannelFirst+p::defs::kSubGroupChannelCount) {cv.notify_all();return;}
         {std::lock_guard lock(mailbox->mutex);
           if(!mailbox->observers.empty()) {
               if(mailbox->queue.size()==options.event_capacity) {mailbox->queue.pop_front();++mailbox->dropped;}
@@ -744,7 +818,7 @@ std::vector<Reply> Session::requestBatch(uint8_t family,uint8_t op,std::span<con
      if(d.closed) {throw contextError(ErrorKind::Connection,"session closed",family,op,false);}
      {std::lock_guard lock(d.mutex);if(d.admitted+bodies.size()>d.options.request_capacity) {throw Error(ErrorKind::Usage,"batch request capacity exhausted");}d.admitted+=bodies.size();}
      asio::post(d.io,[&d,requests] {
-        size_t available=0;for(size_t i=0;i<256;++i) {available+=!d.retired[i] && !d.pending.contains(static_cast<uint8_t>(i));}
+        size_t available=0;for(size_t i=0;i<256;++i) {available+=!d.retiredSeq(static_cast<uint8_t>(i)) && !d.pending.contains(static_cast<uint8_t>(i));}
         if(available<requests.size() || d.writes.size()+requests.size()>d.options.request_capacity+8) {
             for(const auto &r:requests) {d.complete(r,std::unexpected(d.error(r,ErrorKind::Connection,"batch resources exhausted; reconnect")));}return;
         }
@@ -821,6 +895,23 @@ void Session::setMaxPayload(uint16_t cap) {
     std::lock_guard lock(m_impl->mutex);m_impl->max_payload=cap;
 }
 uint16_t Session::maxPayload() const {return m_impl->maxPayload();}
+std::optional<agent::HelloAccepted> Session::agentHello() const {return m_impl->hello;}
+std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint,const std::string &token,
+                                                  std::chrono::milliseconds timeout,const std::string &client_name) {
+    if(timeout.count()<=0 || timeout>std::chrono::seconds(60)) {throw Error(ErrorKind::Usage,"invalid timeout");}
+    asio::io_context io;asio::ip::tcp::socket tcp(io);p::Scanner scanner{p::kMaxPayload};asio::error_code ec;
+    connectTcp(io,tcp,parseTcpEndpoint(endpoint),timeout,ec);
+    if(ec) {Error e(ErrorKind::Connection,"open: "+ec.message());if(ec.category()==asio::error::get_system_category()) {e.os_error=ec.value();}throw e;}
+    performHello(io,tcp,scanner,AgentHello{token,{},client_name},timeout);
+    const auto op=static_cast<uint8_t>(p::defs::AgentOp::ListDevices);
+    const auto response=agentExchange(io,tcp,scanner,agent::Command{2,op,{}},timeout);
+    if(response.version!=agent::kVersion) {Error e(ErrorKind::Protocol,"incompatible agent protocol version");e.peer_version=response.version;throw e;}
+    if(response.result!=static_cast<uint8_t>(p::defs::Result::Ok)) {throw DeviceError("agent refused the device list",response.result,response.detail,0,op);}
+    auto devices=agent::decodeDeviceList(response.body);
+    if(!devices) {throw devices.error();}
+    asio::error_code ignored;tcp.shutdown(asio::ip::tcp::socket::shutdown_both,ignored);tcp.close(ignored);
+    return std::move(*devices);
+}
 uint64_t Session::generation() const {std::lock_guard lock(m_impl->mutex);return m_impl->boot_generation;}
 ClockModel Session::clockModel() const {
     std::lock_guard lock(m_impl->mutex);return aged(m_impl->clock);

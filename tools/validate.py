@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run DriveLink's validation checks: one list, used locally and by CI.
 
-    python tools/validate.py quick          # generator, native tests, this OS's host tests
+    python tools/validate.py quick          # generator, native tests, this OS's host tests (+ agent on Linux)
     python tools/validate.py full           # every check below: the gate before a PR
     python tools/validate.py --only fw-nolog
     python tools/validate.py --list
@@ -259,29 +259,34 @@ def worktree_key():
     return f'{ROOT.name}-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]}'
 
 
-LINUX_PACKAGES_HINT = ('Linux host packages missing (compilers, CMake, Ninja, Qt 6.10); '
-                       'run: sudo sh tools/setup_linux.sh host')
+def linux_packages_hint(profile):
+    what = 'compilers, CMake, Ninja, Python 3' if profile == 'agent' else 'compilers, CMake, Ninja, Qt 6.10'
+    return f'Linux {profile} packages missing ({what}); run: sudo sh tools/setup_linux.sh {profile}'
 
 
-def linux_probe():
-    """Native Linux: None. Windows: (wsl command, env, $HOME) for the WSL distro."""
+def linux_probe(profile='host'):
+    """Native Linux: None. Windows: (wsl command, env, $HOME) for the WSL distro.
+
+    `profile` is the tools/setup_linux.sh profile the check needs.
+    """
+    hint = linux_packages_hint(profile)
     if not WINDOWS:
         need('cmake', 'ninja', 'g++')
-        probe = subprocess.run(['sh', str(ROOT / 'tools/setup_linux.sh'), '--check', 'host'],
+        probe = subprocess.run(['sh', str(ROOT / 'tools/setup_linux.sh'), '--check', profile],
                                capture_output=True, text=True, errors='replace')
         if probe.returncode != 0:
-            raise Unavailable(LINUX_PACKAGES_HINT)
+            raise Unavailable(hint)
         return None
     distro = os.environ.get('DRIVELINK_WSL_DISTRO')
     wsl = ['wsl.exe', *(['-d', distro] if distro else [])]
     env = dict(os.environ, WSL_UTF8='1')
     need('wsl.exe')
     probe = subprocess.run([*wsl, '--cd', str(ROOT), '--exec', 'sh', '-c',
-                            'sh tools/setup_linux.sh --check host >/dev/null && printf %s $HOME'],
+                            f'sh tools/setup_linux.sh --check {profile} >/dev/null && printf %s $HOME'],
                            env=env, capture_output=True, text=True, errors='replace')
     home = probe.stdout.strip()
     if probe.returncode != 0 or not home.startswith('/'):
-        raise Unavailable(f'WSL: {LINUX_PACKAGES_HINT}')
+        raise Unavailable(f'WSL: {hint}')
     return wsl, env, home
 
 
@@ -302,10 +307,35 @@ def plan_host_linux(jobs):
         inside('configure', superbuild, 'cmake', '--preset', 'linux', '-B', build),
         inside('build', superbuild, 'cmake', '--build', build, '--parallel', jobs),
         inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure',
-               '-E', '^host-integration$'),
+               '-E', '^host-integration$', '-LE', 'agent'),
         inside('integration (verbose)', superbuild, 'ctest', '--test-dir', build, '-V',
                '-R', '^host-integration$', '--no-tests=error'),
         inside('installed packages', ROOT, 'python3', 'host/test/install_smoke.py', '--build', build),
+    ]
+
+
+def plan_agent(jobs):
+    """drivelink-agent: the GUI-less superbuild, then the tests labelled `agent`."""
+    probe = linux_probe('agent')
+    superbuild = ROOT / 'host/superbuild'
+    test = ['ctest', '--output-on-failure', '-L', 'agent', '--no-tests=error']
+    if probe is None:
+        build = superbuild / 'build/linux-no-gui'
+        return [
+            Step('configure', ['cmake', '--preset', 'linux-no-gui'], superbuild),
+            Step('build', ['cmake', '--build', str(build), '--parallel', jobs], superbuild),
+            Step('test', [*test[:1], '--test-dir', str(build), *test[1:]], superbuild),
+        ]
+    # As host-linux: the WSL build directory is on the Linux filesystem.
+    wsl, env, home = probe
+    build = f'{home}/.cache/drivelink/{worktree_key()}/agent'
+
+    def inside(title, *command):
+        return Step(title, [*wsl, '--cd', str(superbuild), '--exec', *command], env=env)
+    return [
+        inside('configure', 'cmake', '--preset', 'linux-no-gui', '-B', build),
+        inside('build', 'cmake', '--build', build, '--parallel', jobs),
+        inside('test', *test[:1], '--test-dir', build, *test[1:]),
     ]
 
 
@@ -337,6 +367,7 @@ CHECKS = [
     Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,
           windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
+    Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent),
     Check('deb', 'Linux release, staged smoke and .deb (through WSL on Windows)', plan_deb),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
@@ -357,7 +388,7 @@ def select(mode, only, skip, windows=WINDOWS):
     unknown = [name for name in [*(only or []), *(skip or [])] if name not in here]
     if unknown:
         raise SystemExit(f"unknown check on this OS: {', '.join(unknown)} (have: {', '.join(here)})")
-    quick = ['gen', 'native', 'host-win' if windows else 'host-linux']
+    quick = ['gen', 'native', *(['host-win'] if windows else ['host-linux', 'agent'])]
     wanted = only or (quick if mode == 'quick' else here)
     chosen = [name for name in here if name in wanted and name not in (skip or [])]
     return chosen, [name for name in here if name not in chosen]

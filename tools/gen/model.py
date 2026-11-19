@@ -83,7 +83,7 @@ def opt_str(where: str, d: dict, key: str) -> str:
 # MSG_TYPE classes, as in docs/protocol/framing.md.
 CLASS_RANGES = (("command", 0x01, 0x3F), ("response", 0x40, 0x7F), ("stream", 0x80, 0xBF), ("event", 0xC0, 0xFE))
 STREAM_MIN, STREAM_MAX = 0x80, 0xBF
-DIRECTIONS = ("host_to_esp", "esp_to_host", "both")
+DIRECTIONS = ("host_to_esp", "esp_to_host", "both", "host_to_agent", "agent_to_host")
 
 
 def msg_class(value: int) -> str | None:
