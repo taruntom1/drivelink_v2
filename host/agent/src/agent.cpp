@@ -118,7 +118,7 @@ struct Device
     DeviceConfig config;
     std::shared_ptr<Session> session; // shared so in-flight work can't outlive it
     uint64_t observer = 0;
-    bool online = false, connecting = false;
+    bool online = false, connecting = false, losing = false;
     uint64_t link = 0;         // bumps on every online/offline transition
     uint64_t generation = 0;   // the Session's boot generation last seen
     uint64_t map_generation = 0; // bumps on every GroupMap reset
@@ -146,6 +146,7 @@ struct Device
     void connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList list, uint64_t observer_id, std::shared_ptr<bool> lost);
     void failed(const std::string &why);
     void offline(const std::string &why);
+    void linkLost();
     void frame(const Frame &f);
     void boot();
     void refreshIdentity();
@@ -462,6 +463,7 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
 {
     connecting = false;
     observer = observer_id;
+    losing = false;
     disarm_inflight = 0;
     disarm_next.clear();
     if (agent.stopping) { s->close(); return; }
@@ -479,7 +481,7 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
     log("device " + config.alias + " online: " + formatDeviceId(device_id) + (name.empty() ? "" : " \"" + name + "\"") +
         ", " + std::to_string(groups.subs()) + " subscription groups");
     scheduleMaintenance();
-    if (*lost) { offline("link lost during setup"); }
+    if (*lost) { linkLost(); }
 }
 
 void Device::failed(const std::string &why)
@@ -518,7 +520,7 @@ void Device::offline(const std::string &why)
 
 void Device::frame(const Frame &f)
 {
-    if (f.type == 0) { offline("link lost"); return; }
+    if (f.type == 0) { linkLost(); return; }
     if (f.generation != generation) { generation = f.generation; boot(); }
     if (f.type == msg::kStatusStream || f.type == msg::kDiagEvent || f.type == msg::kCoreEvent)
     {
@@ -536,6 +538,26 @@ void Device::frame(const Frame &f)
         auto it = agent.clients.find(owner->first);
         if (it == agent.clients.end()) { ++dropped; return; }
         it->second->send(static_cast<uint8_t>(defs::kSubGroupChannelFirst + owner->second), f.payload, true);
+    }
+}
+
+void Device::linkLost()
+{
+    // The lost notice skips the Session's ordered completion delivery, so a
+    // reply already received (a REBOOT reply just before the link closes) may
+    // still be queued behind it. Go offline through that same order: a
+    // service call on the closed Session completes after every earlier one.
+    if (!online || losing) { return; }
+    losing = true;
+    try
+    {
+        session->async<int>([] { return 0; }, [this, link_id = link](std::expected<int, Error>) {
+            if (link == link_id) { offline("link lost"); }
+        });
+    }
+    catch (const Error &)
+    {
+        offline("link lost");
     }
 }
 
