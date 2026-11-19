@@ -332,4 +332,70 @@ void LocalConnection::forgetAgent(const QString &address) {
     emit recentDevicesChanged();
 }
 
+QVariantMap LocalConnection::agentBrowse() const {
+    return {{"state",!m_browseOn ? QStringLiteral("off") : m_browseBusy ? QStringLiteral("searching") : QStringLiteral("idle")},
+            {"protocol",int(drivelink::agent::kVersion)},
+            {"agents",m_found.rows(drivelink::agent::kVersion)}};
+}
+
+void LocalConnection::startAgentBrowse() {
+    if(m_browseOn) {return;}
+    m_browseOn=true;m_browseRounds=0;
+    browseRound();
+    emit changed();
+}
+
+void LocalConnection::stopAgentBrowse() {
+    if(!m_browseOn) {return;}
+    m_browseOn=false;m_browseNow=false;
+    m_browseTimer.stop();
+    m_found.clear();
+    ++m_browseSerial; // a round still running lands nowhere
+    m_browseBusy=false;
+    emit changed();
+}
+
+void LocalConnection::browseAgentsNow() {
+    if(!m_browseOn) {startAgentBrowse();return;}
+    m_browseRounds=0;
+    if(m_browseBusy) {m_browseNow=true;return;}
+    m_browseTimer.stop();
+    browseRound();
+    emit changed();
+}
+
+void LocalConnection::browseRound() {
+    if(!m_browseOn || m_browseBusy) {return;}
+    // A stopped round may still be running (its result is dropped by
+    // serial): wait for it without blocking the GUI thread.
+    if(!m_fakeAgents && m_browserDone && !m_browserDone->load()) {m_browseTimer.start(100);return;}
+    const auto serial=++m_browseSerial;
+    m_browseBusy=true;
+    const QPointer<LocalConnection> self(this);
+    auto land=[self,serial](std::vector<discovery::FoundAgent> found) {
+        if(!self || self->m_browseSerial!=serial) {return;}
+        self->m_browseBusy=false;
+        self->m_found.round(found);
+        ++self->m_browseRounds;
+        if(self->m_browseNow) {self->m_browseNow=false;self->m_browseRounds=0;self->browseRound();}
+        else {self->m_browseTimer.start(browseDelay(self->m_browseRounds));}
+        emit self->changed();
+    };
+    if(m_fakeAgents) {
+        // Screenshots: no network; "searching" for a moment like a real round.
+        QTimer::singleShot(300,this,[land,found=*m_fakeAgents] {land(found);});
+        return;
+    }
+    if(m_browser.joinable()) {m_browser.join();} // finished: m_browserDone is set
+    const auto queue=m_dispatch;
+    m_browserDone=std::make_shared<std::atomic<bool>>(false);
+    m_browser=std::thread([queue,land,done=m_browserDone] {
+        std::vector<discovery::FoundAgent> found;
+        try {found=discovery::browseAgents(std::chrono::milliseconds(1000));}
+        catch(const std::exception &) {} // a network failure is an empty round
+        post(queue,[land,found=std::move(found)] {land(found);});
+        done->store(true);
+    });
+}
+
 } // namespace drivelink::gui

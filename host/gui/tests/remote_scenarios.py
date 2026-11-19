@@ -8,6 +8,7 @@ play ROS or a second GUI (agent_integration.RawClient), and runs
 (WSL on Windows) and compare the images with the G6 frames.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import secrets
@@ -39,6 +40,8 @@ MONITOR_ARGS = ['--plot', local.PLOTS, '--window', '5']
 #   flags:  'take' = --take-lease, 'gui_takes' = another GUI takes it once this one holds it,
 #           'history' = lease and arm changes before the GUI connects, 'offline' = a second, stopped device,
 #           'closed' = an address nobody listens on, 'badtoken'
+# The Agent tab's "Found on the network" (H3b-2) never touches the network in a scenario:
+# DRIVELINK_GUI_FAKE_AGENTS carries the agents it shows (FAKE_AGENTS, else none).
 ROS = ('ros_bridge', ai.KIND_ROS, True)
 LAPTOP = ('bench-laptop', ai.KIND_GUI, True)
 SCENARIOS = {
@@ -46,6 +49,8 @@ SCENARIOS = {
     'remote-unreachable': ('agent-failure', [], None, ('closed',)),
     'remote-no-device': ('agent-failure', [], None, ('offline',)),
     'remote-no-device-list': ('agent-connect', [], None, ('offline',)),
+    'remote-agent-found': ('agent-connect', [], None, ()),
+    'remote-agent-found-empty': ('agent-connect', [], None, ()),
     'remote-bad-token': ('agent-failure', [], None, ('badtoken',)),
     'remote-device-ros': ('device', [], ROS, ()),
     'remote-tune-ros': ('tune', TUNE_ARGS, ROS, ()),
@@ -58,6 +63,14 @@ SCENARIOS = {
     'remote-revoked': ('revoked', TUNE_ARGS, None, ('take', 'gui_takes')),
     'remote-other-gui': ('monitor', MONITOR_ARGS, LAPTOP, ()),
     'remote-history': ('drawer', [], None, ('history',)),
+}
+FAKE_AGENTS = {
+    'remote-agent-found': [
+        {'instance': 'robot-pi', 'host': 'robot-pi.local', 'address': '192.168.1.20:47620', 'version': '0.1.0', 'proto': 3},
+        {'instance': 'bench-wsl', 'host': 'bench-wsl.local', 'address': '192.168.1.42:47620', 'version': '0.1.0', 'proto': 3},
+        {'instance': 'old-agent', 'host': 'old-agent.local', 'address': '192.168.1.50:47620', 'version': '0.0.9', 'proto': 2},
+    ],
+    'remote-agent-found-empty': [],
 }
 DIALOGS = ('lease-take', 'lease-release', 'live-edit', 'revoked')
 
@@ -156,9 +169,9 @@ def make_template(work, vdev, cli):
     return state
 
 
-def run_gui(args, command, on_line):
+def run_gui(args, command, on_line, env=None):
     """Run the GUI, handing every stdout line to on_line; return (code, stdout lines, stderr)."""
-    app = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    app = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     errors = []
     thread = threading.Thread(target=lambda: errors.append(app.stderr.read()), daemon=True)
     thread.start()
@@ -240,7 +253,8 @@ def render(args, work, template, destination, name):
                 result, detail, _ = client.lease_take()
                 ai.expect(result == ai.R_OK, 'bench-laptop: LeaseTake', result=result, detail=detail)
 
-        code, output, errors = run_gui(args, gui, on_line)
+        env = dict(os.environ, DRIVELINK_GUI_FAKE_AGENTS=json.dumps(FAKE_AGENTS.get(name, [])))
+        code, output, errors = run_gui(args, gui, on_line, env)
         assert code == 0, (name, code, output, errors)
         if os.environ.get('DRIVELINK_SCENARIO_LOG'):
             print(name, errors, flush=True)

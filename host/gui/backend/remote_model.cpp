@@ -8,6 +8,9 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <algorithm>
 #include <map>
 
@@ -306,6 +309,64 @@ QString agentEndpoint(const QString &address) {
     bool ok=false;const int p=port.toInt(&ok);
     if(host.isEmpty() || !ok || p<=0 || p>65535) {return {};}
     return QStringLiteral("tcp://%1:%2").arg(host).arg(p);
+}
+
+void FoundAgents::round(const std::vector<discovery::FoundAgent> &found) {
+    for(auto &e : m_entries) {++e.misses;}
+    for(const auto &agent : found) {
+        const auto it=std::find_if(m_entries.begin(),m_entries.end(),[&](const Entry &e) {return e.agent.instance==agent.instance;});
+        if(it==m_entries.end()) {m_entries.push_back({agent,0});}
+        else {it->agent=agent;it->misses=0;}
+    }
+    std::erase_if(m_entries,[](const Entry &e) {return e.misses>=kMissesToDrop;});
+    std::sort(m_entries.begin(),m_entries.end(),[](const Entry &a,const Entry &b) {return a.agent.instance<b.agent.instance;});
+}
+
+QVariantList FoundAgents::rows(unsigned protocol) const {
+    QVariantList out;
+    for(const auto &e : m_entries) {
+        const auto &a=e.agent;
+        out.push_back(QVariantMap{{"instance",QString::fromStdString(a.instance)},
+                                  {"host",QString::fromStdString(a.host)},
+                                  {"address",QString::fromStdString(a.address())},
+                                  {"version",QString::fromStdString(a.version)},
+                                  {"proto",a.proto ? int(*a.proto) : -1},
+                                  {"compatible",a.proto.has_value() && *a.proto==protocol}});
+    }
+    return out;
+}
+
+std::chrono::milliseconds browseDelay(unsigned completed) {
+    using std::chrono::milliseconds;
+    if(completed==0) {return milliseconds(0);}
+    if(completed>5) {return milliseconds(60000);}
+    return milliseconds(1000LL<<(completed-1));
+}
+
+std::optional<std::vector<discovery::FoundAgent>> parseFakeAgents(const QByteArray &json) {
+    const auto doc=QJsonDocument::fromJson(json);
+    if(!doc.isArray()) {return std::nullopt;}
+    std::vector<discovery::FoundAgent> out;
+    for(const auto &value : doc.array()) {
+        const auto o=value.toObject();
+        discovery::FoundAgent a;
+        a.instance=o.value("instance").toString().toStdString();
+        a.host=o.value("host").toString().toStdString();
+        a.version=o.value("version").toString().toStdString();
+        const int proto=o.value("proto").toInt(-1);
+        if(proto>=0) {a.proto=unsigned(proto);}
+        const auto address=o.value("address").toString();
+        const auto colon=address.lastIndexOf(':');
+        if(a.instance.empty() || colon<=0) {return std::nullopt;}
+        bool ok=false;
+        const auto port=address.mid(colon+1).toUInt(&ok);
+        if(!ok || port==0 || port>65535) {return std::nullopt;}
+        a.port=uint16_t(port);
+        a.from=address.left(colon).toStdString();
+        a.addresses={a.from};
+        out.push_back(std::move(a));
+    }
+    return out;
 }
 
 } // namespace drivelink::gui

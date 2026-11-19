@@ -92,6 +92,8 @@ TEST_CASE("config: defaults and a full valid file")
     CHECK(d.hello_timeout.count() == 5000);
     CHECK(d.retry.count() == 2000);
     CHECK(d.request_timeout.count() == 3000);
+    CHECK(d.advertise);
+    CHECK(d.name.empty());
 
     const auto c = parseConfig(R"({
         "bind": "0.0.0.0", "port": 1234, "token": "abcdefgh",
@@ -213,6 +215,70 @@ TEST_CASE("config: history_size 16..4096, default 256, and its flag")
     CHECK(c.history_size == 1000);
     std::vector<std::string_view> bad{"--history-size=5000"};
     CHECK_THROWS_AS(parseCommandLine(bad, c), ConfigError);
+}
+
+TEST_CASE("config: advertise is a boolean, default true")
+{
+    CHECK(AgentConfig{}.advertise);
+    CHECK(parseConfig("{}").advertise);
+    CHECK(parseConfig(R"({"advertise": true})").advertise);
+    CHECK_FALSE(parseConfig(R"({"advertise": false})").advertise);
+    CHECK(refusesJson(R"({"advertise": 0})", "advertise"));
+    CHECK(refusesJson(R"({"advertise": 1})", "advertise"));
+    CHECK(refusesJson(R"({"advertise": "false"})", "advertise"));
+    CHECK(refusesJson(R"({"advertise": null})", "advertise"));
+}
+
+TEST_CASE("config: mDNS instance name rules")
+{
+    const auto nameJson = [](const std::string &name) { return "{\"name\": \"" + name + "\"}"; };
+    CHECK(AgentConfig{}.name.empty());
+    CHECK(parseConfig("{}").name.empty());
+    CHECK(parseConfig(nameJson("robot-pi")).name == "robot-pi");
+    CHECK(parseConfig(nameJson("Bench agent 2")).name == "Bench agent 2");
+    const std::string umlaut = "Roboter-\xC3\x9C"; // U with a diaeresis, UTF-8
+    CHECK(parseConfig(nameJson(umlaut)).name == umlaut);
+    CHECK(parseConfig(nameJson(std::string(63, 'a'))).name.size() == 63);
+
+    CHECK(refusesJson(R"({"name": 5})", "name"));
+    // An explicit empty name is refused; leaving the key out is the default.
+    CHECK(refusesJson(R"({"name": ""})", "name"));
+    CHECK(refusesJson(R"({"name": ""})", "1..63"));
+    CHECK(refusesJson(nameJson(std::string(64, 'a')), "name"));
+    CHECK(refusesJson(nameJson(std::string(64, 'a')), "1..63"));
+    CHECK(refusesJson(nameJson("a.b"), "name"));
+    CHECK(refusesJson(R"({"name": "a\u0007b"})", "name")); // BEL as a JSON escape
+    CHECK(refusesJson(R"({"name": "a\u007fb"})", "name"));  // DEL
+    // A lone UTF-8 continuation byte: the JSON parser refuses the text itself.
+    CHECK_THROWS_AS(parseConfig(nameJson("bad\x80" "name")), ConfigError);
+}
+
+TEST_CASE("command line: --name and --no-advertise")
+{
+    AgentConfig c = parseConfig(R"({"name": "from-file"})");
+    run({"--name", "from-flag"}, c);
+    CHECK(c.name == "from-flag");
+    CHECK(c.advertise);
+
+    AgentConfig e;
+    run({"--name=Bench agent 2", "--no-advertise"}, e);
+    CHECK(e.name == "Bench agent 2");
+    CHECK_FALSE(e.advertise);
+
+    // --no-advertise overrides a file that advertises, and takes no value.
+    AgentConfig f = parseConfig(R"({"advertise": true})");
+    run({"--no-advertise"}, f);
+    CHECK_FALSE(f.advertise);
+    CHECK(refusesFlags({"--no-advertise=1"}, "--no-advertise"));
+    CHECK(refusesFlags({"--no-advertise", "x"}, "x"));
+
+    CHECK(refusesFlags({"--name"}, "--name"));
+    CHECK(refusesFlags({"--name", ""}, "--name"));
+    CHECK(refusesFlags({"--name", "a.b"}, "--name"));
+    CHECK(refusesFlags({"--name", "a\x01" "b"}, "--name"));
+    CHECK(refusesFlags({"--name", "bad\x80" "name"}, "--name"));
+    const std::string too_long(64, 'x');
+    CHECK(refusesFlags({"--name", too_long}, "1..63"));
 }
 
 TEST_CASE("config: device alias rules")
@@ -422,7 +488,7 @@ TEST_CASE("command line: unknown flags, stray arguments and missing values")
     CHECK(refusesFlags({"-p", "1"}, "-p"));
     CHECK(refusesFlags({"extra"}, "extra"));
     for (const char *flag : {"--config", "--bind", "--port", "--token", "--token-file", "--device",
-                             "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms"})
+                             "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms", "--history-size", "--name"})
     {
         CAPTURE(flag);
         CHECK(refusesFlags({flag}, flag));
@@ -614,7 +680,8 @@ TEST_CASE("config: usage lists every flag and config key")
     const std::string u = usage();
     for (const char *s : {"--config", "--bind", "--port", "--token", "--token-file", "--device", "--hello-timeout-ms",
                           "--retry-ms", "--request-timeout-ms", "--help", "--version", "token_file",
-                          "hello_timeout_ms", "retry_ms", "request_timeout_ms", "devices", "alias", "endpoint", "baud"})
+                          "hello_timeout_ms", "retry_ms", "request_timeout_ms", "devices", "alias", "endpoint", "baud",
+                          "--name", "--no-advertise", "advertise", "name"})
     {
         CAPTURE(s);
         CHECK(u.find(s) != std::string::npos);

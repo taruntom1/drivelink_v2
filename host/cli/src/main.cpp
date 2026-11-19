@@ -37,6 +37,7 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   [--lease]                    Through an agent: take the control lease first (needs --device)
   agent-devices                Through an agent: list its devices and lease holders (needs --token, no --device)
   agent-clients                Through an agent: list the device's clients and the lease holder (needs --device)
+  agent-browse                 Find agents on the local network (mDNS); --timeout-ms N (default 1500)
   time-ping | time-sync [DURATION_S]
   ota-status | ota-abort | ota-confirm
   ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]
@@ -820,6 +821,38 @@ int main(int argc, char **argv)
             {
                 args.push_back(arg);
             }
+        }
+        if (!args.empty() && args[0] == "agent-browse")
+        {
+            // --timeout-ms may also follow the command.
+            if (args.size() == 3 && args[1] == "--timeout-ms")
+            {
+                options.timeout = std::chrono::milliseconds(parseUnsigned(args[2], 60000));
+            }
+            else if (args.size() != 1)
+            {
+                usage("agent-browse [--timeout-ms N] takes no other arguments");
+            }
+            if (!endpoint.empty()) { usage("agent-browse finds agents; omit --endpoint"); }
+            if (!device.empty()) { usage("agent-browse finds agents; omit --device"); }
+            if (have_token) { usage("agent-browse finds agents; omit --token"); }
+            if (lease) { usage("--lease does not apply to agent-browse"); }
+            const auto found = discovery::browseAgents(options.timeout);
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &agent : found) { list.push_back(toJson(agent)); }
+                emit({{"agents", list}}, true);
+            }
+            else if (found.empty())
+            {
+                std::cout << "No agents found.\n";
+            }
+            else
+            {
+                for (const auto &agent : found) { std::cout << cli::browseLine(agent) << '\n'; }
+            }
+            return 0;
         }
         if (args.empty() || endpoint.empty())
         {

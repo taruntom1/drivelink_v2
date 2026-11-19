@@ -15,6 +15,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "drivelink/discovery.hpp"
+
 namespace drivelink::agent
 {
 namespace
@@ -68,6 +70,14 @@ std::string jsonString(const json &v, std::string_view what)
     if (!v.is_string())
         throw ConfigError(std::string(what) + " must be a string");
     return v.get<std::string>();
+}
+
+// An mDNS instance name that is not empty must satisfy the library's rules.
+void checkName(std::string_view name, std::string_view what)
+{
+    const std::string why = drivelink::discovery::instanceError(name);
+    if (!why.empty())
+        throw ConfigError(std::string(what) + ": " + why);
 }
 
 void checkBind(std::string_view bind, std::string_view what)
@@ -268,6 +278,17 @@ AgentConfig parseConfig(std::string_view json_text, const std::string &base_dir)
             c.request_timeout = std::chrono::milliseconds(jsonInt(value, key, kMinMs, kMaxMs));
         else if (key == "history_size")
             c.history_size = static_cast<size_t>(jsonInt(value, key, kMinHistory, kMaxHistory));
+        else if (key == "advertise")
+        {
+            if (!value.is_boolean())
+                throw ConfigError("advertise must be true or false");
+            c.advertise = value.get<bool>();
+        }
+        else if (key == "name")
+        {
+            c.name = jsonString(value, "name");
+            checkName(c.name, "name");
+        }
         else if (key == "devices")
         {
             if (!value.is_array())
@@ -325,9 +346,9 @@ AgentConfig loadConfig(const std::string &path)
 
 CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig &config)
 {
-    static constexpr std::array<std::string_view, 10> kValueFlags = {
+    static constexpr std::array<std::string_view, 11> kValueFlags = {
         "--config", "--bind", "--port", "--token", "--token-file",
-        "--device", "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms", "--history-size"};
+        "--device", "--hello-timeout-ms", "--retry-ms", "--request-timeout-ms", "--history-size", "--name"};
 
     CommandLine cl;
     bool devices_replaced = false, token_flag = false, token_file_flag = false;
@@ -349,6 +370,13 @@ CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig
             if (has_inline)
                 throw ConfigError(std::string(name) + " takes no value");
             (name == "--help" ? cl.help : cl.version) = true;
+            continue;
+        }
+        if (name == "--no-advertise")
+        {
+            if (has_inline)
+                throw ConfigError("--no-advertise takes no value");
+            config.advertise = false;
             continue;
         }
         if (std::find(kValueFlags.begin(), kValueFlags.end(), name) == kValueFlags.end())
@@ -390,6 +418,11 @@ CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig
                 throw ConfigError("--token-file needs a path");
             config.token = readTokenFile(std::filesystem::path(std::string(value)), "--token-file");
             token_file_flag = true;
+        }
+        else if (name == "--name")
+        {
+            checkName(value, "--name");
+            config.name = std::string(value);
         }
         else if (name == "--device")
         {
@@ -461,6 +494,8 @@ flags:
   --retry-ms N               device reconnect interval (default 2000)
   --request-timeout-ms N     device request timeout (default 3000)
   --history-size N           history entries kept per device, 16..4096 (default 256)
+  --name NAME                mDNS instance name (default: the host name)
+  --no-advertise             do not advertise over mDNS (only LAN binds advertise)
   --help                     show this text
   --version                  show the version
   Values may also be given as --flag=value. Durations are 100..60000.
@@ -468,7 +503,8 @@ flags:
 config file keys (unknown keys are errors):
   bind, port, token, token_file (relative to the config file; token and
   token_file are mutually exclusive), hello_timeout_ms, retry_ms,
-  request_timeout_ms, history_size, devices: [{alias, endpoint, baud}]
+  request_timeout_ms, history_size, advertise (true/false), name (1..63 bytes,
+  no '.'), devices: [{alias, endpoint, baud}]
   alias: 1..32 of a-z 0-9 _ -, starting with a letter, not 12 hex digits.
   1..8 devices with unique aliases and endpoints.
 

@@ -2,11 +2,14 @@
 // LocalConnection through drivelink-agent and vdev (Linux, where the agent
 // builds; skipped elsewhere): observer first, lease handoff and revocation,
 // DISARM from an observer, the exclusive-operation rule, live-edit
-// confirmation, history, client list, refusals and device loss.
+// confirmation, history, client list, refusals and device loss; and the
+// Agent tab's "Found on the network" (H3b-2) against a fake backend.
+#include "app_settings.hpp"
 #include "test_support.hpp"
 #include "remote_model.hpp"
 #include "style.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
+#include <QElapsedTimer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
@@ -42,9 +45,45 @@ signals:
     void leaseRevoked(const QString &by);
 };
 
+// The backend surface AgentTab uses (H3b-2): the listing, the recent agents and
+// the browse state, with every call recorded.
+class AgentBackend final : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap agentListing MEMBER agentListing NOTIFY changed)
+    Q_PROPERTY(QVariantMap agentFailure MEMBER agentFailure NOTIFY changed)
+    Q_PROPERTY(QVariantMap agentBrowse MEMBER agentBrowse NOTIFY changed)
+    Q_PROPERTY(QVariantList recentAgents MEMBER recentAgents NOTIFY changed)
+    Q_PROPERTY(bool closing MEMBER closing NOTIFY changed)
+    Q_PROPERTY(bool linked MEMBER linked NOTIFY changed)
+    Q_PROPERTY(bool loading MEMBER loading NOTIFY changed)
+public:
+    QVariantMap agentListing,agentFailure,agentBrowse;
+    QVariantList recentAgents;
+    bool closing=false,linked=false,loading=false;
+    int starts=0,stops=0,rounds=0;
+    QList<QStringList> listed;
+    static QVariantMap agent(const QString &instance,const QString &address,const QString &version,int proto) {
+        return {{"instance",instance},{"host",instance+".local"},{"address",address},{"version",version},{"proto",proto},{"compatible",proto==3}};
+    }
+    void browse(const QString &state,const QVariantList &agents) {
+        agentBrowse={{"state",state},{"protocol",3},{"agents",agents}};emit changed();
+    }
+    Q_INVOKABLE void startAgentBrowse() {++starts;}
+    Q_INVOKABLE void stopAgentBrowse() {++stops;}
+    Q_INVOKABLE void browseAgentsNow() {++rounds;}
+    Q_INVOKABLE void listAgent(const QString &address,const QString &token) {listed.append({address,token});}
+    Q_INVOKABLE void connectAgent(const QString &,const QString &,const QString &,bool) {}
+    Q_INVOKABLE void refreshAgentList() {}
+    Q_INVOKABLE void disconnectDevice() {}
+    Q_INVOKABLE void forgetAgent(const QString &) {}
+signals:
+    void changed();
+};
+
 using namespace drivelink;
 using namespace drivelink::gui;
 using drivelink::gui::test::waitFor;
+using drivelink::gui::test::visualChild;
 namespace defs=drivelink::protocol::defs;
 
 namespace {
@@ -62,8 +101,8 @@ struct AgentFixture {
     QProcess agent;
     QString address;
     const QString token=QStringLiteral("gui-remote-token");
-    AgentFixture() {
-        agent.start(QString::fromUtf8(AGENT_PATH),{"--port","0","--token",token,"--device","base="+vdev.endpoint});
+    explicit AgentFixture(const QStringList &extra={}) {
+        agent.start(QString::fromUtf8(AGENT_PATH),QStringList{"--port","0","--token",token,"--device","base="+vdev.endpoint}+extra);
         if(!agent.waitForStarted(10000) || !agent.waitForReadyRead(10000)) {throw std::runtime_error("agent did not start");}
         const auto line=QString::fromUtf8(agent.readLine()).trimmed();
         if(!line.startsWith("READY tcp://")) {throw std::runtime_error("bad agent READY line");}
@@ -297,6 +336,139 @@ Window { width: 1280; height: 800; visible: true
         a.disconnectDevice();b.disconnectDevice();
         QVERIFY(waitFor([&]{return !a.linked() && !a.closing() && !b.linked() && !b.closing();},15000));
     }
+    // "Found on the network" (H3b-2) on the Agent tab, against a fake backend:
+    // the rows, the incompatible one, what a click does, Search again and the
+    // browse start/stop that follows the tab and the Settings switch.
+    void foundAgentsTab() {
+        initShellResources();
+        QTemporaryDir dir;QVERIFY(dir.isValid());
+        AppSettings settings(dir.filePath("gui.ini"));
+        AgentBackend backend;
+        backend.recentAgents={QVariantMap{{"address","192.168.1.20:47620"},{"token","remembered"},{"rememberToken",false},{"lastSeen",QDateTime::currentDateTime()}}};
+        backend.browse("idle",{AgentBackend::agent("robot-pi","192.168.1.20:47620","0.1.0",3),
+                               AgentBackend::agent("bench-wsl","192.168.1.42:47620","",3),
+                               AgentBackend::agent("old-agent","192.168.1.50:47620","0.0.9",2)});
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("agentBackend",&backend);
+        engine.rootContext()->setContextProperty("agentSettings",&settings);
+        engine.loadData(R"(import QtQuick
+import DriveLink.Shell
+Window { width: 800; height: 1200; visible: true
+    AgentTab { objectName: "tab"; width: 760; backend: agentBackend; settings: agentSettings } })");
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);
+        window->requestActivate();
+        const auto item=[&](const QString &name) {return visualChild(window->contentItem(),name);};
+        const auto click=[&](const QString &name) {
+            auto *i=item(name);if(!i || !i->isVisible()) {return false;}
+            QTest::qWait(50); // positioners lay out on polish
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,i->mapToScene({i->width()/2,i->height()/2}).toPoint());
+            return true;
+        };
+        const auto texts=[&](const QString &name) {
+            QStringList all;
+            std::function<void(QQuickItem *)> walk=[&](QQuickItem *i) {
+                if(i->metaObject()->indexOfProperty("text")>=0 && i->isVisible()) {all<<i->property("text").toString();}
+                for(auto *child:i->childItems()) {walk(child);}
+            };
+            if(auto *i=item(name)) {walk(i);}
+            return all;
+        };
+        auto *tab=item("tab");QVERIFY(tab);
+        // Started when shown.
+        QVERIFY(waitFor([&]{return backend.starts==1;}));QCOMPARE(backend.stops,0);
+        QVERIFY(item("foundAgents") && item("foundAgents")->isVisible());
+        QVERIFY(!item("foundAgentsOff")->isVisible());QVERIFY(!item("foundAgentsEmpty")->isVisible());
+        QVERIFY(!item("foundAgentsSearching")->isVisible());
+        // One row per agent: instance, address and version.
+        QVERIFY(waitFor([&]{return item("foundAgent_robot-pi") && item("foundAgent_bench-wsl") && item("foundAgent_old-agent");}));
+        QCOMPARE(item("foundAgent_robot-pi")->height(),56.0);
+        QVERIFY(texts("foundAgent_robot-pi").contains("robot-pi"));
+        QVERIFY(texts("foundAgent_robot-pi").contains("192.168.1.20:47620  ·  DriveLink 0.1.0"));
+        QVERIFY(texts("foundAgent_bench-wsl").contains("192.168.1.42:47620")); // no version: no suffix
+        // The incompatible row: badge, reason, and not clickable.
+        QVERIFY(item("foundIncompatible_old-agent")->isVisible());
+        QVERIFY(!item("foundIncompatible_robot-pi")->isVisible());QVERIFY(!item("foundIncompatible_bench-wsl")->isVisible());
+        QCOMPARE(item("foundReason_old-agent")->property("reason").toString(),QString("Agent protocol 2; this DriveLink speaks 3"));
+        QVERIFY(!item("foundReason_robot-pi")->isVisible());
+        QVERIFY(!item("useFoundAgent_old-agent")->property("enabled").toBool());QVERIFY(item("useFoundAgent_robot-pi")->property("enabled").toBool());
+        auto *address=item("agentAddress");auto *token=item("agentToken");
+        QVERIFY(address && token);
+        // The tab filled the address from the recent agent when it opened; clear it.
+        address->setProperty("text","");token->setProperty("text","");
+        QVERIFY(click("useFoundAgent_old-agent"));
+        QCOMPARE(address->property("text").toString(),QString());QVERIFY(backend.listed.isEmpty());
+        // A row whose address has a remembered token: fills both and lists.
+        QVERIFY(click("useFoundAgent_robot-pi"));
+        QCOMPARE(address->property("text").toString(),QString("192.168.1.20:47620"));
+        QCOMPARE(token->property("text").toString(),QString("remembered"));
+        QCOMPARE(tab->property("rememberToken").toBool(),false);
+        QCOMPARE(backend.listed.size(),1);
+        QCOMPARE(backend.listed[0],(QStringList{"192.168.1.20:47620","remembered"}));
+        // Another address with no remembered token: the old token is not carried over, the token field gets focus.
+        QVERIFY(click("useFoundAgent_bench-wsl"));
+        QCOMPARE(address->property("text").toString(),QString("192.168.1.42:47620"));
+        QCOMPARE(token->property("text").toString(),QString());
+        QCOMPARE(backend.listed.size(),1);
+        QVERIFY(waitFor([&]{return token->property("focus").toBool();}));
+        // Once a token is typed for it, picking the same row again keeps it and lists.
+        token->setProperty("text","typed");
+        QVERIFY(click("useFoundAgent_bench-wsl"));
+        QCOMPARE(token->property("text").toString(),QString("typed"));
+        QCOMPARE(backend.listed.size(),2);QCOMPARE(backend.listed[1],(QStringList{"192.168.1.42:47620","typed"}));
+        // No row can be used while a listing runs.
+        backend.agentListing={{"state","listing"}};emit backend.changed();
+        QVERIFY(waitFor([&]{return !item("useFoundAgent_robot-pi")->property("enabled").toBool();}));
+        backend.agentListing={};emit backend.changed();
+        QVERIFY(waitFor([&]{return item("useFoundAgent_robot-pi")->property("enabled").toBool();}));
+        // Search again.
+        QVERIFY(click("foundAgentsSearch"));QCOMPARE(backend.rounds,1);
+        // A round shows "Searching..." beside the title (and in an empty list).
+        backend.browse("searching",backend.agentBrowse["agents"].toList());
+        QVERIFY(waitFor([&]{return item("foundAgentsSearching")->isVisible();}));QVERIFY(!item("foundAgentsEmpty")->isVisible());
+        backend.browse("searching",{});
+        QVERIFY(waitFor([&]{return item("foundAgentsEmpty")->isVisible();}));
+        QCOMPARE(item("foundAgentsEmpty")->property("text").toString(),QString("Searching…"));
+        backend.browse("idle",{});
+        QVERIFY(waitFor([&]{return item("foundAgentsEmpty")->property("text").toString().startsWith("No agents found");}));
+        QVERIFY(!item("foundAgentsSearching")->isVisible());QVERIFY(!item("foundAgent_robot-pi"));
+        // Hidden: stop; shown again: start.
+        tab->setVisible(false);QVERIFY(waitFor([&]{return backend.stops==1;}));QCOMPARE(backend.starts,1);
+        tab->setVisible(true);QVERIFY(waitFor([&]{return backend.starts==2;}));
+        // Discovery off in Settings: stop, the one-line notice, no list; on again: start.
+        settings.setDiscoverAgents(false);
+        QVERIFY(waitFor([&]{return backend.stops==2;}));
+        QVERIFY(item("foundAgentsOff")->isVisible());QVERIFY(!item("foundAgents")->isVisible());
+        QCOMPARE(item("foundAgentsOff")->property("text").toString(),QString("Finding agents on the network is off (Settings)."));
+        tab->setVisible(false);tab->setVisible(true);QTest::qWait(50);QCOMPARE(backend.starts,2);
+        settings.setDiscoverAgents(true);
+        QVERIFY(waitFor([&]{return backend.starts==3;}));QVERIFY(!item("foundAgentsOff")->isVisible());
+    }
+    void foundAgentsOffNeverStarts() {
+        initShellResources();
+        QTemporaryDir dir;QVERIFY(dir.isValid());
+        AppSettings settings(dir.filePath("gui.ini"));settings.setDiscoverAgents(false);
+        AgentBackend backend;
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("agentBackend",&backend);
+        engine.rootContext()->setContextProperty("agentSettings",&settings);
+        engine.loadData(R"(import QtQuick
+import DriveLink.Shell
+Window { width: 800; height: 1200; visible: true
+    Loader { objectName: "loader"; width: 760
+        sourceComponent: AgentTab { objectName: "tab"; width: 760; backend: agentBackend; settings: agentSettings } } })");
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);
+        QTest::qWait(100);
+        QVERIFY(visualChild(window->contentItem(),"foundAgentsOff")->isVisible());
+        QCOMPARE(backend.starts,0);QCOMPARE(backend.stops,0);
+        // On, then the tab is destroyed: browsing stops.
+        settings.setDiscoverAgents(true);
+        QVERIFY(waitFor([&]{return backend.starts==1;}));
+        auto *loader=visualChild(window->contentItem(),"loader");QVERIFY(loader);
+        loader->setProperty("active",false);
+        QVERIFY(waitFor([&]{return backend.stops==1;}));
+    }
     void exclusiveRule() {
         LeaseTracker t;t.reset(1,{});
         QVERIFY(leaseBlock(false,t,1,false).isEmpty());  // direct connection: never
@@ -377,7 +549,132 @@ Window { width: 1280; height: 800; visible: true
         QFile again(path);QVERIFY(again.open(QIODevice::ReadOnly));QVERIFY(!again.readAll().contains("kept"));again.close();
         recent.forget("pi5.local");QCOMPARE(RecentAgents(path).list().size(),1);
     }
+    // The PC hardware check (H3b-2): an agent advertising on the LAN (in WSL
+    // with mirrored networking, or on another host) is found by this GUI's
+    // browse; its address lists the devices and a connection through it
+    // observes the device. Nothing is written to the device.
+    void benchDiscovery() {
+        const auto instance=qEnvironmentVariable("DRIVELINK_GUI_BENCH_DISCOVER");
+        if(instance.isEmpty()) {QSKIP("set DRIVELINK_GUI_BENCH_DISCOVER (the agent's instance name) and _TOKEN to find an agent");}
+        const auto token=qEnvironmentVariable("DRIVELINK_GUI_BENCH_TOKEN");
+        const auto device=qEnvironmentVariable("DRIVELINK_GUI_BENCH_DEVICE","bench");
+        QVERIFY2(!token.isEmpty(),"DRIVELINK_GUI_BENCH_TOKEN is empty");
+        QTemporaryDir dir;LocalConnection c;
+        c.setSettingsPath(dir.filePath("bench.ini"));c.setClientName("bench-gui-discovery");
+        QElapsedTimer clock;clock.start();
+        c.startAgentBrowse();
+        QVariantMap row;
+        const bool found=waitFor([&]{
+            for(const auto &r : c.agentBrowse()["agents"].toList()) {
+                if(r.toMap()["instance"].toString()==instance) {row=r.toMap();return true;}
+            }
+            return false;
+        },30000);
+        QStringList seen;
+        for(const auto &r : c.agentBrowse()["agents"].toList()) {seen<<r.toMap()["instance"].toString()+"@"+r.toMap()["address"].toString();}
+        QVERIFY2(found,qPrintable("not found; seen: "+seen.join(", ")));
+        qInfo("bench: found %s at %s (DriveLink %s, protocol %d) after %lld ms; all: %s",qPrintable(instance),
+              qPrintable(row["address"].toString()),qPrintable(row["version"].toString()),row["proto"].toInt(),
+              static_cast<long long>(clock.elapsed()),qPrintable(seen.join(", ")));
+        QVERIFY(row["compatible"].toBool());
+        c.listAgent(row["address"].toString(),token);
+        QVERIFY2(waitFor([&]{return c.agentListing()["state"].toString()!="listing";},10000),"listing timed out");
+        QVERIFY2(c.agentListing()["state"].toString()=="ok",qPrintable(c.agentListing()["failure"].toMap()["text"].toString()));
+        c.stopAgentBrowse();
+        c.connectAgent(row["address"].toString(),token,device,false);
+        QVERIFY2(waitFor([&]{return c.ready() && c.snapshot() && c.snapshot()->status.has_value();},30000),
+                 qPrintable(c.lastError()["message"].toString()+" "+c.agentFailure()["text"].toString()));
+        QVERIFY(c.remote());QVERIFY(c.commandGroups().empty());
+        qInfo("bench: connected to %s device %s through the found address",qPrintable(device),qPrintable(c.deviceId()));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.linked() && !c.closing();}));
+    }
+    void foundAgentsAndBrowseSchedule() {
+        discovery::FoundAgent pi{"robot-pi","drivelink-robot-pi.local.",47620,{"192.168.1.20"},"192.168.1.20",3u,"0.1.0"};
+        discovery::FoundAgent old{"old-agent","drivelink-old.local.",47620,{"192.168.1.50"},"192.168.1.50",2u,"0.0.9"};
+        discovery::FoundAgent bare{"bare","drivelink-bare.local.",47621,{"192.168.1.60"},"",std::nullopt,""};
+        FoundAgents found;
+        found.round({pi,old,bare});
+        auto rows=found.rows(3);
+        QCOMPARE(rows.size(),3);
+        QCOMPARE(rows[0].toMap()["instance"].toString(),QString("bare")); // sorted
+        QCOMPARE(rows[0].toMap()["proto"].toInt(),-1);
+        QVERIFY(!rows[0].toMap()["compatible"].toBool());
+        QCOMPARE(rows[1].toMap()["version"].toString(),QString("0.0.9"));
+        QVERIFY(!rows[1].toMap()["compatible"].toBool());
+        QCOMPARE(rows[2].toMap()["address"].toString(),QString("192.168.1.20:47620"));
+        QCOMPARE(rows[2].toMap()["host"].toString(),QString("drivelink-robot-pi.local."));
+        QVERIFY(rows[2].toMap()["compatible"].toBool());
+        // Missed once: kept; twice in a row: dropped. A new address replaces the old.
+        pi.addresses={"10.0.0.5"};pi.from="10.0.0.5";
+        found.round({pi});QCOMPARE(found.rows(3).size(),3);
+        QCOMPARE(found.rows(3)[2].toMap()["address"].toString(),QString("10.0.0.5:47620"));
+        found.round({pi,bare});
+        rows=found.rows(3);QCOMPARE(rows.size(),2);
+        QCOMPARE(rows[0].toMap()["instance"].toString(),QString("bare"));
+        found.round({});found.round({});QVERIFY(found.rows(3).isEmpty());
+        found.round({pi});found.clear();QVERIFY(found.rows(3).isEmpty());
+        // Rounds at 0, 1, 3, 7, 15, 31 s, then every 60 s.
+        QCOMPARE(browseDelay(1).count(),1000);QCOMPARE(browseDelay(2).count(),2000);
+        QCOMPARE(browseDelay(5).count(),16000);QCOMPARE(browseDelay(6).count(),60000);
+        QCOMPARE(browseDelay(100).count(),60000);
+        // The screenshot hook.
+        const auto fake=parseFakeAgents(R"([{"instance":"robot-pi","host":"h.local.","address":"192.168.1.20:47620","version":"0.1.0","proto":3},{"instance":"x","address":"10.0.0.1:1"}])");
+        QVERIFY(fake.has_value());QCOMPARE(fake->size(),size_t(2));
+        QCOMPARE(QString::fromStdString((*fake)[0].address()),QString("192.168.1.20:47620"));
+        QVERIFY(!(*fake)[1].proto.has_value());
+        QVERIFY(parseFakeAgents("[]").has_value());
+        for(const auto *bad:{"{}","nope",R"([{"instance":"a","address":"1.2.3.4"}])",R"([{"instance":"a","address":"1.2.3.4:0"}])",R"([{"address":"1.2.3.4:5"}])"}) {
+            QVERIFY2(!parseFakeAgents(bad).has_value(),bad);
+        }
+    }
+    void browseStatesWithFakeAgents() {
+        // The backend's states with the hook: off, searching, idle; stop forgets.
+        qputenv("DRIVELINK_GUI_FAKE_AGENTS",R"([{"instance":"robot-pi","address":"192.168.1.20:47620","version":"0.1.0","proto":3}])");
+        QTemporaryDir dir;LocalConnection c;c.setSettingsPath(dir.filePath("gui.ini"));
+        qunsetenv("DRIVELINK_GUI_FAKE_AGENTS");
+        QCOMPARE(c.agentBrowse()["state"].toString(),QString("off"));
+        QCOMPARE(c.agentBrowse()["protocol"].toInt(),3);
+        c.startAgentBrowse();
+        QCOMPARE(c.agentBrowse()["state"].toString(),QString("searching"));
+        QVERIFY(waitFor([&]{return c.agentBrowse()["state"].toString()=="idle";},3000));
+        auto agents=c.agentBrowse()["agents"].toList();
+        QCOMPARE(agents.size(),1);QVERIFY(agents[0].toMap()["compatible"].toBool());
+        c.browseAgentsNow();QCOMPARE(c.agentBrowse()["state"].toString(),QString("searching"));
+        c.browseAgentsNow(); // while searching: one more round after this one
+        QVERIFY(waitFor([&]{return c.agentBrowse()["state"].toString()=="idle";},3000));
+        c.stopAgentBrowse();
+        QCOMPARE(c.agentBrowse()["state"].toString(),QString("off"));
+        QVERIFY(c.agentBrowse()["agents"].toList().isEmpty());
+        QTest::qWait(500); // a dropped round lands nowhere
+        QCOMPARE(c.agentBrowse()["state"].toString(),QString("off"));
+    }
 #ifdef AGENT_PATH
+    void discoveryFindsLanAgent() {
+        // H3b-2: an agent on the LAN address is found by the backend's browse
+        // and its address lists the devices.
+        const auto interfaces=discovery::listIpv4Interfaces();
+        if(interfaces.empty()) {QSKIP("no non-loopback IPv4 interface");}
+        const auto ip=QString::fromStdString(discovery::formatIpv4(interfaces.front().address));
+        const auto name=QStringLiteral("gui-itest-%1").arg(QCoreApplication::applicationPid());
+        AgentFixture f({"--bind",ip,"--name",name});
+        QVERIFY(f.address.startsWith(ip+":"));
+        Window a("gui-a");
+        a.c.startAgentBrowse();
+        QVariantMap row;
+        QVERIFY(waitFor([&]{
+            for(const auto &r : a.c.agentBrowse()["agents"].toList()) {
+                if(r.toMap()["instance"].toString()==name) {row=r.toMap();return true;}
+            }
+            return false;
+        },20000));
+        QCOMPARE(row["address"].toString(),f.address);
+        QVERIFY(row["compatible"].toBool());
+        QCOMPARE(row["proto"].toInt(),3);
+        a.c.listAgent(row["address"].toString(),f.token);
+        QVERIFY(waitFor([&]{return a.c.agentListing()["state"].toString()=="ok";}));
+        a.c.stopAgentBrowse();
+        QCOMPARE(a.c.agentBrowse()["state"].toString(),QString("off"));
+    }
     void observerThenLease() {
         AgentFixture f;Window a("gui-a");
         QVERIFY(a.open(f));

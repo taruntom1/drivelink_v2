@@ -68,6 +68,14 @@ lists them all. A config file:
 - `hello_timeout_ms` (5000), `retry_ms` (2000) and `request_timeout_ms` (3000)
   tune the timings; `history_size` (256, 16..4096) is the history kept per
   device. At most 8 devices.
+- On a LAN bind the agent advertises itself over mDNS/DNS-SD as
+  `_drivelink._tcp` so the GUI's Agent tab and `drivelink-cli agent-browse`
+  find it ([agent.md](../../docs/protocol/agent.md), "Discovery"). `name`
+  (`--name`) is the instance name shown there (1..63 bytes of UTF-8, no `.`;
+  default: the host name); `advertise: false` (`--no-advertise`) turns it off.
+  A loopback bind never advertises. It needs UDP port 5353, which it shares
+  with avahi or any other responder; without it the agent logs why and serves
+  TCP as usual.
 
 Through the agent the CLI adds `--device NAME --token TOKEN` (or
 `DRIVELINK_AGENT_TOKEN`); `--lease` takes the lease for one command (it ends
@@ -105,6 +113,13 @@ devices and their lease holders and `agent-clients` a device's clients
   followed by another DISARM) CMD_CLEAR of its command slots; then a waiting
   Take is granted. A failed CLEAR leaves the slot Dirty for the 2 s
   maintenance, and ARM is answered `Busy/None` until it is gone.
+- mDNS (`mdns.cpp`, mjansson/mdns for sockets and record parsing): the
+  responder runs on its own thread with fixed settings and shares nothing
+  with the agent thread; it never touches a device, a client or the lease.
+  One UDP socket per advertised interface (`IP_MULTICAST_ALL` off, so each
+  sees only its interface's queries), interfaces re-scanned every 10 s,
+  goodbyes at shutdown. The record sets and the answer rules are pure and
+  unit tested.
 - Clock: the device's Session pings it (periodic time); every 500 ms a
   changed model goes to the device's clients as a ClockModel event, and at
   once after a Boot. Clients' TimePing is answered with the agent's

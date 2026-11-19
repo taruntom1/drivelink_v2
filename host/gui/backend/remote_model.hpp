@@ -4,11 +4,14 @@
 // exclusive-operation rule, the rows the Connect, Device and faults views
 // show, and the recent agents. No I/O; tested in gui-backend.
 #include <drivelink/agent.hpp>
+#include <drivelink/discovery.hpp>
 #include <drivelink/model.hpp>
 #include <QDateTime>
 #include <QString>
 #include <QVariantList>
 #include <optional>
+#include <chrono>
+#include <QByteArray>
 
 namespace drivelink::gui {
 
@@ -124,6 +127,32 @@ private:
     QVariantList read() const;
     void write(const QVariantList &);
 };
+
+// Agents found on the network as the Agent tab lists them (H3b-2). Keyed by
+// instance name; an agent missed in two browse rounds in a row is dropped,
+// so one lost answer does not make a row flicker.
+class FoundAgents final {
+public:
+    static constexpr int kMissesToDrop=2;
+    void round(const std::vector<discovery::FoundAgent> &found);
+    void clear() {m_entries.clear();}
+    // {instance, host, address ("ip:port"), version, proto (-1: unknown),
+    // compatible (proto == protocol)}, sorted by instance.
+    QVariantList rows(unsigned protocol) const;
+private:
+    struct Entry {discovery::FoundAgent agent;int misses=0;};
+    std::vector<Entry> m_entries;
+};
+
+// The wait after browse round `completed` (1-based) while the Agent tab is
+// shown: 1, 2, 4, 8, 16 s, then 60 s (RFC 6762 5.2 back-off). Rounds start
+// at 0, 1, 3, 7, 15, 31 s, then every 60 s.
+std::chrono::milliseconds browseDelay(unsigned completed);
+
+// The screenshot hook's found list (DRIVELINK_GUI_FAKE_AGENTS): a JSON array
+// of {instance, host, address "ip:port", version, proto}. nullopt when the
+// text is not such an array.
+std::optional<std::vector<discovery::FoundAgent>> parseFakeAgents(const QByteArray &json);
 
 // "host:port" or "tcp://host:port" (port defaults to the agent's 47620) as
 // the tcp:// endpoint a Session takes; empty when it is not one.

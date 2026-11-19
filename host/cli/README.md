@@ -137,6 +137,18 @@ device, a missing lease) are device rejections: exit 5, with the agent's
 `result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
 for a direct endpoint.
 
+`agent-browse [--timeout-ms N]` needs no endpoint, device or token (giving
+`--endpoint`, `--device`, `--token`, `--lease` or arguments is a usage error,
+exit 2). It does one mDNS browse round (`_drivelink._tcp`, IPv4, N ms, default
+1500, allowed 100..10000, else exit 2) and prints one line per agent:
+`INSTANCE ADDRESS protocol N DriveLink VERSION HOST` (`?` when the agent did
+not advertise the value), or `No agents found.` (exit 0). With `--json` the
+envelope's `data.agents` is an array of `{instance, host, port, address,
+endpoint, addresses, from, proto, version}` (`proto` is `null` when absent;
+empty when no agent answered). `address` is `a.b.c.d:port` and `endpoint` the
+`tcp://` form to pass to `--endpoint`. Agents on loopback or with
+`--no-advertise` do not appear.
+
 `--lease` (a global option before the command, needs `--device`) takes the
 device's control lease before the command runs, preempting the current holder
 (who is disarmed). Arming, command groups and the exclusive operations (SAVE,

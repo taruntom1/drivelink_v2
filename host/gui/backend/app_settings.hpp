@@ -13,6 +13,9 @@ class AppSettings : public QObject {
     // OS reports none).
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(bool dark READ dark NOTIFY themeChanged)
+    // Look for drivelink-agent on the local network (mDNS) while Connect's
+    // Agent tab is open. Default true; saved under connection/discoverAgents.
+    Q_PROPERTY(bool discoverAgents READ discoverAgents WRITE setDiscoverAgents NOTIFY discoverAgentsChanged)
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
     Q_PROPERTY(QString compiler READ compiler CONSTANT)
@@ -25,6 +28,9 @@ public:
     // Unknown values are ignored. Saved at once.
     void setTheme(const QString &theme);
     bool dark() const;
+    bool discoverAgents() const {return m_discoverAgents;}
+    // Saved at once (unless screenshot mode).
+    void setDiscoverAgents(bool enabled);
     QString version() const;
     QString qtVersion() const;
     QString compiler() const;
@@ -39,10 +45,12 @@ public:
     void setSystemDarkForTest(int dark) {m_systemOverride=dark;emit themeChanged();}
 signals:
     void themeChanged();
+    void discoverAgentsChanged();
 private:
     QString m_path,m_theme;
     int m_systemOverride=-1;
     bool m_persistent=true;
+    bool m_discoverAgents=true;
 };
 
 }

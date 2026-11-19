@@ -35,14 +35,17 @@ struct AgentConfig
     std::chrono::milliseconds retry{2000};         // 100..60000
     std::chrono::milliseconds request_timeout{3000}; // 100..60000, device request timeout
     size_t history_size = 256;                       // 16..4096 entries per device
+    bool advertise = true;                           // mDNS advertising (only when bind is not loopback)
+    std::string name;                                // mDNS instance name; empty = the host name
     std::vector<DeviceConfig> devices;              // 1..8, unique aliases and endpoints
     bool loopback() const;                           // bind is 127.0.0.0/8 or ::1
 };
 
 // Parse the JSON text of a config file. Unknown keys are errors. Keys:
 // bind, port, token, token_file (relative to base_dir), hello_timeout_ms,
-// retry_ms, request_timeout_ms, history_size, devices: [{alias, endpoint, baud}].
-// token and token_file are mutually exclusive.
+// retry_ms, request_timeout_ms, history_size, advertise (boolean), name (mDNS
+// instance, 1..63 bytes, see discovery::instanceError), devices: [{alias,
+// endpoint, baud}]. token and token_file are mutually exclusive.
 AgentConfig parseConfig(std::string_view json_text, const std::string &base_dir = ".");
 
 struct CommandLine
@@ -58,7 +61,8 @@ AgentConfig loadConfig(const std::string &path);
 // Flags: --config PATH (recorded only), --bind ADDR, --port N, --token TOKEN,
 // --token-file PATH, --device ALIAS=ENDPOINT[@BAUD] (repeatable; any --device
 // replaces the file's device list), --hello-timeout-ms N, --retry-ms N,
-// --request-timeout-ms N, --history-size N, --help, --version.
+// --request-timeout-ms N, --history-size N, --name NAME, --no-advertise (no
+// value), --help, --version.
 CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig &config);
 // Final checks after flags (token present, at least one device, uniqueness).
 void validate(const AgentConfig &config);

@@ -3,8 +3,9 @@ import QtQuick.Layouts
 import QtQuick.Templates as T
 import DriveLink.Style
 
-// H2g Settings: Appearance (Dark / Light / Follow system) and About (version,
-// Qt, compiler, licence, third-party notices with Copy). Inline, no popups.
+// H2g Settings: Appearance (Dark / Light / Follow system), Connection (find
+// agents on the network, H3b-2) and About (version, Qt, compiler, licence,
+// third-party notices with Copy). Inline, no popups.
 Flickable {
     id: page
     objectName: "settingsPage"
@@ -52,39 +53,63 @@ Flickable {
             columnSpacing: Theme.space24
             rowSpacing: Theme.space24
 
-            Card {
-                objectName: "appearanceCard"
+            // Appearance and Connection share the narrow column; About takes the rest.
+            Column {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
                 Layout.alignment: Qt.AlignTop
-                title: qsTr("Appearance")
-                Text {
-                    text: qsTr("Theme")
-                    font: Theme.fontBodyStrong; color: Theme.textPrimary
-                }
-                Row {
-                    spacing: Theme.space4
-                    Repeater {
-                        model: [{value: "dark", name: "themeDark", text: qsTr("Dark")},
-                                {value: "light", name: "themeLight", text: qsTr("Light")},
-                                {value: "system", name: "themeSystem", text: qsTr("Follow system")}]
-                        delegate: DLTabButton {
-                            required property var modelData
-                            objectName: modelData.name
-                            text: modelData.text
-                            checkable: false
-                            checked: page.settings.theme === modelData.value
-                            onClicked: page.settings.theme = modelData.value
+                spacing: Theme.space24
+
+                Card {
+                    objectName: "appearanceCard"
+                    width: parent.width
+                    title: qsTr("Appearance")
+                    Text {
+                        text: qsTr("Theme")
+                        font: Theme.fontBodyStrong; color: Theme.textPrimary
+                    }
+                    Row {
+                        spacing: Theme.space4
+                        Repeater {
+                            model: [{value: "dark", name: "themeDark", text: qsTr("Dark")},
+                                    {value: "light", name: "themeLight", text: qsTr("Light")},
+                                    {value: "system", name: "themeSystem", text: qsTr("Follow system")}]
+                            delegate: DLTabButton {
+                                required property var modelData
+                                objectName: modelData.name
+                                text: modelData.text
+                                checkable: false
+                                checked: page.settings.theme === modelData.value
+                                onClicked: page.settings.theme = modelData.value
+                            }
                         }
                     }
+                    Text {
+                        objectName: "themeHint"
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: page.settings.theme === "system"
+                            ? qsTr("Follows the operating system's app mode (now: %1).").arg(page.settings.dark ? qsTr("Dark") : qsTr("Light"))
+                            : qsTr("Saved on this computer.")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
                 }
-                Text {
-                    objectName: "themeHint"
-                    width: parent.width; wrapMode: Text.Wrap
-                    text: page.settings.theme === "system"
-                        ? qsTr("Follows the operating system's app mode (now: %1).").arg(page.settings.dark ? qsTr("Dark") : qsTr("Light"))
-                        : qsTr("Saved on this computer.")
-                    font: Theme.fontCaption; color: Theme.textSecondary
+
+                Card {
+                    objectName: "connectionCard"
+                    width: parent.width
+                    title: qsTr("Connection")
+                    DLSwitch {
+                        objectName: "discoverAgents"
+                        text: qsTr("Find agents on the network")
+                        checked: page.settings.discoverAgents
+                        onToggled: page.settings.discoverAgents = checked
+                    }
+                    Text {
+                        objectName: "discoverAgentsHint"
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: qsTr("Looks for DriveLink agents on the local network (mDNS) while Connect's Agent tab is open. Typed addresses and recent agents always work.")
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
                 }
             }
 
