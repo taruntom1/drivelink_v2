@@ -39,8 +39,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| The controller_manager rate against the device loop rates; a stale-sample rule in `read()` (sample age through the clock model) | H4a |
-| How the plugin waits for the agent's answers outside the real-time path (configure, activate, the mode switch) | H4a, H4b |
+| How the plugin waits for the agent's answers outside the real-time path during the mode switch (configure and activate call the library synchronously, H4a) | H4b |
 | The position hold before a first sample arrives; whether a mode switch while armed needs a DISARM for any controller type | H4b |
 | Which controllers `recover` reactivates (remembered at the `ERROR`, or a parameter) | H4c |
 | The Debian names and version scheme of the ROS packages (bloom's `ros-<distro>-` prefix, the release suffix); how the apt suites hold them | H4d |
@@ -71,7 +70,7 @@ Re-planned with the user on 2026-11-21. The architecture section "`drivelink_har
 - **Lease at activation:** if another client holds the device's lease, `on_activate` fails with an error naming the holder (from the device record). A `take_lease: preempt` parameter takes it anyway. No wire change: LeaseTake itself always preempts.
 - **Mapping:** a joint names its controller instance by label. The standard interfaces map by convention (state `position` → `position`, `velocity` → `velocity`; command `position` → `position_sp`, `velocity` → `velocity_sp`), and a parameter per interface overrides the item name. Open-loop duty is a custom `duty` interface (state `duty`, command `duty_sp`); claiming it sets the mode to `open_loop`. The IMU follows the ROS convention by default: orientation ← `quaternion.*`, angular velocity ← `gyro.*`, linear acceleration ← `accel.*` (with gravity), overridable the same way.
 - **Arming:** ARM when a controller first claims a command interface, after the mode write and a fresh hold frame; DISARM when the last one is released and in `on_deactivate`. State-only use (broadcasters) never arms.
-- **Recovery:** never re-arms by itself. A disarm, a lost lease or the device going offline makes `read()` return `ERROR`. The diagnostics node (H4c) offers `ack_fault` and `recover`; `recover` acknowledges the fault and reactivates the component and its controllers, so an operator or supervisor calling it is the explicit act that re-arms.
+- **Recovery:** never re-arms by itself. A disarm, a lost lease, the device going offline or a stale group (`stale_timeout_ms`, default ten group periods and at least 100 ms; user decision 2026-11-21, H4a) makes `read()` return `ERROR`. The diagnostics node (H4c) offers `ack_fault` and `recover`; `recover` acknowledges the fault and reactivates the component and its controllers, so an operator or supervisor calling it is the explicit act that re-arms.
 - **Packaging:** colcon from source in the robot's workspace (H4a to H4c), then bloom `.deb` files in the H3d apt repository (H4d).
 - **Order:** strict, each step after the previous one merges.
 

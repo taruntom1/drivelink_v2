@@ -263,7 +263,8 @@ def worktree_key():
 
 
 def linux_packages_hint(profile):
-    what = 'compilers, CMake, Ninja, Python 3' if profile == 'agent' else 'compilers, CMake, Ninja, Qt 6.10'
+    what = {'agent': 'compilers, CMake, Ninja, Python 3', 'base': 'compilers, CMake, Ninja, Python 3',
+            'ros': 'ROS 2 Lyrical or Jazzy with ros2_control, colcon'}.get(profile, 'compilers, CMake, Ninja, Qt 6.10')
     return f'Linux {profile} packages missing ({what}); run: sudo sh tools/setup_linux.sh {profile}'
 
 
@@ -392,6 +393,56 @@ def plan_apt_repo(jobs):
     ]
 
 
+ROS_PHASES = [('superbuild (agent, vdev, cli)', 'superbuild'), ('colcon build', 'build'), ('colcon test', 'test')]
+
+
+def version_env(env):
+    """env plus DRIVELINK_VERSION_FULL (passed through WSLENV): a Linux build of a
+    Windows worktree cannot ask git for the version."""
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import version
+    env = dict(env or os.environ, DRIVELINK_VERSION_FULL=version.full())
+    env['WSLENV'] = ':'.join(filter(None, [env.get('WSLENV'), 'DRIVELINK_VERSION_FULL', 'DRIVELINK_JOBS']))
+    return env
+
+
+def plan_ros(jobs):
+    """drivelink_hardware (H4a): the agent, vdev and CLI from the superbuild, then
+    colcon build and test of protocol/, host/libdrivelink and host/ros against
+    the installed ROS 2 (Lyrical in WSL; the ROS image's distribution in CI)."""
+    probe = linux_probe('ros')
+    if probe is None:
+        build, wrap, env = (ROOT / 'build/ros').as_posix(), [], None
+    else:
+        wsl, env, home = probe
+        build = f'{home}/.cache/drivelink/{worktree_key()}/ros'
+        wrap = [*wsl, '--cd', str(ROOT), '--exec']
+    env = dict(version_env(env), DRIVELINK_JOBS=jobs)
+    return [Step(title, [*wrap, 'sh', 'tools/ros_check.sh', phase, build], env=env, warning_free=True)
+            for title, phase in ROS_PHASES]
+
+
+def plan_ros_jazzy(jobs):
+    """The `ros` build and tests on ROS 2 Jazzy (Ubuntu 24.04) in the ros:jazzy image
+    through Docker. The image adds tools/setup_linux.sh ros once (cached by Docker);
+    the build lives in the drivelink-ros-jazzy volume and the checkout is read only."""
+    need('docker')
+    alive = subprocess.run(['docker', 'info', '--format', '{{.ServerVersion}}'],
+                           capture_output=True, text=True, errors='replace')
+    if alive.returncode != 0:
+        raise Unavailable('Docker is not running: start Docker Desktop (or skip this check with --skip ros-jazzy)')
+    image = 'drivelink-ros:jazzy'
+    env = dict(version_env(None), DRIVELINK_JOBS=jobs)
+    run = ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src',
+           '-v', 'drivelink-ros-jazzy:/cache', '-e', 'DRIVELINK_VERSION_FULL', '-e', 'DRIVELINK_JOBS', image]
+    build = f'/cache/{worktree_key()}'
+    return [Step('image (ros:jazzy + setup_linux.sh ros)',
+                 ['docker', 'build', '-q', '-t', image, '--build-arg', 'DISTRO=jazzy',
+                  '-f', str(ROOT / 'tools/ros.Dockerfile'), str(ROOT / 'tools')], env=env),
+            *(Step(title, [*run, 'sh', 'tools/ros_check.sh', phase, build], env=env, warning_free=True)
+              for title, phase in ROS_PHASES)]
+
+
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
@@ -406,6 +457,9 @@ CHECKS = [
     Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb),
     Check('apt-repo', 'apt repository from the .deb packages, checked by apt (through WSL on Windows)',
           plan_apt_repo),
+    Check('ros', 'drivelink_hardware: colcon build and tests on ROS 2 (Lyrical through WSL on Windows)',
+          plan_ros),
+    Check('ros-jazzy', 'drivelink_hardware: the ros check on ROS 2 Jazzy in Docker (ros:jazzy)', plan_ros_jazzy),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),

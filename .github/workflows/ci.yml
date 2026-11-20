@@ -107,6 +107,33 @@ jobs:
           name: agent-validation
           path: build/validate/
 
+  # H4a: drivelink_hardware with colcon on both ROS distributions. The images
+  # carry ROS and its apt source; setup_linux.sh ros adds ros2_control,
+  # ros2_controllers and colcon. Locally `ros` runs Lyrical in WSL and
+  # `ros-jazzy` the jazzy image through Docker; here both run `ros`.
+  ros:
+    name: ROS 2 ${{ matrix.distro }} (drivelink_hardware)
+    runs-on: ubuntu-latest
+    container: ros:${{ matrix.distro }}
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [lyrical, jazzy]
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the ROS packages (ros2_control, ros2_controllers, colcon)
+        run: sh tools/setup_linux.sh ros
+      - name: Superbuild programs, colcon build (warnings are errors) and tests
+        run: python3 tools/validate.py --only ros
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-${{ matrix.distro }}-validation
+          path: build/validate/
+
   # H3c: drivelink-cli and drivelink-agent for Ubuntu 26.04 and 24.04, the
   # GUI's drivelink for 26.04 only (24.04's Qt 6.4 is below the 6.10 floor),
   # each on its own architecture's runner. 24.04 also holds the GCC 13 floor.
