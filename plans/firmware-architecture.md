@@ -1,6 +1,6 @@
 # Plan: firmware architecture v3 (self-describing core)
 
-Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [host-status.md](host-status.md)). The per-phase implementation plans are in [archive/](archive/).
+Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [host-status.md](host-status.md)). The per-phase implementation plans are in [archive/](archive).
 
 **Baseline.** This plan assumes:
 - `main` at `b72655b`

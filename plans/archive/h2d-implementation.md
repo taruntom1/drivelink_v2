@@ -1,6 +1,6 @@
 # H2d Monitor: plan and results
 
-Brief: [host-steps.md](host-steps.md) "H2d Monitor". Design: G5 Monitor frames
+Brief: [host-steps.md](../host-steps.md) "H2d Monitor". Design: G5 Monitor frames
 `109:8621` (live plots and manual command), `109:9147` (paused with cursors),
 `109:9731` (link budget full), Light check `116:9143`; G6 1080p fitting
 reference (Monitor observer `141:12188`). File `49NRHfKe8rOoVlloLLCqLh`.
@@ -162,7 +162,7 @@ and Light; software, and once on RHI); bare board COM3 (`benchMonitor`):
 41 % → 1000.00 Hz, 1 tick/sample, 0 lost; 81 % beside another 1 kHz group →
 1000.00 Hz, 0 lost; loop at 2 kHz live, 82 % → 1000.00 Hz at divider 2,
 2.000 ticks/sample, 0 lost; board restored (rates 1000/100/10 Hz, idle
-groups, flags 0, bench op refused). See [hardware-log.md](hardware-log.md).
+groups, flags 0, bench op refused). See [hardware-log.md](../hardware-log.md).
 
 ## H2d-2 manual command
 

@@ -78,7 +78,7 @@ Implementation is complete. All production code was written in this session.
   is confirmed in ota_0. Original twelve loop/system values match the LP
   checkpoint; empty saved name, no modules/pending/dirty flags, idle groups
   and unconfigured capture, disarmed; both bench-only commands refused.
-  Hardware rows: [hardware-log.md](hardware-log.md).
+  Hardware rows: [hardware-log.md](../hardware-log.md).
 - **Validation:** the full seven-check gate passed again after the reviewed
   console-harness fix, with no omissions and zero-warning builds. The report
   is `build/validate/summary.json`; passing unchanged checks are reused.
