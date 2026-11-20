@@ -624,9 +624,11 @@ TEST_CASE("validate: token, device count, uniqueness")
     badToken.token = "short";
     CHECK(refuses([&] { validate(badToken); }, "token"));
 
+    // No devices is valid (H3c): the packaged config starts empty.
     AgentConfig noDevices = validConfig();
     noDevices.devices.clear();
-    CHECK(refuses([&] { validate(noDevices); }, "device"));
+    CHECK_NOTHROW(validate(noDevices));
+    CHECK_NOTHROW(validate(parseConfig(R"({"token": "abcdefgh", "devices": []})")));
 
     AgentConfig eight = validConfig();
     eight.devices.clear();

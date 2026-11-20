@@ -1,6 +1,7 @@
 #!/bin/sh
 # The one list of Linux packages for DriveLink development and CI
-# (Ubuntu 26.04: the WSL distro, the ubuntu:26.04 CI containers).
+# (Ubuntu 26.04: the WSL distro, the ubuntu:26.04 CI containers; the `agent`
+# profile also on Ubuntu 24.04, where CI builds the packages without the GUI).
 #
 #   sudo sh tools/setup_linux.sh [base|agent|host]   (default: host)
 #   sh tools/setup_linux.sh --check [base|agent|host] report missing packages, install nothing
@@ -9,7 +10,7 @@
 #         firmware native tests (CI job native-tests)
 #   agent the same package list as base, named for what it builds: the host
 #         superbuild without the GUI, so drivelink-agent and its tests
-#         (validate.py agent, CI job agent)
+#         (validate.py agent, CI job agent) and the 24.04 packages (deb)
 #   host  base plus Ubuntu's Qt 6 (6.10, the GUI's API floor) for the host
 #         superbuild with the GUI and its offscreen Qt Quick tests
 #         (validate.py host-linux, CI job host-linux)

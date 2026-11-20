@@ -171,6 +171,9 @@ def plan_gen(jobs):
         Step('firmware notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check',
                                               '--manifest', 'firmware/notices/notices.json',
                                               '--output', 'firmware/notices/THIRD_PARTY_NOTICES.txt']),
+        Step('CLI and agent package notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check',
+                                                           '--manifest', 'host/notices/notices.json',
+                                                           '--output', 'host/notices/THIRD_PARTY_NOTICES.txt']),
         Step('notices generator tests', [python(), '-m', 'unittest', 'discover',
                                          '-s', 'host/gui/notices', '-p', 'test_*.py']),
     ]
@@ -340,8 +343,15 @@ def plan_agent(jobs):
 
 
 def plan_deb(jobs):
-    """The Linux release build, its staged smoke and the .deb (build/deb/)."""
-    probe = linux_probe()
+    """The Linux release build, its staged smoke and the .deb packages (build/deb/):
+    drivelink-cli and drivelink-agent, and the GUI's drivelink where Ubuntu's Qt
+    meets its floor (26.04, the WSL distro; not 24.04)."""
+    profile = 'host'
+    if not WINDOWS:
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import package_linux
+        profile = 'host' if package_linux.gui_supported(*package_linux.os_release()) else 'agent'
+    probe = linux_probe(profile)
     title = 'package and .deb'
     if probe is None:
         return [Step(title, ['python3', 'tools/package_linux.py', '--jobs', jobs])]
@@ -368,7 +378,7 @@ CHECKS = [
           windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
     Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent),
-    Check('deb', 'Linux release, staged smoke and .deb (through WSL on Windows)', plan_deb),
+    Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),

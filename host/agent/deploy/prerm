@@ -1,0 +1,30 @@
+#!/bin/sh
+# drivelink-agent prerm: stop the service on remove, never on upgrade.
+# Stopping the agent DISARMs every device (postinst explains the upgrade rule).
+set -e
+
+STATE=/var/lib/drivelink-agent
+UNIT=drivelink-agent.service
+
+case "$1" in
+remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+        systemctl stop "$UNIT" || true
+    fi
+    if command -v systemctl >/dev/null; then
+        systemctl disable "$UNIT" >/dev/null 2>&1 || true
+    fi
+    # A later install of this package starts the service again (postinst).
+    mkdir -p "$STATE"
+    touch "$STATE/removed"
+    ;;
+upgrade|failed-upgrade)
+    # The running agent keeps serving; the user restarts it.
+    ;;
+*)
+    echo "prerm called with unknown argument '$1'" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

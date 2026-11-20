@@ -31,6 +31,60 @@ cmake --build host/superbuild/build/linux-no-gui --target drivelink-agent
 On Windows, `python tools/validate.py --only agent` builds and tests it in WSL
 ([docs/development.md](../../docs/development.md)).
 
+## Install
+
+The `drivelink-agent` package (H3c) is the way to run it on a robot. It is
+built for Ubuntu 26.04 and 24.04, amd64 and arm64, from `VERSION` with the
+release in the package version (`<version>~ubuntu26.04`). Get it from a
+release or from `python3 tools/package_linux.py` (`build/deb/`). It
+Recommends `drivelink-cli`. A Raspberry Pi walk-through, from the UART to the
+LAN bind, is [docs/pi-setup.md](../../docs/pi-setup.md).
+
+```sh
+sudo apt install ./drivelink-cli_<version>_<arch>.deb ./drivelink-agent_<version>_<arch>.deb
+```
+
+- **What it installs:**
+  - `/usr/bin/drivelink-agent`;
+  - the `drivelink-agent` systemd unit;
+  - `/usr/lib/udev/rules.d/70-drivelink.rules`;
+  - `/etc/drivelink/agent.json`, a conffile: `bind` `127.0.0.1`,
+    `token_file` `token`, no devices.
+
+  The files are in [deploy/](deploy/). A first install creates the
+  `drivelink` system user (in `dialout`) and a random token in
+  `/etc/drivelink/token` (0640 `root:drivelink`), then enables and starts the
+  service. With no devices it answers device lists only and logs
+  `no devices configured`.
+- **Adding a device:** `drivelink-agent --list-ports` prints a ready-to-paste
+  `{"alias", "endpoint", "baud"}` line for each ESP port it finds:
+  - `/dev/drivelink/<USB serial>`: the udev rule's names for a CH343 adapter
+    or an ESP32-S3's native USB, which is the firmware's console, not its
+    protocol port;
+  - `/dev/serial0` and `/dev/ttyAMA*`.
+
+  It never opens a port, since opening one can reset an ESP. Paste the line
+  into `devices`, then run `sudo systemctl restart drivelink-agent`. The rule
+  also tells ModemManager to leave these ports alone.
+- **Upgrade never restarts the agent** (safety, user decision 2026-11-20).
+  Stopping it DISARMs every device, so `apt upgrade` leaves the old process
+  serving and prints that `sudo systemctl restart drivelink-agent` loads the
+  new version. Only a first install, or a reinstall after remove, starts the
+  service.
+- **Remove and purge:** remove stops and disables the service and keeps
+  `/etc/drivelink`. Purge also deletes the config, the token and the
+  `drivelink` user.
+- **The unit:**
+  - runs as `drivelink` with `--config /etc/drivelink/agent.json`;
+  - stops with SIGTERM (`TimeoutStopSec=30`, room to DISARM 8 devices);
+  - restarts on failure, but not after exit 2, a config error: see
+    `journalctl -u drivelink-agent`;
+  - is hardened: no capabilities, a read-only system (`ProtectSystem=strict`),
+    `@system-service` system calls, and the INET, UNIX and NETLINK address
+    families.
+
+  `/dev` is not restricted, because serial device numbers vary.
+
 ## Run
 
 ```sh
@@ -64,7 +118,8 @@ lists them all. A config file:
 - Aliases are 1..32 of `[a-z0-9_-]` starting with a letter and never 12 hex
   digits; endpoints are `serial://PATH` or `tcp://IP:PORT` (vdev). The device
   list must fit one ListDevices answer (1024 bytes); the agent refuses to start
-  otherwise.
+  otherwise. The list may be empty (the packaged config): the agent then only
+  answers device lists until a restart with devices.
 - `hello_timeout_ms` (5000), `retry_ms` (2000) and `request_timeout_ms` (3000)
   tune the timings; `history_size` (256, 16..4096) is the history kept per
   device. At most 8 devices.
@@ -127,7 +182,8 @@ devices and their lease holders and `agent-clients` a device's clients
 
 ## Tests
 
-- `agent_tests` (`agent-unit`): config and flags, the routing policy (every
+- `agent_tests` (`agent-unit`): config and flags, `--list-ports` (aliases,
+  lines, the scan over a temporary `/dev` and `/sys`), the routing policy (every
   core op open or exclusive), the group map of both kinds, LIST synthesis, the
   lease state machine, history and the status arm parse.
 - `test/agent_integration.py` (`agent-integration`): the agent with vdevs and
@@ -137,6 +193,12 @@ devices and their lease holders and `agent-clients` a device's clients
   cases, a device reboot, Closing events, a slow client; arming through the
   lease, a Take that preempts an armed holder, a holder's disconnect and
   release, exclusive operations through the CLI, the client list, history and
-  the clock model on connect, a lease per device and lobby refusals.
+  the clock model on connect, a lease per device and lobby refusals; an agent
+  with no devices.
+- The packages: the `deb` check's staged smoke (the shipped config, then a
+  vdev device), CI's clean-container `host/test/installed_packages_smoke.py`
+  (install, upgrade without a restart, remove, reinstall, purge, `systemd-analyze
+  verify`, `udevadm verify`), and `host/test/deploy_check.py` on a host with
+  systemd and a device ([docs/bench.md](../../docs/bench.md)).
 - Both carry the ctest label `agent`; `validate.py agent` runs them and
   `host-linux` skips them.

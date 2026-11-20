@@ -1457,6 +1457,23 @@ def scenario_N_browse_usage(ctx):
     return 'agent-browse refuses --endpoint/--device/--token, arguments and a window outside 100..10000 ms (exit 2)'
 
 
+def scenario_O_no_devices(ctx):
+    # The packaged config lists no devices (H3c): the agent starts, answers an
+    # empty device list, refuses a device Hello and stops cleanly on SIGTERM.
+    agent = Proc('agent-empty', [ctx['agent_exe'], '--port', '0', '--token', TOKEN, '--no-advertise'])
+    try:
+        url = agent.next_line(15, 'READY ')[len('READY '):]
+        devices = data(cli(url, 'agent-devices', token=TOKEN))['devices']
+        expect(devices == [], 'no devices listed', devices=devices)
+        unknown = cli(url, 'info', device='base', token=TOKEN, code=5)
+        expect(unknown['detail'] == D_UNKNOWN_DEVICE, 'a device Hello is UnknownDevice', envelope=unknown)
+        code = agent.terminate()
+        expect(code == 0, 'SIGTERM exits 0', code=code, **agent.diag())
+    finally:
+        agent.kill()
+    return 'an agent with no devices lists none, refuses a device Hello (UnknownDevice) and exits 0 on SIGTERM'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -1485,7 +1502,7 @@ SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_dir
              scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
              scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
              scenario_L_discovery_lan, scenario_M_discovery_quiet, scenario_N_browse_usage,
-             scenario_9_device_clean_after_agent]
+             scenario_O_no_devices, scenario_9_device_clean_after_agent]
 
 
 def main():

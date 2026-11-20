@@ -1,0 +1,36 @@
+#!/bin/sh
+# drivelink-agent postrm: remove keeps /etc/drivelink (config and token) and
+# the drivelink user; purge deletes them.
+set -e
+
+case "$1" in
+purge)
+    # dpkg has already deleted the conffile agent.json.
+    rm -f /etc/drivelink/token /etc/drivelink/token.new
+    rmdir /etc/drivelink 2>/dev/null || true
+    rm -rf /var/lib/drivelink-agent
+    if getent passwd drivelink >/dev/null; then
+        userdel drivelink || echo "drivelink-agent: could not delete the drivelink user (still running?)" >&2
+    fi
+    if getent group drivelink >/dev/null; then
+        groupdel drivelink || true
+    fi
+    ;;
+remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+*)
+    echo "postrm called with unknown argument '$1'" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+    fi
+    if [ -d /run/udev ] && command -v udevadm >/dev/null; then
+        udevadm control --reload-rules || true
+    fi
+fi
+
+exit 0

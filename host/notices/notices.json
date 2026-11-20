@@ -1,0 +1,40 @@
+{
+  "components": [
+    {
+      "name": "Asio",
+      "version": "1.30.2",
+      "license": "BSL-1.0",
+      "copyright": "Copyright (c) 2003-2024 Christopher M. Kohlhoff",
+      "url": "https://github.com/chriskohlhoff/asio/releases/tag/asio-1-30-2",
+      "license_files": [
+        "../gui/notices/licenses/BSL-1.0.txt"
+      ],
+      "note": "Header-only; compiled into libdrivelink and so into drivelink-cli, drivelink-vdev and drivelink-agent.",
+      "dll_patterns": []
+    },
+    {
+      "name": "nlohmann JSON",
+      "version": "3.11.3",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2013-2022 Niels Lohmann",
+      "url": "https://github.com/nlohmann/json/releases/tag/v3.11.3",
+      "license_files": [
+        "../gui/notices/licenses/nlohmann-json-MIT.txt"
+      ],
+      "note": "Header-only; compiled into drivelink-cli and drivelink-agent (its config file).",
+      "dll_patterns": []
+    },
+    {
+      "name": "mjansson/mdns",
+      "version": "1.4.3",
+      "license": "Unlicense",
+      "copyright": "Mattias Jansson (public domain)",
+      "url": "https://codeload.github.com/mjansson/mdns/tar.gz/refs/tags/1.4.3",
+      "license_files": [
+        "../gui/notices/licenses/Unlicense-mdns.txt"
+      ],
+      "note": "Header-only; finds and advertises agents on the local network (compiled into libdrivelink, so into drivelink-cli, and into drivelink-agent).",
+      "dll_patterns": []
+    }
+  ]
+}

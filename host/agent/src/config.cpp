@@ -379,6 +379,13 @@ CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig
             config.advertise = false;
             continue;
         }
+        if (name == "--list-ports")
+        {
+            if (has_inline)
+                throw ConfigError("--list-ports takes no value");
+            cl.list_ports = true;
+            continue;
+        }
         if (std::find(kValueFlags.begin(), kValueFlags.end(), name) == kValueFlags.end())
             throw ConfigError("unknown flag " + single_quoted(name));
         std::string_view value = inline_value;
@@ -450,8 +457,6 @@ void validate(const AgentConfig &config)
     if (config.token.empty())
         throw ConfigError("token is required (token, token_file, --token or --token-file)");
     checkToken(config.token, "token");
-    if (config.devices.empty())
-        throw ConfigError("at least one device is required (devices or --device)");
     if (config.devices.size() > kMaxDevices)
         throw ConfigError("at most " + std::to_string(kMaxDevices) + " devices are allowed");
     std::set<std::string> aliases, endpoints;
@@ -496,6 +501,8 @@ flags:
   --history-size N           history entries kept per device, 16..4096 (default 256)
   --name NAME                mDNS instance name (default: the host name)
   --no-advertise             do not advertise over mDNS (only LAN binds advertise)
+  --list-ports               print a device line for each ESP port found (/dev/drivelink/*,
+                             /dev/serial0, /dev/ttyAMA*) and exit; opens no port
   --help                     show this text
   --version                  show the version
   Values may also be given as --flag=value. Durations are 100..60000.
@@ -506,7 +513,8 @@ config file keys (unknown keys are errors):
   request_timeout_ms, history_size, advertise (true/false), name (1..63 bytes,
   no '.'), devices: [{alias, endpoint, baud}]
   alias: 1..32 of a-z 0-9 _ -, starting with a letter, not 12 hex digits.
-  1..8 devices with unique aliases and endpoints.
+  0..8 devices with unique aliases and endpoints (with none, the agent only
+  answers device lists until the config names some).
 
 example:
   {

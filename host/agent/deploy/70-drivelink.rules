@@ -1,0 +1,19 @@
+# DriveLink (drivelink-agent package): stable names for USB-attached ESPs.
+#   /dev/drivelink/<USB serial number>  for a CH343 adapter (1a86:55d3) or an
+#   ESP32-S3's native USB Serial/JTAG (303a:1001). On the DriveLink firmware
+#   the protocol runs on UART0, which a dev board brings out through its CH343;
+#   the native USB port is the console.
+# `drivelink-agent --list-ports` prints the config line for each name.
+# ModemManager is told to leave these ports alone: its probing writes AT
+# commands to a newly plugged serial port.
+SUBSYSTEM!="tty", GOTO="drivelink_end"
+SUBSYSTEMS=="usb", IMPORT{builtin}="usb_id"
+ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d3", GOTO="drivelink_esp"
+ENV{ID_VENDOR_ID}=="303a", ENV{ID_MODEL_ID}=="1001", GOTO="drivelink_esp"
+GOTO="drivelink_end"
+
+LABEL="drivelink_esp"
+ENV{ID_MM_DEVICE_IGNORE}="1"
+ENV{ID_SERIAL_SHORT}=="?*", SYMLINK+="drivelink/$env{ID_SERIAL_SHORT}"
+
+LABEL="drivelink_end"

@@ -1,5 +1,6 @@
 """Hardware-free checks of the .deb packaging helpers (no builds, no dpkg)."""
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -7,6 +8,12 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import package_linux
 from package_common import Failure
+
+CLI, AGENT, GUI = (package_linux.BY_NAME[n] for n in ('drivelink-cli', 'drivelink-agent', 'drivelink'))
+
+
+def fields_of(text):
+    return dict(line.split(': ', 1) for line in text.splitlines() if not line.startswith(' '))
 
 
 class VersionTest(unittest.TestCase):
@@ -19,9 +26,35 @@ class VersionTest(unittest.TestCase):
             with self.assertRaises(Failure, msg=bad):
                 package_linux.debian_version(bad)
 
+    def test_release_suffix(self):
+        self.assertEqual(package_linux.package_version('0.1.0+gabc1234', 'ubuntu', '24.04'),
+                         '0.1.0+gabc1234~ubuntu24.04')
+        self.assertEqual(package_linux.package_version('0.1.0', 'ubuntu', '26.04'), '0.1.0~ubuntu26.04')
+
     def test_file_name(self):
-        self.assertEqual(package_linux.deb_name('0.1.0+gabc1234', 'amd64'),
-                         'drivelink_0.1.0+gabc1234_amd64.deb')
+        self.assertEqual(package_linux.deb_name('drivelink-cli', '0.1.0~ubuntu26.04', 'arm64'),
+                         'drivelink-cli_0.1.0~ubuntu26.04_arm64.deb')
+
+    def test_os_release(self):
+        text = 'PRETTY_NAME="Ubuntu 26.04 LTS"\nNAME="Ubuntu"\nVERSION_ID="26.04"\nID=ubuntu\nID_LIKE=debian\n'
+        self.assertEqual(package_linux.parse_os_release(text), ('ubuntu', '26.04'))
+        for bad in ('ID=ubuntu\n', 'VERSION_ID="26.04"\n', 'ID=ubuntu\nVERSION_ID=rolling\n'):
+            with self.assertRaises(Failure, msg=bad):
+                package_linux.parse_os_release(bad)
+
+
+class ReleaseTest(unittest.TestCase):
+    def test_gui_only_where_qt_meets_the_floor(self):
+        self.assertFalse(package_linux.gui_supported('ubuntu', '24.04'))
+        self.assertFalse(package_linux.gui_supported('ubuntu', '25.10'))
+        self.assertTrue(package_linux.gui_supported('ubuntu', '26.04'))
+        self.assertTrue(package_linux.gui_supported('ubuntu', '28.04'))
+        self.assertFalse(package_linux.gui_supported('debian', '26.04'))
+
+    def test_packages_per_release(self):
+        names = lambda release: [p.name for p in package_linux.packages_for('ubuntu', release)]
+        self.assertEqual(names('24.04'), ['drivelink-cli', 'drivelink-agent'])
+        self.assertEqual(names('26.04'), ['drivelink-cli', 'drivelink-agent', 'drivelink'])
 
 
 class DependsTest(unittest.TestCase):
@@ -40,6 +73,15 @@ class DependsTest(unittest.TestCase):
         shlibs = ['libc6 (>= 2.38)', 'qml6-module-qtquick (>= 6.10)']
         self.assertEqual(package_linux.merge_depends(shlibs, ['qml6-module-qtquick', 'qml6-module-qtcore']),
                          ['libc6 (>= 2.38)', 'qml6-module-qtquick (>= 6.10)', 'qml6-module-qtcore'])
+
+    def test_the_gui_needs_the_cli_at_its_own_version(self):
+        depends = package_linux.all_depends(GUI, ['libc6 (>= 2.38)'], '0.1.0~ubuntu26.04')
+        self.assertEqual(depends[:2], ['libc6 (>= 2.38)', 'drivelink-cli (= 0.1.0~ubuntu26.04)'])
+        self.assertTrue(set(package_linux.QML_PACKAGES) <= set(depends))
+
+    def test_the_agent_and_cli_depends(self):
+        self.assertEqual(package_linux.all_depends(AGENT, ['libc6'], 'v'), ['libc6', 'passwd'])
+        self.assertEqual(package_linux.all_depends(CLI, ['libc6'], 'v'), ['libc6'])
 
     def test_every_qml_import_has_a_package(self):
         # A module the GUI imports must be in Depends, or a clean install fails to load it.
@@ -65,17 +107,83 @@ class DependsTest(unittest.TestCase):
 
 class ControlTest(unittest.TestCase):
     def test_fields(self):
-        text = package_linux.control('0.1.0+gabc1234', 'amd64', ['libc6 (>= 2.38)', 'qml6-module-qtquick'], 1234)
-        fields = dict(line.split(': ', 1) for line in text.splitlines() if not line.startswith(' '))
+        text = package_linux.control(GUI, '0.1.0+gabc1234~ubuntu26.04', 'amd64',
+                                     ['libc6 (>= 2.38)', 'qml6-module-qtquick'], 1234)
+        fields = fields_of(text)
         self.assertEqual(fields['Package'], 'drivelink')
-        self.assertEqual(fields['Version'], '0.1.0+gabc1234')
+        self.assertEqual(fields['Version'], '0.1.0+gabc1234~ubuntu26.04')
         self.assertEqual(fields['Architecture'], 'amd64')
         self.assertEqual(fields['Installed-Size'], '1234')
         self.assertEqual(fields['Depends'], 'libc6 (>= 2.38), qml6-module-qtquick')
+        self.assertEqual(fields['Recommends'], 'qt6-wayland')
+        self.assertNotIn('Replaces', fields)
         self.assertTrue(text.endswith('\n'))
+
+    def test_every_description_is_well_formed(self):
         # The synopsis is one line under 80 characters; the long description is indented.
-        self.assertLess(len(fields['Description']), 80)
-        self.assertTrue(all(line.startswith(' ') for line in text.split('Description: ', 1)[1].splitlines()[1:]))
+        for package in package_linux.PACKAGES:
+            text = package_linux.control(package, '1', 'amd64', ['libc6'], 1)
+            synopsis, *rest = text.split('Description: ', 1)[1].splitlines()
+            self.assertLess(len(synopsis), 80, package.name)
+            self.assertTrue(rest and all(line.startswith(' ') and len(line) <= 80 for line in rest), package.name)
+
+    def test_split_fields(self):
+        cli = fields_of(package_linux.control(CLI, '1', 'amd64', ['libc6'], 1))
+        self.assertEqual(cli['Replaces'], 'drivelink')  # takes over H2g's /usr/bin/drivelink-cli
+        self.assertNotIn('Recommends', cli)
+        agent = fields_of(package_linux.control(AGENT, '1', 'amd64', ['libc6'], 1))
+        self.assertEqual(agent['Recommends'], 'drivelink-cli')
+        self.assertNotIn('Replaces', agent)
+
+    def test_no_two_packages_ship_one_file(self):
+        owned = {}
+        for package in package_linux.PACKAGES:
+            paths = [f'usr/bin/{p}' for p in package.programs] + list(package.files) + [
+                f'usr/share/{package.name}/LICENSE.txt', f'usr/share/doc/{package.name}/copyright']
+            for path in paths:
+                self.assertNotIn(path, owned, f'{package.name} and {owned.get(path)}')
+                owned[path] = package.name
+
+
+class AgentPackageTest(unittest.TestCase):
+    def test_conffile_is_shipped_and_lists_no_devices(self):
+        import json
+        self.assertEqual(AGENT.conffiles, ['/etc/drivelink/agent.json'])
+        source, mode = AGENT.files['etc/drivelink/agent.json']
+        config = json.loads(source.read_text(encoding='utf-8'))
+        self.assertEqual(config, {'bind': '127.0.0.1', 'port': 47620, 'token_file': 'token', 'devices': []})
+
+    def test_scripts_take_the_version(self):
+        text = package_linux.maintainer_script("V='@VERSION@'\r\n", '0.1.0+gabc~ubuntu26.04')
+        self.assertEqual(text, "V='0.1.0+gabc~ubuntu26.04'\n")
+        with self.assertRaises(Failure):
+            package_linux.maintainer_script("V='@VERSION@'", "1'; rm -rf /")
+
+    def test_upgrade_never_stops_or_restarts_the_agent(self):
+        # The safety rule (user decision 2026-11-20): only remove stops it.
+        deploy = package_linux.DEPLOY
+        prerm = (deploy / 'prerm').read_text(encoding='utf-8')
+        upgrade = re.search(r'\n(upgrade\|failed-upgrade)\)\n(.*?);;', prerm, re.S)
+        self.assertIsNotNone(upgrade)
+        self.assertNotIn('systemctl', upgrade.group(2))
+        for script in ('postinst', 'prerm', 'postrm'):
+            text = (deploy / script).read_text(encoding='utf-8')
+            # Commands only: the notices tell the user to restart.
+            commands = '\n'.join(line for line in text.splitlines()
+                                 if not line.strip().startswith(('#', 'echo')))
+            self.assertNotRegex(commands, r'systemctl\s+(restart|try-restart|reload-or-restart|condrestart)', script)
+            self.assertTrue(text.startswith('#!/bin/sh\n'), script)
+            self.assertIn('\nset -e\n', text, script)
+        postinst = (deploy / 'postinst').read_text(encoding='utf-8')
+        self.assertNotIn('systemctl stop', postinst)
+        self.assertEqual(postinst.count('systemctl start'), 1)
+
+    def test_unit_runs_the_installed_config_as_drivelink(self):
+        unit = (package_linux.DEPLOY / 'drivelink-agent.service').read_text(encoding='utf-8')
+        for line in ('User=drivelink', 'SupplementaryGroups=dialout', 'KillSignal=SIGTERM', 'Restart=on-failure',
+                     'ExecStart=/usr/bin/drivelink-agent --config /etc/drivelink/agent.json',
+                     'RestartPreventExitStatus=2', 'WantedBy=multi-user.target'):
+            self.assertIn(f'\n{line}\n', unit)
 
 
 class BundledTest(unittest.TestCase):

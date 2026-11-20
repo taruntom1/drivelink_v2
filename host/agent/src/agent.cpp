@@ -1517,6 +1517,8 @@ uint16_t Agent::start()
     if (ec) { throw std::runtime_error("listen on " + d.config.bind + ":" + std::to_string(d.config.port) + ": " + ec.message()); }
     if (!d.config.loopback()) { log("listening on " + d.config.bind + ", not only loopback: every client needs the token"); }
     for (const auto &config : d.config.devices) { d.devices.push_back(std::make_unique<Device>(d, config)); }
+    // The packaged config starts empty: the agent then answers device lists only.
+    if (d.devices.empty()) { log("no devices configured: list them in the config's \"devices\" and restart"); }
     return d.acceptor.local_endpoint().port();
 }
 

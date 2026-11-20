@@ -1,6 +1,7 @@
 // drivelink-agent: owns device ports and shares them over TCP (host/agent/README.md).
 #include "agent.hpp"
 #include "config.hpp"
+#include "ports.hpp"
 #include <iostream>
 #include <vector>
 
@@ -15,6 +16,17 @@ int main(int argc, char **argv)
         const auto line = parseCommandLine(args, config);
         if (line.help) { std::cout << usage(); return 0; }
         if (line.version) { std::cout << "drivelink-agent " << DRIVELINK_AGENT_VERSION << "\n"; return 0; }
+        if (line.list_ports)
+        {
+            const auto ports = findPorts();
+            if (ports.empty())
+            {
+                std::cerr << "drivelink-agent: no ESP port found (/dev/drivelink/*, /dev/serial0, /dev/ttyAMA*)\n";
+                return 1;
+            }
+            std::cout << portListing(ports);
+            return 0;
+        }
         validate(config);
         const auto bind = config.bind.find(':') == std::string::npos ? config.bind : "[" + config.bind + "]";
         Agent agent(std::move(config));

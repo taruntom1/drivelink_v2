@@ -87,8 +87,9 @@ def start_vdev(vdev, env):
     raise Failure('drivelink-vdev did not print READY')
 
 
-def smoke(bin_dir, env, suffix=''):
-    """Run the staged drivelink-{cli,vdev,gui}<suffix> in bin_dir from a scratch directory."""
+def smoke(bin_dir, env, suffix='', gui=True):
+    """Run the staged drivelink-{cli,vdev,gui}<suffix> in bin_dir from a scratch directory
+    (without the GUI when `gui` is false)."""
     bin_dir = Path(bin_dir)
     program = {name: str(bin_dir / f'drivelink-{name}{suffix}') for name in ('cli', 'vdev', 'gui')}
     with tempfile.TemporaryDirectory(prefix='drivelink-smoke-') as scratch:
@@ -111,6 +112,8 @@ def smoke(bin_dir, env, suffix=''):
         finally:
             stop(process)
         say(f'smoke: vdev answered the cli ({firmware})')
+        if not gui:
+            return
         shots = Path(scratch) / 'shots'
         done = run([program['gui'], '--screen', 'connect', '--out', shots],
                    env=env, cwd=scratch, timeout=60)

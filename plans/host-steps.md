@@ -79,7 +79,7 @@ Natural cut if large: the CLI split, arm64 CI and release job first; then the ag
 **Depends on** H3c; may run beside H4a or H4b.
 
 Scope:
-- An apt repository on this repository's GitHub Pages (a `gh-pages` branch): one suite per Ubuntu release, named by its codename (`noble` for 24.04 and 26.04's codename), component `main`, amd64 and arm64. Only `vX.Y.Z` tags publish it, from the release's packages. Dev builds stay CI artifacts, and the `.deb` files stay release assets as well.
+- An apt repository on this repository's GitHub Pages (a `gh-pages` branch): one suite per Ubuntu release, named by its codename (`noble` for 24.04 and 26.04's codename), component `main`, amd64 and arm64. The package versions carry the release (`<VERSION>~ubuntu24.04`, `~ubuntu26.04`; H3c, user decision 2026-11-20), so one pool can hold both builds of a package. Only `vX.Y.Z` tags publish it, from the release's packages. Dev builds stay CI artifacts, and the `.deb` files stay release assets as well.
 - Signing: a dedicated signing-only key that the user creates offline (the step gives the commands) and adds as Actions secrets. The session never handles the private key. The public key lives in the repository and is served with the apt repository; users install it under `/etc/apt/keyrings/` and name it with `signed-by`. Until the secrets exist, CI builds and verifies the repository with a throwaway key and pushes nothing.
 - A container test: serve the built repository over HTTP, add it with the public key, `apt install drivelink-agent drivelink-cli`, and check that a repository signed with another key is refused.
 - The Pi guide's install section uses the repository, with the release files as the fallback.

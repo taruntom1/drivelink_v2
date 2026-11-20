@@ -661,19 +661,22 @@ the Qt install (`C:/Qt/6.12.0/mingw_64/sbom/`), as a superset.
 ## Linux package (.deb)
 
 `python3 tools/package_linux.py` (the `deb` check of `validate.py`, through WSL
-on Windows; host-linux-package CI uploads the result) builds the
-`linux-release` preset, stages `/usr/bin/drivelink-{gui,cli,vdev}` (stripped),
-`/usr/share/applications/drivelink.desktop` and
-`/usr/share/drivelink/` (`LICENSE.txt`, `THIRD_PARTY_NOTICES.txt`; not under
+on Windows; CI's linux-package job uploads the result) builds the GUI's
+`drivelink` package beside `drivelink-cli` and `drivelink-agent` (H3c,
+[host/README.md](../README.md), "Using the GUI on Linux"). It holds
+`/usr/bin/drivelink-gui` (stripped), `/usr/share/applications/drivelink.desktop`
+and `/usr/share/drivelink/` (`LICENSE.txt`, `THIRD_PARTY_NOTICES.txt`; not under
 `/usr/share/doc`, which minimised systems drop) with
-`/usr/share/doc/drivelink/copyright` pointing there, smokes the staged programs and writes
-`build/deb/drivelink_<version>_<arch>.deb`. It bundles nothing: Qt and the
-C++ runtime come from Ubuntu's packages, so staging fails on any shared
-library. Depends is `dpkg-shlibdeps`' list plus `QML_PACKAGES`, the runtime
-QML modules; a new `import Qt…` in the GUI needs its `qml6-module-*` package
-there (`tools/tests/test_package_linux.py` checks it). The package targets the
-Ubuntu release it was built on (26.04). CI installs it in a clean container
-and renders every screen (`host/test/installed_gui_smoke.py --deb`).
+`/usr/share/doc/drivelink/copyright` pointing there, and Depends
+`drivelink-cli` at its own version (the CLI and vdev moved there). It is
+`build/deb/drivelink_<version>~ubuntu<release>_<arch>.deb`, built only where
+Ubuntu's Qt meets the 6.10 floor (26.04). It bundles nothing: Qt and the C++
+runtime come from Ubuntu's packages, so staging fails on any shared library.
+Depends is `dpkg-shlibdeps`' list plus `QML_PACKAGES`, the runtime QML
+modules; a new `import Qt…` in the GUI needs its `qml6-module-*` package there
+(`tools/tests/test_package_linux.py` checks it). CI installs it with
+`drivelink-cli` in a clean container, amd64 and arm64, and renders every screen
+(`host/test/installed_gui_smoke.py --deb`).
 
 ## Remote mode (H3b-1)
 

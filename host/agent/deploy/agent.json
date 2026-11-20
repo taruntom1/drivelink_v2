@@ -1,0 +1,6 @@
+{
+  "bind": "127.0.0.1",
+  "port": 47620,
+  "token_file": "token",
+  "devices": []
+}

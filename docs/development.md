@@ -100,13 +100,13 @@ One script holds the list of checks and their commands. CI calls it with `--only
 
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
-| `gen` | `gen.py --check`, `version.py --check` (every consumer names the root `VERSION`), the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests), the third-party notices (`gen_notices.py --check` and its tests) | The Python that runs the script |
+| `gen` | `gen.py --check`, `version.py --check` (every consumer names the root `VERSION`), the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests), the third-party notices (`gen_notices.py --check` for the GUI, the firmware and the CLI and agent packages' `host/notices/`, and its tests) | The Python that runs the script |
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
 | `installer` | `tools/package_win.py`: the `windows-mingw-release` preset, the `windeployqt` staging directory, its notices coverage and a self-contained smoke (Qt and MinGW off `PATH`), then the Inno Setup installer in `build/installer/`. Windows only | As `host-win`, plus Inno Setup 6 (`ISCC`): `winget install --id JRSoftware.InnoSetup -e` |
 | `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest (not label `agent`), `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
 | `agent` | The `linux-no-gui` preset (GUI off): build `drivelink-agent`, then ctest with label `agent` (`agent-unit`, `agent-integration`: the agent against the vdev and the CLI). `host-linux` skips that label (`-LE agent`), so the tests run once | As `host-linux` (WSL on Windows, build in `~/.cache/drivelink/<worktree>/agent`), but it runs `tools/setup_linux.sh --check agent`: no Qt needed. Part of `quick` on Linux only |
-| `deb` | `tools/package_linux.py`: the `linux-release` preset, a stage under `/usr` (stripped GUI, CLI and vdev, desktop entry, licence and notices in `/usr/share/drivelink`, which minimised systems keep, unlike `/usr/share/doc`) that bundles no shared library, a smoke of the staged programs, then `build/deb/drivelink_<version>_<arch>.deb`. Depends is `dpkg-shlibdeps`' list plus the QML modules the GUI imports | As `host-linux` (WSL on Windows; the stage and build are in `~/.cache/drivelink/<worktree>/linux-release` there). Installing it is CI's `host-linux-install` job, or `installed_gui_smoke.py --deb` as root |
+| `deb` | `tools/package_linux.py`, the H3c packages for the Ubuntu release it runs on. It builds the `linux-release` preset (`linux-release-no-gui` where Ubuntu's Qt is below 6.10, so 24.04). Each package is staged under `/usr`: stripped programs, licence and notices in `/usr/share/<package>`, which minimised systems keep, unlike `/usr/share/doc`. The stages bundle no shared library. The staged programs are smoked, the agent with the shipped `agent.json` and then with a vdev device. The packages are `build/deb/<package>_<version>~ubuntu<release>_<arch>.deb`: `drivelink-cli`, `drivelink-agent` (with `host/agent/deploy/`) and, on 26.04, the GUI's `drivelink`. Depends is `dpkg-shlibdeps`' list plus what it cannot see: the QML modules and `drivelink-cli (= version)` for the GUI, `passwd` for the agent | As `host-linux` (WSL on Windows; the stage and build are in `~/.cache/drivelink/<worktree>/linux-release` there). Off Windows it checks the `tools/setup_linux.sh` profile the release needs (`host`, or `agent` without the GUI). Installing them is CI's `linux-install` job (`installed_packages_smoke.py`, `installed_gui_smoke.py --deb`) or `deploy_check.py` on a host with systemd |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 | `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
@@ -163,7 +163,7 @@ The root `VERSION` (semver) is the one version of the repository.
 `project()`: the firmware and HIL app as `PROJECT_VER` (GET_INFO's
 `firmware_version`; `bench_fw.py`'s `-D PROJECT_VER` wins), `protocol/`,
 `libdrivelink/` and the superbuild, the GUI's About, the installer and the
-`.deb`. A build at a clean checkout of tag `v<VERSION>` uses it as is; any
+`.deb` packages (with `~ubuntu<release>` appended). A build at a clean checkout of tag `v<VERSION>` uses it as is; any
 other build appends `+g<sha7>`, and `.dirty` with modified tracked files (git is
 read at configure time). An environment `DRIVELINK_VERSION_FULL`
 (`<VERSION>[+suffix]`) wins in both: `validate.py` passes the Windows
@@ -176,19 +176,23 @@ To release: edit `VERSION` and the two `package.xml` files, merge, then push
 tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
 its `release` job checks the tag against `VERSION` and that every package
 carries the plain version, and publishes a GitHub Release with
-`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`,
-`drivelink_<version>_amd64.deb` and their `SHA256SUMS`.
+`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, the ten
+`.deb` packages (`<package>_<version>~ubuntu<release>_<arch>.deb`: the CLI and
+agent for 26.04 and 24.04, the GUI for 26.04, each for amd64 and arm64) and
+their `SHA256SUMS`.
 
 ## Linux packages (`tools/setup_linux.sh`)
 
-The one list of Ubuntu 26.04 packages, for the WSL distro and the CI containers.
-It installs only what is missing and never removes or upgrades anything.
+The one list of Ubuntu packages, for the WSL distro and the CI containers
+(26.04; the `agent` profile also on 24.04, where CI builds the packages
+without the GUI). It installs only what is missing and never removes or
+upgrades anything.
 
 | Profile | Packages for | Used by |
 |---|---|---|
 | `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
-| `agent` | the `base` packages (the GUI-less superbuild; no Qt) | `agent` (WSL and CI) |
-| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` (WSL and CI) |
+| `agent` | the `base` packages (the GUI-less superbuild; no Qt) | `agent` (WSL and CI), `deb` on 24.04 (CI) |
+| `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` on 26.04 (WSL and CI) |
 
 ```bash
 wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host
@@ -212,13 +216,24 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   the package's result and each job finishes sooner.
 - `host-linux-tests` runs `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
 - `agent` runs `agent` in an `ubuntu:26.04` container with `tools/setup_linux.sh agent` (no Qt), and uploads `agent-validation` on failure. `host-linux-tests` skips the `agent` ctest label, so each test runs once.
-- `host-linux-package` runs `deb` in the same container (git marked safe, so the
-  version has its `+g<sha7>`) and uploads `drivelink-linux-deb`.
-  `host-linux-install` then takes that artifact into a clean `ubuntu:26.04` with
-  only git and Python, and runs `installed_gui_smoke.py --deb --vdev`: apt
-  installs it with its Depends, the installed GUI renders every screen against
-  the installed vdev, and apt removes it. The screenshots are uploaded as
-  `drivelink-linux-installed-screens`.
+- `linux-package` runs `deb` in a matrix of `ubuntu:26.04` and `ubuntu:24.04`
+  containers on `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64), with
+  `setup_linux.sh host` on 26.04 and `agent` on 24.04. Git is marked safe, so
+  the version has its `+g<sha7>`. The 24.04 build also holds the GCC 13 floor
+  on Linux. Each run uploads `drivelink-debs-<release>-<arch>`: the CLI and
+  agent packages, plus the GUI on 26.04.
+- `linux-install` takes each artifact into a clean container of its release
+  and architecture with only git and Python. There it runs
+  `installed_packages_smoke.py`:
+  - install, then an upgrade from a relabelled lower version, during which
+    the service is never restarted;
+  - remove, reinstall and purge;
+  - `systemd-analyze verify` and `udevadm verify`;
+  - on 26.04, the upgrade from H2g's single `drivelink` package.
+
+  On 26.04 it also runs `installed_gui_smoke.py --deb --vdev`: the installed
+  GUI renders every screen against the installed vdev, and the screenshots
+  are uploaded as `drivelink-installed-screens-<arch>`.
 - `host-windows-tests` and `host-windows-package` run on `windows-2025` with
   Python 3.12. Both use `.github/actions/windows-qt`, which caches Qt 6.12.0
   `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt` and verifies
