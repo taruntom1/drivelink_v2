@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step:** H4a. H3d (signed apt repository) is in review; H3c is merged. H5 is retired. The 2026-11-20 re-plan is in [host-steps.md](host-steps.md) ([PR #92](https://github.com/taruntom1/drivelink_v2/pull/92)). A GUI on another machine finding the agent, the agent on the Pi and `apt install` from the published repository are deferred rows (Pi). HW runs as hardware arrives.
+- **Next step:** H4a. H3d is merged and v0.1.0 is tagged. ROS was re-planned with the user on 2026-11-21 into four strict steps, H4a to H4d; the briefs and "Decisions for every H4 step" are in [host-steps.md](host-steps.md). H5 is retired. A GUI on another machine finding the agent, the agent on the Pi and `apt install` from the published repository are deferred rows (Pi). HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -33,7 +33,7 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for H4a / HW / H6
+## Handoff for H4a / HW
 
 - **Read first:** [docs/protocol/agent.md](../docs/protocol/agent.md) (agent protocol v3), [host/agent/README.md](../host/agent/README.md) ("Install", "Run"), the agent and GUI remote rules in [host/CLAUDE.md](../host/CLAUDE.md), [host/libdrivelink/README.md](../host/libdrivelink/README.md) "Agent client", and for the apt repository [packaging/apt/README.md](../packaging/apt/README.md).
 - **What exists (H3a to H3d):**
@@ -47,10 +47,13 @@ Every session reads all of this file, so it holds only what has no other home.
     - `drivelink` (the GUI, Depends `drivelink-cli (=)`, 26.04 only).
   - CI's `linux-package` and `linux-install` matrices (26.04 and 24.04, amd64 and arm64), and the `release` job attaching ten `.deb` files.
   - H3d: `tools/apt_repo.py` (build and rootless apt `verify`), the `apt-repo` check, CI's `apt-repo`, `apt-install` (4-way matrix) and tag-only `apt-publish` (environment `apt-repo`, secret `APT_SIGNING_KEY`, gh-pages one commit). Key fingerprint `0B7ABAC1B5A995FB3512E0686964AFD8333BB3D6` in `packaging/apt/FINGERPRINT`.
-- **v0.1.0 (first release, user decision 2026-11-21):** tagged on `host_overhaul` once this PR merges. Its `apt-publish` is the first run with the real key and the first push of `gh-pages`; then the user enables Pages once (Settings → Pages → Deploy from a branch, `gh-pages`, `/ (root)`). If the job fails, the GitHub release already exists: fix and rerun the job, not the tag. Then the H3d Pi row can run. H6 bumps `VERSION` before its tag.
+- **v0.1.0 (first release, user decision 2026-11-21):** tagged on `host_overhaul` after H3d; its CI run (release and `apt-publish`) succeeded. GitHub Pages is enabled once by the user (Settings → Pages → Deploy from a branch, `gh-pages`, `/ (root)`); then the H3d Pi row can run. H6 bumps `VERSION` before its tag.
 - **For H4a (ROS):**
+  - The H4 decisions (Lyrical and Jazzy, agent only, `token_file`, `take_lease`, mapping defaults, the `duty` interface, IMU convention, arming, recovery) are in [host-steps.md](host-steps.md), "Decisions for every H4 step", and the architecture's "`drivelink_hardware` (ROS 2)". Its plan settles the items host-steps lists for H4a.
   - Send `client_kind` Ros (`AgentHello::kind`). The GUI then shows "ROS is driving" and asks for the safe-to-stop confirmation before a Take.
-  - On a robot the agent is the packaged service: `tcp://127.0.0.1:47620`, token in `/etc/drivelink/token` (0640 `root:drivelink`). A ROS user needs that token, through the `drivelink` group or a copy.
+  - On a robot the agent is the packaged service: `tcp://127.0.0.1:47620`, token in `/etc/drivelink/token` (0640 `root:drivelink`), read through the `drivelink` group.
+  - libdrivelink's `package.xml` names the package `drivelink`, the GUI's Debian name too; bloom would make it `ros-<distro>-drivelink`. H4d settles the ROS package names.
+  - Jazzy runs on Ubuntu 24.04 (GCC 13.3, above the 13.1 floor); the agent and CLI already build there (H3c).
 - **For the Pi (HW):** the H3c deferred row below runs `host/test/deploy_check.py`, the same script the PC check ran. [docs/pi-setup.md](../docs/pi-setup.md) is the guide, unverified on a Pi: the `uart0` overlay, the console and `ttyAMA0` naming on Ubuntu 26.04 for the Pi 5.
 - **Traps:**
   - **WSL runs in mirrored networking** (the user's `.wslconfig`, 2026-11-20): WSL holds the PC's LAN address on eth1, localhost forwarding still works (the `benchRemote` setup), but the GUI on the same PC cannot find or reach a WSL agent's LAN address. See [docs/bench.md](../docs/bench.md), "Finding the agent (mDNS)".
@@ -78,9 +81,11 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c; may run beside H4a/H4b | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | in review | [#94](https://github.com/taruntom1/drivelink_v2/pull/94) |
-| H4a | `drivelink_hardware`, ROS in `setup_linux.sh`, ros check and CI. Depends on H3a-2 | vdev; deferred: robot | high, independent | planned | |
-| H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test. Depends on H4a | vdev; deferred: robot | high, self | planned | |
+| H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | merged | [#94](https://github.com/taruntom1/drivelink_v2/pull/94) |
+| H4a | ROS toolchain (Lyrical in WSL, Jazzy in Docker and CI), colcon packages, `drivelink_hardware` state path: agent connection, mapping, lease, `read()`. Depends on H3d | vdev; deferred: robot (read only) | high, independent | planned | |
+| H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()`, `ERROR` on a disarm. Depends on H4a | vdev; deferred: robot (wheels off the ground) | high, independent | planned | |
+| H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | planned | |
+| H4d | ROS `.deb` packages (bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | container; deferred: Pi | high, self | planned | |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
 | HW | Hardware campaign on `host_overhaul`: run every open row of "Deferred hardware checks"; firmware fixes go to `host_overhaul` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
 
@@ -137,6 +142,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
 | 2026-11-21 | H3d | User: v0.1.0 is tagged on `host_overhaul` once H3d merges (the first release and apt publish; H6 bumps `VERSION`); the session's Python builder instead of reprepro/aptly; `gh-pages` holds only the latest release (one force-pushed orphan commit); all ten `.deb` files, the GUI included; the user made the key in this step (`packaging/apt/create_signing_key.sh`). Internal: suites `noble`/`resolute` hard-coded with tests; no `Valid-Until` (a static repository published only by tags); SHA256 only in Release and Packages; the secret in an environment that only `v*` tags may deploy to, so the real key first signs at the v0.1.0 tag (the same code path runs with a throwaway key on every run); `apt-publish` after `release` and `release` after `apt-install`; `gnupg` in the `base` profile; the key ed25519, sign only, 5 years, no passphrase on the CI copy | Keep the key out of every branch and PR job; no database to keep on gh-pages | yes (host-steps H6, host-architecture CI, packaging/apt/README.md) |
+| 2026-11-21 | H4 re-plan | User: H4 is four strict steps (H4a state path, H4b command path, H4c bringup and diagnostics, H4d ROS `.deb` files in the apt repository); Lyrical and Jazzy (Jazzy checked locally in Docker); agent only, no direct serial; `token_file` default `/etc/drivelink/token`; activation refuses while another client holds the lease unless `take_lease: preempt`; mapping by convention with per-interface overrides; custom `duty` interface; IMU linear acceleration from `accel.*` (with gravity); ARM on the first claimed command interface; no automatic re-arm, a `recover` service in a separate observer diagnostics node; full-loop launch test; independent review for H4a to H4c | Keep the robot's ports with the agent, never let ROS stop a tuning run silently, and re-arm only by an explicit act | yes (host-steps H4, host-architecture `drivelink_hardware`, CI, phases) |
 
 ## Hardware results
 

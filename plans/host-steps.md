@@ -23,9 +23,11 @@ logs its internal choices.
 
 | Step | Content | Depends on | Hardware check | Review |
 |---|---|---|---|---|
-| H3d | Signed apt repository on GitHub Pages, published by tag releases | H3c; may run beside H4a/H4b | container; deferred: Pi | self |
-| H4a | `drivelink_hardware` (ros2_control), ROS in `setup_linux.sh`, ros check and CI | H3a | vdev; deferred: robot | independent |
-| H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test | H4a | vdev; deferred: robot | self |
+| H3d | Signed apt repository on GitHub Pages, published by tag releases | H3c | container; deferred: Pi | self |
+| H4a | ROS toolchain (Lyrical and Jazzy), colcon packages, `drivelink_hardware` state path: connect through the agent, mapping, lease, `read()`; `ros` and `ros-jazzy` checks and CI | H3d | vdev; deferred: robot (read only) | independent |
+| H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()`, `ERROR` on a disarm | H4a | vdev; deferred: robot (wheels off the ground) | independent |
+| H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test | H4b | vdev; deferred: robot driving | independent |
+| H4d | ROS `.deb` packages (bloom) for Lyrical and Jazzy, amd64 and arm64, in the apt repository | H4c | container; deferred: Pi | self |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main` | all H steps | bare board: full smoke and GUI | self |
 | HW | Hardware campaign: every open deferred row, whenever hardware arrives | — | motors, IMU, Pi, robot | per fix |
 
@@ -37,14 +39,18 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| How the ROS packages ship: colcon from source in the robot's workspace for now; whether to add bloom `.deb`s to the H3d repository is put to the user | H4a |
+| The controller_manager rate against the device loop rates; a stale-sample rule in `read()` (sample age through the clock model) | H4a |
+| How the plugin waits for the agent's answers outside the real-time path (configure, activate, the mode switch) | H4a, H4b |
+| The position hold before a first sample arrives; whether a mode switch while armed needs a DISARM for any controller type | H4b |
+| Which controllers `recover` reactivates (remembered at the `ERROR`, or a parameter) | H4c |
+| The Debian names and version scheme of the ROS packages (bloom's `ros-<distro>-` prefix, the release suffix); how the apt suites hold them | H4d |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
 Not planned: a descriptor disk cache (until connecting gets slow), a USB transport, a higher baud rate, Python bindings, installer signing, a devcontainer.
 
 ## H3d Signed apt repository
 
-**Depends on** H3c; may run beside H4a or H4b.
+**Depends on** H3c.
 
 Scope:
 - An apt repository on this repository's GitHub Pages (a `gh-pages` branch): one suite per Ubuntu release, named by its codename (`noble` for 24.04 and 26.04's codename), component `main`, amd64 and arm64. The package versions carry the release (`<VERSION>~ubuntu24.04`, `~ubuntu26.04`; H3c, user decision 2026-11-20), so one pool can hold both builds of a package. Only `vX.Y.Z` tags publish it, from the release's packages. Dev builds stay CI artifacts, and the `.deb` files stay release assets as well.
@@ -56,31 +62,74 @@ Hardware check: container. Deferred row: `apt install` and later `apt upgrade` o
 
 Review: self; the PR states the release job's permissions and where the secrets are used.
 
-## H4a `drivelink_hardware`
+## Decisions for every H4 step
 
-**Depends on** H3a. **Architecture:** "`drivelink_hardware` (ROS 2)".
+Re-planned with the user on 2026-11-21. The architecture section "`drivelink_hardware` (ROS 2)" holds the design; these apply to H4a to H4d:
+
+- **Distributions:** ROS 2 Lyrical (Ubuntu 26.04, the Pi) and Jazzy (Ubuntu 24.04). The code uses only the ros2_control API both share. Locally the `ros` check runs Lyrical in WSL, and `ros-jazzy` runs the same build and tests in the `ros:jazzy` image through Docker Desktop (skipped, with the one-line fix, when Docker is stopped). CI runs both.
+- **Connection:** through the agent only. The plugin never opens a serial port; on a robot the agent owns the ports. Parameters: `agent` (default `tcp://127.0.0.1:47620`), `token_file` (default `/etc/drivelink/token`; the ROS user joins the `drivelink` group) or an inline `token` for tests and vdev, and `device` (alias or device id). The Hello sends `client_kind` Ros.
+- **Lease at activation:** if another client holds the device's lease, `on_activate` fails with an error naming the holder (from the device record). A `take_lease: preempt` parameter takes it anyway. No wire change: LeaseTake itself always preempts.
+- **Mapping:** a joint names its controller instance by label. The standard interfaces map by convention (state `position` → `position`, `velocity` → `velocity`; command `position` → `position_sp`, `velocity` → `velocity_sp`), and a parameter per interface overrides the item name. Open-loop duty is a custom `duty` interface (state `duty`, command `duty_sp`); claiming it sets the mode to `open_loop`. The IMU follows the ROS convention by default: orientation ← `quaternion.*`, angular velocity ← `gyro.*`, linear acceleration ← `accel.*` (with gravity), overridable the same way.
+- **Arming:** ARM when a controller first claims a command interface, after the mode write and a fresh hold frame; DISARM when the last one is released and in `on_deactivate`. State-only use (broadcasters) never arms.
+- **Recovery:** never re-arms by itself. A disarm, a lost lease or the device going offline makes `read()` return `ERROR`. The diagnostics node (H4c) offers `ack_fault` and `recover`; `recover` acknowledges the fault and reactivates the component and its controllers, so an operator or supervisor calling it is the explicit act that re-arms.
+- **Packaging:** colcon from source in the robot's workspace (H4a to H4c), then bloom `.deb` files in the H3d apt repository (H4d).
+- **Order:** strict, each step after the previous one merges.
+
+## H4a ROS toolchain and `drivelink_hardware` state path
+
+**Depends on** H3d. **Architecture:** "`drivelink_hardware` (ROS 2)".
 
 Scope:
-- The ros2_control `SystemInterface` as the architecture describes: parameters, configure and activate, the lease, groups, the command mode switch with fresh hold values, ARM on the first claimed interface and DISARM on the last, `noexcept` `read()` / `write()` from the seqlock buffers and the command queue, NaN to hold, timestamps mapped to ROS time, `ERROR` on a disarm.
-- Both connection modes: the agent (address, token and device alias or id), or a serial port directly. One hardware component per device. Through the agent its Hello sends `client_kind` Ros (agent protocol v3, H3b-1), so the GUI shows "ROS is driving" while it holds the lease.
-- `setup_linux.sh` adds ROS Lyrical, ros2_control and rosdep (skipping what is installed); the `ros` validate check in WSL; the ros CI job in `ros:lyrical`.
+- Toolchain: a `ros` profile in `setup_linux.sh` (ROS Lyrical on 26.04 or Jazzy on 24.04, ros2_control, ros2_controllers, colcon, rosdep; skipping what is installed). `protocol/` and `host/libdrivelink/` build as colcon packages on both distributions with rosdep-clean `package.xml` files. The validate checks `ros` (WSL, Lyrical) and `ros-jazzy` (Docker); the CI jobs in `ros:lyrical` and `ros:jazzy`.
+- `host/ros/drivelink_hardware`: the `SystemInterface` with state interfaces only. Parameters and mapping as above, joints and sensors (the IMU). `on_configure` connects through the agent, loads the device model and resolves every label and item (safe mode, a pending reboot, or anything missing or wrongly typed is a clear error). `on_activate` checks the holder, takes the lease and sets up one subscription group per loop that holds a mapped signal. `noexcept` `read()` from the seqlock buffers; `ERROR` when the lease is lost or the device goes offline. `on_deactivate` releases the lease.
+- Its README: parameters, mapping, the token, and how to build it with colcon.
 
-Tests: plugin unit tests; integration against vdev through the agent and directly over a PTY.
+Tests: plugin unit tests (parameters, mapping, refusals); integration against vdev behind the agent: configure, activate, state values that follow the mock plant, the refusal while another client holds the lease, `preempt`, `ERROR` on lease loss and on the agent stopping. Both distributions.
 
-Hardware check: vdev. Deferred row: the robot (first-run procedure).
+Hardware check: vdev. Deferred row: the Pi's agent with the real ESP; the robot on stands, wheels turned by hand and the IMU tilted: joint positions with the right sign and scale, IMU values plausible.
 
-Review: independent (real-time paths, arming, the lease).
+Review: independent (the lease and the real-time read path).
 
-## H4b `drivelink_bringup`
+## H4b Command path
 
 **Depends on** H4a.
 
 Scope:
-- An example two-wheel diff-drive robot with an IMU: URDF/xacro snippet, controllers YAML (`diff_drive_controller`, `joint_state_broadcaster`, `imu_sensor_broadcaster`), launch files.
-- The diagnostics node: `/diagnostics` from the status stream and diag events, and a fault-acknowledge service.
-- A launch test against vdev and the agent in the `ros` check; the documented recovery procedure.
+- Command interfaces (`position`, `velocity`, `duty`) per joint, mapped as above; one command group per loop that holds a commanded input.
+- `prepare_command_mode_switch` / `perform_command_mode_switch`: one command interface per joint at a time (joints may differ); write each controller's `mode`, set holds (current position, zero velocity, zero duty) and send a fresh frame after the write. ARM on the first claim, DISARM on the last release; a refused ARM fails the switch with the refusal detail in the log.
+- `noexcept` `write()` that queues one frame and never blocks; NaN is sent as hold.
+- `read()` returns `ERROR` on a disarm while armed (watchdog, fault, loop stall, the GUI taking the lease). Nothing re-arms by itself.
 
-Hardware check: vdev. Deferred row: the robot.
+Tests: unit tests for the switch state machine and the hold mapping; integration against vdev behind the agent: claim and arm, commands move the mock plant, release and disarm, a mode change while armed, NaN as hold, a GUI-style Take from a second client, an injected disarming fault (`actuator.mock` `diagnostic`), a watchdog trip. Both distributions.
+
+Hardware check: vdev. Deferred row: the robot, wheels off the ground, first-run procedure: each wheel through `forward_command_controller` in velocity, position and duty; polarity; release disarms; a Take from the GUI ends in `ERROR`.
+
+Review: independent (arming, the command path, the lease).
+
+## H4c `drivelink_bringup` and diagnostics
+
+**Depends on** H4b.
+
+Scope:
+- `host/ros/drivelink_bringup`: a xacro macro for the `<ros2_control>` block, an example two-wheel diff-drive robot with an IMU (URDF), controllers YAML (`diff_drive_controller`, `joint_state_broadcaster`, `imu_sensor_broadcaster`), launch files with arguments for the agent, device and token, and a vdev layout for the example (two velocity controllers on mock actuators and encoders, an `imu.mock`). The real robot's config is added when it is on the bench.
+- The diagnostics node: its own agent connection as an observer (no lease, `client_kind` Ros), so it keeps working while the component is inactive or in `ERROR`. `/diagnostics` from the status stream, diag events, the lease holder and the online state. Services `ack_fault` and `recover` (above).
+- The launch test, full loop, in both `ros` checks: `cmd_vel` drives the vdev plant, `/odom` and `/joint_states` change, `/imu` publishes; an injected disarming fault ends in `ERROR` and `recover` brings it back; a Take from a second client ends in `ERROR`.
+- Docs: the bringup README, the recovery procedure, the token and group setup, and a ROS section in `docs/pi-setup.md`.
+
+Hardware check: vdev. Deferred row: the robot driving (first-run procedure, then on the floor): `cmd_vel`, odometry against a measured distance, the IMU heading, a fault and `recover`, a GUI Take.
+
+Review: independent (`recover` acknowledges faults and reactivates the hardware).
+
+## H4d ROS `.deb` packages
+
+**Depends on** H4c.
+
+Scope:
+- bloom-generated Debian packages of `drivelink_protocol`, `drivelink` (libdrivelink), `drivelink_hardware` and `drivelink_bringup` for Lyrical (resolute) and Jazzy (noble), amd64 and arm64, versioned from the root `VERSION` like the other packages (one version for the repo; `tools/version.py --check`).
+- CI builds them, installs them in clean ROS containers, and runs the launch test from the installed packages against the installed agent. Tags publish them to the H3d apt repository next to the agent packages (and as release assets).
+- Docs: installing with apt (the ROS repository plus ours), beside the source build.
+
+Hardware check: container. Deferred row: on the Pi after the next tag, `apt install` of the Lyrical arm64 packages and the H4c launch file against the real device.
 
 Review: self.
 
@@ -97,4 +146,4 @@ Review: self.
 
 ## HW Hardware campaign
 
-Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H3d) and the robot (H4a, H4b).
+Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H3d, H4d) and the robot (H4a, H4b, H4c).
