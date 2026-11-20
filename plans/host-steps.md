@@ -60,7 +60,7 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | How suggested gains map onto tune-flagged params generically (no module names) | settled in H2e-3: naming conventions in `docs/adding-a-module.md` (`<prefix>.kp/.ki/.kd`, responses named after the prefix, the `open_loop` value); no wire change (user decision) |
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | settled in H2f: versioned JSON of the decoded fields with provenance (`host/gui/modules/imu.bno055/README.md`); Euler as the device reports it, none in the file; nothing re-sent, interruptions recorded as "may have run" |
 | Agent default port, history sizes, retry policy for an offline device | port 47620 and a 2 s fixed retry settled in H3a-1; history 256 entries per device (`history_size`, 16..4096) settled in H3a-2 |
-| mDNS library, service name and TXT records | H3b-2 (library: mjansson/mdns, user decision 2026-11-19) |
+| mDNS library, service name and TXT records | settled in H3b-2: mjansson/mdns 1.4.3, `_drivelink._tcp`, TXT `txtvers`/`proto`/`version` (user decisions; `docs/protocol/agent.md` "Discovery") |
 | Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | settled in H3b-1: the GUI's INI file, only when "Remember token" is checked (user decision) |
 | The device-list screen on Connect's Agent tab (not in Figma) | settled in H3b-1: built from the G2 components, recorded in `gui-design.md` |
 | Pi UART wiring and how udev rules match each ESP | H3c |
@@ -337,7 +337,11 @@ Natural cut if large: H3a-1 server, devices, access, routing, events and agent M
 **Split (user decision 2026-11-19):** H3b-1 (everything below except mDNS;
 [plan](archive/h3b-1-implementation.md)) and H3b-2 (mDNS: the mjansson/mdns
 library, the agent advertising when LAN listening is on, the library's browse
-and the Agent tab's "found on the network" list, notices). User decisions in
+and the Agent tab's "found on the network" list, notices;
+[plan](archive/h3b-2-implementation.md)). User decisions in H3b-2: TXT
+`txtvers`/`proto`/`version`, a Settings toggle for discovery, the PC check
+with WSL mirrored (same-PC discovery proved impossible; the GUI check is a
+deferred Pi row). User decisions in
 H3b-1: agent tokens in the GUI's INI file only when "Remember token" is
 checked; ROS is recognised by a client kind in the Hello (`AgentClientKind`:
 Other, Gui, Cli, Ros), so agent protocol v3 carries `client_kind` in Hello,

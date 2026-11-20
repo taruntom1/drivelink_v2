@@ -1,4 +1,4 @@
-# Agent protocol v3 (H3a, H3b-1)
+# Agent protocol v3 (H3a, H3b)
 
 `drivelink-agent` owns the serial ports of one or more devices on a Linux host
 (the robot's Pi, or WSL on the PC) and lets several clients share each device
@@ -11,7 +11,8 @@ H3a-1 built the connection, access, routing and subscription groups (v1).
 H3a-2 added the control lease, command groups for the lease holder, exclusive
 operations, the clock model with agent time pings, history and the client
 list (v2). H3b-1 added the client kind, so the GUI can tell ROS and other GUIs
-apart (v3).
+apart (v3). H3b-2 added discovery over mDNS/DNS-SD ("Discovery" below), which
+is outside the TCP protocol and left the version at 3.
 
 ## Connection
 
@@ -345,6 +346,51 @@ Group ids are device resources; the agent gives each client its own view.
   event (DeviceOffline) and are closed; the lobby shows it offline. History
   records Online and Offline.
 
+## Discovery
+
+An agent that listens on a LAN address advertises itself over mDNS/DNS-SD
+(RFC 6762, RFC 6763) so the GUI's Agent tab can list it. IPv4 only. The
+records are built and parsed in `libdrivelink`
+([discovery.hpp](../../host/libdrivelink/include/drivelink/discovery.hpp));
+the agent's responder is `host/agent/src/mdns.cpp`.
+
+- **When.** Only when the bind address is not loopback and the config's
+  `advertise` is on (the default). Bound to a specific address, the agent
+  advertises that address on the interface holding it; bound to `0.0.0.0` or
+  `::`, on every up, multicast-capable, non-loopback IPv4 interface, each
+  answering with its own address. Interfaces are scanned again every 10 s, so
+  an agent started before DHCP finishes advertises once it has an address.
+  If UDP port 5353 cannot be opened, the agent says so on stderr and serves
+  TCP as usual.
+- **Names.** Service type `_drivelink._tcp.local.`. Instance: the config's
+  `name` (1..63 bytes of UTF-8, no `.` and no control characters), by default
+  the host name's first label. Target host `drivelink-<hostname>.local.`, the
+  agent's own name, so it never clashes with records another responder (such
+  as avahi) publishes for the host.
+- **Records.** PTR `_drivelink._tcp.local.` → the instance; SRV (priority 0,
+  weight 0, the agent's TCP port, the target host); TXT; A (the interface's
+  address). TTLs: 120 s for SRV and A, 4500 s for PTR and TXT. SRV, TXT and A
+  carry the cache-flush bit.
+- **TXT.** `txtvers=1`, `proto=<agent protocol version>` (3), `version=<the
+  DriveLink version>`. Nothing about the devices: listing them needs the token
+  (ListDevices). A client shows an agent whose `proto` differs as incompatible.
+- **Answers.** A PTR question for the service (or for
+  `_services._dns-sd._udp.local.`) is answered with the PTR and, as additional
+  records, SRV, TXT and A; SRV, TXT and A questions are answered directly. A
+  question with the unicast-response bit gets a unicast answer; a query from a
+  port other than 5353 gets a legacy unicast answer that echoes its id and
+  question with TTLs capped at 10 s; anything else is answered by multicast,
+  at most once a second per record set and interface. The agent announces
+  twice, 1 s apart, when it starts advertising on an interface, and sends
+  goodbyes (TTL 0) when it stops or shuts down. Name-conflict probing is not
+  done.
+- **Browsing.** A client sends a PTR question for the service with the
+  unicast-response bit from an ephemeral port on every interface and collects
+  answers for a window (the CLI: `agent-browse --timeout-ms`, 1500 ms by
+  default; the GUI: 1 s rounds while the Agent tab is shown, backing off from
+  1 s to 60 s). The address to connect to is the answer's source address when
+  it is one of the A records, else the first A record.
+
 ## Versions
 
 | Date | Change | Agent protocol after it |
@@ -352,3 +398,4 @@ Group ids are device resources; the agent gives each client its own view.
 | 2026-11-19 (H3a-1) | First version: Hello, ListDevices, Closing; routing and subscription groups; an interim rule refusing ARM and command groups | v1 |
 | 2026-11-19 (H3a-2) | The lease (LeaseTake, LeaseRelease, Lease event), command groups for the holder, exclusive operations, ClientList, TimePing, ClockModel and History events; the device record gains the holder | v2 |
 | 2026-11-19 (H3b-1) | The client kind (`AgentClientKind`): `client_kind` in Hello, `kind` in ClientList, `holder_kind` in the device record and the Lease event (and so in Lease history entries) | v3 |
+| 2026-11-20 (H3b-2) | Discovery over mDNS/DNS-SD (no change to the TCP protocol) | v3 |

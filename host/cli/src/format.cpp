@@ -404,4 +404,16 @@ std::string deviceLine(const agent::DeviceRecord &v)
                                   " (" + clientKindName(v.holder_kind) + ')'
                             : "");
 }
+Json toJson(const discovery::FoundAgent &v)
+{
+    return {{"instance", v.instance}, {"host", v.host}, {"port", v.port}, {"address", v.address()},
+            {"endpoint", v.endpoint()}, {"addresses", v.addresses}, {"from", v.from},
+            {"proto", v.proto ? Json(*v.proto) : Json(nullptr)}, {"version", v.version}};
+}
+std::string browseLine(const discovery::FoundAgent &v)
+{
+    return v.instance + ' ' + (v.address().empty() ? "-" : v.address()) + " protocol " +
+           (v.proto ? std::to_string(*v.proto) : "?") + " DriveLink " + (v.version.empty() ? "?" : v.version) + ' ' +
+           v.host;
+}
 } // namespace cli

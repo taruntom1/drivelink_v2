@@ -108,6 +108,29 @@ private slots:
         s.setTheme("light");QVERIFY(!s.dark());
         QVERIFY(!QSettings(path,QSettings::IniFormat).contains("appearance/theme"));
     }
+    void discoverAgentsDefaultsOnAndPersists() {
+        QTemporaryDir dir;QVERIFY(dir.isValid());
+        const auto path=dir.filePath("gui.ini");
+        {
+            AppSettings s(path);
+            QVERIFY(s.discoverAgents());
+            QSignalSpy spy(&s,&AppSettings::discoverAgentsChanged);
+            s.setDiscoverAgents(true);QCOMPARE(spy.count(),0); // unchanged: no signal
+            s.setDiscoverAgents(false);QCOMPARE(spy.count(),1);QVERIFY(!s.discoverAgents());
+        }
+        QCOMPARE(QSettings(path,QSettings::IniFormat).value("connection/discoverAgents").toBool(),false);
+        {
+            AppSettings again(path);QVERIFY(!again.discoverAgents());
+            again.setDiscoverAgents(true);
+        }
+        AppSettings third(path);QVERIFY(third.discoverAgents());
+        // The theme is untouched by it, and screenshot mode does not save.
+        QCOMPARE(third.theme(),QString("dark"));
+        QTemporaryDir other;QVERIFY(other.isValid());
+        AppSettings shot(other.filePath("gui.ini"));shot.setPersistent(false);
+        shot.setDiscoverAgents(false);QVERIFY(!shot.discoverAgents());
+        QVERIFY(!QSettings(other.filePath("gui.ini"),QSettings::IniFormat).contains("connection/discoverAgents"));
+    }
     void aboutFacts() {
         QTemporaryDir dir;QVERIFY(dir.isValid());
         AppSettings s(dir.filePath("gui.ini"));
@@ -160,6 +183,21 @@ private slots:
         QVERIFY(h.item("themeHint")->property("text").toString().contains("now: Dark"));
         QVERIFY(h.click("themeDark"));
         QCOMPARE(QSettings(h.dir.filePath("app.ini"),QSettings::IniFormat).value("appearance/theme").toString(),QString("dark"));
+    }
+    void connectionSwitchWritesTheSetting() {
+        ShellHarness h;QVERIFY(h.open());
+        QVERIFY(h.click("navSettings"));QVERIFY(waitFor([&]{return h.shown("discoverAgents");}));
+        QVERIFY(h.shown("connectionCard"));QVERIFY(h.item("discoverAgents")->property("checked").toBool());
+        QCOMPARE(h.item("discoverAgents")->property("text").toString(),QString("Find agents on the network"));
+        QVERIFY(h.item("discoverAgentsHint")->property("text").toString().contains("mDNS"));
+        QVERIFY(h.click("discoverAgents"));
+        QVERIFY(!h.settings.discoverAgents());QVERIFY(!h.item("discoverAgents")->property("checked").toBool());
+        QCOMPARE(QSettings(h.dir.filePath("app.ini"),QSettings::IniFormat).value("connection/discoverAgents").toBool(),false);
+        QVERIFY(h.click("discoverAgents"));
+        QVERIFY(h.settings.discoverAgents());QVERIFY(h.item("discoverAgents")->property("checked").toBool());
+        // A change from elsewhere shows in the switch.
+        h.settings.setDiscoverAgents(false);
+        QVERIFY(waitFor([&]{return !h.item("discoverAgents")->property("checked").toBool();}));
     }
     void aboutShowsTheFacts() {
         ShellHarness h;QVERIFY(h.open());

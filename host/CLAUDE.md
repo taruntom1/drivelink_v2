@@ -71,7 +71,10 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   every device open: GET_INFO, DISARM, clear all groups, then accept clients.
   Keep routing, the group map, LIST, the lease and history pure
   (`groups.cpp`, `lease.cpp`, `history.cpp`) with unit tests. Agent clients
-  ping the agent, never the device, and compose its ClockModel.
+  ping the agent, never the device, and compose its ClockModel. The mDNS
+  responder (`mdns.cpp`, own thread) answers only from fixed settings and
+  never touches a device, a client or the lease; it advertises only on LAN
+  binds, and parsing a received packet never throws.
 - GUI remote mode (H3b-1, [gui/README.md](gui/README.md) "Remote mode"): a
   `LocalConnection` through the agent with its Hello's `client_kind` Gui. It
   observes first and sets up command groups only while it holds the lease;

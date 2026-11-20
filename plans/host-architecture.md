@@ -363,7 +363,7 @@ drivelink_v2/
   - Never mix compilers. Qt, libdrivelink, vdev and the GUI all build with Qt's MinGW kit.
   - Another `g++` may be on `PATH` (Strawberry Perl; MSYS2 UCRT64 for the native tests after T0). Name the compiler in the preset, and ship the right runtime DLLs with `windeployqt`.
   - Asio on MinGW needs `ws2_32` and `mswsock`, and `_WIN32_WINNT` defined.
-- **Dependencies:** keep them few and mostly header-only, version- and SHA256-pinned in `host/cmake/Dependencies.cmake` (standalone Asio, doctest, nlohmann JSON for the CLI; a small mDNS library in H3b, chosen there). No vcpkg, because its MinGW support is community-only. Qt comes from Qt's installer (Windows) and Ubuntu's packages (Linux). The generator needs Python 3 and PyYAML.
+- **Dependencies:** keep them few and mostly header-only, version- and SHA256-pinned in `host/cmake/Dependencies.cmake` (standalone Asio, doctest, nlohmann JSON for the CLI; mjansson/mdns 1.4.3 for agent discovery, H3b-2). No vcpkg, because its MinGW support is community-only. Qt comes from Qt's installer (Windows) and Ubuntu's packages (Linux). The generator needs Python 3 and PyYAML.
 
 ## Development environment
 

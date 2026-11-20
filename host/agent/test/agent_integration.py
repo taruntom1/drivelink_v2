@@ -1320,6 +1320,143 @@ def scenario_K_device_connection_cap(ctx):
     return '16 device connections fit one ClientList; a 17th Hello is NoMemory/Capacity'
 
 
+# ------------------------------------------------------------- discovery (mDNS)
+
+def lan_ipv4():
+    """The host's first non-loopback global IPv4 address, or None."""
+    try:
+        out = subprocess.run(['ip', '-4', '-o', 'addr', 'show', 'scope', 'global'], capture_output=True, text=True,
+                             timeout=10).stdout
+        for line in out.splitlines():
+            fields = line.split()
+            if 'inet' in fields and fields[1] != 'lo':   # a loopback device is not a LAN (WSL puts a global address on lo)
+                address = fields[fields.index('inet') + 1].split('/')[0]
+                if not address.startswith('127.'):
+                    return address
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(('192.0.2.1', 9))   # no packet is sent; this only selects a route
+            address = probe.getsockname()[0]
+            return None if address.startswith('127.') or address == '0.0.0.0' else address
+    except OSError:
+        return None
+
+
+def cli_local(*command, code=0, timeout=30):
+    """The CLI with --json and no endpoint (agent-browse); return the envelope."""
+    run = subprocess.run([CLI, '--json', *command], capture_output=True, text=True, timeout=timeout)
+    lines = run.stdout.strip().splitlines()
+    expect(run.returncode == code, f'{command}: exit {run.returncode}, wanted {code}', stdout=run.stdout, stderr=run.stderr)
+    expect(len(lines) == 1, f'{command}: stdout holds exactly one envelope', stdout=run.stdout, stderr=run.stderr)
+    envelope = json.loads(lines[0])
+    expect(envelope['ok'] == (code == 0), f'{command}: ok flag', envelope=envelope)
+    return envelope
+
+
+def browse(timeout_ms=2000):
+    return data(cli_local('agent-browse', '--timeout-ms', str(timeout_ms)))['agents']
+
+
+def browse_until(predicate, timeout_ms=2000, attempts=3):
+    """Browse up to `attempts` times until predicate(agents) holds; return the last list."""
+    agents = []
+    for _ in range(attempts):
+        agents = browse(timeout_ms)
+        if predicate(agents):
+            break
+    return agents
+
+
+def start_lan_agent(ctx, label, ip, name, advertise=True):
+    """A vdev and a second agent bound to `ip` (an ephemeral port) with its own device."""
+    vdev, vdev_url = start_vdev(f'vdev-{label}', ctx['vdev'], ctx['tmp'] / label)
+    argv = [ctx['agent_exe'], '--bind', ip, '--port', '0', '--token', TOKEN, '--device', f'disc={vdev_url}',
+            '--retry-ms', '300', '--hello-timeout-ms', '500', '--name', name]
+    if not advertise:
+        argv.append('--no-advertise')
+    agent = Proc(f'agent-{label}', argv)
+    url = agent.next_line(15, 'READY ')[len('READY '):]
+    expect(url.startswith(f'tcp://{ip}:'), f'{label} agent READY line', line=url)
+    return agent, vdev, int(url.rsplit(':', 1)[1])
+
+
+def scenario_L_discovery_lan(ctx):
+    # An agent on a LAN address advertises _drivelink._tcp; agent-browse finds it
+    # with the right address, protocol and version, and its goodbye removes it.
+    ip = lan_ipv4()
+    if ip is None:
+        print('skipped: no non-loopback IPv4 address', flush=True)
+        return 'skipped: no non-loopback IPv4 address'
+    name = f'itest-{os.getpid()}'
+    version = subprocess.run([ctx['agent_exe'], '--version'], capture_output=True, text=True, timeout=10).stdout.split()[-1]
+    agent, vdev, port = start_lan_agent(ctx, 'disc-lan', ip, name)
+    try:
+        agents = browse_until(lambda found: any(a['instance'] == name for a in found))
+        mine = [a for a in agents if a['instance'] == name]
+        expect(len(mine) == 1, 'the advertised agent is listed once', agents=agents)
+        found = mine[0]
+        expect(found['address'] == f'{ip}:{port}', 'address', found=found, wanted=f'{ip}:{port}')
+        expect(found['endpoint'] == f'tcp://{ip}:{port}', 'endpoint', found=found)
+        expect(found['port'] == port and ip in found['addresses'], 'port and addresses', found=found)
+        expect(found['proto'] == AGENT_VERSION, 'proto is the agent protocol version', found=found)
+        expect(found['version'] == version, 'version is the agent version', found=found, wanted=version)
+        # The readable form: one line per agent with the same facts.
+        run = subprocess.run([CLI, 'agent-browse', '--timeout-ms', '2000'], capture_output=True, text=True, timeout=30)
+        expect(run.returncode == 0, 'readable agent-browse exits 0', stderr=run.stderr)
+        lines = [line for line in run.stdout.splitlines() if line.startswith(name + ' ')]
+        expect(len(lines) == 1 and f' {ip}:{port} protocol {AGENT_VERSION} DriveLink {version} ' in lines[0],
+               'readable line', stdout=run.stdout)
+        # The endpoint it reports is a working agent endpoint.
+        devices = data(cli(found['endpoint'], 'agent-devices', token=TOKEN))['devices']
+        expect([d['alias'] for d in devices] == ['disc'], 'the found endpoint is the agent', devices=devices)
+        code = agent.terminate()
+        expect(code == 0, 'second agent stops on SIGTERM', code=code)
+        gone = browse_until(lambda found: not any(a['instance'] == name for a in found))
+        expect(not any(a['instance'] == name for a in gone), 'a stopped agent is no longer listed (goodbye)', agents=gone)
+    finally:
+        agent.kill()
+        vdev.kill()
+    return f'{name} found at {ip}:{port} (proto {AGENT_VERSION}, version {version}); gone after SIGTERM'
+
+
+def scenario_M_discovery_quiet(ctx):
+    # A loopback agent and a --no-advertise agent on a LAN address never appear.
+    ip = lan_ipv4()
+    if ip is None:
+        print('skipped: no non-loopback IPv4 address', flush=True)
+        return 'skipped: no non-loopback IPv4 address'
+    name = f'quiet-{os.getpid()}'
+    loopback_port = int(AGENT_URL.rsplit(':', 1)[1])
+    agent, vdev, port = start_lan_agent(ctx, 'disc-quiet', ip, name, advertise=False)
+    try:
+        time.sleep(1)   # an announcement, if one wrongly went out, has landed
+        agents = browse(1500)
+        expect(not any(a['instance'] == name for a in agents), 'a --no-advertise agent is not listed', agents=agents)
+        expect(not any(a['port'] == port and ip in a['addresses'] for a in agents),
+               'a --no-advertise agent is not listed under another name', agents=agents)
+        expect(not any(a['port'] == loopback_port and any(x.startswith('127.') for x in a['addresses'] + [a['from']])
+                       for a in agents), 'a loopback agent is not listed', agents=agents)
+        run = subprocess.run([CLI, 'agent-browse', '--timeout-ms', '1500'], capture_output=True, text=True, timeout=30)
+        expect(run.returncode == 0 and name not in run.stdout, 'readable output omits it too', stdout=run.stdout)
+    finally:
+        agent.kill()
+        vdev.kill()
+    return f'neither the loopback agent (port {loopback_port}) nor {name} at {ip}:{port} is listed'
+
+
+def scenario_N_browse_usage(ctx):
+    # agent-browse takes no endpoint, device, token or arguments, and a window of 100..10000 ms.
+    for command in (['agent-browse', '--timeout-ms', '50'], ['agent-browse', '--timeout-ms', '20000'],
+                    ['agent-browse', 'extra']):
+        cli_local(*command, code=2)
+    for options in (['--endpoint', AGENT_URL], ['--device', 'base'], ['--token', TOKEN]):
+        run = subprocess.run([CLI, '--json', *options, 'agent-browse'], capture_output=True, text=True, timeout=30)
+        expect(run.returncode == 2, f'{options[0]} with agent-browse is a usage error', stdout=run.stdout, stderr=run.stderr)
+    return 'agent-browse refuses --endpoint/--device/--token, arguments and a window outside 100..10000 ms (exit 2)'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -1347,6 +1484,7 @@ SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_dir
              scenario_A_take_and_arm, scenario_B_take_preempts, scenario_C_holder_disconnect, scenario_D_release,
              scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
              scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
+             scenario_L_discovery_lan, scenario_M_discovery_quiet, scenario_N_browse_usage,
              scenario_9_device_clean_after_agent]
 
 
@@ -1364,7 +1502,7 @@ def main():
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix='drivelink-agent-it-') as tmp:
         tmp = Path(tmp)
-        ctx = {'vdev': args.vdev, 'arm_state': tmp / 'arm'}
+        ctx = {'vdev': args.vdev, 'agent_exe': args.agent, 'tmp': tmp, 'arm_state': tmp / 'arm'}
         try:
             ctx['base'], ctx['base_url'] = start_vdev('vdev-base', args.vdev, tmp / 'base')
             ctx['arm'], ctx['arm_url'] = start_vdev('vdev-arm', args.vdev, ctx['arm_state'], device_id=ARM_ID)

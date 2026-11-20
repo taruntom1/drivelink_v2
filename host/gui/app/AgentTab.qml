@@ -7,7 +7,9 @@ import DriveLink.Style
 // the agent serves, the failure states (unreachable, version mismatch, refused
 // token, unknown or offline device) and the recent agents. A connection made
 // here observes first; the control lease is taken explicitly on Device.
-// Everything shown comes from the backend; nothing is decided here.
+// "Found on the network" (H3b-2) lists the agents the backend browses for
+// (mDNS) while this tab is shown and Settings allows it; a click fills the
+// address. Everything shown comes from the backend; nothing is decided here.
 Column {
     id: tab
     objectName: "agentTab"
@@ -20,6 +22,15 @@ Column {
     // again (the backend keeps no agent target after a failed open).
     property string lastAddress
     property string lastDevice
+    // The GUI-wide settings (the context property of main.cpp).
+    property var settings: typeof appSettings !== "undefined" ? appSettings : null
+    readonly property bool discoverOn: settings ? settings.discoverAgents !== false : true
+    readonly property var browse: backend.agentBrowse || ({})
+    readonly property var found: browse.agents || []
+    readonly property bool searching: browse.state === "searching"
+    // Browsing follows the tab: on while it is shown and discovery is allowed.
+    readonly property bool wantBrowse: visible && discoverOn
+    property bool browseStarted: false
 
     readonly property var listing: backend.agentListing || ({})
     readonly property bool listingBusy: listing.state === "listing"
@@ -72,6 +83,33 @@ Column {
         lastDevice = device
         backend.connectAgent(agentAddress, token.text, device, rememberToken)
     }
+    function syncBrowse() {
+        if (wantBrowse && !browseStarted) {
+            browseStarted = true
+            backend.startAgentBrowse()
+        } else if (!wantBrowse && browseStarted) {
+            browseStarted = false
+            backend.stopAgentBrowse()
+        }
+    }
+    onWantBrowseChanged: syncBrowse()
+    // A found agent: its address, and the token of the recent agent at that
+    // address when one was remembered; without a token the field gets focus.
+    function useFound(row) {
+        // A token typed for another address is never sent to this one.
+        if (address.text.trim() !== row.address) token.text = ""
+        address.text = row.address
+        const recent = backend.recentAgents || []
+        for (let i = 0; i < recent.length; ++i) {
+            if (recent[i].address === row.address && (recent[i].token || "").length > 0) {
+                token.text = recent[i].token
+                rememberToken = recent[i].rememberToken !== false
+                break
+            }
+        }
+        if (token.text.length > 0) listDevices()
+        else token.forceActiveFocus()
+    }
     function useRecent(row) {
         address.text = row.address
         token.text = row.token || ""
@@ -86,6 +124,13 @@ Column {
             token.text = recent[0].token || ""
             rememberToken = recent[0].rememberToken !== false
         }
+        syncBrowse()
+    }
+    Component.onDestruction: {
+        if (browseStarted) {
+            browseStarted = false
+            backend.stopAgentBrowse()
+        }
     }
 
     Text {
@@ -94,6 +139,122 @@ Column {
         text: qsTr("Connect to observe first. Take the control lease explicitly when you are ready to tune. Every connected client can DISARM.")
         font: Theme.fontBodyDefault
         color: Theme.textSecondary
+    }
+
+    // Found on the network (G6, H3b-2): agents that announced themselves (mDNS).
+    Text {
+        objectName: "foundAgentsOff"
+        width: parent.width
+        wrapMode: Text.Wrap
+        visible: !tab.discoverOn
+        text: qsTr("Finding agents on the network is off (Settings).")
+        font: Theme.fontCaption
+        color: Theme.textSecondary
+    }
+    Column {
+        objectName: "foundSection"
+        width: parent.width
+        spacing: Theme.space4
+        visible: tab.discoverOn
+        RowLayout {
+            objectName: "foundAgents"
+            width: parent.width
+            spacing: Theme.space8
+            Text {
+                text: qsTr("Found on the network")
+                font: Theme.fontLabelCaps
+                color: Theme.textSecondary
+            }
+            Text {
+                objectName: "foundAgentsSearching"
+                visible: tab.searching
+                text: qsTr("Searching…")
+                font: Theme.fontCaption
+                color: Theme.textSecondary
+            }
+            Item { Layout.fillWidth: true }
+            DLIconButton {
+                objectName: "foundAgentsSearch"
+                iconName: "refresh-cw"
+                size: DLIconButton.Sm
+                toolTipText: qsTr("Search again")
+                onClicked: tab.backend.browseAgentsNow()
+            }
+        }
+        Text {
+            objectName: "foundAgentsEmpty"
+            width: parent.width
+            wrapMode: Text.Wrap
+            visible: tab.found.length === 0
+            text: tab.searching ? qsTr("Searching…")
+                                : qsTr("No agents found. Agents appear here when they listen on the LAN.")
+            font: Theme.fontCaption
+            color: Theme.textSecondary
+        }
+        Repeater {
+            model: tab.found
+            Rectangle {
+                id: foundRow
+                required property var modelData
+                readonly property bool compatible: modelData.compatible !== false
+                objectName: "foundAgent_" + modelData.instance
+                width: parent.width
+                height: 56
+                radius: Theme.radiusMd
+                color: foundMouse.containsMouse ? Theme.bgHover : "transparent"
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.space12
+                    anchors.rightMargin: Theme.space12
+                    spacing: Theme.space8
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: Theme.space2
+                        opacity: foundRow.compatible ? 1 : 0.6
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: foundRow.modelData.instance
+                            font: Theme.fontBodyStrong
+                            color: Theme.textPrimary
+                        }
+                        Text {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: foundRow.modelData.address
+                                + ((foundRow.modelData.version || "").length > 0
+                                   ? "  ·  " + qsTr("DriveLink %1").arg(foundRow.modelData.version) : "")
+                            font: Theme.fontMonoSmall
+                            color: Theme.textSecondary
+                        }
+                    }
+                    DLBadge {
+                        objectName: "foundIncompatible_" + foundRow.modelData.instance
+                        visible: !foundRow.compatible
+                        tone: DLBadge.Pending
+                        text: qsTr("Incompatible")
+                    }
+                }
+                MouseArea {
+                    id: foundMouse
+                    objectName: "useFoundAgent_" + foundRow.modelData.instance
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: foundRow.compatible && !tab.listingBusy && !tab.backend.closing
+                    onClicked: tab.useFound(foundRow.modelData)
+                }
+                // An incompatible row says why it cannot be used.
+                DLReasonHover {
+                    objectName: "foundReason_" + foundRow.modelData.instance
+                    anchors.fill: parent
+                    visible: !foundRow.compatible
+                    reason: qsTr("Agent protocol %1; this DriveLink speaks %2")
+                        .arg(foundRow.modelData.proto >= 0 ? foundRow.modelData.proto : "?")
+                        .arg(tab.browse.protocol ?? "?")
+                    Item { enabled: false }
+                }
+            }
+        }
     }
 
     Column {

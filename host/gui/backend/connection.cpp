@@ -28,6 +28,12 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     // Action rows follow every state change (arm state, OTA, a configuration
     // action, outcomes); unchanged rows are left alone.
     connect(this,&Connection::changed,this,[this] {updateActions();});
+    m_browseTimer.setSingleShot(true);
+    connect(&m_browseTimer,&QTimer::timeout,this,[this] {browseRound();});
+    if(qEnvironmentVariableIsSet("DRIVELINK_GUI_FAKE_AGENTS")) {
+        m_fakeAgents=parseFakeAgents(qgetenv("DRIVELINK_GUI_FAKE_AGENTS"));
+        if(!m_fakeAgents) {qWarning("DRIVELINK_GUI_FAKE_AGENTS is not a JSON array of agents; ignored");}
+    }
     connect(&m_monitor,&MonitorView::plansChanged,this,[this] {syncMonitor();});
     connect(&m_monitor,&MonitorView::notification,this,&Connection::notification);
     // Manual command frames go only to this connection's value groups of the
@@ -91,7 +97,11 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
     });
     m_timer.start();
 }
-LocalConnection::~LocalConnection() {finishClose();if(m_lister.joinable()) {m_lister.join();}}
+LocalConnection::~LocalConnection() {
+    finishClose();
+    if(m_lister.joinable()) {m_lister.join();}
+    if(m_browser.joinable()) {m_browser.join();} // a round ends within ~1.3 s
+}
 bool LocalConnection::current(const std::shared_ptr<Context> &c) const {return m_context==c && !c->retired;}
 bool LocalConnection::linked() const {return m_context && m_context->getSession() && !m_linkLost && (!m_snapshot || m_snapshot->connected);}
 bool LocalConnection::ready() const {

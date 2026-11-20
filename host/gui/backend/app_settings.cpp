@@ -10,6 +10,7 @@
 namespace drivelink::gui {
 namespace {
 const QString kThemeKey=QStringLiteral("appearance/theme");
+const QString kDiscoverKey=QStringLiteral("connection/discoverAgents");
 
 // LF only: a Windows checkout (core.autocrlf) embeds CRLF, and the About
 // text, the copied text and Qt's text areas must all agree.
@@ -22,8 +23,10 @@ QString resourceText(const QString &path) {
 
 AppSettings::AppSettings(QString path, QObject *parent)
     :QObject(parent),m_path(path.isEmpty()?RecentDevices().path():std::move(path)) {
-    const auto saved=QSettings(m_path,QSettings::IniFormat).value(kThemeKey).toString();
+    const QSettings file(m_path,QSettings::IniFormat);
+    const auto saved=file.value(kThemeKey).toString();
     m_theme=validTheme(saved)?saved:QStringLiteral("dark");
+    m_discoverAgents=file.value(kDiscoverKey,true).toBool();
     if(auto *hints=QGuiApplication::styleHints()) {
         connect(hints,&QStyleHints::colorSchemeChanged,this,[this] {if(m_theme==QLatin1String("system")) {emit themeChanged();}});
     }
@@ -38,6 +41,13 @@ void AppSettings::setTheme(const QString &theme) {
     m_theme=theme;
     if(m_persistent) {QSettings(m_path,QSettings::IniFormat).setValue(kThemeKey,m_theme);}
     emit themeChanged();
+}
+
+void AppSettings::setDiscoverAgents(bool enabled) {
+    if(enabled==m_discoverAgents) {return;}
+    m_discoverAgents=enabled;
+    if(m_persistent) {QSettings(m_path,QSettings::IniFormat).setValue(kDiscoverKey,m_discoverAgents);}
+    emit discoverAgentsChanged();
 }
 
 bool AppSettings::dark() const {

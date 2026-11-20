@@ -1,4 +1,5 @@
 #include "agent.hpp"
+#include "mdns.hpp"
 #include "groups.hpp"
 #include "history.hpp"
 #include "lease.hpp"
@@ -11,6 +12,7 @@
 #include "drivelink/protocol/gen/registry.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include <asio.hpp>
+#include <unistd.h>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -83,6 +85,7 @@ struct Agent::Impl
     uint64_t next_client = 1;
     uint16_t next_wire = 0;
     bool stopping = false;
+    std::unique_ptr<Advertiser> advertiser; // mDNS, LAN binds only (run() to shutdown())
 
     explicit Impl(AgentConfig c) : config(std::move(c)) {}
     ~Impl();
@@ -1471,6 +1474,7 @@ void Agent::Impl::shutdown()
     if (stopping) { return; }
     stopping = true;
     log("shutting down");
+    if (advertiser) { advertiser->stop(); } // goodbyes first: clients find out at once
     asio::error_code ignored;
     acceptor.close(ignored);
     signals.cancel(ignored);
@@ -1525,6 +1529,18 @@ void Agent::run()
     d.signals.async_wait([&d](auto ec, int) { if (!ec) { d.shutdown(); } });
     d.accept();
     for (auto &device : d.devices) { device->open(); }
+    if (d.config.advertise && !d.config.loopback())
+    {
+        char hostname[256] = {};
+        ::gethostname(hostname, sizeof(hostname) - 1);
+        AdvertiseSettings settings{d.config.name.empty() ? defaultInstance(hostname) : d.config.name,
+                                   discovery::hostLabel(hostname), d.config.bind, d.acceptor.local_endpoint().port(),
+                                   agent::kVersion, DRIVELINK_AGENT_VERSION};
+        d.advertiser = std::make_unique<Advertiser>(std::move(settings), [](const std::string &line) { log(line); });
+        // Advertising is best effort: the agent serves TCP without it.
+        try { d.advertiser->start(); }
+        catch (const std::exception &e) { log(std::string("mDNS: not advertising: ") + e.what()); d.advertiser.reset(); }
+    }
     d.io.run();
 }
 

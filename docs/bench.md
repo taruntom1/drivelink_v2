@@ -42,6 +42,22 @@ give the adapter back before flashing or a direct check. The GUI's PC check
 writes nothing to the board. Over serial the agent keeps the port across a
 REBOOT, so its Boot path runs here (a TCP vdev looks like device loss).
 
+### Finding the agent (mDNS)
+
+An agent bound to a LAN address advertises itself (`_drivelink._tcp`); one
+bound to `127.0.0.1`, as above, never does. In WSL that needs mirrored
+networking (`networkingMode=Mirrored` in `%USERPROFILE%\.wslconfig`, then
+`wsl --shutdown`), so WSL holds the PC's LAN address; the agent then shares
+UDP 5353 with Windows' own mDNS. `drivelink-cli agent-browse` inside WSL finds
+it, and so do other machines on the LAN, but the GUI on the same PC cannot:
+Windows' own multicast never reaches mirrored WSL, and Windows reaches the
+agent's LAN address only with `hostAddressLoopback=true` and a Hyper-V
+firewall rule. On one PC, bind the agent to `127.0.0.1` and type
+`127.0.0.1:47620`. Mirrored mode keeps the localhost
+forwarding `benchRemote` uses. `gui_remote_tests benchDiscovery`
+(`DRIVELINK_GUI_BENCH_DISCOVER=<instance>`, `_TOKEN`, `_DEVICE`) is the check
+for a GUI on another machine than the agent.
+
 ## Serial traps
 
 - **First open resets the board.** The first time the adapter's port is opened

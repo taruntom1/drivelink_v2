@@ -104,6 +104,9 @@ class Connection : public QObject {
     Q_PROPERTY(QVariantMap agentListing READ agentListing NOTIFY changed)
     // Why the last agent connection failed (agentFailure), empty otherwise.
     Q_PROPERTY(QVariantMap agentFailure READ agentFailure NOTIFY changed)
+    // Agents found on the network (H3b-2): {state: off, searching, idle;
+    // protocol (this GUI's agent protocol); agents (FoundAgents::rows)}.
+    Q_PROPERTY(QVariantMap agentBrowse READ agentBrowse NOTIFY changed)
     Q_PROPERTY(QVariantList recentAgents READ recentAgents NOTIFY recentDevicesChanged)
     // A live param edit held for confirmation while another client holds
     // the lease: {key, what, holder, ros}; empty when none.
@@ -167,6 +170,7 @@ public:
     virtual QVariantList agentHistory() const=0;
     virtual QVariantMap agentListing() const=0;
     virtual QVariantMap agentFailure() const=0;
+    virtual QVariantMap agentBrowse() const=0;
     virtual QVariantList recentAgents() const=0;
     virtual QVariantMap liveEdit() const=0;
     // Remote mode. listAgent opens a lobby and lists the agent's devices
@@ -178,6 +182,13 @@ public:
     Q_INVOKABLE virtual void refreshAgentList()=0;
     Q_INVOKABLE virtual void connectAgent(const QString &address,const QString &token,const QString &device,bool rememberToken)=0;
     Q_INVOKABLE virtual void forgetAgent(const QString &address)=0;
+    // mDNS browsing while the Agent tab is shown (the tab checks the
+    // "Find agents on the network" setting): rounds back off from 1 s to
+    // 60 s; browseAgentsNow runs one at once and restarts the back-off. Stop
+    // forgets the list. Never blocks the GUI thread.
+    Q_INVOKABLE virtual void startAgentBrowse()=0;
+    Q_INVOKABLE virtual void stopAgentBrowse()=0;
+    Q_INVOKABLE virtual void browseAgentsNow()=0;
     // The lease: Take preempts another holder (the agent disarms the device
     // first); Release disarms. Neither ever arms.
     Q_INVOKABLE virtual void takeLease()=0;
@@ -340,12 +351,16 @@ public:
     QVariantList agentHistory() const override {return m_agentHistory;}
     QVariantMap agentListing() const override {return m_listing;}
     QVariantMap agentFailure() const override {return m_agentFailure;}
+    QVariantMap agentBrowse() const override;
     QVariantList recentAgents() const override {return m_recentAgents.list();}
     QVariantMap liveEdit() const override;
     void listAgent(const QString &address,const QString &token) override;
     void refreshAgentList() override;
     void connectAgent(const QString &address,const QString &token,const QString &device,bool rememberToken) override;
     void forgetAgent(const QString &address) override;
+    void startAgentBrowse() override;
+    void stopAgentBrowse() override;
+    void browseAgentsNow() override;
     void takeLease() override;
     void releaseLease() override;
     void acknowledgeRevoked() override;
@@ -460,6 +475,16 @@ private:
     bool m_listBusy=false,m_listQueued=false; // a lister thread runs / an explicit list waits for it
     std::pair<QString,QString> m_listTarget; // address, token of the last list
     void startList(bool quiet);
+    // mDNS browse (connection_remote.cpp): one round at a time on m_browser.
+    std::thread m_browser;
+    std::shared_ptr<std::atomic<bool>> m_browserDone; // m_browser's round ended
+    QTimer m_browseTimer;
+    FoundAgents m_found;
+    uint64_t m_browseSerial=0;
+    unsigned m_browseRounds=0;
+    bool m_browseOn=false,m_browseBusy=false,m_browseNow=false;
+    std::optional<std::vector<discovery::FoundAgent>> m_fakeAgents; // DRIVELINK_GUI_FAKE_AGENTS
+    void browseRound();
     QDateTime m_revokedAt;
     bool m_leasePending=false,m_clientsPending=false,m_historyDone=false;
     uint64_t m_liveEditSerial=0;

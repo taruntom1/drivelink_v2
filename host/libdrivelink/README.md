@@ -120,6 +120,25 @@ late reply to the old request then fails the family/op correlation), and
 (bounded by `event_capacity`, drops counted). DISARM may reuse a retired ID
 when no other is free, so it goes out even after every ID has timed out.
 
+## Agent discovery (`drivelink/discovery.hpp`, H3b-2)
+
+`browseAgents(window)` finds agents advertising `_drivelink._tcp` over
+mDNS/DNS-SD ([agent.md](../../docs/protocol/agent.md), "Discovery"): one PTR
+question with the unicast-response bit from an ephemeral port on every up
+IPv4 interface (sent again at 300 ms when the window is at least 600 ms),
+answers collected until the window (100..10000 ms) ends. It blocks, so run it
+off a UI thread; network failures give an empty or partial list, never an
+exception. Each `FoundAgent` has the instance, target host, port, A records,
+the sender, the TXT `proto` and `version`; `address()`/`endpoint()` prefer the
+sender when it is one of the A records. IPv4 only.
+
+The record building (`buildResponse`, `buildQuery`, `match`) and parsing
+(`Collector`, `parseQuery`) are pure and shared with the agent's responder;
+names and records are decoded with mjansson/mdns 1.4.3 (public domain,
+pinned in `host/cmake/Dependencies.cmake`, private to the library).
+`listIpv4Interfaces()` uses `getifaddrs` or `GetAdaptersAddresses`
+(`iphlpapi` on Windows).
+
 ## Device identity
 
 File helper `readOtaImage(path)` takes a UTF-8 path and opens the native

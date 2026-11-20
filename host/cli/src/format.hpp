@@ -1,6 +1,7 @@
 #pragma once
 #include "drivelink/agent.hpp"
 #include "drivelink/client.hpp"
+#include "drivelink/discovery.hpp"
 #include <nlohmann/json.hpp>
 namespace cli
 {
@@ -64,6 +65,10 @@ Json toJson(const agent::ClientRecord &v);
 std::string deviceLine(const agent::DeviceRecord &v);
 // "client_id NAME [holder]"
 std::string clientLine(const agent::ClientRecord &v);
+// {instance, host, port, address, endpoint, addresses, from, proto (number or null), version}
+Json toJson(const discovery::FoundAgent &v);
+// "INSTANCE ADDRESS protocol N|? DriveLink VERSION|? HOST"
+std::string browseLine(const discovery::FoundAgent &v);
 Json valueJson(ValueType type, uint32_t bits);
 template<class T> Json toJson(const std::optional<T> &value) {
     return value ? toJson(*value) : Json(nullptr);
