@@ -108,6 +108,8 @@ class Rm
     }
     return_type configure() { return go(LifecycleState::PRIMARY_STATE_INACTIVE, "inactive"); }
     return_type activate() { return go(LifecycleState::PRIMARY_STATE_ACTIVE, "active"); }
+    return_type deactivate() { return go(LifecycleState::PRIMARY_STATE_INACTIVE, "inactive"); }
+    return_type cleanup() { return go(LifecycleState::PRIMARY_STATE_UNCONFIGURED, "unconfigured"); }
 
     uint8_t state() { return m_rm->get_components_status().at(m_name).state.id(); }
     std::string stateLabel() { return m_rm->get_components_status().at(m_name).state.label(); }
@@ -227,11 +229,13 @@ std::string str(const Stats &s)
 class Integration : public ::testing::Test
 {
   protected:
+    // TCP vdev by default; IntegrationPty serves it on a PTY, which survives a reboot.
+    virtual bool pty() const { return false; }
     void SetUp() override
     {
         try
         {
-            h = Harness::start();
+            h = Harness::start(pty());
         }
         catch (const HarnessError &e)
         {
@@ -273,9 +277,58 @@ class Integration : public ::testing::Test
         return o.str();
     }
 
+    // The agent's client list, retried while the agent re-opens the device.
+    std::vector<drivelink::agent::ClientRecord> clientsRetry()
+    {
+        const auto deadline = Clock::now() + 10s;
+        for (;;)
+        {
+            try
+            {
+                return clients();
+            }
+            catch (const std::exception &)
+            {
+                if (Clock::now() >= deadline) { throw; }
+                h->closeGui();
+                std::this_thread::sleep_for(200ms);
+            }
+        }
+    }
+
+    static bool holds(const std::vector<drivelink::agent::ClientRecord> &list, uint8_t kind)
+    {
+        for (const auto &c : list)
+        {
+            if (c.holder && c.kind == kind) { return true; }
+        }
+        return false;
+    }
+
+    // The failure tests: a read failed (cycles >= 1) in time and the component is UNCONFIGURED.
+    void expectFailedAndUnconfigured(Rm &r, int cycles, std::chrono::milliseconds took, std::chrono::milliseconds limit,
+                                     const std::string &what)
+    {
+        ASSERT_GE(cycles, 1) << "no read failed: " << what;
+        EXPECT_LT(took.count(), limit.count()) << what << ": the failure took " << took.count() << " ms";
+        EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED)
+            << what << ": after the failure the component is " << r.stateLabel();
+    }
+
     std::unique_ptr<Harness> h;
     std::unique_ptr<Rm> rm;
 };
+
+class IntegrationPty : public Integration
+{
+  protected:
+    bool pty() const override { return true; }
+};
+
+std::chrono::milliseconds since(Clock::time_point start)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start);
+}
 
 TEST_F(Integration, ConfigureActivateAndReadFiniteValues)
 {
@@ -424,15 +477,14 @@ TEST_F(Integration, PreemptTakesTheLeaseFromAnotherClient)
 
 TEST_F(Integration, LeaseLossFailsTheComponent)
 {
-    Rm &r = makeRm();
+    // No stale check: only the Lease observer can fail this.
+    Rm &r = makeRm("<param name=\"stale_timeout_ms\">0</param>");
     bringUp(r);
     for (int i = 0; i < 20; ++i) { ASSERT_TRUE(r.cycle()) << "read failed before the lease was taken, cycle " << i; }
     drivelink::agentLeaseTake(h->gui());
+    const auto start = Clock::now();
     const int n = r.cyclesUntilFailure(5s);
-    ASSERT_GE(n, 1) << "no read failed within 5 s of another client taking the lease";
-    const auto state = r.state();
-    EXPECT_TRUE(state == LifecycleState::PRIMARY_STATE_UNCONFIGURED || state == LifecycleState::PRIMARY_STATE_INACTIVE)
-        << "after the failure the component is " << r.stateLabel();
+    expectFailedAndUnconfigured(r, n, since(start), 1000ms, "another client took the lease");
     // The plugin must have let go: its connection is gone or at least not the holder.
     const auto deadline = Clock::now() + 3s;
     std::vector<drivelink::agent::ClientRecord> list;
@@ -440,12 +492,8 @@ TEST_F(Integration, LeaseLossFailsTheComponent)
     do
     {
         list = clients();
-        ros_holds = gui_holds = false;
-        for (const auto &c : list)
-        {
-            ros_holds = ros_holds || (c.holder && c.kind == kKindRos);
-            gui_holds = gui_holds || (c.holder && c.kind == kKindGui);
-        }
+        ros_holds = holds(list, kKindRos);
+        gui_holds = holds(list, kKindGui);
         if (!ros_holds && gui_holds) { break; }
         std::this_thread::sleep_for(100ms);
     } while (Clock::now() < deadline);
@@ -455,15 +503,14 @@ TEST_F(Integration, LeaseLossFailsTheComponent)
 
 TEST_F(Integration, AgentStopFailsTheComponent)
 {
-    Rm &r = makeRm();
+    // No stale check: only the Closing event or the lost link can fail this.
+    Rm &r = makeRm("<param name=\"stale_timeout_ms\">0</param>");
     bringUp(r);
     for (int i = 0; i < 20; ++i) { ASSERT_TRUE(r.cycle()) << "read failed in cycle " << i; }
     h->stopAgent();
+    const auto start = Clock::now();
     const int n = r.cyclesUntilFailure(5s);
-    ASSERT_GE(n, 1) << "no read failed within 5 s of the agent stopping";
-    const auto state = r.state();
-    EXPECT_TRUE(state == LifecycleState::PRIMARY_STATE_UNCONFIGURED || state == LifecycleState::PRIMARY_STATE_INACTIVE)
-        << "after the failure the component is " << r.stateLabel();
+    expectFailedAndUnconfigured(r, n, since(start), 1000ms, "the agent stopped");
 }
 
 TEST_F(Integration, StaleDataFailsTheComponent)
@@ -475,12 +522,79 @@ TEST_F(Integration, StaleDataFailsTheComponent)
     h->vdevScenario(1, "loop-stall 0 4000");
     const auto start = Clock::now();
     const int n = r.cyclesUntilFailure(3500ms);
-    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start);
-    ASSERT_GE(n, 1) << "no read failed within 3.5 s of a 4 s loop stall with stale_timeout_ms 300";
-    EXPECT_LT(took.count(), 2500) << "the stale failure took " << took.count() << " ms for a 300 ms timeout";
-    const auto state = r.state();
-    EXPECT_TRUE(state == LifecycleState::PRIMARY_STATE_UNCONFIGURED || state == LifecycleState::PRIMARY_STATE_INACTIVE)
-        << "after the failure the component is " << r.stateLabel();
+    expectFailedAndUnconfigured(r, n, since(start), 2500ms, "a 4 s loop stall with stale_timeout_ms 300");
+}
+
+TEST_F(IntegrationPty, BootFailsTheComponent)
+{
+    // No stale check: only the device's Boot (a new frame generation) can fail this.
+    Rm &r = makeRm("<param name=\"stale_timeout_ms\">0</param>");
+    bringUp(r);
+    for (int i = 0; i < 20; ++i) { ASSERT_TRUE(r.cycle()) << "read failed before the reboot, cycle " << i; }
+    h->vdevScenario(1, "reboot");
+    const auto start = Clock::now();
+    const int n = r.cyclesUntilFailure(5s);
+    expectFailedAndUnconfigured(r, n, since(start), 3000ms, "the device rebooted");
+}
+
+TEST_F(IntegrationPty, RebootBetweenConfigureAndActivateIsRefused)
+{
+    Rm &r = makeRm();
+    ASSERT_TRUE(r.exists());
+    ASSERT_EQ(r.configure(), return_type::OK) << r.stateLabel();
+    ASSERT_EQ(r.state(), LifecycleState::PRIMARY_STATE_INACTIVE);
+    h->vdevScenario(1, "reboot");
+    std::this_thread::sleep_for(1500ms);
+    EXPECT_NE(r.activate(), return_type::OK) << "activation succeeded after the device rebooted since configure";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    const auto list = clientsRetry();
+    EXPECT_FALSE(holds(list, kKindRos)) << "the plugin holds the lease:" << describe(list);
+}
+
+TEST_F(Integration, DeactivateReleasesTheLeaseAndReactivates)
+{
+    Rm &r = makeRm();
+    bringUp(r);
+    for (int i = 0; i < 20; ++i) { ASSERT_TRUE(r.cycle()) << "read failed in cycle " << i; }
+    ASSERT_EQ(r.deactivate(), return_type::OK) << r.stateLabel();
+    ASSERT_EQ(r.state(), LifecycleState::PRIMARY_STATE_INACTIVE);
+    auto list = clients();
+    EXPECT_FALSE(holds(list, kKindRos)) << "the plugin still holds the lease after deactivate:" << describe(list);
+    for (const auto &c : list)
+    {
+        EXPECT_FALSE(c.holder) << "somebody holds the lease after deactivate:" << describe(list);
+    }
+    ASSERT_EQ(r.activate(), return_type::OK) << "reactivation failed; state " << r.stateLabel();
+    ASSERT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE);
+    r.claimAll();
+    for (int i = 0; i < 30; ++i) { ASSERT_TRUE(r.cycle()) << "read failed after reactivation, cycle " << i; }
+    for (const auto &key : r.keys())
+    {
+        const auto v = r.value(key);
+        ASSERT_TRUE(v.has_value()) << key << " has no value";
+        EXPECT_TRUE(std::isfinite(*v)) << key << " = " << *v;
+    }
+    list = clients();
+    EXPECT_TRUE(holds(list, kKindRos)) << "the plugin does not hold the lease after reactivation:" << describe(list);
+}
+
+TEST_F(Integration, CleanupAndConfigureAgain)
+{
+    Rm &r = makeRm();
+    ASSERT_TRUE(r.exists());
+    ASSERT_EQ(r.configure(), return_type::OK) << r.stateLabel();
+    ASSERT_EQ(r.cleanup(), return_type::OK) << r.stateLabel();
+    ASSERT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED);
+    ASSERT_EQ(r.configure(), return_type::OK) << "the second configure failed; state " << r.stateLabel();
+    ASSERT_EQ(r.activate(), return_type::OK) << "activate after the second configure failed; state " << r.stateLabel();
+    r.claimAll();
+    for (int i = 0; i < 30; ++i) { ASSERT_TRUE(r.cycle()) << "read failed, cycle " << i; }
+    for (const auto &key : r.keys())
+    {
+        const auto v = r.value(key);
+        ASSERT_TRUE(v.has_value()) << key << " has no value";
+        EXPECT_TRUE(std::isfinite(*v)) << key << " = " << *v;
+    }
 }
 
 std::string replaceAll(std::string text, const std::string &from, const std::string &to)

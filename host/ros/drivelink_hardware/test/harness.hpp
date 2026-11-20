@@ -39,7 +39,14 @@ class Harness
     // random 24-hex-digit token, owning the vdev as alias "robot" on a free
     // loopback port (waits for READY and for the device to be online in a
     // lobby device list).
-    static std::unique_ptr<Harness> start();
+    //
+    // pty = false (default): the vdev listens on loopback TCP, and drops the
+    // link when it reboots (the agent sees the device go offline). pty = true:
+    // `drivelink-vdev --pty`, READY `serial:///dev/pts/N`; the port survives a
+    // reboot, so a reboot reaches the device's clients as a Boot event, not as
+    // device loss. The CLI, the library and the agent (--device
+    // robot=serial:///dev/pts/N) take the serial:// endpoint the same way.
+    static std::unique_ptr<Harness> start(bool pty = false);
     ~Harness(); // SIGTERM to the agent, then the vdev; SIGKILL after 5 s; removes the temp dir
 
     Harness(const Harness &) = delete;

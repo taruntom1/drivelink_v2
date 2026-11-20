@@ -72,7 +72,7 @@ build and test it the same way ([development.md](../../../docs/development.md)).
 | `token_file` | `/etc/drivelink/token` | The agent's token, first line. The packaged agent keeps it `0640 root:drivelink`: add the ROS user to the `drivelink` group (`sudo usermod -aG drivelink $USER`, then log in again) |
 | `token` | empty | The token inline, for tests and vdev; wins over `token_file` |
 | `take_lease` | `refuse` | `refuse`: activation fails, naming the holder, while another client (the GUI tuning) holds the lease. `preempt`: take it anyway; the agent disarms the device and clears the old holder's command groups first |
-| `state_rate_hz` | `100` | How often the plugin needs fresh state, normally the controller_manager's `update_rate`. Each loop's group runs at its loop rate divided by `max(1, floor(loop rate / state_rate_hz))`, so it is never slower than this and spends no more of the link than needed |
+| `state_rate_hz` | `100` | 1..10000 Hz: how often the plugin needs fresh state, normally the controller_manager's `update_rate`. Each loop's group runs at its loop rate divided by `max(1, floor(loop rate / state_rate_hz))`, so it is never slower than this and spends no more of the link than needed |
 | `stale_timeout_ms` | `auto` | `read()` returns `ERROR` when a group's newest sample is older than this. `auto`: ten group periods, at least 100 ms; `0` turns the check off |
 | `timeout_ms` | `3000` | Each agent and device request while configuring and activating |
 
@@ -103,24 +103,33 @@ published with `imu_sensor_broadcaster`.
   `client_kind` Ros, so the GUI shows "ROS is driving"), loads the device
   model and resolves every label and signal. Safe mode, a pending reboot, an
   invalid layout, a missing or failed instance, a missing signal or one of the
-  wrong kind or type fails with a message naming the joint, the interface and
-  what was found.
+  wrong kind or type, or a state interface whose `data_type` is not `double`,
+  fails with a message naming the joint, the interface and what was found.
 - **activate**: refuses while another client holds the lease (unless
-  `take_lease` is `preempt`), takes the lease, and sets up one subscription
-  group per loop that holds a mapped signal; it waits for the first sample of
-  each. State-only use never arms.
+  `take_lease` is `preempt`; the component stays inactive), takes the lease,
+  and sets up one subscription group per loop that holds a mapped signal; it
+  waits for the first sample of each. State-only use never arms. A device
+  reboot since configure, or any failure after the Take, disconnects and
+  returns `ERROR` (the component ends unconfigured): closing the connection is
+  the only certain end of a lease. The holder check and the Take are two
+  requests, so a GUI Take landing between them is preempted; the plugin then
+  sees its lease end and fails the activation.
 - **read()** (real time: `noexcept`, no allocation, blocking lock or device call)
   copies the newest sample of each group into the state interfaces. It returns
   `ERROR` when the lease is lost (another client took it), the agent reports
   the device offline or shuts down, the connection drops, the device reboots,
-  or a group's newest sample is older than `stale_timeout_ms` (by the
-  sample's device time mapped through the agent's clock model). ros2_control
-  then calls `on_error`, which logs the reason, clears the groups, releases the
-  lease and disconnects: the component is unconfigured, and nothing comes back
-  by itself. Configure and activate it again
-  (`ros2 control set_hardware_component_state drivelink active`) once the
-  cause is fixed; H4c adds the diagnostics node's `recover`.
-- **deactivate**: clears the groups and releases the lease.
+  agent events were dropped (the lease state is then unknown), or a group's
+  newest sample is older than `stale_timeout_ms` (by the sample's device time
+  mapped through the agent's clock model). ros2_control then calls `on_error`,
+  which logs the reason and disconnects without a device call; the agent
+  clears the plugin's groups and ends its lease. The component is
+  unconfigured, and nothing comes back by itself. Configure and activate it
+  again (`ros2 control set_hardware_component_state drivelink active`) once
+  the cause is fixed; H4c adds the diagnostics node's `recover`. While the
+  component is inactive, `read()` returns `OK` and a fault seen then makes the
+  next activate fail.
+- **deactivate**: clears the groups and releases the lease; if the release is
+  not confirmed it disconnects and returns `ERROR`.
 
 ## Tests
 

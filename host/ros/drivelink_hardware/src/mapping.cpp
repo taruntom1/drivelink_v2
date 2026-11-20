@@ -268,8 +268,8 @@ ConnectionConfig parseConnection(const Params &hardware_params)
         else if (name == "state_rate_hz")
         {
             const auto number = parseNumber(value);
-            if (!number || !(*number > 0) || *number > 10000)
-                failParam(name, value, "expected a number in (0, 10000]");
+            if (!number || *number < 1 || *number > 10000)
+                failParam(name, value, "expected a number in [1, 10000]");
             config.state_rate_hz = *number;
         }
         else if (name == "stale_timeout_ms")
@@ -374,8 +374,8 @@ double toDouble(drivelink::ValueType type, uint32_t bits) noexcept
 Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<ComponentSpec> &components,
                  const ConnectionConfig &config)
 {
-    if (!(config.state_rate_hz > 0) || config.state_rate_hz > 10000 || !std::isfinite(config.state_rate_hz))
-        throw MappingError("state_rate_hz " + std::to_string(config.state_rate_hz) + " is invalid: expected (0, 10000]");
+    if (!(config.state_rate_hz >= 1) || config.state_rate_hz > 10000 || !std::isfinite(config.state_rate_hz))
+        throw MappingError("state_rate_hz " + std::to_string(config.state_rate_hz) + " is invalid: expected [1, 10000]");
 
     Resolved resolved;
     std::set<std::string> component_names;

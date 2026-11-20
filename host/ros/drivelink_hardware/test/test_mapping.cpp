@@ -253,8 +253,8 @@ TEST(ParseConnection, StateRateRange)
 {
     EXPECT_EQ(parseOk({{"device", "r"}, {"state_rate_hz", "100"}}).state_rate_hz, 100);
     EXPECT_EQ(parseOk({{"device", "r"}, {"state_rate_hz", "10000"}}).state_rate_hz, 10000);
-    EXPECT_EQ(parseOk({{"device", "r"}, {"state_rate_hz", "0.5"}}).state_rate_hz, 0.5);
-    for (const char *bad : {"0", "-1", "10000.5", "100hz", "", "nan", "inf", "-inf", "1e400", " 100", "100 ", "abc", "1,5"})
+    EXPECT_EQ(parseOk({{"device", "r"}, {"state_rate_hz", "1"}}).state_rate_hz, 1);
+    for (const char *bad : {"0", "0.5", "-1", "10000.5", "100hz", "", "nan", "inf", "-inf", "1e400", " 100", "100 ", "abc", "1,5"})
         expectRefused([&] { parseOk({{"device", "r"}, {"state_rate_hz", bad}}); }, {"state_rate_hz", bad});
 }
 
@@ -888,7 +888,7 @@ TEST(Resolve, DividerMath)
     };
     const Case cases[] = {
         {1000, 100, 10, 100},   {100, 100, 1, 100},   {30, 100, 1, 30},      {1000, 30, 33, 1000.0 / 33},
-        {1000, 10000, 1, 1000}, {1000, 1, 1000, 1},   {100, 0.5, 200, 0.5},  {1000, 400, 2, 500},
+        {1000, 10000, 1, 1000}, {1000, 1, 1000, 1},   {200, 1.5, 133, 200.0 / 133}, {1000, 400, 2, 500},
     };
     for (const auto &c : cases)
     {

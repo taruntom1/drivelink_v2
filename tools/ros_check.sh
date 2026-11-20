@@ -64,7 +64,7 @@ case "$phase" in
                 --cmake-args -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
         else
             # shellcheck disable=SC2086
-            colcon --log-base "$out/log" test $common --event-handlers console_direct+ \
+            colcon --log-base "$out/log" test $common --event-handlers console_direct+ --return-code-on-test-failure \
                 --ctest-args --output-on-failure
             colcon --log-base "$out/log" test-result --test-result-base "$out/build" --verbose
         fi

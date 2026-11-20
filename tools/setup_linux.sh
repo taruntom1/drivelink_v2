@@ -85,13 +85,14 @@ export DEBIAN_FRONTEND=noninteractive
 # The ROS 2 apt repository (https://docs.ros.org), unless a source already names it.
 ros_key=/usr/share/keyrings/ros-archive-keyring.gpg
 ros_fingerprint=C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
-if [ "$profile" = ros ] && ! grep -rqs 'packages.ros.org/ros2' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+if [ "$profile" = ros ] && ! grep -rqsE '^[^#]*packages\.ros\.org/ros2' /etc/apt/sources.list /etc/apt/sources.list.d/; then
     apt-get update
     apt-get install -y --no-install-recommends curl ca-certificates gnupg
     tmp=$(mktemp)
     curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o "$tmp"
-    # Refuse a key other than the ROS archive key.
-    if ! gpg --show-keys --with-colons "$tmp" | grep -q "^fpr:::::::::$ros_fingerprint:"; then
+    # Refuse anything but exactly the ROS archive key (one primary key, its fingerprint).
+    primaries=$(gpg --show-keys --with-colons "$tmp" | awk -F: '$1 == "pub" { want = 1; next } want && $1 == "fpr" { print $10; want = 0 }')
+    if [ "$primaries" != "$ros_fingerprint" ]; then
         rm -f "$tmp"
         echo "setup_linux.sh: the downloaded ROS key is not $ros_fingerprint" >&2
         exit 1

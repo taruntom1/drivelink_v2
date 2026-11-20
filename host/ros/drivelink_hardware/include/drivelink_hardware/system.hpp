@@ -35,8 +35,9 @@ class DriveLinkSystem : public hardware_interface::SystemInterface
     hardware_interface::return_type read(const rclcpp::Time &time, const rclcpp::Duration &period) noexcept override;
     hardware_interface::return_type write(const rclcpp::Time &time, const rclcpp::Duration &period) override;
 
+    struct Impl; // opaque: the connection, mapping and read() state (system.cpp)
+
   private:
-    struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
 } // namespace drivelink_hardware

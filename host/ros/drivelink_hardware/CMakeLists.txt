@@ -30,6 +30,9 @@ target_link_libraries(drivelink_hardware PRIVATE drivelink_hardware_mapping)
 target_link_libraries(drivelink_hardware PUBLIC
   hardware_interface::hardware_interface pluginlib::pluginlib rclcpp::rclcpp rclcpp_lifecycle::rclcpp_lifecycle)
 target_compile_options(drivelink_hardware PRIVATE ${warnings})
+# The statically linked libdrivelink and Asio stay private to the plugin; only
+# its own (pluginlib) symbols are exported into the controller_manager.
+target_link_options(drivelink_hardware PRIVATE -Wl,--exclude-libs,ALL)
 pluginlib_export_plugin_description_file(hardware_interface drivelink_hardware.xml)
 
 install(TARGETS drivelink_hardware LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)

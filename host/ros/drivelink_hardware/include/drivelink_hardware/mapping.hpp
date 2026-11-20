@@ -42,7 +42,7 @@ struct ConnectionConfig
     std::string token_file = "/etc/drivelink/token"; // `token_file`
     std::string device;                          // `device`: alias or 12-hex device id; required
     TakeLease take_lease = TakeLease::Refuse;    // `take_lease`: "refuse" (default) or "preempt"
-    double state_rate_hz = 100;                  // `state_rate_hz`: (0, 10000]; the rate the plugin reads at
+    double state_rate_hz = 100;                  // `state_rate_hz`: [1, 10000]; the rate the plugin reads at
     // `stale_timeout_ms`: "auto" (default, nullopt), "0" (off) or a positive
     // number of milliseconds (at most 60000).
     std::optional<double> stale_timeout_ms;

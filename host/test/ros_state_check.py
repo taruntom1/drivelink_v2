@@ -16,7 +16,7 @@ Checks, in order (each printed as PASS/FAIL with the numbers):
                position by +2*pi within 15 %; held still, |velocity| < 0.05 rad/s
   4 IMU tilt   (real) nose up by about 30 deg: pitch changes by 20..40 deg with
                the sign REP 103 expects (nose up is negative pitch about +Y)
-  5 lease      the controller_manager reports the "drivelink" hardware
+  5 active     the controller_manager reports the "drivelink" hardware
                component active, i.e. the plugin configured, took the lease
                and subscribed its groups
 
@@ -474,16 +474,16 @@ def check_lease(args, probe):
     try:
         components = probe.hardware_components()
     except Fail as e:
-        return report('5 lease/active', 'FAIL', str(e))
+        return report('5 component active', 'FAIL', str(e))
     found = [c for c in components if c.name == HW_NAME]
     if not found:
-        return report('5 lease/active', 'FAIL', f'no hardware component "{HW_NAME}" (have {[c.name for c in components]})')
+        return report('5 component active', 'FAIL', f'no hardware component "{HW_NAME}" (have {[c.name for c in components]})')
     c = found[0]
     state = c.state.label
     states = [i.name for i in c.state_interfaces]
     want = 2 * len(args.joint) + (len(IMU_INTERFACES) if args.imu else 0)
     ok = state == 'active' and len(states) == want
-    return report('5 lease/active', 'PASS' if ok else 'FAIL',
+    return report('5 component active', 'PASS' if ok else 'FAIL',
                   f'component "{c.name}" ({c.plugin_name}) is {state} (need active), {len(states)} state interfaces '
                   f'(need {want}); active means the agent lease is held and the groups stream',
                   state=state, plugin=c.plugin_name, state_interfaces=states)

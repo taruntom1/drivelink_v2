@@ -467,7 +467,7 @@ struct Harness::Impl
 
 Harness::Harness() : m_impl(std::make_unique<Impl>()) {}
 
-std::unique_ptr<Harness> Harness::start()
+std::unique_ptr<Harness> Harness::start(bool pty)
 {
     std::unique_ptr<Harness> h(new Harness());
     auto &m = *h->m_impl;
@@ -479,9 +479,12 @@ std::unique_ptr<Harness> Harness::start()
     m.dir = pattern;
     fs::create_directories(m.dir / "state");
 
-    m.vdev = std::make_unique<Child>("vdev", std::vector<std::string>{m.vdev_program, "--port", "0", "--state",
-                                                                     (m.dir / "state").string(), "--scenario-file",
-                                                                     (m.dir / "scenario").string()});
+    std::vector<std::string> vdev_args{m.vdev_program};
+    if (pty) { vdev_args.push_back("--pty"); }
+    else { vdev_args.insert(vdev_args.end(), {"--port", "0"}); }
+    vdev_args.insert(vdev_args.end(), {"--state", (m.dir / "state").string(), "--scenario-file",
+                                       (m.dir / "scenario").string()});
+    m.vdev = std::make_unique<Child>("vdev", vdev_args);
     m.vdev_endpoint = m.vdev->waitLine("READY ", 20s).substr(6);
     m.layout();
 
@@ -540,8 +543,7 @@ void Harness::vdevScenario(unsigned sequence, const std::string &action)
     const fs::path temp = m_impl->dir / "scenario.tmp";
     {
         std::ofstream out(temp);
-        out << sequence << ' ' << action << '
-';
+        out << sequence << ' ' << action << '\n';
         if (!out) { m_impl->fail("vdev scenario", "cannot write " + temp.string()); }
     }
     fs::rename(temp, file);
