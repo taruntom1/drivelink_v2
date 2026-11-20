@@ -68,7 +68,7 @@ then the agent and the GUI's remote mode, then ROS.
 | Async | Callbacks on a dispatcher the caller supplies (contract under "Session"). No Qt or Asio in public headers; the agent may use coroutines internally. Decided 2026-11-14. |
 | Generic host | The host has no module-specific code. It reads the descriptors (items and diag codes) from the device at every connect and builds its models from them. The descriptor hash in `GET_INFO` tells it when the definitions changed; a disk cache keyed by the hash is deferred until connecting gets slow. It uses the generated headers from `protocol/` only for core and system ids. |
 | Device identity | A read-only device id (the factory MAC) and a user-set name in `GET_INFO`, set with a new system op `SET_NAME` (core v9, H1c). The name applies live, sets `nvs_dirty`, is persisted by SAVE and restored by REVERT, and may be set while armed. The host keys recent devices and session files on the id. Decided 2026-11-14; proposal in [todo-device-name.md](archive/todo-device-name.md). |
-| Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the ports. The ROS plugin and the remote GUI are its clients. |
+| Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the ports. The ROS plugin and the remote GUI are its clients; the plugin has no direct serial mode (user decision 2026-11-21). |
 | Devices per agent | One agent serves several ESPs, one serial port each, every one with its own session, I/O, lease, groups, clock model and history, so one failing port doesn't affect the others. A client opens one TCP connection per device and names it in the hello by its config alias (for example `base`, `arm`) or its device id; after the hello the connection carries that device's frames unchanged. The lease is per device. Decided 2026-11-14. |
 | Port ownership on the bench | The GUI opens the serial port itself through `libdrivelink`. No agent is needed on Windows. |
 | Agent API | The device protocol over TCP, plus a few agent-only messages. Clients use the same frames as over serial. gRPC is out because of MinGW, and Zenoh would add a Rust toolchain. |
@@ -240,33 +240,33 @@ commands) in H3a. Python bindings are not planned.
 
 ### `drivelink_hardware` (ROS 2)
 
-- A ros2_control `SystemInterface`.
+- A ros2_control `SystemInterface` for ROS 2 Lyrical (Ubuntu 26.04) and Jazzy (Ubuntu 24.04), using only the ros2_control API both share. Built with colcon from source, and shipped as bloom `.deb` files in the apt repository (H4d). Re-planned with the user 2026-11-21 (H4a to H4d in [host-steps.md](host-steps.md)).
 - **Parameters:**
-  - how to connect: the agent address, token and device (alias or device id), or a serial port for running without the agent. One hardware component per device; a robot with two ESPs has two components.
-  - for each joint: the label of its controller instance, and which interfaces map to which signals and inputs (by item name, for example `position` → `position`, `velocity` → `velocity`, command `velocity` → `velocity_sp`)
-  - for each sensor: the label of its instance and its signal names (for the IMU, the quaternion, gyro and linear acceleration signals)
+  - how to connect, always through the agent: `agent` (default `tcp://127.0.0.1:47620`), `token_file` (default `/etc/drivelink/token`, readable by the `drivelink` group) or an inline `token` for tests, and `device` (alias or device id). The plugin never opens a serial port. Its Hello sends `client_kind` Ros. One hardware component per device; a robot with two ESPs has two components.
+  - `take_lease`: by default `on_activate` fails, naming the holder, when another client holds the lease; `preempt` takes it anyway (LeaseTake always preempts on the wire).
+  - for each joint: the label of its controller instance. Interfaces map by convention: state `position` → `position`, `velocity` → `velocity`, `duty` → `duty`; command `position` → `position_sp`, `velocity` → `velocity_sp`, `duty` → `duty_sp`. `duty` is a custom interface (open loop, not effort). A parameter per interface overrides the item name, so another controller type needs no code.
+  - for each sensor: the label of its instance. The IMU follows the ROS convention by default: orientation ← `quaternion.*`, angular velocity ← `gyro.*`, linear acceleration ← `accel.*` (gravity included, as `sensor_msgs/Imu` expects), overridable the same way.
 - **`on_configure`:**
   1. Connect and load the device model. Safe mode or a pending reboot is a clear error.
   2. Resolve every label and item name to a `Ref`. Anything missing, wrongly typed or failed is a clear error.
 - **`on_activate`:**
-  1. Take the lease.
+  1. Check the device record's lease holder (see `take_lease`), then take the lease.
   2. Configure one subscription group per loop that holds a mapped signal, and one command group.
   3. Stay disarmed. The command group sends keepalive frames.
 - **`prepare_command_mode_switch` / `perform_command_mode_switch`:**
   1. Set each controller's `mode` param to match the newly claimed command interfaces. The firmware switches modes bumplessly, so this works while armed.
   2. Set command values to hold (current position, zero velocity, zero duty) and send a fresh value frame after the mode write completes. The controller ignores old queued/inactive setpoints; keepalives do not satisfy the new mode's fresh-command requirement.
-  3. When the first command interface is claimed, `ARM`. When the last one is released, `DISARM`.
+  3. When the first command interface is claimed, `ARM`. When the last one is released, `DISARM`. State-only use (broadcasters) never arms. One command interface per joint at a time; joints may be in different modes.
 - **`on_deactivate`:** `DISARM`, then release the lease.
 - **`read()`** (`noexcept`): copies the latest group values out of the seqlock buffers, with timestamps mapped to ROS time through the agent's clock model.
 - **`write()`** (`noexcept`): queues one command group frame and never blocks.
   - A NaN command value (the ros2_control default before a controller writes) is sent as hold: the last measured position, or zero velocity or duty. The firmware rejects non-finite frames, and a rejected frame doesn't feed the watchdog.
-- **Status and faults:** diag events and the status stream are published on `/diagnostics` through a small node in `drivelink_bringup`, which also offers a fault-acknowledge service.
-- **Losing the device while active.** A disarm (watchdog, fault, a loop stall, or the GUI taking the lease) makes `read()` return `ERROR`. ros2_control then deactivates the component. Recovery is documented and done by an operator or a supervisor node:
-  1. acknowledge any fault (from the GUI, or the diagnostics node's service)
-  2. hand the lease back
-  3. reactivate the component with `ros2 control set_hardware_component_state`
+- **Status and faults:** a diagnostics node in `drivelink_bringup` holds its own agent connection as an observer (no lease, `client_kind` Ros), so it keeps working while the component is inactive or in `ERROR`. It publishes `/diagnostics` from the status stream, diag events, the lease holder and the online state, and offers the services `ack_fault` and `recover`.
+- **Losing the device while active.** A disarm (watchdog, fault, a loop stall, or the GUI taking the lease), a lost lease or the device going offline makes `read()` return `ERROR`. ros2_control then deactivates the component. Nothing re-arms on its own. Recovery is an explicit act by an operator or a supervisor node:
+  1. hand the lease back (the GUI releases it)
+  2. call the diagnostics node's `recover`: it acknowledges any fault, reactivates the component through controller_manager and then its controllers, whose claims ARM again
 
-  ros2_control does not reactivate a component on its own.
+  The documented manual equivalent is `ack_fault` (or the GUI) and `ros2 control set_hardware_component_state`, then the controllers.
 - **IMU:** exposed as sensor state interfaces, published with `imu_sensor_broadcaster`. `imu.bno055` runs in a non-real-time loop, so its group is separate from the motor loop's.
 - **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets, for an example two-wheel diff-drive robot with an IMU that runs against vdev mocks. The real robot's config is added when it is on the bench.
 
@@ -329,7 +329,7 @@ drivelink_v2/
 │  │  ├─ modules/<type>/      optional custom panels (H2f: imu.bno055)
 │  │  └─ installer/           H2g: Inno Setup script
 │  ├─ agent/                  H3a (COLCON_IGNORE); deploy/ unit, udev rules, config, package scripts (H3c)
-│  └─ ros/                    H4a/H4b
+│  └─ ros/                    H4a to H4c (colcon); H4d .debs
 │     ├─ drivelink_hardware/
 │     └─ drivelink_bringup/
 ├─ docs/
@@ -371,8 +371,8 @@ Decided 2026-11-14. Sessions run in the Claude desktop app on Windows; only buil
 
 - **Windows** (native): ESP-IDF, the firmware native tests, the host with Qt's MinGW (`host-win`), the GUI, flashing and the serial ports.
 - **WSL** (the `Ubuntu-26.04` distro): `host-linux`, and later the `agent` and `ros` checks. `tools/validate.py` runs them there from the Windows session, as it does `host-linux` today, with build directories under `~/.cache/drivelink/<worktree>/` in the distro.
-- **`tools/setup_linux.sh`** is the one list of Linux packages. It skips anything already installed (apt packages, then from H4a ROS Lyrical, ros2_control and rosdep). The WSL distro runs it once (by hand, or an agent with sudo approved). CI's host-linux and agent jobs run it in `ubuntu:26.04`, where ROS isn't needed; the ros job runs it in the `ros:lyrical` image, where it only adds the extra packages. `ci.yml` holds no package list. It lands in H2a, the first step that needs new Linux packages (Qt 6 for the GUI's Linux build).
-- **validate.py checks** for the new areas (`agent` in H3a, `ros` in H4a) are built like `host-linux`: each first checks for missing tools and stops with one line naming the exact fix, keeps its output short with full logs in `build/validate/`, reports in `build/validate/summary.json` like every check (PR #66), and is skipped when unchanged.
+- **`tools/setup_linux.sh`** is the one list of Linux packages. It skips anything already installed (apt packages, then from H4a a `ros` profile: ROS Lyrical on 26.04 or Jazzy on 24.04, ros2_control, ros2_controllers, colcon and rosdep). The WSL distro runs it once (by hand, or an agent with sudo approved). CI's host-linux and agent jobs run it in `ubuntu:26.04`, where ROS isn't needed; the ros jobs run it in the `ros:lyrical` and `ros:jazzy` images, where it only adds the extra packages. `ci.yml` holds no package list. It lands in H2a, the first step that needs new Linux packages (Qt 6 for the GUI's Linux build).
+- **validate.py checks** for the new areas (`agent` in H3a; `ros` in WSL and `ros-jazzy` in the `ros:jazzy` image through Docker Desktop in H4a, the latter skipped with its fix when Docker is stopped) are built like `host-linux`: each first checks for missing tools and stops with one line naming the exact fix, keeps its output short with full logs in `build/validate/`, reports in `build/validate/summary.json` like every check (PR #66), and is skipped when unchanged.
 - **`tools/wsl_serial.py attach|detach|status`** (with `--dry-run`, H3b) hands the CH343 to WSL through usbipd for agent hardware tests, and always gives it back to Windows afterwards. The one-time `usbipd bind` is done by hand in an admin shell.
 - **No devcontainer for now.** Revisit if cloud sessions should build the Linux side.
 - Later speed-ups, if CI time matters: run the ros job only when `host/ros/`, `host/libdrivelink/` or `protocol/` change, or build a CI image from the setup script.
@@ -392,7 +392,8 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 | host-linux | `ubuntu:26.04` + `setup_linux.sh` | superbuild, libdrivelink/CLI tests, vdev integration, installed-package smoke; GUI build and tests against Qt 6.10 from H2a | exists |
 | host-windows | Windows, Qt 6.12.0 `win64_mingw` + MinGW 13.1 via aqtinstall | superbuild, tests, the C++23/GCC 13.1 floor; GUI and Quick Tests from H2a; the Inno Setup installer as an artifact from H2g | exists (H1a-2) |
 | agent | `ubuntu:26.04` + `setup_linux.sh` | agent ↔ vdev integration tests | H3a |
-| ros | `ros:lyrical` + `setup_linux.sh` | `colcon build` + `colcon test`, including a launch test against vdev and the agent | H4a |
+| ros | `ros:lyrical` and `ros:jazzy` + `setup_linux.sh` | `colcon build` + `colcon test`, including the full-loop launch test against vdev and the agent (H4c) | H4a |
+| ros deb | the ROS images, amd64 and arm64 | bloom `.deb` files for both distributions, installed in clean containers with the launch test; tags publish them to the apt repository | H4d |
 | deb | `ubuntu:26.04` and `ubuntu:24.04` on `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64) | `drivelink-cli` and `drivelink-agent` for both releases and architectures, the GUI's `drivelink` for 26.04 on both; installed, upgraded, removed and purged in a clean container | H3c (jobs `linux-package`, `linux-install`) |
 | apt repo | `ubuntu:26.04` (`apt-repo`), the `deb` matrix (`apt-install`); `apt-publish` tags only | every run: the repository built with a throwaway key, checked by apt and installed from in clean containers; a tag: the release's packages signed with the real key (environment `apt-repo`) into one suite per Ubuntu release on `gh-pages` | H3d (jobs `apt-repo`, `apt-install`, `apt-publish`) |
 
@@ -407,7 +408,7 @@ The steps, their dependencies and briefs are in [host-steps.md](host-steps.md); 
 | Library | H1a typed API and device model; H1b async path, events, group buffers, time mapping; H1c device identity (core v9). |
 | GUI, local | H2a-1 build and style, H2a-2 shell and backend; H2b Connect and Device; H2c Layout; H2d Monitor; H2e Tune; H2f IMU calibration panel; H2g installer and close-out. |
 | Agent and remote | H3a agent; H3b GUI remote mode; H3c agent packages and Pi deployment; H3d signed apt repository. |
-| ROS | H4a `drivelink_hardware`; H4b `drivelink_bringup`. |
+| ROS | H4a toolchain and the `drivelink_hardware` state path; H4b the command path; H4c `drivelink_bringup` and diagnostics; H4d ROS `.deb` packages. |
 | Finish | H6 cleanup and the merge into `main`. |
 | Hardware | HW, whenever hardware arrives. |
 
