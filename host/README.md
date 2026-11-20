@@ -63,23 +63,32 @@ version is the root `VERSION` (with `+g<commit>` on a build that isn't the
 
 ## Using the GUI on Linux
 
-On Ubuntu 26.04 (amd64), install `drivelink_<version>_amd64.deb`, the
-`drivelink-linux-deb` artifact of the host-linux-package CI job (or
-`build/deb/` after `python3 tools/package_linux.py`):
+The Linux programs ship as three `.deb` packages (H3c), each versioned
+`<VERSION>~ubuntu<release>` and built for amd64 and arm64:
+
+| Package | Holds | Ubuntu |
+|---|---|---|
+| `drivelink-cli` | `drivelink-cli`, `drivelink-vdev` (no Qt) | 26.04, 24.04 |
+| `drivelink` | `drivelink-gui` and its desktop entry; Depends `drivelink-cli` at the same version | 26.04 only (24.04's Qt 6.4 is below the 6.10 floor) |
+| `drivelink-agent` | the agent as a service ([agent/README.md](agent/README.md), "Install") | 26.04, 24.04 |
+
+Get them from a release, from the `drivelink-debs-<release>-<arch>` artifact
+of CI's linux-package job, or from `build/deb/` after
+`python3 tools/package_linux.py`. Install the GUI with its CLI:
 
 ```bash
-sudo apt install ./drivelink_<version>_amd64.deb
+sudo apt install ./drivelink_<version>_amd64.deb ./drivelink-cli_<version>_amd64.deb
 ```
 
-apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. It
-installs `drivelink-gui`, `drivelink-cli` and `drivelink-vdev` in `/usr/bin`
-and a **DriveLink** application entry; the licence and third-party notices are
-in `/usr/share/drivelink/`. Remove it with `sudo apt remove drivelink`.
+apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. The
+packages install their programs in `/usr/bin`, a **DriveLink** application
+entry, and the licence and third-party notices in `/usr/share/<package>/`.
+H2g's single `drivelink` package (GUI, CLI and vdev) upgrades to the pair in
+place. Remove them with `sudo apt remove drivelink drivelink-cli`.
 The GUI works as on Windows (above). Serial ports need your user in the
 `dialout` group (`sudo usermod -aG dialout $USER`, then log in again). The GUI
-keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. The package is
-built for the Ubuntu release CI builds on (26.04); other releases need a build
-from source ("Build" below).
+keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. Other releases
+need a build from source ("Build" below).
 
 ## Device identity (H1c)
 

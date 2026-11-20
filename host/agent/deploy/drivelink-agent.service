@@ -1,0 +1,55 @@
+# drivelink-agent: shares DriveLink devices (ESP32-S3 motion controllers) over TCP.
+# Installed by the drivelink-agent package; edit /etc/drivelink/agent.json,
+# then `systemctl restart drivelink-agent`. Stopping it DISARMs every device.
+[Unit]
+Description=DriveLink agent (shares DriveLink devices over TCP)
+Documentation=https://github.com/taruntom1/drivelink_v2/blob/main/host/agent/README.md
+After=network.target
+
+[Service]
+Type=simple
+User=drivelink
+Group=drivelink
+SupplementaryGroups=dialout
+ExecStart=/usr/bin/drivelink-agent --config /etc/drivelink/agent.json
+# SIGTERM closes every client and DISARMs every online device (a request each,
+# 3 s timeout, up to 8 devices) before the agent exits.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=2
+# Exit 2 is a config error: retrying cannot fix it (journalctl -u drivelink-agent).
+RestartPreventExitStatus=2
+
+# Hardening. The agent reads its config and token, opens serial ports
+# (dialout), listens on TCP and, on a LAN bind, mDNS (UDP 5353, netlink for
+# the interface list). Serial device numbers vary, so /dev is not restricted.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# A refused call fails with EPERM instead of killing the agent.
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

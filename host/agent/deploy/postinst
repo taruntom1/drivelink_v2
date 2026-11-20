@@ -1,0 +1,80 @@
+#!/bin/sh
+# drivelink-agent postinst: the drivelink user, the token, udev, the service.
+#
+# Safety rule (user decision 2026-11-20): an upgrade never stops or restarts
+# the running agent, because stopping it DISARMs every device and an
+# `apt upgrade` must not stop a moving robot. The old process keeps serving
+# until the user restarts it. Only a first install (or a reinstall after
+# remove, which stopped it) enables and starts the service.
+set -e
+
+CONF=/etc/drivelink
+STATE=/var/lib/drivelink-agent
+UNIT=drivelink-agent.service
+VERSION='@VERSION@'
+
+systemd_running() { [ -d /run/systemd/system ]; }
+
+case "$1" in
+configure|abort-remove)
+    if ! getent passwd drivelink >/dev/null; then
+        useradd --system --user-group --home-dir /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin --comment 'DriveLink agent' drivelink
+    fi
+    if getent group dialout >/dev/null; then
+        usermod -a -G dialout drivelink
+    fi
+
+    # The token: made once, kept across upgrades and remove, deleted by purge.
+    if [ ! -e "$CONF/token" ]; then
+        old_umask=$(umask)
+        umask 077
+        od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > "$CONF/token.new"
+        printf '\n' >> "$CONF/token.new"
+        umask "$old_umask"
+        chown root:drivelink "$CONF/token.new"
+        chmod 0640 "$CONF/token.new"
+        mv "$CONF/token.new" "$CONF/token"
+    fi
+
+    # New udev rules name boards that are already plugged in.
+    if [ -d /run/udev ] && command -v udevadm >/dev/null; then
+        udevadm control --reload-rules || true
+        udevadm trigger --subsystem-match=tty --action=change || true
+    fi
+
+    # First install: no previous version. Reinstall after remove: the marker
+    # prerm left. Anything else is an upgrade.
+    first=no
+    if [ -z "$2" ] || [ -e "$STATE/removed" ]; then
+        first=yes
+    fi
+    rm -f "$STATE/removed"
+    rmdir "$STATE" 2>/dev/null || true
+
+    if systemd_running; then
+        systemctl daemon-reload || true
+    fi
+    if [ "$first" = yes ]; then
+        if command -v systemctl >/dev/null; then
+            systemctl enable "$UNIT" >/dev/null 2>&1 || true
+        fi
+        if systemd_running; then
+            systemctl start "$UNIT" || echo "drivelink-agent: the service did not start; see: journalctl -u drivelink-agent" >&2
+        fi
+        echo "drivelink-agent: listening on 127.0.0.1:47620 with no devices; the token is in $CONF/token."
+        echo "drivelink-agent: add devices to $CONF/agent.json (drivelink-agent --list-ports prints the lines), then: sudo systemctl restart drivelink-agent"
+    elif systemd_running && systemctl is-active --quiet "$UNIT"; then
+        echo "drivelink-agent: upgraded to $VERSION. The running agent was NOT restarted: a restart DISARMs every device."
+        echo "drivelink-agent: when the robot is safe to stop, run: sudo systemctl restart drivelink-agent"
+    fi
+    ;;
+abort-upgrade|abort-deconfigure)
+    ;;
+*)
+    echo "postinst called with unknown argument '$1'" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

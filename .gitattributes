@@ -1,2 +1,4 @@
 # Shell scripts run inside WSL from the Windows checkout; CRLF breaks them.
 *.sh text eol=lf
+# The agent package's maintainer scripts, unit and rules run on Linux.
+host/agent/deploy/* text eol=lf

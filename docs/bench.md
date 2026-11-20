@@ -42,6 +42,27 @@ give the adapter back before flashing or a direct check. The GUI's PC check
 writes nothing to the board. Over serial the agent keeps the port across a
 REBOOT, so its Boot path runs here (a TCP vdev looks like device loss).
 
+### The agent package in WSL (H3c)
+
+The Ubuntu-26.04 distro runs systemd, so the packaged agent runs there as a
+service. `host/test/deploy_check.py` installs the `build/deb/` packages (after
+the `deb` check). It adds the board through the udev name and
+`drivelink-agent --list-ports`, checks that an upgrade leaves the service's
+MainPID alone, then removes and purges. It needs root, given with
+`wsl -u root`; the user approved that for this check on 2026-11-20. Run it
+through `wsl_serial.py run`, which attaches the CH343 for the run and always
+gives it back:
+
+```
+python tools/wsl_serial.py run -- wsl.exe -d Ubuntu-26.04 -u root --cd <repo> --exec python3 host/test/deploy_check.py --debs build/deb --phase all
+```
+
+`--endpoint vdev` is the same run without the board (the installed vdev as
+the device). The CH343 shows up as `/dev/drivelink/<USB serial>` and also as
+`/dev/ttyACM0`. It only reads (`info`, `status`); the agent DISARMs the board
+when it opens it and when it stops. The check needs a distro without
+`drivelink-agent` installed and leaves none behind.
+
 ### Finding the agent (mDNS)
 
 An agent bound to a LAN address advertises itself (`_drivelink._tcp`); one

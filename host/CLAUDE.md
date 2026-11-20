@@ -199,9 +199,15 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   bundles (a dependency, Qt module or plugin) needs a `gui/notices/notices.json`
   entry and its licence text; regenerate with `gen_notices.py --write`.
   Staging refuses an unlisted DLL. The installer's AppId never changes. Release
-  installers come from CI's open-source Qt. The Linux `.deb` bundles no shared
-  library (Qt comes from Ubuntu's packages); a new `import Qt…` in the GUI
-  needs its `qml6-module-*` package in `tools/package_linux.py` Depends.
+  installers come from CI's open-source Qt. The Linux `.deb` packages
+  (`drivelink-cli`, `drivelink-agent`, the GUI's `drivelink`; H3c) bundle no
+  shared library (Qt comes from Ubuntu's packages); a new `import Qt…` in the
+  GUI needs its `qml6-module-*` package in `tools/package_linux.py` Depends.
+  The CLI and agent notices are `host/notices/`, kept equal to the GUI's
+  entries. The agent package's maintainer scripts never stop or restart the
+  service on upgrade (stopping DISARMs every device; user decision
+  2026-11-20): only remove stops it, only a first install or a reinstall
+  after remove starts it.
 - Windows host binaries use Qt's MinGW kit exclusively. Firmware native tests
   use MSYS2 UCRT64 GCC 16.2; keep build dirs and runtime DLLs separate. The root
   `full` gate includes Linux/MinGW unit/integration and installed-package smoke checks; host-linux CI

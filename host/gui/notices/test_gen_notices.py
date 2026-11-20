@@ -116,6 +116,18 @@ class CommittedNoticesTest(unittest.TestCase):
         self.assertEqual(gen_notices.render(gen_notices.HERE / 'notices.json'),
                          (gen_notices.HERE / 'THIRD_PARTY_NOTICES.txt').read_text(encoding='utf-8'))
 
+    def test_cli_and_agent_notices_match_the_gui_entries(self):
+        # host/notices (the drivelink-cli and drivelink-agent packages) repeats
+        # GUI entries; their version, licence and source must not drift.
+        gui = {c['name']: c for c in gen_notices.load_manifest(gen_notices.HERE / 'notices.json')}
+        tools = gen_notices.HERE.parents[1] / 'notices/notices.json'
+        for item in gen_notices.load_manifest(tools):
+            self.assertIn(item['name'], gui)
+            for key in ('version', 'license', 'copyright', 'url'):
+                self.assertEqual(item[key], gui[item['name']][key], f'{item["name"]} {key}')
+            self.assertEqual([Path(f).name for f in item['license_files']],
+                             [Path(f).name for f in gui[item['name']]['license_files']], item['name'])
+
 
 if __name__ == '__main__':
     unittest.main()

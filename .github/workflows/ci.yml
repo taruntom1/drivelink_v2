@@ -107,56 +107,78 @@ jobs:
           name: agent-validation
           path: build/validate/
 
-  host-linux-package:
-    name: Host Linux package (.deb)
-    runs-on: ubuntu-latest
-    container: ubuntu:26.04
+  # H3c: drivelink-cli and drivelink-agent for Ubuntu 26.04 and 24.04, the
+  # GUI's drivelink for 26.04 only (24.04's Qt 6.4 is below the 6.10 floor),
+  # each on its own architecture's runner. 24.04 also holds the GCC 13 floor.
+  linux-package:
+    name: Linux packages (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', arch: amd64, runner: ubuntu-latest, profile: host}
+          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm, profile: host}
+          - {release: '24.04', arch: amd64, runner: ubuntu-latest, profile: agent}
+          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm, profile: agent}
     steps:
       - name: Bootstrap git for the checkout
         run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
-      - name: Install the host packages (compilers, CMake, Ninja, Qt 6.10)
-        run: sh tools/setup_linux.sh host
-      - name: Release build, staged smoke, .deb
+      - name: Install the build packages (Qt 6.10 only where the GUI is built)
+        run: sh tools/setup_linux.sh ${{ matrix.profile }}
+      - name: Release build, staged smoke, .deb packages
         run: |
           # The checkout belongs to another user than the container's; the
           # version (VERSION+g<sha>) needs git.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           python3 tools/validate.py --only deb
-      - name: Upload the .deb
+      - name: Upload the packages
         uses: actions/upload-artifact@v4
         with:
-          name: drivelink-linux-deb
-          path: build/deb/drivelink_*.deb
+          name: drivelink-debs-${{ matrix.release }}-${{ matrix.arch }}
+          path: build/deb/*.deb
           if-no-files-found: error
       - name: Upload validation diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: host-linux-package-validation
+          name: linux-package-validation-${{ matrix.release }}-${{ matrix.arch }}
           path: build/validate/
 
-  host-linux-install:
-    name: Host Linux .deb installed in a clean container
-    needs: host-linux-package
-    runs-on: ubuntu-latest
-    container: ubuntu:26.04
+  linux-install:
+    name: Linux packages installed in a clean container (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    needs: linux-package
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '24.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm}
     steps:
-      # Only git and Python: the package's Depends must bring everything else.
+      # Only git and Python: the packages' Depends must bring everything else.
       - name: Bootstrap git and Python
         run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: drivelink-linux-deb
+          name: drivelink-debs-${{ matrix.release }}-${{ matrix.arch }}
           path: deb
-      - name: apt install, every screen against the installed vdev, apt remove
-        run: python3 host/test/installed_gui_smoke.py --deb deb/drivelink_*.deb --vdev --out build/installed-gui
+      - name: Install, upgrade (the agent is not restarted), remove, reinstall and purge
+        run: python3 host/test/installed_packages_smoke.py --debs deb
+      - name: apt install the GUI, every screen against the installed vdev, apt remove
+        if: matrix.release == '26.04'
+        run: python3 host/test/installed_gui_smoke.py --deb deb/drivelink_*.deb deb/drivelink-cli_*.deb --vdev --out build/installed-gui
       - name: Upload the screenshots
-        if: always()
+        if: always() && matrix.release == '26.04'
         uses: actions/upload-artifact@v4
         with:
-          name: drivelink-linux-installed-screens
+          name: drivelink-installed-screens-${{ matrix.arch }}
           path: build/installed-gui/
           if-no-files-found: ignore
 
@@ -214,8 +236,8 @@ jobs:
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [host-windows-tests, host-windows-package, host-linux-tests, agent, host-linux-package,
-            host-linux-install, firmware, firmware-package, native-tests]
+    needs: [host-windows-tests, host-windows-package, host-linux-tests, agent, linux-package,
+            linux-install, firmware, firmware-package, native-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -234,16 +256,26 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1
           fi
           # A tag build carries the plain version; a +g suffix means it was not.
+          # Every asset goes flat into dist/release, which SHA256SUMS describes.
+          mkdir dist/release
           firmware="drivelink-firmware-$version"
-          installer="dist/drivelink-windows-installer/DriveLink-$version-setup.exe"
-          deb="dist/drivelink-linux-deb/drivelink_${version}_amd64.deb"
-          test -f "$installer" && test -f "$deb"
+          cp "dist/drivelink-windows-installer/DriveLink-$version-setup.exe" dist/release/
           args=$(find dist/drivelink-firmware -name flash_args.json)
           test "$(jq -r .version "$args")" = "$version"
-          (cd "$(dirname "$args")" && zip -r "$GITHUB_WORKSPACE/dist/$firmware.zip" .)
-          (cd dist && sha256sum "$firmware.zip" "${installer#dist/}" "${deb#dist/}") > dist/SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes \
-            "dist/$firmware.zip" "$installer" "$deb" dist/SHA256SUMS
+          (cd "$(dirname "$args")" && zip -r "$GITHUB_WORKSPACE/dist/release/$firmware.zip" .)
+          # The .debs: cli and agent for 26.04 and 24.04, the GUI for 26.04,
+          # each for amd64 and arm64 (release and architecture in the name).
+          find dist -path 'dist/drivelink-debs-*' -name '*.deb' -exec cp {} dist/release/ \;
+          count=$(find dist/release -name '*.deb' | wc -l)
+          if [ "$count" -ne 10 ]; then echo "expected 10 .deb packages, found $count" >&2; exit 1; fi
+          for deb in dist/release/*.deb; do
+            case "$(basename "$deb")" in
+              *_"$version"~ubuntu*_amd64.deb|*_"$version"~ubuntu*_arm64.deb) ;;
+              *) echo "not a tag build: $deb" >&2; exit 1 ;;
+            esac
+          done
+          (cd dist/release && sha256sum -- * > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes dist/release/*
 
   native-tests:
     name: Native unit tests

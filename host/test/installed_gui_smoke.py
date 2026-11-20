@@ -3,11 +3,12 @@
     python host/test/installed_gui_smoke.py --installer build/installer/DriveLink-<v>-setup.exe \
         --endpoint serial://COM3 --out <dir>
     python host/test/installed_gui_smoke.py --installer <setup.exe> --vdev --out <dir>
-    sudo python3 host/test/installed_gui_smoke.py --deb build/deb/drivelink_<v>_amd64.deb --vdev --out <dir>
+    sudo python3 host/test/installed_gui_smoke.py --deb build/deb/drivelink_<v>_amd64.deb         build/deb/drivelink-cli_<v>_amd64.deb --vdev --out <dir>
 
 Windows: installs per user into a temporary directory (silent). Linux (--deb,
-as root, e.g. in a clean ubuntu:26.04 container): apt installs the package with
-its Depends and removes it at the end. It records the device's
+as root, e.g. in a clean ubuntu:26.04 container): apt installs the GUI's
+`drivelink` and `drivelink-cli` (H3c's split) with their Depends and removes
+them at the end. It records the device's
 layout and loop rates, adds a mock layout (actuator, feedback and a controller
 in the control loop, imu.mock in the sensor loop), saves and reboots, then
 renders each screen with the installed drivelink-gui (on Windows with Qt and
@@ -74,8 +75,9 @@ WINDOWS = sys.platform == 'win32'
 EXE = '.exe' if WINDOWS else ''
 DEB_FILES = ['/usr/bin/drivelink-gui', '/usr/bin/drivelink-cli', '/usr/bin/drivelink-vdev',
              '/usr/share/doc/drivelink/copyright', '/usr/share/drivelink/THIRD_PARTY_NOTICES.txt',
-             '/usr/share/drivelink/LICENSE.txt',
-             '/usr/share/applications/drivelink.desktop']
+             '/usr/share/drivelink/LICENSE.txt', '/usr/share/applications/drivelink.desktop',
+             '/usr/share/doc/drivelink-cli/copyright', '/usr/share/drivelink-cli/THIRD_PARTY_NOTICES.txt',
+             '/usr/share/drivelink-cli/LICENSE.txt']
 
 
 def clean_env():
@@ -101,12 +103,12 @@ def install(setup, directory, log):
     return gui
 
 
-def install_deb(deb):
-    """apt installs the package and its Depends; return the bin directory."""
+def install_deb(debs):
+    """apt installs the packages and their Depends; return the bin directory."""
     assert os.geteuid() == 0, '--deb installs with apt: run as root (a clean container)'
     env = dict(os.environ, DEBIAN_FRONTEND='noninteractive')
     subprocess.run(['apt-get', 'update'], check=True, timeout=300, env=env)
-    subprocess.run(['apt-get', 'install', '-y', '--no-install-recommends', str(Path(deb).resolve())],
+    subprocess.run(['apt-get', 'install', '-y', '--no-install-recommends', *(str(Path(d).resolve()) for d in debs)],
                    check=True, timeout=900, env=env)
     for name in DEB_FILES:
         assert Path(name).is_file(), f'{name} missing after install'
@@ -115,7 +117,7 @@ def install_deb(deb):
 
 def uninstall_deb():
     env = dict(os.environ, DEBIAN_FRONTEND='noninteractive')
-    subprocess.run(['apt-get', 'remove', '-y', 'drivelink'], check=True, timeout=300, env=env)
+    subprocess.run(['apt-get', 'remove', '-y', 'drivelink', 'drivelink-cli'], check=True, timeout=300, env=env)
     left = [name for name in DEB_FILES if Path(name).exists()]
     assert not left, f'remove left {left} behind'
 
@@ -168,7 +170,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     package = parser.add_mutually_exclusive_group(required=True)
     package.add_argument('--installer', type=Path, help='Windows: the Inno Setup installer')
-    package.add_argument('--deb', type=Path, help='Linux: the .deb (apt installs it; run as root)')
+    package.add_argument('--deb', type=Path, nargs='+',
+                         help='Linux: the drivelink and drivelink-cli .debs (apt installs them; run as root)')
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('--endpoint', help='the device, e.g. serial://COM3')
     target.add_argument('--vdev', action='store_true', help='dry run: the installed drivelink-vdev')
@@ -184,7 +187,7 @@ def main():
             installed = True  # apt may have half-installed it: always remove
             directory = install_deb(args.deb)
             gui = directory / 'drivelink-gui'
-            print(f'installed {args.deb.name} with apt', flush=True)
+            print(f'installed {", ".join(d.name for d in args.deb)} with apt', flush=True)
         else:
             gui = install(args.installer, directory, work / 'install.log')
             print(f'installed {args.installer.name} into {directory}', flush=True)

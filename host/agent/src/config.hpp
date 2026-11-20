@@ -37,7 +37,7 @@ struct AgentConfig
     size_t history_size = 256;                       // 16..4096 entries per device
     bool advertise = true;                           // mDNS advertising (only when bind is not loopback)
     std::string name;                                // mDNS instance name; empty = the host name
-    std::vector<DeviceConfig> devices;              // 1..8, unique aliases and endpoints
+    std::vector<DeviceConfig> devices;              // 0..8, unique aliases and endpoints
     bool loopback() const;                           // bind is 127.0.0.0/8 or ::1
 };
 
@@ -52,6 +52,7 @@ struct CommandLine
 {
     std::optional<std::string> config_path; // --config PATH
     bool help = false, version = false;     // --help, --version
+    bool list_ports = false;                // --list-ports
 };
 // The --config value, if any (main reads that file with loadConfig first).
 std::optional<std::string> findConfigPath(std::span<const std::string_view> args);
@@ -62,9 +63,9 @@ AgentConfig loadConfig(const std::string &path);
 // --token-file PATH, --device ALIAS=ENDPOINT[@BAUD] (repeatable; any --device
 // replaces the file's device list), --hello-timeout-ms N, --retry-ms N,
 // --request-timeout-ms N, --history-size N, --name NAME, --no-advertise (no
-// value), --help, --version.
+// value), --list-ports, --help, --version.
 CommandLine parseCommandLine(std::span<const std::string_view> args, AgentConfig &config);
-// Final checks after flags (token present, at least one device, uniqueness).
+// Final checks after flags (token present, at most 8 devices, uniqueness).
 void validate(const AgentConfig &config);
 // Usage text for --help.
 std::string usage();
