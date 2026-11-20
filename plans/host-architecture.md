@@ -67,14 +67,14 @@ then the agent and the GUI's remote mode, then ROS.
 | Errors | Sync calls throw typed exceptions: `drivelink::Error` (the existing kinds) and `DeviceError` with the device result, detail and `outcome_unknown`. Async completions receive `std::expected<T, drivelink::Error>`. The ROS `read()` / `write()` paths are `noexcept`. Decided 2026-11-14. |
 | Async | Callbacks on a dispatcher the caller supplies (contract under "Session"). No Qt or Asio in public headers; the agent may use coroutines internally. Decided 2026-11-14. |
 | Generic host | The host has no module-specific code. It reads the descriptors (items and diag codes) from the device at every connect and builds its models from them. The descriptor hash in `GET_INFO` tells it when the definitions changed; a disk cache keyed by the hash is deferred until connecting gets slow. It uses the generated headers from `protocol/` only for core and system ids. |
-| Device identity | A read-only device id (the factory MAC) and a user-set name in `GET_INFO`, set with a new system op `SET_NAME` (core v9, H1c). The name applies live, sets `nvs_dirty`, is persisted by SAVE and restored by REVERT, and may be set while armed. The host keys recent devices and session files on the id. Decided 2026-11-14; proposal in [todo-device-name.md](todo-device-name.md). |
+| Device identity | A read-only device id (the factory MAC) and a user-set name in `GET_INFO`, set with a new system op `SET_NAME` (core v9, H1c). The name applies live, sets `nvs_dirty`, is persisted by SAVE and restored by REVERT, and may be set while armed. The host keys recent devices and session files on the id. Decided 2026-11-14; proposal in [todo-device-name.md](archive/todo-device-name.md). |
 | Port ownership on the robot | A headless agent (`drivelink-agent`) always owns the ports. The ROS plugin and the remote GUI are its clients. |
 | Devices per agent | One agent serves several ESPs, one serial port each, every one with its own session, I/O, lease, groups, clock model and history, so one failing port doesn't affect the others. A client opens one TCP connection per device and names it in the hello by its config alias (for example `base`, `arm`) or its device id; after the hello the connection carries that device's frames unchanged. The lease is per device. Decided 2026-11-14. |
 | Port ownership on the bench | The GUI opens the serial port itself through `libdrivelink`. No agent is needed on Windows. |
 | Agent API | The device protocol over TCP, plus a few agent-only messages. Clients use the same frames as over serial. gRPC is out because of MinGW, and Zenoh would add a Rust toolchain. |
 | Agent access | Listens on `127.0.0.1` by default; a LAN address is opt-in in its config. Every client sends the agent's shared token (one per agent, not per device) in the hello, and a wrong token is refused before any device frame. No TLS: a trusted lab network is assumed. Decided 2026-11-14. |
 | Agent discovery | With LAN listening on, the agent advertises itself over mDNS/DNS-SD, and the GUI's Agent tab lists what it finds beside typed addresses and recent devices. Decided 2026-11-14. |
-| Agent deployment | Built from source on the Pi with an install script (binary, systemd unit, udev rules giving each ESP's port a stable name, config file) in H3c; an arm64 `.deb` follows in H5. Decided 2026-11-14. |
+| Agent deployment | Debian packages only, for amd64 and arm64: `drivelink-agent` (the agent, systemd unit, udev rules, config and token; Recommends `drivelink-cli`) and `drivelink-cli` (CLI and vdev, no Qt) for Ubuntu 26.04 and 24.04, and `drivelink` (the GUI, Depends `drivelink-cli`) for 26.04 only (24.04's Qt 6.4 is below the floor). There is no from-source install script: a source build runs the packaging script on the Pi and installs the result. After install the agent runs as a `drivelink` user, listens on loopback with a generated token, and serves no devices until `agent.json` lists them. An upgrade never restarts the running agent, since stopping it DISARMs every device; the user restarts it. The ESP's main link is the Pi's GPIO UART; USB-attached ESPs get stable names from udev. H3c builds the packages and attaches them to the tag release; H3d publishes them in a signed apt repository on GitHub Pages (tags only, one suite per Ubuntu release by codename). Decided 2026-11-14, re-planned 2026-11-20 (H3c and H5 merged, H3d added). |
 | Device actions over the agent | Actions (including paused actions with blobs, such as IMU calibration apply) are exclusive operations: they need the lease, or a disarmed device with nobody holding it. Live param writes stay open to every client. Decided 2026-11-14. |
 | Clock | `libdrivelink` runs the time pings and fits offset and drift (the F8 `ClockEstimator`). The agent owns the clock model and sends it to its clients. |
 | Configuration | Lives on the ESP (NVS). The host reads it and writes it, and never stores it. Host-side files hold only GUI settings, recent devices, tuning sessions and calibration exports. |
@@ -182,7 +182,7 @@ commands) in H3a. Python bindings are not planned.
 - Owns the serial ports, runs as one systemd service, and keeps working while ROS is down. Linux only.
 - **Devices.** The config lists the devices, each with an alias, a serial device and a baud. Each device has its own `Session`, I/O, device model, lease, groups, clock model and history; a device whose port fails or disappears is reported as offline and retried without affecting the others.
 - **Access.** Listens on `127.0.0.1` unless its config enables a LAN address. A client's first message is the agent hello: agent protocol version, token and the device it wants (alias or device id). A wrong token or version, or an unknown device, is refused before any device frame is forwarded. A hello without a device opens a lobby connection that can only list the devices (alias, device id, name, port, online state, lease holder); the GUI's Agent tab uses it. With LAN listening on, the agent advertises itself over mDNS/DNS-SD.
-- **Config.** One file: bind address and port, token, history sizes, and the device list. The install script (H3c) writes it; command-line flags override it.
+- **Config.** One file: bind address and port, token, history sizes, and the device list. The `drivelink-agent` package installs it as a conffile, `/etc/drivelink/agent.json` (H3c); command-line flags override it.
 - Clients speak the device protocol over TCP, one connection per device. Everything below is per device. The agent arbitrates between the clients of a device:
   - **`seq`.** It rewrites each client's `seq` before forwarding a request. It maps the response back and routes it to the client that sent the request.
   - **Groups.** Group ids are device resources (the pool sizes are in `limits.*`). The agent gives each client its own groups out of the device's pool, rewrites the group ids and stream channels both ways, and sends each client only its own subscription streams. It tracks each group's epoch, so frames left over from a group's previous owner are dropped. The status stream, core events and diag events go to every client.
@@ -201,7 +201,7 @@ commands) in H3a. Python bindings are not planned.
 ### `drivelink-gui` (Qt/QML)
 
 - Qt 6.12.0 with Qt's MinGW kit on Windows; Qt 6.10 is the API floor, which the Linux CI build against Ubuntu 26.04's Qt enforces.
-- The screens follow the Figma design ([gui-design.md](gui-design.md), [gui-design-status.md](gui-design-status.md)), including G7b's loops-and-sources rework and LP's placement enum (Any core is the Add loop default). G8 is folded into H2a: no clickable prototype; the tokens are exported and the open handoff issues are settled in code.
+- The screens follow the Figma design ([gui-design.md](gui-design.md), [gui-design-status.md](archive/gui-design-status.md)), including G7b's loops-and-sources rework and LP's placement enum (Any core is the Add loop default). G8 is folded into H2a: no clickable prototype; the tokens are exported and the open handoff issues are settled in code.
 - **Theme.** Figma's variables are exported to `tokens.json` in the repo and a script writes the `Theme` singleton with a dark and a light set; Figma stays the source of truth. Inter and JetBrains Mono (OFL) and the Lucide icons used (ISC) are bundled in the Qt resources.
 - **Style.** A custom DriveLink style built on the Basic style; each G2 component maps to one QML control (the mapping table in Figma).
 - **C++ backend:**
@@ -328,7 +328,7 @@ drivelink_v2/
 │  ├─ gui/                    H2a (COLCON_IGNORE): app, style, theme (tokens.json + generator), tests, shots tool
 │  │  ├─ modules/<type>/      optional custom panels (H2f: imu.bno055)
 │  │  └─ installer/           H2g: Inno Setup script
-│  ├─ agent/                  H3a (COLCON_IGNORE); deploy/ install script, unit, udev rule (H3c), debian/ (H5)
+│  ├─ agent/                  H3a (COLCON_IGNORE); deploy/ unit, udev rules, config, package scripts (H3c)
 │  └─ ros/                    H4a/H4b
 │     ├─ drivelink_hardware/
 │     └─ drivelink_bringup/
@@ -393,7 +393,8 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 | host-windows | Windows, Qt 6.12.0 `win64_mingw` + MinGW 13.1 via aqtinstall | superbuild, tests, the C++23/GCC 13.1 floor; GUI and Quick Tests from H2a; the Inno Setup installer as an artifact from H2g | exists (H1a-2) |
 | agent | `ubuntu:26.04` + `setup_linux.sh` | agent ↔ vdev integration tests | H3a |
 | ros | `ros:lyrical` + `setup_linux.sh` | `colcon build` + `colcon test`, including a launch test against vdev and the agent | H4a |
-| deb | arm64 Linux, `ubuntu:26.04` | the agent `.deb`, installed and removed in a container | H5 |
+| deb | `ubuntu:26.04` and `ubuntu:24.04` on `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64) | `drivelink-cli` and `drivelink-agent` for both releases and architectures, the GUI's `drivelink` for 26.04 on both; installed, upgraded, removed and purged in a clean container | exists for the GUI (H2g); split, 24.04 and arm64 in H3c |
+| apt repo | `ubuntu-latest`, tags only | the release's packages signed into one suite per Ubuntu release on GitHub Pages | H3d |
 
 ## Phases
 
@@ -405,9 +406,9 @@ The steps, their dependencies and briefs are in [host-steps.md](host-steps.md); 
 | Tooling | T0: C++23 for the host and the native tests, MSYS2 UCRT64 GCC 16.2 for the native tests, the native-tests job in `ubuntu:26.04`. |
 | Library | H1a typed API and device model; H1b async path, events, group buffers, time mapping; H1c device identity (core v9). |
 | GUI, local | H2a-1 build and style, H2a-2 shell and backend; H2b Connect and Device; H2c Layout; H2d Monitor; H2e Tune; H2f IMU calibration panel; H2g installer and close-out. |
-| Agent and remote | H3a agent; H3b GUI remote mode; H3c Pi deployment. |
+| Agent and remote | H3a agent; H3b GUI remote mode; H3c agent packages and Pi deployment; H3d signed apt repository. |
 | ROS | H4a `drivelink_hardware`; H4b `drivelink_bringup`. |
-| Finish | H5 agent `.deb`; H6 cleanup and the merge into `main`. |
+| Finish | H6 cleanup and the merge into `main`. |
 | Hardware | HW, whenever hardware arrives. |
 
 The S1 restructure details are in git history (`git show 272575d:plans/host-architecture.md`).

@@ -1,9 +1,9 @@
 # H2e Tune: plan and results
 
-Brief: [host-steps.md](host-steps.md) "H2e Tune". Design: G5 Tune frames (run
+Brief: [host-steps.md](../host-steps.md) "H2e Tune". Design: G5 Tune frames (run
 results, disarmed, run in progress, stopped by a disarm, A/B compare, plant
 identification) and the G2 GainControl and Slider `Scale=Log`
-([gui-design.md](gui-design.md), node ids in
+([gui-design.md](../gui-design.md), node ids in
 [gui-design-status.md](gui-design-status.md)).
 
 ## User decisions (2026-11-18)
@@ -12,7 +12,7 @@ identification) and the G2 GainControl and Slider `Scale=Log`
 |---|---|
 | Split | Three PRs, one session each, each with an independent Opus review at high effort: **H2e-1 Runs** (this record's first part), **H2e-2 Session** (gain history and restore, A/B compare and its 1080p card, Auto re-run, session files, CSV export; how Open/Save pick a file, since a native dialog cannot pass Esc to DISARM), **H2e-3 Plant identification** (FOPDT fit and suggested gains in libdrivelink, the tab, CheckItem warning; how suggested gains map onto tune-flagged params generically). |
 | Gains | Marked in the definitions by a descriptor flag, not by names. All eight `ItemFlag` bits were in use, so GET_ITEMS item `flags` widens to u16 with `Tune = 0x0100`: **core v10**, firmware, host, vdev and docs in H2e-1. |
-| Mode groups | Flag and prefix order: tune-flagged enums are combos on top; tune-flagged numerics group by dotted prefix; the group whose prefix starts the selected enum value's name is first and open; a group no value selects is open; the others collapsed but editable. Documented in [adding-a-module.md](../docs/adding-a-module.md). |
+| Mode groups | Flag and prefix order: tune-flagged enums are combos on top; tune-flagged numerics group by dotted prefix; the group whose prefix starts the selected enum value's name is first and open; a group no value selects is open; the others collapsed but editable. Documented in [adding-a-module.md](../../docs/adding-a-module.md). |
 | Run end | Return to 0: during a run the controller instance's manual commands are suspended at 0 (the H2d-2 live-write mechanism); when the run ends (completed, Stop, disarm) a fresh frame returns a commandable target to 0. A target outside the hold rule (`position_sp`) keeps the generator's last value; the run card says so. |
 | Bench board | Flash the verified v10 normal firmware and leave it installed. |
 
@@ -31,7 +31,7 @@ identification) and the G2 GainControl and Slider `Scale=Log`
   (`connection.tune`), `backend/connection_tune.cpp` (gain writes and the run),
   `PlotItem` on a `PlotSource` interface (Monitor and Tune), `DLSlider` Log
   scale with ticks and labels, `DLGainControl`, `TunePage.qml`, screenshot
-  options and four scenarios. Details in [host/gui/README.md](../host/gui/README.md) "Tune (H2e-1)".
+  options and four scenarios. Details in [host/gui/README.md](../../host/gui/README.md) "Tune (H2e-1)".
 
 ## Review
 
@@ -68,7 +68,7 @@ device's snapshot (cleared on a device change).
   `tune`, `tune-running`, `tune-disarm`, `tune-disarmed` at both sizes and themes.
 - **Bare board** (COM3, v10 `59429185fa2d504a`): hardware, identity, testgen
   (mock) and capture smokes, `benchBoard` and `benchTune` with a staged mock
-  passed; details in [hardware-log.md](hardware-log.md). The mock run shows no
+  passed; details in [hardware-log.md](../hardware-log.md). The mock run shows no
   metrics by design: its target is the unitless `duty` input and the only
   other captured signal is `velocity` (rad/s), so there is no same-unit
   response; the controller mode (velocity_sp against velocity) was dry-run on
@@ -145,7 +145,7 @@ bounded by the sample cap); the per-row "current" scan (200 entries at most).
   close), and the H2e-1 tests (`tuneOperations` with Auto re-run off).
   Scenarios `tune` and `tune-ab` at both sizes and themes.
 - **Bench dry run.** `benchTune` with `DRIVELINK_GUI_BENCH_GAIN` on the sample
-  vdev passed (row in [hardware-log.md](hardware-log.md)). Real motor deferred
+  vdev passed (row in [hardware-log.md](../hardware-log.md)). Real motor deferred
   (the H2e-1/H2e-2 row in the status file).
 
 ## H2e-3 Plant identification

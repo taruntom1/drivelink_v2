@@ -124,7 +124,7 @@ the user's decision before implementation.
   Exact original LP ELF b8ad3d153466c34d400e15757674e9cd937575b055f1307a658962d514449b94
   is restored and confirmed in ota_0, with original layout/params, disarmed state
   and idle groups. Normal firmware refuses bench commands. Results are in
-  [hardware-log.md](hardware-log.md); local evidence is in `build/h1a-bench/`.
+  [hardware-log.md](../hardware-log.md); local evidence is in `build/h1a-bench/`.
 - No wire, firmware, safety or later-feature behavior change. Approved workflow
   deviations are the Codex model exception and H1a split; H1a-2 is next after
   this PR merges. No new deferred hardware check is needed.

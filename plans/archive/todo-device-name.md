@@ -4,7 +4,7 @@ Status: **implemented in H1c** (2026-11-15), core v9 on `host_overhaul`. See [ap
 
 ## Why
 
-`GET_INFO` ([firmware-architecture.md](firmware-architecture.md), "Notes on the ops") returns the versions, build id, descriptor hash, capacities, loops and flags. Nothing in it identifies the board. So:
+`GET_INFO` ([firmware-architecture.md](../firmware-architecture.md), "Notes on the ops") returns the versions, build id, descriptor hash, capacities, loops and flags. Nothing in it identifies the board. So:
 - the GUI can't tell two boards apart, and can only list recent devices by port and firmware version
 - the agent, the ROS diagnostics node and logs can't say which board they are talking to
 - a session file from Tune can't record which board it was made on

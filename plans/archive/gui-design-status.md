@@ -1,6 +1,6 @@
 # GUI design status
 
-**The design phase is complete** (G0–G7b accepted; G8 folded into host step H2a on 2026-11-14 and done in H2a-1 on 2026-11-15). This file is now the Figma reference for the GUI steps H2a–H3b: the node ids, the rules to keep and the Figma traps. The plan, the decisions and the open issues are in [gui-design.md](gui-design.md); the build is tracked in [host-status.md](host-status.md).
+**The design phase is complete** (G0–G7b accepted; G8 folded into host step H2a on 2026-11-14 and done in H2a-1 on 2026-11-15). This file is now the Figma reference for the GUI steps H2a–H3b: the node ids, the rules to keep and the Figma traps. The plan, the decisions and the open issues are in [gui-design.md](../gui-design.md); the build is tracked in [host-status.md](../host-status.md).
 
 Last updated: 2026-11-14 (host re-plan). The last design PR was [#62](https://github.com/taruntom1/drivelink_v2/pull/62).
 
@@ -17,7 +17,7 @@ Last updated: 2026-11-14 (host re-plan). The last design PR was [#62](https://gi
 | G6 Remote mode | done | Accepted 2026-11-13, including the four G2 extensions. 16 frames plus 2 retained 1080p Light checks |
 | G7 Custom panel | done | Accepted 2026-11-14, including CalibrationLevel/OrientationPreview, 11 screens and 2 retained 1080p Light checks; calibration contract alignment remains in handoff notes |
 | G7b Loops and sources rework | done | Parts A–G and G2 extensions accepted 2026-11-14: 17 Layout frames, shared updates, two G4 deletions, Cover/flow records and checks |
-| G8 Prototype and handoff | done (H2a-1) | No clickable prototype. Tokens exported read-only to `host/gui/theme/tokens.json` (re-export: `host/gui/theme/export_tokens.js`, [host/gui/README.md](../host/gui/README.md)); open issues assigned in gui-design.md, "Open issues by host step" |
+| G8 Prototype and handoff | done (H2a-1) | No clickable prototype. Tokens exported read-only to `host/gui/theme/tokens.json` (re-export: `host/gui/theme/export_tokens.js`, [host/gui/README.md](../../host/gui/README.md)); open issues assigned in gui-design.md, "Open issues by host step" |
 
 States: `planned`, `in progress`, `in review` (built, waiting for the user's acceptance), `done`.
 
@@ -25,12 +25,12 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
 
 1. **G8 is done (H2a-1, 2026-11-15).** The tokens are in `host/gui/theme/tokens.json` and the generated `Theme`; each G2 shell component is a `DL*` control in `host/gui/style/`. The open issues are assigned to steps in gui-design.md ("Open issues by host step"). Remote calibration actions need the lease (decided 2026-11-14).
 2. **Not in Figma, by decision:** LP's `loop.core` enum (Core 0, Core 1, Any core; Any core is the Add loop default; factory control/sensor stay 1/0) is built in code by H2c; the user chose not to apply it to the frames (2026-11-15). The agent's device list (H3b) has no frame either, nor the Settings page (H2g: Appearance and About from G2 components, after G1 frame 17).
-3. **Token changes:** edit the variables in Figma, then re-export and regenerate as [host/gui/README.md](../host/gui/README.md) ("Theme") says. Two variables share the QML name `Theme.borderFocus`; the Size one is `borderFocusWidth` in code.
+3. **Token changes:** edit the variables in Figma, then re-export and regenerate as [host/gui/README.md](../../host/gui/README.md) ("Theme") says. Two variables share the QML name `Theme.borderFocus`; the Size one is `borderFocusWidth` in code.
 4. A Figma edit from now on is made by the H step that needs it, on that step's branch, following the `/gui-design-step` rules for the file.
 5. **H2a-2 built the shell/backend (2026-11-16).** The application event filter
    owns Esc; the status bar stays above the page scrim. The drawer is a frame
    and the four pages are placeholders for their H2 steps. Runtime contracts
-   and screenshot commands are in [host/gui/README.md](../host/gui/README.md).
+   and screenshot commands are in [host/gui/README.md](../../host/gui/README.md).
    No Figma mutation was needed.
 
 ## Handoff note
@@ -43,11 +43,11 @@ States: `planned`, `in progress`, `in review` (built, waiting for the user's acc
   - The mock actuator and feedback need a real-time loop. In wiring picker `85:4111`, move the scenario's `sim_motor` into second real-time loop `test`; its cross-loop entry stays disabled with a reason.
   - Read `docs/protocol/core.md`, `docs/protocol/types/loop.md` and `docs/protocol/types/fusion.mock.md`. The source target picker accepts signals and inputs of the required value type; `left_enc.count` is i32 and cannot feed fusion.mock's f32 feedback source. Use `left_enc.position` instead.
   - Source validity is derived from the age sentinel and discovered instance state; `fresh` is not a wire signal. Hide invalid values, distinguish telemetry unavailable from no valid sample, and do not infer that a producer is paused from age alone. Pending targets must not relabel current live values.
-- **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [host-status.md](host-status.md), after asking the user.
+- **Scope rules:** design only. No QML or C++. Don't touch `firmware/`, `protocol/` or `docs/protocol/`. Firmware needs found while designing go into a `plans/todo-*.md` file (like [todo-device-name.md](todo-device-name.md)) and a line in the Notes of [host-status.md](../host-status.md), after asking the user.
 - **Things to check in G5** (from G2): plot series 2 (orange) is close to Armed amber, so never put it next to the arm state. The Light Unsaved contrast was fixed in G3.
 - **G5 rules to keep:** run colours are fixed per run; Run is disabled with "Arm first" while disarmed (no "Arm and run"); Auto re-run waits for a first manual Run; Tune has no Save of its own (status bar), only "Revert gains to saved"; a refused plot add says why next to the signal and offers a lower rate.
 - **G4 rules to keep:** pending (reboot-required) is violet and never looks live; a refused layout op is not staged and its row says why, naming the clashing instance; ARM blocked by the layout shows as ArmButton "Arm disabled" with the reason in the status bar, not as Fault; there is no per-change undo, only Discard all.
-- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) is scheduled for host step H1c. [todo-layout-ops.md](archive/todo-layout-ops.md) (G4) is closed: the firmware has the loop at `ADD_INSTANCE` and refuses a remove with dependents.
+- **Firmware to-dos from the design:** [todo-device-name.md](todo-device-name.md) (G1) is scheduled for host step H1c. [todo-layout-ops.md](todo-layout-ops.md) (G4) is closed: the firmware has the loop at `ADD_INSTANCE` and refuses a remove with dependents.
 - **G3 rules to keep:** the scrim of a modal starts under the status bar (DISARM stays live); DISARM is enabled whenever there is a link; refused-while-armed buttons are disabled with a Tooltip saying why.
 - **Rename** assumes `SET_NAME` applies at once and sets `nvs_dirty` (an open question in todo-device-name.md; not yet put to the firmware side).
 - **G5 accepted:** gain of 0 and negative gains follow the Decisions table; Auto re-run on by default was explicitly accepted 2026-11-13. Keep the documented 1080p issues open for handoff.

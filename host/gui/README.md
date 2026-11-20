@@ -2,7 +2,7 @@
 
 The PC GUI: Qt 6 and QML, built from the Figma design
 ([gui-design.md](../../plans/gui-design.md), node ids in
-[gui-design-status.md](../../plans/gui-design-status.md)). Windows uses Qt
+[gui-design-status.md](../../plans/archive/gui-design-status.md)). Windows uses Qt
 6.12.0 with Qt's MinGW 13.1; Qt 6.10 (Ubuntu 26.04) is the API floor that the
 Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.

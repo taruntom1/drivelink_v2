@@ -1,7 +1,7 @@
 # H2a-1 GUI build, Theme and style
 
 Status: approved by the user 2026-11-15, built; results at the end. Step brief: "H2a GUI foundation"
-in [host-steps.md](host-steps.md). Branch `claude/overhaul-H2a-1` from
+in [host-steps.md](../host-steps.md). Branch `claude/overhaul-H2a-1` from
 `origin/host_overhaul`; PR into `host_overhaul`.
 
 ## User decisions (2026-11-15, before the plan)
