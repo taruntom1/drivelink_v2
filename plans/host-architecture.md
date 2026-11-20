@@ -394,7 +394,7 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 | agent | `ubuntu:26.04` + `setup_linux.sh` | agent ↔ vdev integration tests | H3a |
 | ros | `ros:lyrical` + `setup_linux.sh` | `colcon build` + `colcon test`, including a launch test against vdev and the agent | H4a |
 | deb | `ubuntu:26.04` and `ubuntu:24.04` on `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64) | `drivelink-cli` and `drivelink-agent` for both releases and architectures, the GUI's `drivelink` for 26.04 on both; installed, upgraded, removed and purged in a clean container | H3c (jobs `linux-package`, `linux-install`) |
-| apt repo | `ubuntu-latest`, tags only | the release's packages signed into one suite per Ubuntu release on GitHub Pages | H3d |
+| apt repo | `ubuntu:26.04` (`apt-repo`), the `deb` matrix (`apt-install`); `apt-publish` tags only | every run: the repository built with a throwaway key, checked by apt and installed from in clean containers; a tag: the release's packages signed with the real key (environment `apt-repo`) into one suite per Ubuntu release on `gh-pages` | H3d (jobs `apt-repo`, `apt-install`, `apt-publish`) |
 
 ## Phases
 

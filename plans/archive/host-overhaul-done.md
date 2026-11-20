@@ -1,6 +1,6 @@
 # Host overhaul: finished steps
 
-The steps T0 to H3b-2, moved here from [host-steps.md](../host-steps.md) and
+The steps T0 to H3c, moved here from [host-steps.md](../host-steps.md) and
 [host-status.md](../host-status.md) on 2026-11-20 once they were merged. The
 live files keep the rules and the remaining steps. Each step's own plan and
 results are the `h*-implementation.md` files in this folder; hardware results
@@ -32,6 +32,7 @@ are in [hardware-log.md](../hardware-log.md).
 | H3a-2 | Agent lease (Take preempts), exclusive operations, clock model (agent pings, composed clock), history, client list; agent protocol v2; CLI `--lease`, `agent-clients`. Depends on H3a-1 | vdev: 27 integration scenarios, unit tests | high, independent | merged | [#89](https://github.com/taruntom1/drivelink_v2/pull/89) |
 | H3b-1 | GUI remote mode (Agent tab and device list, lease chip, take/release/revoked, held live edits, ROS banner, agent history, exclusive-operation gating); agent protocol v3 (client kind); `wsl_serial.py`. Depends on H3a-2, H2g | PC: `benchRemote` through the agent in WSL on the bench board passed (CLI takeover, observer DISARM, REBOOT and the agent's Boot path) | high, independent | merged | [#90](https://github.com/taruntom1/drivelink_v2/pull/90) |
 | H3b-2 | mDNS: mjansson/mdns, agent responder (LAN binds only), library browse, CLI `agent-browse`, the Agent tab's "Found on the network" list, Settings > Connection. Depends on H3b-1 | PC (mirrored WSL): agent found in WSL and LAN probes answered; the same-PC GUI cannot reach mirrored WSL; deferred: a GUI on another machine (Pi) | high, self | merged | [#91](https://github.com/taruntom1/drivelink_v2/pull/91) |
+| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64, Ubuntu 26.04 and 24.04 (no GUI on 24.04), release files, Pi guide; replaces the old H3c and H5. Depends on H3b-2 | PC: packages in WSL with systemd; deferred: Pi | high, self | merged | [#93](https://github.com/taruntom1/drivelink_v2/pull/93) |
 
 ## Overview rows
 
@@ -53,6 +54,7 @@ are in [hardware-log.md](../hardware-log.md).
 | H3a-1 | Agent for several devices: server, access, routing, subscription groups, events, agent MSG_TYPEs; library agent client; agent check and CI. Interim: nobody can arm through it | H1b (planned after H2g) | vdev | independent |
 | H3a-2 | Agent lease (Take preempts), exclusive operations, clock model, history, client list; CLI lease commands | H3a-1 | vdev | independent |
 | H3b | GUI remote mode with the agent's device list, mDNS, `wsl_serial.py` | H3a, H2g | PC: agent in WSL owns the bench board | independent |
+| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64 in CI, Pi setup guide (replaces the old H3c script and H5) | H3b-2 | PC: packages in WSL with systemd; deferred: Pi | self |
 
 ## Items settled by the step plans
 
@@ -67,6 +69,8 @@ are in [hardware-log.md](../hardware-log.md).
 | Calibration file format, provenance, Euler convention, cancel and reconnect behaviour | settled in H2f: versioned JSON of the decoded fields with provenance (`host/gui/modules/imu.bno055/README.md`); Euler as the device reports it, none in the file; nothing re-sent, interruptions recorded as "may have run" |
 | Agent default port, history sizes, retry policy for an offline device | port 47620 and a 2 s fixed retry settled in H3a-1; history 256 entries per device (`history_size`, 16..4096) settled in H3a-2 |
 | mDNS library, service name and TXT records | settled in H3b-2: mjansson/mdns 1.4.3, `_drivelink._tcp`, TXT `txtvers`/`proto`/`version` (user decisions; `docs/protocol/agent.md` "Discovery") |
+| Pi UART wiring and the udev match for USB-attached ESPs (USB serial number; CH343 and native USB) | settled in H3c: see `tools/package_linux.py`, `host/agent/deploy/` and the H3c decision row |
+| One packaging script or a sibling per package; Replaces/Breaks for the old `drivelink` package that held the CLI; the unit's hardening | settled in H3c: see `tools/package_linux.py`, `host/agent/deploy/` and the H3c decision row |
 | Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | settled in H3b-1: the GUI's INI file, only when "Remember token" is checked (user decision) |
 | The device-list screen on Connect's Agent tab (not in Figma) | settled in H3b-1: built from the G2 components, recorded in `gui-design.md` |
 
@@ -110,6 +114,7 @@ Rows whose decisions are now stated in the plans, the docs, the READMEs or
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
 | 2026-11-20 | H3b-2 | User: TXT `txtvers`, `proto`, `version` only (no device data); Settings > Connection "Find agents on the network" (on by default); the PC check with WSL in mirrored networking. Internal: IPv4 only; the agent's own target host `drivelink-<hostname>.local.`; no conflict probing; the responder on its own thread, one socket per interface, a 10 s re-scan; multicast answers at most once a second per record set and interface; legacy unicast echoes id and question (TTL at most 10 s); browse = one QU query per interface (again at 300 ms), the endpoint from the sender when it is an A record; GUI rounds back off 1 s to 60 s and drop an agent missed twice; picking a found agent clears a token typed for another address; CLI `agent-browse` (`--timeout-ms`, default 1500); config `advertise`/`name`, flags `--no-advertise`/`--name`; an mDNS setup failure is logged and TCP continues. Same-PC Windows to mirrored-WSL discovery proved impossible, so the GUI check is a deferred Pi row | H3c and HW run the deferred row; discovery stays outside the TCP protocol | yes (agent.md, READMEs, gui-design, bench.md, host-steps) |
+| 2026-11-20 | H3c | User: the package version carries the Ubuntu release (`<VERSION>~ubuntu24.04`, `~ubuntu26.04`), so H3d keeps both builds in one pool; the session runs the PC package check as root through `wsl -u root`. Internal: the agent accepts an empty device list; `--list-ports` is the device helper; one packaging script for the three packages; the reinstall marker `/var/lib/drivelink-agent/removed` (prerm on remove) lets postinst tell a reinstall from an upgrade; the unit does not restart after exit 2 (config error) and has no `DevicePolicy` (serial device numbers vary); CLI and agent notices in `host/notices/`; CI jobs `linux-package` and `linux-install` | The upgrade rule needs a reliable first-install test; a config typo must not loop | yes (host-steps H3d, host-architecture "Agent deployment") |
 | 2026-11-13 | F6, F10 | Test harnesses retry group-only Busy/StagingBusy rejections (in addition to Withdrawn), bounded to ten attempts; production SDK/CLI stays unchanged. F10 applies the same bounded retry to the native "autonomous loops" group test (`test_core_groups.cpp`) | CI's existing sub-enable scenario raced a loop's atomic slot claim (host-linux in F6; the native test on PR #60's CI, where the owning loop's `endTick` held the slot during `enable`). The rejection occurs before mutation; unit tests and independent review confirm timeouts/actions/expected refusals are not broadened | n/a |
 
 ## Briefs
@@ -404,3 +409,30 @@ Hardware check (PC, run by the session after the user's one-time `usbipd bind`):
 
 Review: independent (lease and arming in the GUI, the remote command group).
 
+## H3c Agent packages and Pi deployment
+
+**Depends on** H3b-2. Runs next, before H4a. **Architecture:** "Agent deployment", "`drivelink-agent`", "CI".
+
+**Re-planned (user decisions 2026-11-20):** the old H3c (an install script that built from source) and H5 (the agent `.deb`) merge into this step. The `.deb` is the only install path: a source build runs the packaging script on the Pi and installs what it makes with `apt install ./…deb`. The signed apt repository is H3d.
+
+Scope:
+- **Three packages**, versioned from `VERSION`, each built for amd64 and arm64:
+  - `drivelink-cli`: the CLI and vdev, no Qt. Ubuntu 26.04 and 24.04.
+  - `drivelink-agent`: the agent, its systemd unit, udev rules, config and token. It Recommends `drivelink-cli`. Ubuntu 26.04 and 24.04.
+  - `drivelink` (H2g's package): the GUI only, and Depends `drivelink-cli` at the same version. Ubuntu 26.04 only, because 24.04's Qt 6.4 is below the 6.10 floor and nothing is bundled. Built for arm64 too, so a Pi desktop can run the GUI. Upgrading from H2g's package, which held the CLI, must work.
+  - The 24.04 build also enforces the GCC 13 floor on Linux (24.04 ships GCC 13.2 and CMake 3.28). The ROS side stays 26.04 (Lyrical); 24.04 would be Jazzy.
+- **First run** (`postinst`): a `drivelink` system user in `dialout`; a random token in `/etc/drivelink/token` (mode 0640, `root:drivelink`), made only when absent; `/etc/drivelink/agent.json` as a conffile with `bind` `127.0.0.1`, `token_file` and no devices; the service enabled and started, idling until devices are listed. LAN access means editing `bind`, which also turns on mDNS advertising. Remove keeps the config and token, and purge deletes them and the user.
+- **Upgrade never restarts the agent** (safety, user decision 2026-11-20): stopping it DISARMs every device, so an `apt upgrade` must not stop a moving robot. The old process keeps serving, and `postinst` prints that `systemctl restart drivelink-agent` loads the new version. Only a fresh install starts the service; remove and purge stop it.
+- **Devices are added by editing `agent.json`**: the guide shows how, and the helper below prints the device line to paste in.
+- **systemd unit:** runs as `drivelink` with `--config /etc/drivelink/agent.json`, restarts on failure, stops with SIGTERM (the agent DISARMs every device), and carries hardening the plan picks.
+- **ESP links:** the Pi's GPIO UART is the main link (`/dev/serial0` at 921600). A udev rule gives USB-attached ESPs (CH343 or the ESP's native USB) stable names, `/dev/drivelink/<serial>`, from the USB serial number. A helper prints the device line for a plugged-in board.
+- **Pi setup guide:** Ubuntu 26.04 on the Pi 5, the GPIO UART with the serial console off, wiring (from the F8 row), installing the packages from the release, adding devices, the LAN bind, and checks with `drivelink-cli agent-devices` and `agent-browse`.
+- **Tooling and CI:** the packaging script grows from `tools/package_linux.py` and `package_common.py` (stage under `/usr`, `dpkg-shlibdeps` Depends, no bundled library, staged smoke). The `deb` check covers every package. CI builds amd64 on `ubuntu-latest` and arm64 on `ubuntu-24.04-arm`, each in `ubuntu:26.04` and `ubuntu:24.04` containers (24.04 without the GUI). For every release and architecture, a clean container installs, upgrades (from a build with a lower version, checking the running agent is not restarted), removes and purges. The installed-GUI smoke (`installed_gui_smoke.py --deb`) runs on 26.04 for both architectures. Containers have no systemd as PID 1, so the unit is checked with `systemd-analyze verify` and the agent is started by hand with the installed config. The tag's `release` job attaches every package (release and architecture in the file name) and adds them to `SHA256SUMS`.
+- **Notices** per package: the agent links libdrivelink, Asio, nlohmann JSON and mjansson/mdns, and the CLI links libdrivelink, Asio and nlohmann JSON.
+- **Docs:** `host/agent/README.md` "Install", `host/README.md`, `docs/development.md`, `docs/bench.md` where WSL uses the packages.
+
+Hardware check (PC, run by the session): in WSL with systemd, install the amd64 packages; the service starts on the loopback config; the bench board is lent through `wsl_serial.py` and listed in the config; `drivelink-cli agent-devices` answers; restart, remove and purge. Deferred row (Pi): install the arm64 packages, the service survives a reboot, the GPIO UART device comes online, and a LAN bind is found by the GUI on the PC (H3b-2's row runs here). The F8 Pi time row runs through the installed CLI.
+
+Review: self (packaging; no wire, lease or arming change).
+
+Natural cut if large: the CLI split, arm64 CI and release job first; then the agent package, deploy files and guide.

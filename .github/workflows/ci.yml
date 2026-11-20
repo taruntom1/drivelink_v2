@@ -182,6 +182,72 @@ jobs:
           path: build/installed-gui/
           if-no-files-found: ignore
 
+  # H3d: the apt repository from every release's packages, signed with a
+  # throwaway key and checked by apt; apt-install installs from it in clean
+  # containers. Only apt-publish, on a tag, signs with the real key.
+  apt-repo:
+    name: apt repository (throwaway key)
+    needs: linux-package
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drivelink-debs-*
+          merge-multiple: true
+          path: debs
+      - name: Install Python and gpg
+        run: sh tools/setup_linux.sh base
+      - name: Build the repository and check it with apt
+        env:
+          DRIVELINK_APT_DEBS: debs
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only apt-repo
+      - name: Upload the repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo-test
+          path: |
+            build/apt/
+            build/apt-key.asc
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo-validation
+          path: build/validate/
+
+  apt-install:
+    name: apt install from the repository (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    needs: apt-repo
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '24.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      # gpg signs the refused copy; the packages' Depends bring the rest.
+      - name: Bootstrap git, Python and gpg
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apt-repo-test
+          path: apt-repo
+      - name: Add the repository, apt install the agent and CLI, refuse another key
+        run: python3 host/test/apt_repo_smoke.py --repo apt-repo/apt --key apt-repo/apt-key.asc
+
   firmware:
     name: idf.py build (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -237,7 +303,7 @@ jobs:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [host-windows-tests, host-windows-package, host-linux-tests, agent, linux-package,
-            linux-install, firmware, firmware-package, native-tests]
+            linux-install, apt-install, firmware, firmware-package, native-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -276,6 +342,53 @@ jobs:
           done
           (cd dist/release && sha256sum -- * > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes dist/release/*
+
+  # H3d: the release's packages signed with the repository key into gh-pages,
+  # which GitHub Pages serves. The key is the secret APT_SIGNING_KEY of the
+  # environment apt-repo, which only v* tags may deploy to, so no branch or
+  # pull-request job can read it. gh-pages holds one commit: this release.
+  apt-publish:
+    name: Publish the apt repository
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    environment: apt-repo
+    permissions:
+      contents: write
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drivelink-debs-*
+          merge-multiple: true
+          path: debs
+      - name: Install Python and gpg
+        run: sh tools/setup_linux.sh base
+      - name: Sign with the repository key (its fingerprint must be the committed one)
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 tools/apt_repo.py build --debs debs \
+            --out build/apt-publish --clean --key-env APT_SIGNING_KEY \
+            --expect-fingerprint packaging/apt/FINGERPRINT
+      - name: Check it with apt and the committed public key
+        run: python3 tools/apt_repo.py verify --repo build/apt-publish --key packaging/apt/drivelink-archive-keyring.asc
+      - name: Replace gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cd build/apt-publish
+          git init -q -b gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -q -m "apt repository for $GITHUB_REF_NAME"
+          git push --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages
 
   native-tests:
     name: Native unit tests

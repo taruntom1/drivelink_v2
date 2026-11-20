@@ -107,6 +107,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 | `host-linux` | The `linux` preset (with the GUI against Ubuntu's Qt 6.10): build, ctest (not label `agent`), `install_smoke.py` | On Windows it runs inside WSL (the default distro, or `DRIVELINK_WSL_DISTRO`). It first runs `tools/setup_linux.sh --check host` and names the fix when a package is missing |
 | `agent` | The `linux-no-gui` preset (GUI off): build `drivelink-agent`, then ctest with label `agent` (`agent-unit`, `agent-integration`: the agent against the vdev and the CLI). `host-linux` skips that label (`-LE agent`), so the tests run once | As `host-linux` (WSL on Windows, build in `~/.cache/drivelink/<worktree>/agent`), but it runs `tools/setup_linux.sh --check agent`: no Qt needed. Part of `quick` on Linux only |
 | `deb` | `tools/package_linux.py`, the H3c packages for the Ubuntu release it runs on. It builds the `linux-release` preset (`linux-release-no-gui` where Ubuntu's Qt is below 6.10, so 24.04). Each package is staged under `/usr`: stripped programs, licence and notices in `/usr/share/<package>`, which minimised systems keep, unlike `/usr/share/doc`. The stages bundle no shared library. The staged programs are smoked, the agent with the shipped `agent.json` and then with a vdev device. The packages are `build/deb/<package>_<version>~ubuntu<release>_<arch>.deb`: `drivelink-cli`, `drivelink-agent` (with `host/agent/deploy/`) and, on 26.04, the GUI's `drivelink`. Depends is `dpkg-shlibdeps`' list plus what it cannot see: the QML modules and `drivelink-cli (= version)` for the GUI, `passwd` for the agent | As `host-linux` (WSL on Windows; the stage and build are in `~/.cache/drivelink/<worktree>/linux-release` there). Off Windows it checks the `tools/setup_linux.sh` profile the release needs (`host`, or `agent` without the GUI). Installing them is CI's `linux-install` job (`installed_packages_smoke.py`, `installed_gui_smoke.py --deb`) or `deploy_check.py` on a host with systemd |
+| `apt-repo` | `tools/apt_repo.py` (H3d): builds the apt repository from the `deb` check's packages (`build/deb`, or the directory in `DRIVELINK_APT_DEBS`) with a throwaway key, then `verify` checks it with apt itself, rootless: `apt-get update` clean, every package listed at its version and hash, the agent and CLI resolve for the host's suite, and a copy signed by another key, an unsigned copy and a changed index are refused. Layout and signing: [packaging/apt/README.md](../packaging/apt/README.md) | As `deb` (WSL on Windows; the repository is in `~/.cache/drivelink/<worktree>/apt-repo` there, `build/apt` elsewhere). Needs the `base` profile (gpg) and the `deb` check's packages |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 | `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
@@ -179,7 +180,8 @@ carries the plain version, and publishes a GitHub Release with
 `drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, the ten
 `.deb` packages (`<package>_<version>~ubuntu<release>_<arch>.deb`: the CLI and
 agent for 26.04 and 24.04, the GUI for 26.04, each for amd64 and arm64) and
-their `SHA256SUMS`.
+their `SHA256SUMS`. Then `apt-publish` signs those packages into the apt
+repository on GitHub Pages ([packaging/apt/README.md](../packaging/apt/README.md)).
 
 ## Linux packages (`tools/setup_linux.sh`)
 
@@ -190,7 +192,7 @@ upgrades anything.
 
 | Profile | Packages for | Used by |
 |---|---|---|
-| `base` | compilers, CMake, Ninja, Python 3, PyYAML, git | `gen`, `native` (CI native-tests) |
+| `base` | compilers, CMake, Ninja, Python 3, PyYAML, git, gpg | `gen`, `native` (CI native-tests), `apt-repo` |
 | `agent` | the `base` packages (the GUI-less superbuild; no Qt) | `agent` (WSL and CI), `deb` on 24.04 (CI) |
 | `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` on 26.04 (WSL and CI) |
 
@@ -209,7 +211,7 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 - `firmware-package` runs `fw-package` in the same container (git marked safe,
   so the version has its `+g<sha7>`) and uploads `drivelink-firmware`.
 - `release` runs only on a pushed `v*` tag, after every other job passed; it
-  is the only job with `contents: write` (see "Version" for what it checks and
+  and `apt-publish` are the only jobs with `contents: write` (see "Version" for what it checks and
   publishes).
 - `gen` and `native` in an `ubuntu:26.04` container with `tools/setup_linux.sh base`.
 - Host tests and host packages are separate jobs, so a test failure never hides
@@ -234,6 +236,19 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   On 26.04 it also runs `installed_gui_smoke.py --deb --vdev`: the installed
   GUI renders every screen against the installed vdev, and the screenshots
   are uploaded as `drivelink-installed-screens-<arch>`.
+- `apt-repo` (after `linux-package`) runs the `apt-repo` check in an
+  `ubuntu:26.04` container on every package artifact (`DRIVELINK_APT_DEBS`)
+  and uploads the throwaway-signed repository as `apt-repo-test`.
+- `apt-install` takes it into a clean container of each release and
+  architecture and runs `host/test/apt_repo_smoke.py`: the key and a deb822
+  source as a user adds them, `apt install drivelink-agent drivelink-cli` at
+  this release's version, the GUI resolving on 26.04, a copy signed by another
+  key refused, purge. `release` waits for it.
+- `apt-publish` runs only on a `v*` tag, after `release`, in the environment
+  `apt-repo` that holds the signing key (`APT_SIGNING_KEY`; only `v*` tags
+  may deploy to it, so no other job can read the key). It signs, checks the
+  key against `packaging/apt/FINGERPRINT`, verifies with the committed public
+  key and force-pushes one commit to `gh-pages`.
 - `host-windows-tests` and `host-windows-package` run on `windows-2025` with
   Python 3.12. Both use `.github/actions/windows-qt`, which caches Qt 6.12.0
   `win64_mingw`, Qt's MinGW 13.1.0, CMake and Ninja under `C:/Qt` and verifies

@@ -72,7 +72,9 @@ The Linux programs ship as three `.deb` packages (H3c), each versioned
 | `drivelink` | `drivelink-gui` and its desktop entry; Depends `drivelink-cli` at the same version | 26.04 only (24.04's Qt 6.4 is below the 6.10 floor) |
 | `drivelink-agent` | the agent as a service ([agent/README.md](agent/README.md), "Install") | 26.04, 24.04 |
 
-Get them from a release, from the `drivelink-debs-<release>-<arch>` artifact
+Get them from DriveLink's signed apt repository (H3d, Ubuntu 26.04 for the GUI:
+add it as in [docs/pi-setup.md](../docs/pi-setup.md) step 4, then
+`sudo apt install drivelink`), from a release, from the `drivelink-debs-<release>-<arch>` artifact
 of CI's linux-package job, or from `build/deb/` after
 `python3 tools/package_linux.py`. Install the GUI with its CLI:
 

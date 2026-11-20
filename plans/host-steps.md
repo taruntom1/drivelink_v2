@@ -23,14 +23,13 @@ logs its internal choices.
 
 | Step | Content | Depends on | Hardware check | Review |
 |---|---|---|---|---|
-| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64 in CI, Pi setup guide (replaces the old H3c script and H5) | H3b-2 | PC: packages in WSL with systemd; deferred: Pi | self |
 | H3d | Signed apt repository on GitHub Pages, published by tag releases | H3c; may run beside H4a/H4b | container; deferred: Pi | self |
 | H4a | `drivelink_hardware` (ros2_control), ROS in `setup_linux.sh`, ros check and CI | H3a | vdev; deferred: robot | independent |
 | H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test | H4a | vdev; deferred: robot | self |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main` | all H steps | bare board: full smoke and GUI | self |
 | HW | Hardware campaign: every open deferred row, whenever hardware arrives | — | motors, IMU, Pi, robot | per fix |
 
-T0 to H3b-2 are merged. Their briefs, overview rows and the items their plans settled are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
+T0 to H3c are merged. Their briefs, overview rows and the items their plans settled are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
 
 ## Left to the step plans
 
@@ -38,41 +37,10 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| Pi UART wiring and the udev match for USB-attached ESPs (USB serial number; CH343 and native USB) | H3c |
-| One packaging script or a sibling per package; Replaces/Breaks for the old `drivelink` package that held the CLI; the unit's hardening | H3c |
-| reprepro or aptly; the key-generation commands given to the user; how the publish is dry-run before the secrets exist | H3d |
 | How the ROS packages ship: colcon from source in the robot's workspace for now; whether to add bloom `.deb`s to the H3d repository is put to the user | H4a |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
 Not planned: a descriptor disk cache (until connecting gets slow), a USB transport, a higher baud rate, Python bindings, installer signing, a devcontainer.
-
-## H3c Agent packages and Pi deployment
-
-**Depends on** H3b-2. Runs next, before H4a. **Architecture:** "Agent deployment", "`drivelink-agent`", "CI".
-
-**Re-planned (user decisions 2026-11-20):** the old H3c (an install script that built from source) and H5 (the agent `.deb`) merge into this step. The `.deb` is the only install path: a source build runs the packaging script on the Pi and installs what it makes with `apt install ./…deb`. The signed apt repository is H3d.
-
-Scope:
-- **Three packages**, versioned from `VERSION`, each built for amd64 and arm64:
-  - `drivelink-cli`: the CLI and vdev, no Qt. Ubuntu 26.04 and 24.04.
-  - `drivelink-agent`: the agent, its systemd unit, udev rules, config and token. It Recommends `drivelink-cli`. Ubuntu 26.04 and 24.04.
-  - `drivelink` (H2g's package): the GUI only, and Depends `drivelink-cli` at the same version. Ubuntu 26.04 only, because 24.04's Qt 6.4 is below the 6.10 floor and nothing is bundled. Built for arm64 too, so a Pi desktop can run the GUI. Upgrading from H2g's package, which held the CLI, must work.
-  - The 24.04 build also enforces the GCC 13 floor on Linux (24.04 ships GCC 13.2 and CMake 3.28). The ROS side stays 26.04 (Lyrical); 24.04 would be Jazzy.
-- **First run** (`postinst`): a `drivelink` system user in `dialout`; a random token in `/etc/drivelink/token` (mode 0640, `root:drivelink`), made only when absent; `/etc/drivelink/agent.json` as a conffile with `bind` `127.0.0.1`, `token_file` and no devices; the service enabled and started, idling until devices are listed. LAN access means editing `bind`, which also turns on mDNS advertising. Remove keeps the config and token, and purge deletes them and the user.
-- **Upgrade never restarts the agent** (safety, user decision 2026-11-20): stopping it DISARMs every device, so an `apt upgrade` must not stop a moving robot. The old process keeps serving, and `postinst` prints that `systemctl restart drivelink-agent` loads the new version. Only a fresh install starts the service; remove and purge stop it.
-- **Devices are added by editing `agent.json`**: the guide shows how, and the helper below prints the device line to paste in.
-- **systemd unit:** runs as `drivelink` with `--config /etc/drivelink/agent.json`, restarts on failure, stops with SIGTERM (the agent DISARMs every device), and carries hardening the plan picks.
-- **ESP links:** the Pi's GPIO UART is the main link (`/dev/serial0` at 921600). A udev rule gives USB-attached ESPs (CH343 or the ESP's native USB) stable names, `/dev/drivelink/<serial>`, from the USB serial number. A helper prints the device line for a plugged-in board.
-- **Pi setup guide:** Ubuntu 26.04 on the Pi 5, the GPIO UART with the serial console off, wiring (from the F8 row), installing the packages from the release, adding devices, the LAN bind, and checks with `drivelink-cli agent-devices` and `agent-browse`.
-- **Tooling and CI:** the packaging script grows from `tools/package_linux.py` and `package_common.py` (stage under `/usr`, `dpkg-shlibdeps` Depends, no bundled library, staged smoke). The `deb` check covers every package. CI builds amd64 on `ubuntu-latest` and arm64 on `ubuntu-24.04-arm`, each in `ubuntu:26.04` and `ubuntu:24.04` containers (24.04 without the GUI). For every release and architecture, a clean container installs, upgrades (from a build with a lower version, checking the running agent is not restarted), removes and purges. The installed-GUI smoke (`installed_gui_smoke.py --deb`) runs on 26.04 for both architectures. Containers have no systemd as PID 1, so the unit is checked with `systemd-analyze verify` and the agent is started by hand with the installed config. The tag's `release` job attaches every package (release and architecture in the file name) and adds them to `SHA256SUMS`.
-- **Notices** per package: the agent links libdrivelink, Asio, nlohmann JSON and mjansson/mdns, and the CLI links libdrivelink, Asio and nlohmann JSON.
-- **Docs:** `host/agent/README.md` "Install", `host/README.md`, `docs/development.md`, `docs/bench.md` where WSL uses the packages.
-
-Hardware check (PC, run by the session): in WSL with systemd, install the amd64 packages; the service starts on the loopback config; the bench board is lent through `wsl_serial.py` and listed in the config; `drivelink-cli agent-devices` answers; restart, remove and purge. Deferred row (Pi): install the arm64 packages, the service survives a reboot, the GPIO UART device comes online, and a LAN bind is found by the GUI on the PC (H3b-2's row runs here). The F8 Pi time row runs through the installed CLI.
-
-Review: self (packaging; no wire, lease or arming change).
-
-Natural cut if large: the CLI split, arm64 CI and release job first; then the agent package, deploy files and guide.
 
 ## H3d Signed apt repository
 
@@ -124,6 +92,7 @@ Review: self.
 - Remove the temporary "Host overhaul in progress" section of the root `CLAUDE.md` and the overhaul workflow that only served it, as agreed with the user then.
 - Bare board: the full smoke set and the installed GUI.
 - After merge: merge `host_overhaul` into `main` and tag `vX.Y.Z` from `VERSION`. Whether open HW rows must pass first is decided with the user at that point.
+- After the tag: the `apt-publish` job creates `gh-pages` (H3d); the user then enables Pages once (Settings → Pages → Deploy from a branch, `gh-pages`, `/ (root)`), and H3d's deferred Pi row can run.
 
 Review: self.
 

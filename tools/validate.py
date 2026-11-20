@@ -367,6 +367,31 @@ def plan_deb(jobs):
                          '--jobs', jobs, '--build-dir', build], env=env)]
 
 
+def plan_apt_repo(jobs):
+    """The H3d apt repository built from the `deb` check's packages (build/deb, or
+    DRIVELINK_APT_DEBS: CI passes every release's) with a throwaway key, then
+    checked by apt itself: signature, indices, resolution, and that another key,
+    no signature or a changed index is refused."""
+    probe = linux_probe('base')
+    debs = os.environ.get('DRIVELINK_APT_DEBS') or 'build/deb'
+    if probe is None:
+        need('gpg', 'dpkg-deb', 'apt-get')
+        out = (ROOT / 'build/apt').as_posix()
+        wrap, env = [], None
+    else:
+        # The repository is written on the Linux filesystem (pool copies, file modes).
+        wsl, env, home = probe
+        out = f'{home}/.cache/drivelink/{worktree_key()}/apt-repo'
+        wrap = [*wsl, '--cd', str(ROOT), '--exec']
+    key = f'{out}-key.asc'
+    tool = [*wrap, 'python3', 'tools/apt_repo.py']
+    return [
+        Step('build (throwaway key)', [*tool, 'build', '--debs', debs, '--out', out, '--clean',
+                                       '--throwaway-key', '--public-key-out', key], env=env),
+        Step('verify with apt', [*tool, 'verify', '--repo', out, '--key', key], env=env),
+    ]
+
+
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
@@ -379,6 +404,8 @@ CHECKS = [
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
     Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent),
     Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb),
+    Check('apt-repo', 'apt repository from the .deb packages, checked by apt (through WSL on Windows)',
+          plan_apt_repo),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),
