@@ -103,8 +103,9 @@ published with `imu_sensor_broadcaster`.
   `client_kind` Ros, so the GUI shows "ROS is driving"), loads the device
   model and resolves every label and signal. Safe mode, a pending reboot, an
   invalid layout, a missing or failed instance, a missing signal or one of the
-  wrong kind or type, or a state interface whose `data_type` is not `double`,
-  fails with a message naming the joint, the interface and what was found.
+  wrong kind or type fails with a message naming the joint, the interface and
+  what was found. (Loading the component already refuses unknown parameters,
+  `<gpio>` and a state interface whose `data_type` is not `double`.)
 - **activate**: refuses while another client holds the lease (unless
   `take_lease` is `preempt`; the component stays inactive), takes the lease,
   and sets up one subscription group per loop that holds a mapped signal; it
@@ -128,8 +129,8 @@ published with `imu_sensor_broadcaster`.
   the cause is fixed; H4c adds the diagnostics node's `recover`. While the
   component is inactive, `read()` returns `OK` and a fault seen then makes the
   next activate fail.
-- **deactivate**: clears the groups and releases the lease; if the release is
-  not confirmed it disconnects and returns `ERROR`.
+- **deactivate**: clears the groups and releases the lease; if a clear or the
+  release is not confirmed it disconnects and returns `ERROR`.
 
 ## Tests
 
@@ -138,6 +139,8 @@ published with `imu_sensor_broadcaster`.
 is set, as `tools/ros_check.sh` does) runs the plugin through
 `hardware_interface::ResourceManager` against `drivelink-vdev` behind
 `drivelink-agent`: configure and activate, values following the device, the
-lease refusal and `preempt`, and `ERROR` on a lost lease, a stopped agent and
-stale data. `host/test/ros_state_check.py` is the robot check (wheels turned by
+lease refusal and `preempt`, `ERROR` on a lost lease, a stopped agent, a
+device reboot (vdev on a PTY) and stale data, a reboot between configure and
+activate, deactivate and activate again, cleanup and configure again, and a
+wrong label or token. `host/test/ros_state_check.py` is the robot check (wheels turned by
 hand, the IMU tilted) with a `--mock` mode against vdev.

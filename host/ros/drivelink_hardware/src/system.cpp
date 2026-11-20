@@ -166,18 +166,24 @@ void disconnect(DriveLinkSystem::Impl &m)
 }
 
 // Clears our subscription groups and gives the lease back, on the
-// controller_manager's non-real-time path (deactivate). True when the lease
-// is known to be ours no more.
+// controller_manager's non-real-time path (deactivate). True when every
+// group is cleared and the lease is known to be ours no more; otherwise the
+// caller disconnects, and the agent clears what is left.
 bool release(DriveLinkSystem::Impl &m, const rclcpp::Logger &logger)
 {
     m.running = false;
     m.watch->leased = false;
     if (!m.client) { return true; }
+    bool cleared = true;
     for (const auto &run : m.runs)
     {
         m.session->removeBuffer(run.id);
         try { m.client->groupClear(run.id, false); }
-        catch (const std::exception &e) { RCLCPP_WARN(logger, "clearing group %u: %s", unsigned(run.id), e.what()); }
+        catch (const std::exception &e)
+        {
+            RCLCPP_WARN(logger, "clearing group %u: %s", unsigned(run.id), e.what());
+            cleared = false;
+        }
     }
     m.runs.clear();
     try
@@ -189,7 +195,7 @@ bool release(DriveLinkSystem::Impl &m, const rclcpp::Logger &logger)
         // WrongState: we do not hold it (already taken by another client).
         if (e.result == uint8_t(defs::Result::InvalidArgument) && e.detail == uint8_t(defs::Detail::WrongState))
         {
-            return true;
+            return cleared;
         }
         RCLCPP_WARN(logger, "releasing the lease: %s", e.what());
         return false;
@@ -199,7 +205,7 @@ bool release(DriveLinkSystem::Impl &m, const rclcpp::Logger &logger)
         RCLCPP_WARN(logger, "releasing the lease: %s", e.what());
         return false;
     }
-    return true;
+    return cleared;
 }
 } // namespace
 
@@ -335,6 +341,10 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         for (const auto &state : m.resolved.states)
         {
             m.handles.push_back(get_state_interface_handle(state.component + "/" + state.interface_name));
+        }
+        if (const auto fault = m.watch->fault.load(); fault != Fault::None)
+        {
+            throw std::runtime_error(describe(fault));
         }
         const auto device = hello ? hello->device : drivelink::agent::DeviceRecord{};
         RCLCPP_INFO(get_logger(), "configured: device '%s' (%s) through %s, %zu state interfaces in %zu loop group(s)",
@@ -492,7 +502,7 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_deactivate(const rclcpp_l
     if (!release(*m_impl, get_logger()))
     {
         // The lease may still be ours: closing the connection ends it for certain.
-        RCLCPP_ERROR(get_logger(), "the lease release was not confirmed; disconnecting (configure again)");
+        RCLCPP_ERROR(get_logger(), "a group clear or the lease release was not confirmed; disconnecting (configure again)");
         disconnect(*m_impl);
         return CallbackReturn::ERROR;
     }
@@ -568,7 +578,7 @@ return_type DriveLinkSystem::read(const rclcpp::Time &, const rclcpp::Duration &
             // model; until that mapping is valid (or if it lies far ahead),
             // when read() first saw it.
             uint64_t sample_us = run.seen_us;
-            if (m.sample.mapped && m.sample.host_us > 0 && uint64_t(m.sample.host_us) <= now + kFutureToleranceUs)
+            if (m.sample.mapped && m.sample.host_us > 0 && m.sample.host_us <= double(now + kFutureToleranceUs))
             {
                 sample_us = uint64_t(m.sample.host_us);
             }

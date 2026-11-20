@@ -63,10 +63,13 @@ case "$phase" in
                 --event-handlers console_direct+ \
                 --cmake-args -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
         else
+            # The results summary first, then the run's status.
+            status=0
             # shellcheck disable=SC2086
             colcon --log-base "$out/log" test $common --event-handlers console_direct+ --return-code-on-test-failure \
-                --ctest-args --output-on-failure
-            colcon --log-base "$out/log" test-result --test-result-base "$out/build" --verbose
+                --ctest-args --output-on-failure || status=$?
+            colcon --log-base "$out/log" test-result --test-result-base "$out/build" --verbose || status=1
+            exit "$status"
         fi
         ;;
     *) echo "usage: ros_check.sh superbuild|build|test BUILD_DIR" >&2; exit 2 ;;

@@ -89,11 +89,14 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   only through the agent (Hello `client_kind` Ros), never a serial port; only
   the ros2_control API Jazzy and Lyrical share. Lifecycle callbacks may block
   (bounded); `read()` is `noexcept` with no allocation, blocking lock or device call,
-  and learns of agent events and link loss only through atomics. A lost
-  lease, Closing, link loss, a Boot or a stale group (`stale_timeout_ms`)
-  returns `ERROR`; `on_error` releases and disconnects, and nothing re-arms or
+  and learns of agent events, link loss and a Boot only through atomics set
+  by the session observer. A lost lease, Closing, link loss, a Boot, dropped
+  observer events or a stale group (`stale_timeout_ms`) returns `ERROR`;
+  `on_error` only disconnects (no device call in the controller_manager
+  loop; the agent clears the groups and lease), and nothing re-arms or
   reconnects by itself. Activation refuses another holder unless
-  `take_lease: preempt`. Mapping stays pure (`mapping.cpp`, unit-tested).
+  `take_lease: preempt`; any failure after the Take, or an unconfirmed
+  release, disconnects. Mapping stays pure (`mapping.cpp`, unit-tested).
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - GUI ([gui/README.md](gui/README.md)): Qt 6.10 API floor. Figma is the source
