@@ -1,0 +1,37 @@
+Package: drivelink-agent
+Version: 0.1.0~ubuntu24.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 973
+Depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), passwd
+Recommends: drivelink-cli
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink agent: shares DriveLink devices over TCP
+ drivelink-agent owns the serial ports of DriveLink devices (ESP32-S3 motion
+ controllers) and shares them with the GUI, the CLI and ROS 2, with access
+ control and a control lease. It runs as the drivelink-agent service on
+ 127.0.0.1 with a generated token until /etc/drivelink/agent.json lists
+ devices; an upgrade never restarts the running agent.
+Filename: pool/main/d/drivelink-agent/drivelink-agent_0.1.0~ubuntu24.04_arm64.deb
+Size: 409160
+SHA256: f4086390f5ccc1b32f167240a5b837f1406bfae8d73d75e5ad5fe440582c4dde
+
+Package: drivelink-cli
+Version: 0.1.0~ubuntu24.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1420
+Depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1)
+Replaces: drivelink
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink command line client and virtual device
+ drivelink-cli configures, monitors and scripts a DriveLink device (an ESP32-S3
+ motion controller) over serial, TCP or a drivelink-agent. drivelink-vdev is a
+ virtual device for trying it without hardware.
+Filename: pool/main/d/drivelink-cli/drivelink-cli_0.1.0~ubuntu24.04_arm64.deb
+Size: 525510
+SHA256: cddb58030fe936899800b0dd3fd717ee1bea18b622332ce4591e0206e2d25d44

@@ -1,0 +1,24 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: DriveLink
+Label: DriveLink
+Suite: resolute
+Codename: resolute
+Version: 26.04
+Date: Fri, 20 Nov 2026 19:25:53 UTC
+Architectures: amd64 arm64
+Components: main
+Description: DriveLink packages for Ubuntu 26.04
+SHA256:
+ ee3264410fbad3838031303083a320aecabc39e126d350f529e4ce61c789f4d8             2872 main/binary-amd64/Packages
+ 3dfd5646cd9fbf13075db5cc25406566abdb5107ab82c75d2101731e8302e688             1024 main/binary-amd64/Packages.gz
+ 73fab4319d980ad948832a214af9fdbc86f83a87bddd7149cd3ce7aa542c3e56             2872 main/binary-arm64/Packages
+ 951495d1360afba1a850fc0525a5c053421f20185b61e5587d082cd937a7b827             1027 main/binary-arm64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQQLerrBtamV+zUS4GhpZK/YMzuz1gUCawCi7wAKCRBpZK/YMzuz
+1gGpAP9BkoL7tQLAfRon+xPfe69FqiAqN5DzBOI9jDEzv2vbdgEA2bQEJg0FHi03
+NxRq9hOqmH12cDB64iyOwA8a+KUPuQU=
+=hnO1
+-----END PGP SIGNATURE-----

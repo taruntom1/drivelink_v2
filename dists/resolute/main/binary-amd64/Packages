@@ -1,0 +1,55 @@
+Package: drivelink
+Version: 0.1.0~ubuntu26.04
+Architecture: amd64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 5520
+Depends: libc6 (>= 2.42), libgcc-s1 (>= 3.0), libqt6core6t64 (>= 6.10.2), libqt6gui6 (>= 6.6.0), libqt6qml6 (>= 6.6.0), libqt6quick6 (>= 6.6.0), libqt6svg6 (>= 6.6.0), libstdc++6 (>= 14), drivelink-cli (= 0.1.0~ubuntu26.04), qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtcore, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-templates, qml6-module-qtquick-layouts, qml6-module-qtquick-window, qml6-module-qtquick-dialogs
+Recommends: qt6-wayland
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink GUI for an ESP32-S3 motion controller
+ drivelink-gui configures, tunes and monitors a DriveLink device over USB
+ serial, TCP or a drivelink-agent. The command line client and the virtual
+ device are in drivelink-cli.
+Filename: pool/main/d/drivelink/drivelink_0.1.0~ubuntu26.04_amd64.deb
+Size: 1904024
+SHA256: cf621e07d28223c792970ded23ac97d9badecbf1d2d286ed5b612e3a7b9f93d5
+
+Package: drivelink-agent
+Version: 0.1.0~ubuntu26.04
+Architecture: amd64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1149
+Depends: libc6 (>= 2.42), libgcc-s1 (>= 3.0), libstdc++6 (>= 14), passwd
+Recommends: drivelink-cli
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink agent: shares DriveLink devices over TCP
+ drivelink-agent owns the serial ports of DriveLink devices (ESP32-S3 motion
+ controllers) and shares them with the GUI, the CLI and ROS 2, with access
+ control and a control lease. It runs as the drivelink-agent service on
+ 127.0.0.1 with a generated token until /etc/drivelink/agent.json lists
+ devices; an upgrade never restarts the running agent.
+Filename: pool/main/d/drivelink-agent/drivelink-agent_0.1.0~ubuntu26.04_amd64.deb
+Size: 463568
+SHA256: c4b84f727cbb78ce9987607fb67870cceeed1594b8c61ecc00e439f8a7677350
+
+Package: drivelink-cli
+Version: 0.1.0~ubuntu26.04
+Architecture: amd64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1552
+Depends: libc6 (>= 2.43), libgcc-s1 (>= 3.0), libstdc++6 (>= 14)
+Replaces: drivelink
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink command line client and virtual device
+ drivelink-cli configures, monitors and scripts a DriveLink device (an ESP32-S3
+ motion controller) over serial, TCP or a drivelink-agent. drivelink-vdev is a
+ virtual device for trying it without hardware.
+Filename: pool/main/d/drivelink-cli/drivelink-cli_0.1.0~ubuntu26.04_amd64.deb
+Size: 585414
+SHA256: 6923866865e10067761e923feaa583b1037c81e410ec91a5ef64aba4a6f0c8c7
