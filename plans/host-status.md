@@ -78,7 +78,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c; may run beside H4a/H4b | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | in review | |
+| H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c; may run beside H4a/H4b | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | in review | [#94](https://github.com/taruntom1/drivelink_v2/pull/94) |
 | H4a | `drivelink_hardware`, ROS in `setup_linux.sh`, ros check and CI. Depends on H3a-2 | vdev; deferred: robot | high, independent | planned | |
 | H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test. Depends on H4a | vdev; deferred: robot | high, self | planned | |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
