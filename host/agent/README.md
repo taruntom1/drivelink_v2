@@ -36,7 +36,9 @@ On Windows, `python tools/validate.py --only agent` builds and tests it in WSL
 The `drivelink-agent` package (H3c) is the way to run it on a robot. It is
 built for Ubuntu 26.04 and 24.04, amd64 and arm64, from `VERSION` with the
 release in the package version (`<version>~ubuntu26.04`). Get it from a
-release or from `python3 tools/package_linux.py` (`build/deb/`). It
+release, from DriveLink's signed apt repository (H3d; adding it is step 4 of
+[docs/pi-setup.md](../../docs/pi-setup.md), then `sudo apt install drivelink-agent`)
+or from `python3 tools/package_linux.py` (`build/deb/`). It
 Recommends `drivelink-cli`. A Raspberry Pi walk-through, from the UART to the
 LAN bind, is [docs/pi-setup.md](../../docs/pi-setup.md).
 

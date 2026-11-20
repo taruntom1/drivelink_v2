@@ -26,7 +26,7 @@ if [ "${1:-}" = "--check" ]; then
 fi
 profile=${1:-host}
 
-base="build-essential cmake ninja-build python3 python3-yaml git ca-certificates"
+base="build-essential cmake ninja-build python3 python3-yaml git ca-certificates gnupg"
 qt="qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-declarative-dev-tools \
 qt6-svg-dev qt6-qpa-plugins libgl-dev \
 qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-templates \

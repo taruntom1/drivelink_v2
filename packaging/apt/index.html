@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DriveLink apt repository</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1b1f24; --muted: #57606a; --code: #f3f4f6; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --code: #161b22; } }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 16px; }
+  pre { background: var(--code); padding: 12px; overflow-x: auto; border-radius: 6px; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; }
+  p.muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>DriveLink apt repository</h1>
+<p>Signed packages for Ubuntu 24.04 (<code>noble</code>) and 26.04 (<code>resolute</code>), amd64 and arm64:
+<code>drivelink-agent</code>, <code>drivelink-cli</code> and, on 26.04, the GUI <code>drivelink</code>.
+It holds the latest release; older versions stay on the GitHub release pages.</p>
+
+<h2>Add the repository</h2>
+<pre><code>sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/drivelink-archive-keyring.asc @URL@/drivelink-archive-keyring.asc
+gpg --show-keys /etc/apt/keyrings/drivelink-archive-keyring.asc
+. /etc/os-release
+printf 'Types: deb\nURIs: @URL@/\nSuites: %s\nComponents: main\nSigned-By: /etc/apt/keyrings/drivelink-archive-keyring.asc\n' \
+  "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/drivelink.sources
+sudo apt update
+sudo apt install drivelink-agent drivelink-cli</code></pre>
+<p>The key's fingerprint must be:</p>
+<pre><code>@FINGERPRINT@</code></pre>
+<p class="muted">Check it against the fingerprint in the DriveLink repository (<code>packaging/apt/FINGERPRINT</code>), not only this page.
+An upgrade (<code>sudo apt upgrade</code>) never restarts a running agent: run <code>sudo systemctl restart drivelink-agent</code>
+when the robot is safe to stop.</p>
+</body>
+</html>

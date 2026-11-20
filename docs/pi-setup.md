@@ -9,7 +9,8 @@ shares the device with the GUI, the CLI and ROS 2 on the Pi or over the LAN
 > are tested in containers and in WSL with systemd (H3c). The Pi-specific
 > steps below (the UART overlay, the console, the wiring) are unverified
 > until the H3c row in [host-status.md](../plans/host-status.md), "Deferred
-> hardware checks", passes.
+> hardware checks", passes. The apt repository (step 4) is tested in
+> containers (H3d) and published from v0.1.0 on.
 
 ## 1. Ubuntu on the Pi
 
@@ -61,8 +62,28 @@ fight. A board on USB instead of the GPIO UART works too (step 5).
 
 ## 4. Install the packages
 
-From a release, download the two arm64 packages for your Ubuntu
-(`drivelink-cli_<version>~ubuntu26.04_arm64.deb` and
+From DriveLink's signed apt repository (H3d): add its key and source once,
+then install with apt. `apt upgrade` then brings new releases.
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/drivelink-archive-keyring.asc \
+  https://taruntom1.github.io/drivelink_v2/drivelink-archive-keyring.asc
+gpg --show-keys /etc/apt/keyrings/drivelink-archive-keyring.asc
+. /etc/os-release
+printf 'Types: deb\nURIs: https://taruntom1.github.io/drivelink_v2/\nSuites: %s\nComponents: main\nSigned-By: /etc/apt/keyrings/drivelink-archive-keyring.asc\n' \
+  "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/drivelink.sources
+sudo apt update
+sudo apt install drivelink-agent drivelink-cli
+```
+
+The fingerprint `gpg --show-keys` prints must equal
+[packaging/apt/FINGERPRINT](../packaging/apt/FINGERPRINT) in the DriveLink
+repository. The repository holds the latest release for Ubuntu 24.04 and
+26.04 ([packaging/apt/README.md](../packaging/apt/README.md)).
+
+Without the repository, download the two arm64 packages for your Ubuntu from
+a release (`drivelink-cli_<version>~ubuntu26.04_arm64.deb` and
 `drivelink-agent_<version>~ubuntu26.04_arm64.deb`) and install them:
 
 ```sh
@@ -139,7 +160,8 @@ use a trusted network only. UDP 5353 (mDNS) and TCP 47620 must be open.
 
 ## Upgrades and removal
 
-- **Upgrade:** install newer packages the same way. An upgrade never
+- **Upgrade:** `sudo apt update && sudo apt upgrade` from the repository, or
+  install newer release files the same way. An upgrade never
   restarts the running agent, because a restart DISARMs every device.
   `apt` prints a reminder. Run `sudo systemctl restart drivelink-agent`
   when the robot is safe to stop. Your `agent.json` is kept; apt asks before
