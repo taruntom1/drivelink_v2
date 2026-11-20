@@ -10,8 +10,7 @@ shares the device with the GUI, the CLI and ROS 2 on the Pi or over the LAN
 > steps below (the UART overlay, the console, the wiring) are unverified
 > until the H3c row in [host-status.md](../plans/host-status.md), "Deferred
 > hardware checks", passes. The apt repository (step 4) is tested in
-> containers (H3d) and is first published by the first release tag; until
-> then, install from the release files or from source.
+> containers (H3d) and published from v0.1.0 on.
 
 ## 1. Ubuntu on the Pi
 

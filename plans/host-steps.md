@@ -91,8 +91,7 @@ Review: self.
 - Remove stale text, archive finished step plans, bring `host/CLAUDE.md`, the READMEs and `docs/` in line with the code.
 - Remove the temporary "Host overhaul in progress" section of the root `CLAUDE.md` and the overhaul workflow that only served it, as agreed with the user then.
 - Bare board: the full smoke set and the installed GUI.
-- After merge: merge `host_overhaul` into `main` and tag `vX.Y.Z` from `VERSION`. Whether open HW rows must pass first is decided with the user at that point.
-- After the tag: the `apt-publish` job creates `gh-pages` (H3d); the user then enables Pages once (Settings → Pages → Deploy from a branch, `gh-pages`, `/ (root)`), and H3d's deferred Pi row can run.
+- After merge: merge `host_overhaul` into `main`, bump `VERSION` (and the `package.xml` files) past 0.1.0 and tag `vX.Y.Z` from it. v0.1.0 was tagged early on `host_overhaul` after H3d (user decision 2026-11-21) and is the first release and apt publish. Whether open HW rows must pass first is decided with the user at that point.
 
 Review: self.
 
