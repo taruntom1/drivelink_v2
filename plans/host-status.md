@@ -79,7 +79,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64, Ubuntu 26.04 and 24.04 (no GUI on 24.04), release files, Pi guide; replaces the old H3c and H5. Depends on H3b-2 | PC: packages in WSL with systemd; deferred: Pi | high, self | in review | |
+| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64, Ubuntu 26.04 and 24.04 (no GUI on 24.04), release files, Pi guide; replaces the old H3c and H5. Depends on H3b-2 | PC: packages in WSL with systemd; deferred: Pi | high, self | in review | [#93](https://github.com/taruntom1/drivelink_v2/pull/93) |
 | H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c; may run beside H4a/H4b | container; deferred: Pi | high, self | planned | |
 | H4a | `drivelink_hardware`, ROS in `setup_linux.sh`, ros check and CI. Depends on H3a-2 | vdev; deferred: robot | high, independent | planned | |
 | H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test. Depends on H4a | vdev; deferred: robot | high, self | planned | |
