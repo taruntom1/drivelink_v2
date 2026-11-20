@@ -626,6 +626,9 @@ stops); DISARM and Esc are unchanged.
   file, so `--settings` isolates it) and resolves "system" from Qt's colour
   scheme; `main.cpp` sets `Theme.dark` from it. Screenshot mode switches
   themes without saving them.
+- **Connection (H3b-2):** *Find agents on the network* (`AppSettings::discoverAgents`,
+  INI `connection/discoverAgents`, on by default). Off, the Agent tab shows a
+  line saying so and never browses.
 - **About:** the full version (`cmake/DriveLinkVersion.cmake`, configure
   time), Qt and compiler, the repository `LICENSE` and the third-party
   notices, both compiled into the backend's resources, with Copy.
@@ -694,6 +697,18 @@ client list; `backend/remote_model.*` holds the pure rules (tested in
   file (`recentAgents`); the token is stored there only when *Remember token*
   is checked (it is by default; user decision 2026-11-19), and never
   otherwise. Unchecking it or forgetting the agent removes a stored token.
+- **Found on the network (H3b-2).** While the Agent tab is shown and
+  discovery is on, the backend browses for agents over mDNS
+  (`discovery::browseAgents` on a worker thread, `agentBrowse`: state off,
+  searching or idle, and the agents): rounds at 0, 1, 3, 7, 15 and 31 s, then
+  every 60 s; *Search again* restarts the back-off; an agent missed in two
+  rounds in a row is dropped (`FoundAgents`). An agent on another agent
+  protocol shows *Incompatible* and cannot be picked. Picking one fills the
+  address (clearing a token typed for another address), takes the token of a
+  recent agent with that address, and lists the devices when there is a token.
+  `DRIVELINK_GUI_FAKE_AGENTS` (a JSON array) replaces the network for
+  screenshots (`remote-agent-found`, `remote-agent-found-empty`). A GUI on the
+  same PC cannot find an agent in mirrored WSL ([bench.md](../../docs/bench.md)).
 - **Observer first.** The connection starts with the holder named by the
   Hello's device record and follows the agent's Lease events (the truth: a
   Take that timed out may still be granted later). Command groups are set up
