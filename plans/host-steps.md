@@ -39,10 +39,10 @@ logs its internal choices.
 | H3a-1 | Agent for several devices: server, access, routing, subscription groups, events, agent MSG_TYPEs; library agent client; agent check and CI. Interim: nobody can arm through it | H1b (planned after H2g) | vdev | independent |
 | H3a-2 | Agent lease (Take preempts), exclusive operations, clock model, history, client list; CLI lease commands | H3a-1 | vdev | independent |
 | H3b | GUI remote mode with the agent's device list, mDNS, `wsl_serial.py` | H3a, H2g | PC: agent in WSL owns the bench board | independent |
-| H3c | Pi deployment: install script, systemd unit, udev rule, config | H3a; may run beside H3b | deferred: Pi | self |
+| H3c | Agent packages and Pi deployment: `drivelink-cli` split out, `drivelink-agent` (unit, udev rules, config, token), amd64 and arm64 in CI, Pi setup guide (replaces the old H3c script and H5) | H3b-2 | PC: packages in WSL with systemd; deferred: Pi | self |
+| H3d | Signed apt repository on GitHub Pages, published by tag releases | H3c; may run beside H4a/H4b | container; deferred: Pi | self |
 | H4a | `drivelink_hardware` (ros2_control), ROS in `setup_linux.sh`, ros check and CI | H3a | vdev; deferred: robot | independent |
 | H4b | `drivelink_bringup`: example diff-drive + IMU, diagnostics node, launch test | H4a | vdev; deferred: robot | self |
-| H5 | Agent `.deb` (arm64) | H3c | deferred: Pi | self |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main` | all H steps | bare board: full smoke and GUI | self |
 | HW | Hardware campaign: every open deferred row, whenever hardware arrives | — | motors, IMU, Pi, robot | per fix |
 
@@ -63,7 +63,10 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 | mDNS library, service name and TXT records | settled in H3b-2: mjansson/mdns 1.4.3, `_drivelink._tcp`, TXT `txtvers`/`proto`/`version` (user decisions; `docs/protocol/agent.md` "Discovery") |
 | Where the GUI keeps agent tokens (`QSettings` or Windows Credential Manager) | settled in H3b-1: the GUI's INI file, only when "Remember token" is checked (user decision) |
 | The device-list screen on Connect's Agent tab (not in Figma) | settled in H3b-1: built from the G2 components, recorded in `gui-design.md` |
-| Pi UART wiring and how udev rules match each ESP | H3c |
+| Pi UART wiring and the udev match for USB-attached ESPs (USB serial number; CH343 and native USB) | H3c |
+| One packaging script or a sibling per package; Replaces/Breaks for the old `drivelink` package that held the CLI; the unit's hardening | H3c |
+| reprepro or aptly; the key-generation commands given to the user; how the publish is dry-run before the secrets exist | H3d |
+| How the ROS packages ship: colcon from source in the robot's workspace for now; whether to add bloom `.deb`s to the H3d repository is put to the user | H4a |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
 Not planned: a descriptor disk cache (until connecting gets slow), a USB transport, a higher baud rate, Python bindings, installer signing, a devcontainer.
@@ -358,18 +361,47 @@ Hardware check (PC, run by the session after the user's one-time `usbipd bind`):
 
 Review: independent (lease and arming in the GUI, the remote command group).
 
-## H3c Pi deployment
+## H3c Agent packages and Pi deployment
 
-**Depends on** H3a; may run beside H3b.
+**Depends on** H3b-2. Runs next, before H4a. **Architecture:** "Agent deployment", "`drivelink-agent`", "CI".
+
+**Re-planned (user decisions 2026-11-20):** the old H3c (an install script that built from source) and H5 (the agent `.deb`) merge into this step. The `.deb` is the only install path: a source build runs the packaging script on the Pi and installs what it makes with `apt install ./…deb`. The signed apt repository is H3d.
 
 Scope:
-- `host/agent/deploy/`: an install script that builds from source on the Pi and installs the binary, a systemd unit, udev rules giving each ESP's port a stable name, and the config file (bind address, token, device list); uninstall.
-- A Pi setup guide: Ubuntu 26.04, the GPIO UART at 921600 with the serial console off, wiring (from the F8 row).
-- Dry-run the script where possible (WSL with systemd, or a container).
+- **Three packages**, versioned from `VERSION`, each built for amd64 and arm64:
+  - `drivelink-cli`: the CLI and vdev, no Qt. Ubuntu 26.04 and 24.04.
+  - `drivelink-agent`: the agent, its systemd unit, udev rules, config and token. It Recommends `drivelink-cli`. Ubuntu 26.04 and 24.04.
+  - `drivelink` (H2g's package): the GUI only, and Depends `drivelink-cli` at the same version. Ubuntu 26.04 only, because 24.04's Qt 6.4 is below the 6.10 floor and nothing is bundled. Built for arm64 too, so a Pi desktop can run the GUI. Upgrading from H2g's package, which held the CLI, must work.
+  - The 24.04 build also enforces the GCC 13 floor on Linux (24.04 ships GCC 13.2 and CMake 3.28). The ROS side stays 26.04 (Lyrical); 24.04 would be Jazzy.
+- **First run** (`postinst`): a `drivelink` system user in `dialout`; a random token in `/etc/drivelink/token` (mode 0640, `root:drivelink`), made only when absent; `/etc/drivelink/agent.json` as a conffile with `bind` `127.0.0.1`, `token_file` and no devices; the service enabled and started, idling until devices are listed. LAN access means editing `bind`, which also turns on mDNS advertising. Remove keeps the config and token, and purge deletes them and the user.
+- **Upgrade never restarts the agent** (safety, user decision 2026-11-20): stopping it DISARMs every device, so an `apt upgrade` must not stop a moving robot. The old process keeps serving, and `postinst` prints that `systemctl restart drivelink-agent` loads the new version. Only a fresh install starts the service; remove and purge stop it.
+- **Devices are added by editing `agent.json`**: the guide shows how, and the helper below prints the device line to paste in.
+- **systemd unit:** runs as `drivelink` with `--config /etc/drivelink/agent.json`, restarts on failure, stops with SIGTERM (the agent DISARMs every device), and carries hardening the plan picks.
+- **ESP links:** the Pi's GPIO UART is the main link (`/dev/serial0` at 921600). A udev rule gives USB-attached ESPs (CH343 or the ESP's native USB) stable names, `/dev/drivelink/<serial>`, from the USB serial number. A helper prints the device line for a plugged-in board.
+- **Pi setup guide:** Ubuntu 26.04 on the Pi 5, the GPIO UART with the serial console off, wiring (from the F8 row), installing the packages from the release, adding devices, the LAN bind, and checks with `drivelink-cli agent-devices` and `agent-browse`.
+- **Tooling and CI:** the packaging script grows from `tools/package_linux.py` and `package_common.py` (stage under `/usr`, `dpkg-shlibdeps` Depends, no bundled library, staged smoke). The `deb` check covers every package. CI builds amd64 on `ubuntu-latest` and arm64 on `ubuntu-24.04-arm`, each in `ubuntu:26.04` and `ubuntu:24.04` containers (24.04 without the GUI). For every release and architecture, a clean container installs, upgrades (from a build with a lower version, checking the running agent is not restarted), removes and purges. The installed-GUI smoke (`installed_gui_smoke.py --deb`) runs on 26.04 for both architectures. Containers have no systemd as PID 1, so the unit is checked with `systemd-analyze verify` and the agent is started by hand with the installed config. The tag's `release` job attaches every package (release and architecture in the file name) and adds them to `SHA256SUMS`.
+- **Notices** per package: the agent links libdrivelink, Asio, nlohmann JSON and mjansson/mdns, and the CLI links libdrivelink, Asio and nlohmann JSON.
+- **Docs:** `host/agent/README.md` "Install", `host/README.md`, `docs/development.md`, `docs/bench.md` where WSL uses the packages.
 
-Hardware check: deferred rows for the agent on the Pi and the remote GUI against it; the F8 Pi time row can run through it.
+Hardware check (PC, run by the session): in WSL with systemd, install the amd64 packages; the service starts on the loopback config; the bench board is lent through `wsl_serial.py` and listed in the config; `drivelink-cli agent-devices` answers; restart, remove and purge. Deferred row (Pi): install the arm64 packages, the service survives a reboot, the GPIO UART device comes online, and a LAN bind is found by the GUI on the PC (H3b-2's row runs here). The F8 Pi time row runs through the installed CLI.
 
-Review: self.
+Review: self (packaging; no wire, lease or arming change).
+
+Natural cut if large: the CLI split, arm64 CI and release job first; then the agent package, deploy files and guide.
+
+## H3d Signed apt repository
+
+**Depends on** H3c; may run beside H4a or H4b.
+
+Scope:
+- An apt repository on this repository's GitHub Pages (a `gh-pages` branch): one suite per Ubuntu release, named by its codename (`noble` for 24.04 and 26.04's codename), component `main`, amd64 and arm64. Only `vX.Y.Z` tags publish it, from the release's packages. Dev builds stay CI artifacts, and the `.deb` files stay release assets as well.
+- Signing: a dedicated signing-only key that the user creates offline (the step gives the commands) and adds as Actions secrets. The session never handles the private key. The public key lives in the repository and is served with the apt repository; users install it under `/etc/apt/keyrings/` and name it with `signed-by`. Until the secrets exist, CI builds and verifies the repository with a throwaway key and pushes nothing.
+- A container test: serve the built repository over HTTP, add it with the public key, `apt install drivelink-agent drivelink-cli`, and check that a repository signed with another key is refused.
+- The Pi guide's install section uses the repository, with the release files as the fallback.
+
+Hardware check: container. Deferred row: `apt install` and later `apt upgrade` on the Pi from the published repository (after H6's first tag).
+
+Review: self; the PR states the release job's permissions and where the secrets are used.
 
 ## H4a `drivelink_hardware`
 
@@ -399,16 +431,6 @@ Hardware check: vdev. Deferred row: the robot.
 
 Review: self.
 
-## H5 Agent package
-
-**Depends on** H3c.
-
-Scope: an arm64 `.deb` for the agent (binary, systemd unit, udev rules, config as a conffile), versioned from `VERSION`, built in CI, installed, upgraded and removed in a container; the install guide offers it beside the script.
-
-Hardware check: deferred (installing on the Pi).
-
-Review: self.
-
 ## H6 Close-out
 
 **Depends on** every H step. Like F10:
@@ -422,4 +444,4 @@ Review: self.
 
 ## HW Hardware campaign
 
-Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H5) and the robot (H4a, H4b).
+Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H3d) and the robot (H4a, H4b).
