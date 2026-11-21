@@ -96,7 +96,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()` without keepalives, `ERROR` on a disarm. Depends on H4a | vdev (Lyrical and Jazzy), `ros_command_check.py --mock`; deferred: robot (wheels off the ground) | high, independent | in review | |
+| H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()` without keepalives, `ERROR` on a disarm. Depends on H4a | vdev (Lyrical and Jazzy), `ros_command_check.py --mock`; deferred: robot (wheels off the ground) | high, independent | in review | [#97](https://github.com/taruntom1/drivelink_v2/pull/97) |
 | H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | planned | |
 | H4d | ROS `.deb` packages (bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | container; deferred: Pi | high, self | planned | |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
