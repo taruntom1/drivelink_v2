@@ -44,6 +44,14 @@ stops the run before anything is commanded:
   5 NaN hold   the first wheel's never-published velocity controller: the device
                stays armed and the wheel is still (|velocity| < 0.1 rad/s) for 1 s
                (the plugin sends a hold for the NaN command); deactivate
+  5b mode      the first wheel's velocity controller at min(--velocity, 1) rad/s
+     switch    for 1 s, then one switch hands over to its position controller
+               while armed: the device stays armed (no DISARM), `mode` reads
+               position, with no command the wheel stays within -0.3/+1.0 rad
+               of where it was at the switch (braking, never a jump back) for
+               1.5 s, then the position controller answers a +0.5 rad step
+               (at least +0.25, within 0.3 rad of the target after 3 s;
+               accuracy is check 3's, from rest)
   6 GUI Take   with a velocity controller active and command 0, a second agent
                client (drivelink-cli --lease, named gui-take-sim) takes the lease,
                as the GUI would. Within 1 s the hardware component is no longer
@@ -680,6 +688,77 @@ def check_nan_hold(ctx):
     return released(ctx, name, 'velocity', '5', state) and ok
 
 
+def check_mode_switch(ctx):
+    """5b: a mode change while armed, in one controller_manager switch: the wheel's velocity controller
+    hands over to its position controller. The device stays armed (no DISARM), the mode reads
+    position, the wheel holds where it was instead of heading anywhere else, and the position
+    controller then moves it."""
+    args = ctx.args
+    name = args.joint[0][0]
+    refs = ctx.refs[name]
+    vel, pos = controller_name(name, 'velocity'), controller_name(name, 'position')
+    alive(ctx)
+    ok, message = ctx.probe.switch([vel], [])
+    if not ok:
+        return report('5b mode switch activate', 'FAIL', f'switch_controllers refused {vel}: {message}')
+    active = vel
+    try:
+        reached, _, arm = ctx.obs.wait_arm(1, 2.0)
+        if not reached:
+            return report('5b mode switch armed', 'FAIL', f'arm state {arm} after activating {vel}')
+        speed = min(args.velocity, 1.0)
+        drive(ctx.probe, vel, [speed], 1.0)
+        ok, message = ctx.probe.switch([pos], [vel])
+        if not ok:
+            return report('5b mode switch', 'FAIL',
+                          f'switch_controllers refused {vel} -> {pos}: {message}\n'
+                          f'ros2_control_node:\n{ctx.node.tail(15)}')
+        active = pos
+        base = ctx.probe.latest_joint()
+        p_switch = base['position'][base['name'].index(name)] if base and name in base['name'] else float('nan')
+        samples = drive(ctx.probe, pos, None, 1.5)  # NaN: the plugin holds
+        s = series(samples, name)
+        lowest = min((p for _, p, _ in s), default=float('nan'))
+        highest = max((p for _, p, _ in s), default=float('nan'))
+        armed, _, arm = ctx.obs.wait_arm(1, 0.5)
+        mode = ctx.obs.mode(refs)
+        c = component(ctx)
+        comp_state = c.state.label if c else 'missing'
+        held = bool(s) and lowest >= p_switch - 0.3 and highest <= p_switch + 1.0
+        result = report('5b mode switch hold', 'PASS' if held and armed and mode == 'position' and
+                        comp_state == 'active' else 'FAIL',
+                        f'{vel} -> {pos} while armed at {speed:g} rad/s: position {p_switch:+.3f} rad at the switch, '
+                        f'then {lowest:+.3f}..{highest:+.3f} over 1.5 s with no command (need within -0.3/+1.0: no '
+                        f'jump back, braking only); arm state {arm} (need 1, no DISARM), mode "{mode}" (need '
+                        f'"position"), component {comp_state}',
+                        at_switch=p_switch, lowest=lowest, highest=highest, arm_state=arm, mode=mode)
+        # Let the hold settle (the wheel braked past the hold and comes back), then step.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            recent = series(drive(ctx.probe, pos, None, 0.3), name)
+            if recent and max(abs(v) for _, _, v in recent) < 0.05:
+                break
+        start = ctx.probe.latest_joint()
+        p0 = start['position'][start['name'].index(name)] if start and name in start['name'] else float('nan')
+        t0 = time.monotonic()
+        moved = series(drive(ctx.probe, pos, [p0 + 0.5], 3.0), name)
+        tail = [p for t, p, _ in moved if t >= t0 + 3.0 - 0.2]
+        final = mean(tail) if tail else float('nan')
+        # The position controller drives the wheel after the switch. Accuracy is
+        # check 3's (from rest): after a mode change while moving, the firmware's
+        # integrator preset and the gains shape the step, so only the response
+        # is checked here.
+        responds = final - p0 >= 0.25 and abs(final - (p0 + 0.5)) <= 0.3
+        result &= report('5b mode switch step', 'PASS' if responds else 'FAIL',
+                         f'position controller after the switch: {p0:+.3f} -> {final:+.3f} rad after 3 s for a '
+                         f'+0.5 rad step (need >= +0.25 and within 0.3 of the target)', start=p0, final=final)
+        return result
+    finally:
+        released_ok, release_message = ctx.probe.switch([], [active])
+        state = {'released': released_ok, 'release_message': release_message}
+        released(ctx, name, 'position', '5b', state)
+
+
 def check_take(ctx):
     args = ctx.args
     name = args.joint[0][0]
@@ -912,6 +991,7 @@ def run(args, tmp, ctx):
     ok &= run_mode(ctx, '3', 'position', body_position)
     ok &= run_mode(ctx, '4', 'duty', body_duty)
     ok &= check_nan_hold(ctx)
+    ok &= check_mode_switch(ctx)
     ok &= check_take(ctx)
     alive(ctx)
     return ok

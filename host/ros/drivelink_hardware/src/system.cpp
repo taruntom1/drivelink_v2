@@ -296,6 +296,8 @@ struct DriveLinkSystem::Impl
     std::unique_ptr<std::atomic<bool>[]> reset_pending;
     // perform_command_mode_switch calls in progress: teardown waits for 0.
     std::atomic<int> performing{0};
+    // command_names (and what it indexes) may be read: false while on_configure rebuilds them.
+    std::atomic<bool> names_ready{false};
     uint64_t status_timeout_us = 0; // three status periods, at least 300 ms
     // A claim's prepare -> perform. Only a prepare that claims stores a plan
     // (claimed joints and their kinds); stops are applied by perform from its
@@ -623,6 +625,7 @@ bool armDevice(Impl &m, const rclcpp::Logger &logger)
 
 bool namesOurs(const Impl &m, const std::vector<std::string> &names) noexcept
 {
+    if (!m.names_ready.load()) { return false; } // on_configure is rebuilding them
     for (const auto &name : names)
     {
         for (const auto &ours : m.command_names)
@@ -807,6 +810,10 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         {
             m.handles.push_back(get_state_interface_handle(state.component + "/" + state.interface_name));
         }
+        // A perform racing this (running is false) reads none of these while
+        // names_ready is false.
+        m.names_ready = false;
+        waitPerforming(m);
         m.command_handles.clear();
         m.command_names.clear();
         for (const auto &command : m.resolved.commands)
@@ -822,6 +829,7 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         m.pending.after.assign(m.joint_count, CommandKind::None);
         m.pending.claimed.reserve(m.joint_count);
         m.pending.released.reserve(m.joint_count);
+        m.names_ready = true;
         if (const auto fault = m.watch->fault.load(); fault != Fault::None)
         {
             throw std::runtime_error(describe(fault));
@@ -1024,6 +1032,16 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lif
         m.pending_since_us = 0;
         m.watch->armed_expected = false;
         m.watch->arm_stage = 0;
+        // system.status.rate_hz is live: read it again for the StatusLost rule.
+        // (Lowered while armed, the rule fails safe with a spurious ERROR.)
+        {
+            const drivelink::Ref rate{0, 0, defs::system::kStatusRateHz};
+            const auto result = m.client->get(std::span<const drivelink::Ref>(&rate, 1));
+            if (result.values.size() == 1 && result.values[0] > 0)
+            {
+                m.status_timeout_us = std::max<uint64_t>(300000, uint64_t(3e6 / double(result.values[0])));
+            }
+        }
         if (const auto fault = m.watch->fault.load(); fault != Fault::None)
         {
             throw std::runtime_error(describe(fault));
@@ -1045,6 +1063,9 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lif
 hardware_interface::CallbackReturn DriveLinkSystem::on_deactivate(const rclcpp_lifecycle::State &)
 {
     auto &m = *m_impl;
+    // No perform may change the claims or read the command groups from here on.
+    m.running = false;
+    waitPerforming(m);
     stopWorker(m); // before the lock: it may be finishing a DISARM
     std::lock_guard lock(m.device);
     bool ok = true;
@@ -1269,7 +1290,7 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
                 // would become infinite and the whole frame refused.
                 constexpr double kF32Max = double(std::numeric_limits<float>::max());
                 const double value = std::clamp(
-                    slotValue(kind, claimed, command, state.position_hold.load(std::memory_order_relaxed)), -kF32Max,
+                    slotValue(kind, claimed, command, state.position_hold.load()), -kF32Max,
                     kF32Max);
                 // A position hold is the last position sent while claimed.
                 if (kind == CommandKind::Position && claimed && std::isfinite(command))
@@ -1283,7 +1304,9 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
                 m.command_drops.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        m.write_cycles.fetch_add(1, std::memory_order_release);
+        // seq_cst like the hold loads and prepare's hold stores: a call that
+        // counts after prepare read the counter also loaded the new holds.
+        m.write_cycles.fetch_add(1);
     }
     catch (...)
     {
@@ -1459,6 +1482,7 @@ namespace
 // for another component's interface.
 std::optional<size_t> bindingOf(const Impl &m, const std::string &name) noexcept
 {
+    if (!m.names_ready.load()) { return std::nullopt; }
     for (size_t i = 0; i < m.command_names.size(); ++i)
     {
         if (m.command_names[i] == name) { return i; }
@@ -1508,11 +1532,19 @@ return_type DriveLinkSystem::perform_command_mode_switch(const std::vector<std::
     }
     if (namesOurs(m, start))
     {
-        if (!m.pending_ready.exchange(false, std::memory_order_acq_rel))
+        if (!m.pending_ready.load(std::memory_order_acquire))
         {
             m.watch->raise(Fault::SwitchMismatch); // a claim nobody prepared
             return return_type::ERROR;
         }
+        // The plan is consumed only after it has been read: until then a
+        // concurrent prepare sees it pending and refuses instead of
+        // replacing it.
+        struct Consume
+        {
+            Impl &m;
+            ~Consume() { m.pending_ready.store(false, std::memory_order_release); }
+        } consume{m};
         m.pending_since_us.store(0, std::memory_order_release);
         // The claims must be exactly the prepared ones.
         size_t ours = 0;

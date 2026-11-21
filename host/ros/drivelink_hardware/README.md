@@ -78,7 +78,7 @@ build and test it the same way ([development.md](../../../docs/development.md)).
 | `take_lease` | `refuse` | `refuse`: activation fails, naming the holder, while another client (the GUI tuning) holds the lease. `preempt`: take it anyway; the agent disarms the device and clears the old holder's command groups first |
 | `state_rate_hz` | `100` | 1..10000 Hz: how often the plugin needs fresh state, normally the controller_manager's `update_rate`. Each loop's group runs at its loop rate divided by `max(1, floor(loop rate / state_rate_hz))`, so it is never slower than this and spends no more of the link than needed |
 | `stale_timeout_ms` | `auto` | `read()` returns `ERROR` when a group's newest sample is older than this. `auto`: ten group periods, at least 100 ms; `0` turns the check off |
-| `timeout_ms` | `3000` | Each agent and device request while configuring and activating |
+| `timeout_ms` | `3000` | Each agent and device request while configuring and activating, each stage of a command mode switch, and how long a prepared switch may wait for its perform |
 
 An unknown parameter name is refused, so a typo never falls back to a default.
 
@@ -138,7 +138,10 @@ input, and no two command interfaces may name the same input.
   hold: 0 for `velocity` and `duty`, and for `position` the last position
   sent, which starts at the measured position when the claim begins or ends.
   A new claim starts unset, so a value a previous controller left in the
-  interface is never sent as a command. A position hold is always taken from
+  interface is never sent as a command (if the reset cannot take the
+  interface at once, `write()` retries it and holds meanwhile; a command the
+  new controller wrote before that retry is dropped, which fails safe). A
+  position hold is always taken from
   a readable measured position (the switch fails without one), and a mode
   change while armed first drops the frames queued before the new holds, so
   the controller's first value in its new mode is never an old one.
@@ -150,9 +153,10 @@ input, and no two command interfaces may name the same input.
 - **Link cost.** One frame of 4 + 4·n bytes (n declared command inputs of the
   loop) plus framing per `write()` while armed; at 100 Hz and six inputs
   about 4 KB/s of the 92 KB/s link.
-- **Threads.** `prepare_command_mode_switch` does the mode write and ARM (it
-  blocks, bounded by `timeout_ms`); `perform_command_mode_switch` only applies
-  the claims. A claim prepared on the real-time thread (ros2_control's
+- **Threads.** `prepare_command_mode_switch` does the mode write and ARM. It
+  blocks, each stage bounded by `timeout_ms`: the holds and the queue flush,
+  the mode write, ARM, and the two status waits around it.
+  `perform_command_mode_switch` only applies the claims. A claim prepared on the real-time thread (ros2_control's
   fallback controllers) is refused, because it would block the loop; so is
   `is_async` (the real-time thread is the one running `read()`). A stop-only
   prepare only validates, and perform applies stops from its own list. A
