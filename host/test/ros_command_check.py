@@ -934,16 +934,21 @@ def shutdown(ctx):
     if ctx.node is not None:
         ctx.node.stop()   # SIGINT: the plugin releases its lease, the agent disarms
     if ctx.obs is not None:
-        for ref, value in reversed(ctx.restore_duty):
-            try:
-                ctx.obs.call('set', f'{ref}={value:g}')
-            except Fail as e:
-                ok = False
-                print(f'cleanup: could not restore duty_limit {ref}={value:g}: {e}', file=sys.stderr, flush=True)
+        # Disarmed first: the duty limit goes back up only on a disarmed device.
         done, text = ctx.obs.ensure_disarmed()
         ok &= report('cleanup device disarmed', 'PASS' if done else 'FAIL', text)
         if not done:
             print('!!! THE DEVICE MAY STILL BE ARMED: CUT THE POWER !!!', file=sys.stderr, flush=True)
+            if ctx.restore_duty:
+                print('cleanup: duty_limit left at the cap (not restored on an armed device)', file=sys.stderr,
+                      flush=True)
+        else:
+            for ref, value in reversed(ctx.restore_duty):
+                try:
+                    ctx.obs.call('set', f'{ref}={value:g}')
+                except Fail as e:
+                    ok = False
+                    print(f'cleanup: could not restore duty_limit {ref}={value:g}: {e}', file=sys.stderr, flush=True)
     if ctx.probe is not None:
         ctx.probe.close()
     return ok

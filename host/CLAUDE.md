@@ -88,16 +88,27 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   opt-out lasts one connection). A token is stored only when the user asks.
 - ROS plugin ([ros/drivelink_hardware/README.md](ros/drivelink_hardware/README.md)):
   only through the agent (Hello `client_kind` Ros), never a serial port; only
-  the ros2_control API Jazzy and Lyrical share. Lifecycle callbacks may block
-  (bounded); `read()` is `noexcept` with no allocation, blocking lock or device call,
-  and learns of agent events, link loss and a Boot only through atomics set
-  by the session observer. A lost lease, Closing, link loss, a Boot, dropped
-  observer events or a stale group (`stale_timeout_ms`) returns `ERROR`;
-  `on_error` only disconnects (no device call in the controller_manager
-  loop; the agent clears the groups and lease), and nothing re-arms or
-  reconnects by itself. Activation refuses another holder unless
-  `take_lease: preempt`; any failure after the Take, or an unconfirmed
-  release, disconnects. Mapping stays pure (`mapping.cpp`, unit-tested).
+  the ros2_control API Jazzy and Lyrical share. Lifecycle callbacks and a
+  claiming `prepare_command_mode_switch` may block (bounded) and share one
+  device mutex with the plugin's DISARM worker; `read()`, `write()` and
+  `perform_command_mode_switch` are real-time (no allocation, blocking lock or
+  device call) and learn of agent events, the status stream, link loss and a
+  Boot only through atomics set by the session observer. A lost lease,
+  Closing, link loss, a Boot, dropped observer events, a stale group
+  (`stale_timeout_ms`), a disarm seen in the status stream while armed, a
+  status stream gone quiet while armed, or a prepared claim not performed in
+  `timeout_ms` returns `ERROR`; `on_error` only disconnects (no device call in
+  the controller_manager loop; the agent clears the groups and lease and
+  DISARMs), and nothing re-arms or reconnects by itself. Activation refuses
+  another holder unless `take_lease: preempt`; any failure after the Take, or
+  an unconfirmed release, disconnects. Command path (H4b): command groups
+  are configured at activation without keepalives, so only `write()` feeds
+  the watchdog; a claim writes the mode and arms in prepare (never from the
+  real-time thread) after its holds are measured and, while armed, older
+  queued frames are discarded; stops are applied by perform from its own
+  list; the last release DISARMs from the worker; NaN, infinite and
+  unclaimed inputs send holds. Mapping stays pure (`mapping.cpp`,
+  unit-tested).
 - CLI `--json` stdout contains only envelopes/NDJSON; errors retain exit code,
   device result and detail.
 - GUI ([gui/README.md](gui/README.md)): Qt 6.10 API floor. Figma is the source

@@ -118,7 +118,8 @@ default `mode`; `none` writes no mode). A controller type without a `mode`
 param gets no mode writes. A `position` command needs the joint's measured
 position for its hold (`state.position`, else the signal `position`); it is
 subscribed even when the joint exports no `position` state interface. The
-command interfaces' `data_type` must be double.
+command interfaces' `data_type` must be double, every input must be an `f32`
+input, and no two command interfaces may name the same input.
 
 - **One command interface per joint at a time**; joints may be in different
   modes. A switch that claims two interfaces of one joint, or claims a joint
@@ -137,7 +138,10 @@ command interfaces' `data_type` must be double.
   hold: 0 for `velocity` and `duty`, and for `position` the last position
   sent, which starts at the measured position when the claim begins or ends.
   A new claim starts unset, so a value a previous controller left in the
-  interface is never sent as a command.
+  interface is never sent as a command. A position hold is always taken from
+  a readable measured position (the switch fails without one), and a mode
+  change while armed first drops the frames queued before the new holds, so
+  the controller's first value in its new mode is never an old one.
 - **The watchdog.** The plugin sends no keepalives: only `write()` feeds the
   device watchdog (`system.watchdog_ms`, 200 ms by default). If the
   controller_manager's loop stops, the device disarms within that time and
@@ -149,10 +153,13 @@ command interfaces' `data_type` must be double.
 - **Threads.** `prepare_command_mode_switch` does the mode write and ARM (it
   blocks, bounded by `timeout_ms`); `perform_command_mode_switch` only applies
   the claims. A claim prepared on the real-time thread (ros2_control's
-  fallback controllers) is refused, because it would block the loop. A
-  prepared switch that is not performed within `timeout_ms` (another
-  component refused it, or the switch timed out) makes `read()` fail, since a
-  joint's mode may then not match its running controller.
+  fallback controllers) is refused, because it would block the loop; so is
+  `is_async` (the real-time thread is the one running `read()`). A stop-only
+  prepare only validates, and perform applies stops from its own list. A
+  prepared claim that is not performed within `timeout_ms` (another component
+  refused the switch, or it timed out), or a second claim prepared before it
+  is, makes `read()` fail, since a joint's mode may then not match its
+  running controller.
 
 ## Lifecycle
 
@@ -178,7 +185,8 @@ command interfaces' `data_type` must be double.
   copies the newest sample of each group into the state interfaces. It returns
   `ERROR` when the device disarms while armed (the watchdog, a fault, a loop
   stall, or a DISARM from another client; the log names the status stream's
-  disarm reason), a prepared switch was not performed in time, a mode write
+  disarm reason), the status stream is silent for three status periods (at
+  least 300 ms) while armed, a prepared switch was not performed in time, a mode write
   while armed got no answer, the lease is lost (another client took it), the agent reports
   the device offline or shuts down, the connection drops, the device reboots,
   agent events were dropped (the lease state is then unknown), or a group's

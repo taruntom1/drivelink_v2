@@ -6,10 +6,12 @@
 // the default export of the interfaces declared in the URDF, the handle-based
 // set_state/get_command/set_command, and prepare/perform_command_mode_switch.
 //
-// Threads: the lifecycle callbacks and prepare_command_mode_switch run off the
-// real-time loop and may block (bounded by the `timeout_ms` parameter and the
-// lease handoff); they serialize on one device mutex with the plugin's worker
-// thread, which sends the DISARM after the last release. read(), write() and
+// Threads: the lifecycle callbacks and a claiming prepare_command_mode_switch
+// run off the real-time loop and may block (bounded by the `timeout_ms`
+// parameter and the lease handoff); they serialize on one device mutex with
+// the plugin's worker thread, which sends the DISARM after the last release.
+// A stop-only prepare (ros2_control also calls it from the real-time loop in
+// its error and undo paths) only validates. read(), write() and
 // perform_command_mode_switch run in (or beside) the real-time loop: no
 // allocation, blocking lock or device call. Agent events, the status stream
 // and link changes reach them through atomics that libdrivelink's callback

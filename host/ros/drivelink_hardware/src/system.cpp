@@ -11,6 +11,7 @@
 #include <drivelink/model.hpp>
 #include <drivelink/session.hpp>
 #include <drivelink/protocol/gen/registry.hpp>
+#include <drivelink/protocol/gen/type_system.hpp>
 #include <hardware_interface/types/hardware_interface_return_values.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/logging.hpp>
@@ -49,7 +50,9 @@ enum class Fault : uint8_t
     EventsLost,
     Stale,
     Disarmed,
+    StatusLost,
     SwitchAbandoned,
+    SwitchMismatch,
     ModeUncertain,
     DisarmFailed,
     Internal
@@ -68,9 +71,13 @@ const char *describe(Fault fault)
     case Fault::EventsLost: return "agent events were dropped, so the lease state is unknown";
     case Fault::Stale: return "no fresh sample within stale_timeout_ms";
     case Fault::Disarmed: return "the device disarmed while armed; nothing re-arms by itself";
+    case Fault::StatusLost:
+        return "no status frame from the device for three status periods while armed, so a disarm could go unseen";
     case Fault::SwitchAbandoned:
-        return "a prepared command mode switch was not performed within timeout_ms (a joint's mode may not match "
-               "its controller)";
+        return "a prepared command mode switch was not performed within timeout_ms, or another claim was prepared "
+               "before it (a joint's mode may not match its controller)";
+    case Fault::SwitchMismatch:
+        return "perform_command_mode_switch claimed other interfaces than prepare_command_mode_switch planned";
     case Fault::ModeUncertain: return "a mode write while armed got no answer, so a joint's mode is unknown";
     case Fault::DisarmFailed: return "the DISARM after the last release failed";
     case Fault::Internal: return "internal error in read() or write()";
@@ -158,6 +165,7 @@ struct Watch
     std::atomic<uint8_t> arm_stage{0};
     std::atomic<bool> armed_expected{false}; // a disarmed status is then a fault
     std::atomic<uint8_t> disarm_reason{kNoStatus};
+    std::atomic<uint64_t> last_status_us{0}; // host monotonic time of the newest status frame
 
     void raise(Fault value) noexcept
     {
@@ -167,6 +175,7 @@ struct Watch
 
     void status(uint8_t arm_state, uint8_t reason) noexcept
     {
+        last_status_us.store(drivelink::monotonicUs());
         last_arm.store(arm_state);
         if (arm_state != kArmed)
         {
@@ -281,7 +290,16 @@ struct DriveLinkSystem::Impl
     std::vector<CommandRun> command_runs;
     std::atomic<bool> commanding{false}; // write() sends value frames (arming, armed, or until the DISARM)
     std::atomic<uint64_t> command_drops{0};
-    // prepare -> perform. pending is written by prepare before pending_ready
+    std::atomic<uint64_t> write_cycles{0}; // write() calls that sent frames
+    // Per binding (parallel to resolved.commands): the NaN reset of a new
+    // claim's handle has not happened yet; write() retries it and holds.
+    std::unique_ptr<std::atomic<bool>[]> reset_pending;
+    // perform_command_mode_switch calls in progress: teardown waits for 0.
+    std::atomic<int> performing{0};
+    uint64_t status_timeout_us = 0; // three status periods, at least 300 ms
+    // A claim's prepare -> perform. Only a prepare that claims stores a plan
+    // (claimed joints and their kinds); stops are applied by perform from its
+    // own list. pending is written under the device mutex before pending_ready
     // (release) and read by perform after taking it (acquire).
     SwitchPlan pending;
     std::atomic<bool> pending_ready{false};
@@ -336,6 +354,37 @@ void holdHere(Impl &m, size_t joint, drivelink::GroupSample &scratch) noexcept
     }
 }
 
+// Off the real-time loop: the position hold from a measured position, retried
+// until a readable sample (a torn seqlock read retries) or the deadline. True
+// for a joint without a position command. False: no measured position, so the
+// caller refuses rather than hold at an old or zero position.
+bool holdMeasured(Impl &m, size_t joint, std::chrono::steady_clock::time_point deadline)
+{
+    if (!m.resolved.joints[joint].position_group) { return true; }
+    for (;;)
+    {
+        if (const auto position = measure(m, joint, m.prepare_sample))
+        {
+            m.joints[joint].position_hold.store(*position);
+            return true;
+        }
+        if (std::chrono::steady_clock::now() > deadline || m.closing.load()) { return false; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+// Teardown (running is already false): waits until no perform_command_mode_switch
+// is inside, so the structures it reads can change. perform re-checks running
+// after announcing itself, so none starts using them afterwards.
+void waitPerforming(const Impl &m)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (m.performing.load() != 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::yield();
+    }
+}
+
 void stopWorker(Impl &m)
 {
     if (!m.worker.joinable()) { return; }
@@ -384,7 +433,15 @@ void workerLoop(Impl &m, rclcpp::Logger logger)
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
-            std::lock_guard lock(m.device, std::adopt_lock);
+            std::unique_lock lock(m.device, std::adopt_lock);
+            if (m.pending_ready.load())
+            {
+                // A claim is prepared and about to be performed (which clears
+                // the request); if it never is, read() fails the component.
+                lock.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
             // A claim prepared meanwhile handled (or superseded) the request.
             if (m.disarm_requested.exchange(false) && !anyClaim(m) && m.commanding.load())
             {
@@ -423,6 +480,7 @@ void disconnect(DriveLinkSystem::Impl &m)
     m.watch->leased = false;
     m.watch->armed_expected = false;
     m.closing = true;
+    waitPerforming(m);
     if (m.session)
     {
         if (m.observer) { m.session->unobserve(m.observer); } // waits for a running handler
@@ -456,6 +514,7 @@ bool release(DriveLinkSystem::Impl &m, const rclcpp::Logger &logger)
 {
     m.running = false;
     m.watch->leased = false;
+    waitPerforming(m);
     if (!m.client) { return true; }
     bool cleared = true;
     for (const auto &run : m.runs)
@@ -542,6 +601,9 @@ bool armDevice(Impl &m, const rclcpp::Logger &logger)
         }
         RCLCPP_ERROR(logger, "ARM got no definite answer (%s); disarming", e.what());
         disarmDevice(m, logger);
+        // A late armed status of that ARM may still be in flight: the next ARM
+        // waits for a fresh disarmed one instead of trusting last_arm.
+        w.last_arm = kNoStatus;
         return false;
     }
     if (!waitStage(m, 3, std::chrono::steady_clock::now() + m.config.timeout))
@@ -549,6 +611,7 @@ bool armDevice(Impl &m, const rclcpp::Logger &logger)
         RCLCPP_ERROR(logger, "ARM was accepted but the status stream did not show the device armed within "
                              "timeout_ms (it may have disarmed at once); disarming");
         disarmDevice(m, logger);
+        w.last_arm = kNoStatus;
         return false;
     }
     // From here a disarmed status is a fault (a disarm in between still shows
@@ -595,6 +658,12 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_init(
         if (!info_.gpios.empty())
         {
             throw MappingError("<gpio> is not supported: map joints and sensors by instance label");
+        }
+        if (info_.is_async)
+        {
+            // prepare_command_mode_switch tells the control loop's thread by
+            // the thread that runs read(); an async component reads elsewhere.
+            throw MappingError("is_async is not supported: run the component in the controller_manager's loop");
         }
         m.specs.clear();
         auto add = [&](const hardware_interface::ComponentInfo &component, bool sensor) {
@@ -717,6 +786,14 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
             const auto snapshot = model.snapshotShared();
             checkDevice(*snapshot);
             m.resolved = resolve(*snapshot, m.specs, m.config);
+            // The status stream's rate (system.status.rate_hz) for the StatusLost rule.
+            double status_hz = 10;
+            if (const auto it = snapshot->system_params.find(defs::system::kStatusRateHz);
+                it != snapshot->system_params.end())
+            {
+                if (const auto *hz = std::get_if<uint16_t>(&it->second); hz && *hz > 0) { status_hz = *hz; }
+            }
+            m.status_timeout_us = std::max<uint64_t>(300000, uint64_t(3e6 / status_hz));
             m.generation = m.session->generation();
             if (m.generation != before)
             {
@@ -739,6 +816,7 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         }
         m.last_command.assign(m.resolved.commands.size(), kNaN);
         m.last_epoch.assign(m.resolved.commands.size(), std::numeric_limits<uint32_t>::max());
+        m.reset_pending = std::make_unique<std::atomic<bool>[]>(m.resolved.commands.size());
         m.joint_count = m.resolved.joints.size();
         m.joints = std::make_unique<Impl::JointState[]>(m.joint_count);
         m.pending.after.assign(m.joint_count, CommandKind::None);
@@ -1041,6 +1119,11 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_error(const rclcpp_lifecy
     {
         RCLCPP_ERROR(get_logger(), "%s; disconnected, the component is unconfigured", describe(fault));
     }
+    if (const auto drops = m.command_drops.load(); drops != 0)
+    {
+        RCLCPP_ERROR(get_logger(), "%llu command frame(s) were refused locally (queue full or an invalid value)",
+                     static_cast<unsigned long long>(drops));
+    }
     disconnect(m);
     return CallbackReturn::SUCCESS;
 }
@@ -1066,6 +1149,17 @@ return_type DriveLinkSystem::read(const rclcpp::Time &, const rclcpp::Duration &
         {
             m.watch->raise(Fault::SwitchAbandoned);
             return return_type::ERROR;
+        }
+        // Armed, a disarm shows only in the status stream: without it for
+        // three periods a disarm could go unseen.
+        if (m.watch->armed_expected.load(std::memory_order_acquire))
+        {
+            const uint64_t last = m.watch->last_status_us.load(std::memory_order_acquire);
+            if (last != 0 && now > last && now - last > m.status_timeout_us)
+            {
+                m.watch->raise(Fault::StatusLost);
+                return return_type::ERROR;
+            }
         }
         for (auto &run : m.runs)
         {
@@ -1146,7 +1240,16 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
                     }
                 }
                 double command = kNaN;
-                if (claimed)
+                if (claimed && m.reset_pending[chosen].load(std::memory_order_acquire))
+                {
+                    // perform could not clear what a previous controller left:
+                    // hold until the reset takes the handle.
+                    if (set_command(m.command_handles[chosen], kNaN, false))
+                    {
+                        m.reset_pending[chosen].store(false, std::memory_order_release);
+                    }
+                }
+                else if (claimed)
                 {
                     double value = kNaN;
                     // try_lock: a controller holding the handle leaves last cycle's value (same claim only).
@@ -1162,8 +1265,12 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
                     }
                 }
                 const CommandKind kind = m.resolved.commands[chosen].kind;
-                const double value =
-                    slotValue(kind, claimed, command, state.position_hold.load(std::memory_order_relaxed));
+                // Inputs are f32 (resolve): a finite double beyond its range
+                // would become infinite and the whole frame refused.
+                constexpr double kF32Max = double(std::numeric_limits<float>::max());
+                const double value = std::clamp(
+                    slotValue(kind, claimed, command, state.position_hold.load(std::memory_order_relaxed)), -kF32Max,
+                    kF32Max);
                 // A position hold is the last position sent while claimed.
                 if (kind == CommandKind::Position && claimed && std::isfinite(command))
                 {
@@ -1176,6 +1283,7 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
                 m.command_drops.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        m.write_cycles.fetch_add(1, std::memory_order_release);
     }
     catch (...)
     {
@@ -1188,6 +1296,10 @@ return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration 
 return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::string> &start,
                                                          const std::vector<std::string> &stop)
 {
+    // Only a claim does work here (off the real-time loop: the mode write and
+    // ARM). Stops need nothing: perform applies them from its own list, so a
+    // stop-only prepare (also on the real-time thread, in ros2_control's
+    // error and undo paths) only validates.
     auto &m = *m_impl;
     if (!m.running.load())
     {
@@ -1198,34 +1310,14 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
         }
         return return_type::OK;
     }
-    if (m.pending_ready.load())
-    {
-        // The previous prepare was never performed: its mode writes may not
-        // match the running controllers.
-        m.watch->raise(Fault::SwitchAbandoned);
-        RCLCPP_ERROR(get_logger(), "%s; refusing this switch", describe(Fault::SwitchAbandoned));
-        return return_type::ERROR;
-    }
-    SwitchPlan plan;
     try
     {
-        plan = planSwitch(m.resolved, currentClaims(m), start, stop);
+        if (planSwitch(m.resolved, currentClaims(m), start, stop).claimed.empty()) { return return_type::OK; }
     }
     catch (const std::exception &e)
     {
         RCLCPP_ERROR(get_logger(), "command mode switch refused: %s", e.what());
         return return_type::ERROR;
-    }
-    const auto store = [&] {
-        if (plan.claimed.empty() && plan.released.empty()) { return; } // nothing of ours to perform
-        m.pending = std::move(plan);
-        m.pending_since_us.store(drivelink::monotonicUs(), std::memory_order_release);
-        m.pending_ready.store(true, std::memory_order_release);
-    };
-    if (plan.claimed.empty())
-    {
-        store(); // releases only: perform applies them, the worker DISARMs; no I/O here
-        return return_type::OK;
     }
     if (std::this_thread::get_id() == m.rt_thread.load(std::memory_order_relaxed))
     {
@@ -1239,8 +1331,20 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
         RCLCPP_ERROR(get_logger(), "cannot claim a command interface: the component is failing or inactive");
         return return_type::ERROR;
     }
+    if (m.pending_ready.load())
+    {
+        // An earlier claim was prepared but never performed: its mode writes
+        // may not match the running controllers.
+        m.watch->raise(Fault::SwitchAbandoned);
+        RCLCPP_ERROR(get_logger(), "%s; refusing this switch", describe(Fault::SwitchAbandoned));
+        return return_type::ERROR;
+    }
     try
     {
+        // Planned again under the lock: a stop performed on the real-time
+        // thread meanwhile changes the claims.
+        SwitchPlan plan = planSwitch(m.resolved, currentClaims(m), start, stop);
+        if (plan.claimed.empty()) { return return_type::OK; }
         // A DISARM still owed after the last release goes first, so ARM
         // starts from a known disarmed device.
         if (m.disarm_requested.exchange(false) && m.commanding.load() && !anyClaim(m))
@@ -1251,14 +1355,26 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
                 return return_type::ERROR;
             }
         }
+        // Whether this switch arms: the device is not armed by us now (not
+        // the plan's view, which a concurrent release or the owed DISARM
+        // above may have overtaken).
+        const bool arm = !m.commanding.load();
         // Holds before the mode write: until perform the claimed slots are
         // unclaimed, so write() sends these, and they are the first values
         // the controller sees in its new mode. At ARM every position hold is
         // refreshed: an unclaimed joint in position mode holds where it is.
+        // A joint without a measured position refuses the switch.
+        const auto hold_deadline = std::chrono::steady_clock::now() + m.config.timeout;
         for (size_t j = 0; j < m.joint_count; ++j)
         {
             const bool claiming = std::find(plan.claimed.begin(), plan.claimed.end(), j) != plan.claimed.end();
-            if (plan.arm || claiming) { holdHere(m, j, m.prepare_sample); }
+            if ((arm || claiming) && !holdMeasured(m, j, hold_deadline))
+            {
+                RCLCPP_ERROR(get_logger(), "command mode switch refused: no readable position of joint '%s' for its "
+                                           "hold within timeout_ms",
+                             m.resolved.joints[j].name.c_str());
+                return return_type::ERROR;
+            }
         }
         std::vector<drivelink::Ref> refs;
         std::vector<uint32_t> values;
@@ -1271,6 +1387,26 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
             refs.push_back(*joint.mode);
             values.push_back(joint.mode_values[size_t(kind)]);
             modes += (modes.empty() ? "" : ", ") + joint.name + " " + commandName(kind);
+        }
+        if (!refs.empty() && !arm)
+        {
+            // Armed: frames built before the new holds may still be queued.
+            // One sent after the mode write would release the controller's
+            // wait for a fresh command with an old value (a position hold
+            // from long ago). Wait until write() has built frames with the
+            // new holds, then drop everything queued before them.
+            const uint64_t cycles = m.write_cycles.load();
+            while (m.write_cycles.load() < cycles + 2)
+            {
+                if (std::chrono::steady_clock::now() > hold_deadline || m.closing.load() ||
+                    m.watch->fault.load() != Fault::None)
+                {
+                    RCLCPP_ERROR(get_logger(), "command mode switch refused: write() did not run within timeout_ms");
+                    return return_type::ERROR;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            for (auto &run : m.command_runs) { run.group->discardQueued(); }
         }
         if (!refs.empty())
         {
@@ -1290,7 +1426,7 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
                 return return_type::ERROR;
             }
         }
-        if (plan.arm)
+        if (arm)
         {
             if (!armDevice(m, get_logger())) { return return_type::ERROR; }
             RCLCPP_INFO(get_logger(), "armed (%s)", modes.empty() ? "no mode writes" : modes.c_str());
@@ -1299,57 +1435,135 @@ return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::
         {
             RCLCPP_INFO(get_logger(), "mode switch while armed (%s)", modes.c_str());
         }
+        m.pending = std::move(plan);
+        m.pending_since_us.store(drivelink::monotonicUs(), std::memory_order_release);
+        m.pending_ready.store(true, std::memory_order_release);
     }
     catch (const std::exception &e)
     {
         RCLCPP_ERROR(get_logger(), "command mode switch failed: %s", e.what());
+        // An unexpected failure while arming must not leave hold frames
+        // feeding the watchdog with nothing claimed.
+        if (m.commanding.load() && !anyClaim(m) && !disarmDevice(m, get_logger()))
+        {
+            m.watch->raise(Fault::DisarmFailed);
+        }
         return return_type::ERROR;
     }
-    store();
     return return_type::OK;
 }
 
+namespace
+{
+// "<joint>/<interface>" -> the binding index, without allocating; nullopt
+// for another component's interface.
+std::optional<size_t> bindingOf(const Impl &m, const std::string &name) noexcept
+{
+    for (size_t i = 0; i < m.command_names.size(); ++i)
+    {
+        if (m.command_names[i] == name) { return i; }
+    }
+    return std::nullopt;
+}
+
+struct Performing
+{
+    std::atomic<int> &count;
+    explicit Performing(std::atomic<int> &c) : count(c) { count.fetch_add(1); }
+    ~Performing() { count.fetch_sub(1); }
+};
+} // namespace
+
 return_type DriveLinkSystem::perform_command_mode_switch(const std::vector<std::string> &start,
-                                                         const std::vector<std::string> &)
+                                                         const std::vector<std::string> &stop)
 {
     // Real-time (or the switching thread beside it): no allocation, no lock,
-    // no device call. Applies what prepare planned.
+    // no device call. Stops are applied from the list itself; claims only as
+    // their prepare planned.
     auto &m = *m_impl;
-    if (!m.pending_ready.exchange(false, std::memory_order_acq_rel))
+    const Performing performing(m.performing);
+    if (!m.running.load())
     {
-        // Nothing of ours was prepared: fine unless this claims one of ours.
         return namesOurs(m, start) ? return_type::ERROR : return_type::OK;
     }
-    m.pending_since_us.store(0, std::memory_order_release);
-    if (m.pending.after.size() != m.joint_count) { return return_type::ERROR; }
     const bool before = anyClaim(m);
-    for (size_t j = 0; j < m.joint_count; ++j)
+    for (const auto &name : stop)
     {
-        auto &state = m.joints[j];
-        const auto next = m.pending.after[j];
-        const auto previous = state.claim.load();
-        // A released position claim holds where the joint is now.
-        if (previous == CommandKind::Position && next != CommandKind::Position)
+        const auto index = bindingOf(m, name);
+        if (!index) { continue; }
+        const auto &binding = m.resolved.commands[*index];
+        auto &state = m.joints[binding.joint];
+        CommandKind expected = binding.kind;
+        if (binding.kind == CommandKind::Position)
         {
-            holdHere(m, j, m.perform_sample);
+            // A released position claim holds where the joint is now (before
+            // the release is visible to write()).
+            if (state.claim.load() != CommandKind::Position) { continue; }
+            holdHere(m, binding.joint, m.perform_sample);
         }
-        if (next != previous) { state.claim.store(next, std::memory_order_release); }
-    }
-    for (const size_t j : m.pending.claimed)
-    {
-        auto &state = m.joints[j];
-        // The new claim starts unset: a value a previous controller left in
-        // the handle is not a command, so write() holds until it writes.
-        if (const auto index = m.resolved.joints[j].commands[size_t(m.pending.after[j])])
+        if (state.claim.compare_exchange_strong(expected, CommandKind::None, std::memory_order_acq_rel))
         {
-            for (int attempt = 0; attempt < 100; ++attempt)
+            state.epoch.fetch_add(1, std::memory_order_acq_rel);
+        }
+    }
+    if (namesOurs(m, start))
+    {
+        if (!m.pending_ready.exchange(false, std::memory_order_acq_rel))
+        {
+            m.watch->raise(Fault::SwitchMismatch); // a claim nobody prepared
+            return return_type::ERROR;
+        }
+        m.pending_since_us.store(0, std::memory_order_release);
+        // The claims must be exactly the prepared ones.
+        size_t ours = 0;
+        for (const auto &name : start)
+        {
+            const auto index = bindingOf(m, name);
+            if (!index) { continue; }
+            const auto &binding = m.resolved.commands[*index];
+            ++ours;
+            const bool planned = binding.joint < m.pending.after.size() &&
+                                 m.pending.after[binding.joint] == binding.kind &&
+                                 std::find(m.pending.claimed.begin(), m.pending.claimed.end(), binding.joint) !=
+                                     m.pending.claimed.end();
+            if (!planned)
             {
-                if (set_command(m.command_handles[*index], kNaN, false)) { break; }
+                m.watch->raise(Fault::SwitchMismatch);
+                return return_type::ERROR;
             }
         }
-        state.epoch.fetch_add(1, std::memory_order_acq_rel);
+        if (ours != m.pending.claimed.size())
+        {
+            m.watch->raise(Fault::SwitchMismatch);
+            return return_type::ERROR;
+        }
+        for (const size_t j : m.pending.claimed)
+        {
+            auto &state = m.joints[j];
+            const auto kind = m.pending.after[j];
+            // The new claim starts unset: a value a previous controller left
+            // in the handle is not a command. Reset it first, then the epoch,
+            // then publish the claim, so write() never pairs the claim with
+            // the old contents; a reset that cannot take the handle now is
+            // retried by write(), which holds until it succeeds.
+            if (const auto index = m.resolved.joints[j].commands[size_t(kind)])
+            {
+                bool reset = false;
+                for (int attempt = 0; attempt < 100 && !reset; ++attempt)
+                {
+                    reset = set_command(m.command_handles[*index], kNaN, false);
+                }
+                m.reset_pending[*index].store(!reset, std::memory_order_release);
+            }
+            state.epoch.fetch_add(1, std::memory_order_acq_rel);
+            state.claim.store(kind, std::memory_order_release);
+        }
     }
-    if (before && !anyClaim(m) && m.running.load())
+    if (anyClaim(m))
+    {
+        m.disarm_requested.store(false); // a claim supersedes an owed DISARM
+    }
+    else if (before)
     {
         m.disarm_requested.store(true);
         m.worker_signal.fetch_add(1);
