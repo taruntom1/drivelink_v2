@@ -822,6 +822,36 @@ std::string Harness::enumParam(const std::string &label, const std::string &item
     }
 }
 
+void Harness::setEnumParam(const std::string &label, const std::string &item, const std::string &entry)
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        const FoundItem found = findItem(client, label, item);
+        if (found.descriptor.value_type != drivelink::ValueType::Enum)
+        {
+            throw std::runtime_error("'" + item + "' is not an Enum param");
+        }
+        std::optional<uint32_t> value;
+        for (const auto &e : client.enums(found.type, found.ref.item))
+        {
+            if (e.name == entry) { value = e.value; }
+        }
+        if (!value) { throw std::runtime_error("the param has no entry '" + entry + "'"); }
+        const auto result = client.set(std::span<const drivelink::Ref>(&found.ref, 1),
+                                       std::span<const uint32_t>(&*value, 1));
+        if (result.result != 0 && result.result != 8)
+        {
+            throw std::runtime_error("SET was refused (result " + std::to_string(int(result.result)) + ")");
+        }
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("setEnumParam " + label + "." + item, e.what());
+    }
+}
+
 void Harness::action(const std::string &label, const std::string &item, std::array<uint32_t, 4> args)
 {
     auto &m = *m_impl;

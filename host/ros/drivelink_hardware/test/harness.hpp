@@ -118,6 +118,9 @@ class Harness
     double param(const std::string &label, const std::string &item);
     // The enum entry name of an Enum param (e.g. mode -> "velocity").
     std::string enumParam(const std::string &label, const std::string &item);
+    // A live write of an Enum param by entry name, through the GUI client
+    // (any client may write params). Throws on an unknown entry or a refusal.
+    void setEnumParam(const std::string &label, const std::string &item, const std::string &entry);
     // Runs a loop action of an instance found by label through the GUI client
     // (Client::action), args as f32/bool bits by the action's descriptor order
     // (the test passes them already encoded). Throws on a refusal.

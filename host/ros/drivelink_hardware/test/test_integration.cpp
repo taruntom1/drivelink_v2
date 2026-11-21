@@ -161,12 +161,13 @@ class Rm
 
     // --- H4b: controller_manager's real-time loop and its mode switches ---
 
-    // A thread calling read() then write() at 100 Hz, as controller_manager's
-    // update loop does. Returns when a few cycles have run.
-    void startLoop()
+    // A thread calling read() then write() at `rate_hz` (100 by default), as
+    // controller_manager's update loop does. Returns when a few cycles have run.
+    void startLoop(unsigned rate_hz = 100)
     {
         if (m_loop.joinable()) { return; }
         m_stop = false;
+        m_period = std::chrono::microseconds(1000000 / rate_hz);
         m_loop = std::thread([this] { loopMain(); });
         waitCycles(3, 5s);
     }
@@ -292,11 +293,11 @@ class Rm
             }
             for (auto &task : tasks) { task(); }
             const auto time = m_clock->now();
-            const auto period = rclcpp::Duration::from_seconds(0.01);
+            const auto period = rclcpp::Duration::from_seconds(std::chrono::duration<double>(m_period).count());
             if (readFailed(m_rm->read(time, period))) { noteFailure("read()"); }
             if (!m_write_paused && readFailed(m_rm->write(time, period))) { noteFailure("write()"); }
             ++m_cycles;
-            next += 10ms;
+            next += m_period;
             if (Clock::now() > next + 100ms) { next = Clock::now(); } // a stall: do not burst to catch up
             std::this_thread::sleep_until(next);
         }
@@ -316,6 +317,7 @@ class Rm
     std::thread m_loop;
     std::atomic<bool> m_stop{false}, m_write_paused{false}, m_failed{false};
     std::atomic<unsigned> m_cycles{0};
+    std::chrono::microseconds m_period{10000};
     std::mutex m_mutex;
     std::deque<std::function<void()>> m_tasks;
     std::string m_failure;
@@ -437,12 +439,12 @@ class Integration : public ::testing::Test
     // The H4b setup: the component with command interfaces, configured and
     // activated, its state interfaces loaned, controller_manager's loop running.
     // The device stays disarmed until a claim.
-    void upCommanded(const std::string &extra = {})
+    void upCommanded(const std::string &extra = {}, unsigned loop_hz = 100)
     {
         Rm &r = makeCommandRm(extra);
         ASSERT_NO_FATAL_FAILURE(bringUp(r));
         r.claimAll();
-        r.startLoop();
+        r.startLoop(loop_hz);
         ASSERT_TRUE(r.waitCycles(5)) << "the loop did not run";
         ASSERT_FALSE(r.failed()) << r.failure();
     }
@@ -1203,5 +1205,142 @@ TEST_F(Integration, ClaimFromTheRtThreadIsRefused)
     EXPECT_TRUE(r.waitCycles(20));
     EXPECT_FALSE(r.failed()) << r.failure();
     EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+// ---------------------------------------------------------------------------
+// H4b review tests: no jump on a mode switch, no stale command on a re-claim,
+// the hold of an unclaimed joint, and the ways the component must fail.
+
+// Runs the wheel for `duration` at `rad_s` on `key`, bounded by the loop running.
+void driveFor(Rm &r, const char *key, double rad_s, std::chrono::milliseconds duration)
+{
+    ASSERT_TRUE(r.command(key, rad_s));
+    std::this_thread::sleep_for(duration);
+}
+
+TEST_F(Integration, NoJumpAfterVelocityToPositionSwitch)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded({}, 500));
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    const double armed_at = state(r, "left_wheel/position");
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kLeftVel, 3.0, 1500ms));
+    ASSERT_GT(state(r, "left_wheel/position"), armed_at + 2.0) << "the wheel did not move away from its ARM-time position";
+    ASSERT_FALSE(r.failed()) << r.failure();
+
+    // Velocity -> position with no position command (NaN): hold where the wheel is. The wheel
+    // is turning at 3 rad/s, so it brakes forward by about v / pos.kp = 0.75 rad (measured in
+    // the CLI trace: 0.81 rad) and settles there; a jump to the ARM-time position, or a
+    // command left over from the velocity mode, would show as a move back or a larger lurch.
+    ASSERT_TRUE(r.switchTo({kLeftPos}, {kLeftVel})) << "the mode switch was refused";
+    const double at_switch = state(r, "left_wheel/position");
+    double highest = at_switch, lowest = at_switch;
+    std::vector<double> tail;
+    const auto start = Clock::now();
+    while (since(start) < 1s)
+    {
+        const double p = state(r, "left_wheel/position");
+        highest = std::max(highest, p);
+        lowest = std::min(lowest, p);
+        if (since(start) > 700ms) { tail.push_back(p); }
+        std::this_thread::sleep_for(5ms);
+    }
+    EXPECT_GT(lowest, at_switch - 0.3) << "the wheel headed back towards the ARM-time position (" << armed_at
+                                       << "): lowest " << lowest << ", at the switch " << at_switch;
+    EXPECT_LT(highest, at_switch + 1.0) << "the wheel lurched " << highest - at_switch << " rad past the switch position";
+    ASSERT_FALSE(tail.empty());
+    EXPECT_LT(*std::max_element(tail.begin(), tail.end()) - *std::min_element(tail.begin(), tail.end()), 0.1)
+        << "the position had not settled after 0.7 s";
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(h->enumParam("left", "mode"), "position");
+}
+
+TEST_F(Integration, ReclaimDoesNotResendTheOldCommand)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kLeftVel, 3.0, 1000ms));
+    ASSERT_TRUE(r.release({kLeftVel}));
+    ASSERT_NO_THROW(h->waitArm(false));
+
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the second claim was refused";
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_LT(std::abs(meanOver(r, "left_wheel/velocity", 500ms)), 0.2) << "the old 3 rad/s command was sent again";
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, UnclaimedPositionModeJointHoldsAtArm)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kRightVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kRightVel, 3.0, 1000ms));
+    ASSERT_TRUE(r.release({kRightVel}));
+    ASSERT_NO_THROW(h->waitArm(false));
+    ASSERT_TRUE(waitFor([&] { return std::abs(meanOver(r, "right_wheel/velocity", 100ms)) < 0.1; }, 3s))
+        << "the right wheel did not stop";
+
+    // The right controller is left in position mode, and is never claimed.
+    h->setEnumParam("right", "mode", "position");
+    ASSERT_EQ(h->enumParam("right", "mode"), "position");
+    const double recorded = state(r, "right_wheel/position");
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the claim was refused";
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    double worst = 0;
+    const auto end = Clock::now() + 1s;
+    while (Clock::now() < end)
+    {
+        worst = std::max(worst, std::abs(state(r, "right_wheel/position") - recorded));
+        std::this_thread::sleep_for(5ms);
+    }
+    EXPECT_LT(worst, 0.1) << "the unclaimed right wheel moved " << worst << " rad from " << recorded;
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, GuiDisarmFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    h->disarm(); // the GUI client's DISARM; the lease does not change
+    ASSERT_TRUE(r.waitFailed(5s)) << "no ERROR after another client's DISARM";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    ASSERT_NO_THROW(h->waitArm(false));
+    const auto reasons = h->disarmReasons();
+    ASSERT_FALSE(reasons.empty());
+    EXPECT_EQ(reasons.front(), 1) << "an explicit DISARM is reason Explicit (1)";
+}
+
+TEST_F(Integration, ReclaimRightAfterLastRelease)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    // The release owes a DISARM; the claim follows at once, without a wait.
+    ASSERT_TRUE(r.release({kLeftVel}));
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the immediate re-claim was refused";
+    ASSERT_TRUE(r.waitCycles(100)) << "the loop stopped";
+    EXPECT_FALSE(r.failed()) << "the component failed: " << r.failure();
+    EXPECT_EQ(h->waitArm(true).arm_state, 1) << "the device is not armed after the re-claim";
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+TEST_F(Integration, UnpreparedClaimFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_FALSE(r.perform({kRightVel}, {})) << "a perform that claims what nobody prepared was accepted";
+    EXPECT_TRUE(r.waitFailed(3s)) << "the component did not fail after the unprepared claim";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
 }
 } // namespace
