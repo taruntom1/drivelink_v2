@@ -1,0 +1,6 @@
+<library path="drivelink_hardware">
+  <class name="drivelink_hardware/DriveLinkSystem" type="drivelink_hardware::DriveLinkSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>A DriveLink device through drivelink-agent: joints and sensors mapped by instance label.</description>
+  </class>
+</library>

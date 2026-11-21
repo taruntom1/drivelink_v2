@@ -31,7 +31,9 @@ add_library(drivelink::protocol ALIAS drivelink_protocol)
 target_include_directories(drivelink_protocol PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-set_target_properties(drivelink_protocol PROPERTIES EXPORT_NAME protocol)
+# POSITION_INDEPENDENT_CODE: the ROS plugin links this static library into a
+# shared object (host/ros/drivelink_hardware).
+set_target_properties(drivelink_protocol PROPERTIES EXPORT_NAME protocol POSITION_INDEPENDENT_CODE ON)
 target_compile_features(drivelink_protocol PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(drivelink_protocol PRIVATE -Wall -Wextra)

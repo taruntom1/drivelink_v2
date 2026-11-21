@@ -11,6 +11,8 @@ include(../cmake/Dependencies.cmake)
 add_library(drivelink STATIC src/session.cpp src/client.cpp src/values.cpp src/model.cpp src/groups.cpp src/buffers.cpp src/command.cpp src/capture.cpp src/testgen.cpp src/time.cpp src/tuning.cpp src/ota.cpp src/ota_update.cpp src/ports.cpp src/agent_wire.cpp src/discovery.cpp src/discovery_net.cpp)
 add_library(drivelink::drivelink ALIAS drivelink)
 target_compile_features(drivelink PUBLIC cxx_std_23)
+# The ROS plugin (host/ros/drivelink_hardware) links this static library into a shared object.
+set_target_properties(drivelink PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(drivelink PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_link_libraries(drivelink PUBLIC drivelink::protocol PRIVATE $<BUILD_INTERFACE:drivelink_asio> $<BUILD_INTERFACE:drivelink_mdns> Threads::Threads)
 if(WIN32)

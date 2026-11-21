@@ -476,7 +476,10 @@ struct Session::Impl
         if(tried==256 || pending.contains(static_cast<uint8_t>(sequence%256))) { complete(r,std::unexpected(error(r,ErrorKind::Connection,"sequence IDs exhausted; reconnect")));return; }
         r->seq=static_cast<uint8_t>(sequence++%256);
         const bool core=r->kind!=msg::kDiagQuery;
-        Bytes payload{static_cast<uint8_t>(core?p::core_wire::kVersion:3),r->seq};
+        // Sized once: GCC 13 at -O2 reports a false -Wstringop-overflow for the
+        // grow-then-insert path of a two-byte vector (seen in ros-jazzy, H4a).
+        Bytes payload;payload.reserve(4+r->body.size());
+        payload.push_back(static_cast<uint8_t>(core?p::core_wire::kVersion:3));payload.push_back(r->seq);
         if(core) { payload.push_back(r->family); }payload.push_back(r->op);
         payload.insert(payload.end(),r->body.begin(),r->body.end());
         if(payload.size()>maxPayload()) { complete(r,std::unexpected(error(r,ErrorKind::Usage,"request exceeds device payload cap")));return; }
