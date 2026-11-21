@@ -90,7 +90,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
 | H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | merged | [#94](https://github.com/taruntom1/drivelink_v2/pull/94) |
-| H4a | ROS toolchain (Lyrical in WSL, Jazzy in Docker and CI), colcon packages, `drivelink_hardware` state path: agent connection, mapping, lease, `read()`. Depends on H3d | vdev; deferred: robot (read only) | high, independent | in review | |
+| H4a | ROS toolchain (Lyrical in WSL, Jazzy in Docker and CI), colcon packages, `drivelink_hardware` state path: agent connection, mapping, lease, `read()`. Depends on H3d | vdev; deferred: robot (read only) | high, independent | in review | [#96](https://github.com/taruntom1/drivelink_v2/pull/96) |
 | H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()`, `ERROR` on a disarm. Depends on H4a | vdev; deferred: robot (wheels off the ground) | high, independent | planned | |
 | H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | planned | |
 | H4d | ROS `.deb` packages (bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | container; deferred: Pi | high, self | planned | |
