@@ -57,7 +57,7 @@ case "$profile" in
         # hardware interface, controller_manager and the broadcasters;
         # ros-dev-tools: colcon and rosdep.
         wanted="$base curl ros-$distro-ros-base ros-$distro-ros2-control ros-$distro-ros2-controllers \
-ros-$distro-ament-cmake-gtest ros-dev-tools"
+ros-$distro-ament-cmake-gtest ros-$distro-xacro ros-$distro-robot-state-publisher ros-dev-tools"
         ;;
     *) echo "usage: $0 [base|agent|host|ros]" >&2; exit 2 ;;
 esac

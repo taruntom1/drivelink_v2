@@ -193,13 +193,16 @@ def mock_reboot(cli, endpoint):
                 raise Fail('the vdev did not come back after the reboot')
 
 
-def start_mock(args, tmp, token):
+def start_mock(args, tmp, token, *, gains=None, scenario=None):
     """vdev with the example layout behind drivelink-agent. Returns (agent url, alias)."""
     for name in ('vdev', 'agent_bin', 'cli'):
         path = getattr(args, name)
         if not path or not os.path.isfile(path):
             raise Fail(f'--mock needs --{name.replace("_", "-")} (or DRIVELINK_{name.split("_")[0].upper()}): {path!r}')
-    vdev = Proc('vdev', [args.vdev, '--port', '0', '--state', str(tmp / 'vdev')])
+    argv = [args.vdev, '--port', '0', '--state', str(tmp / 'vdev')]
+    if scenario is not None:
+        argv += ['--scenario-file', str(scenario)]
+    vdev = Proc('vdev', argv)
     endpoint = vdev.next_line(15, 'READY ')[len('READY '):]
     info = mock_cli(args.cli, endpoint, 'info')
     control = next(loop for loop in info['loops'] if loop['realtime'])
@@ -217,6 +220,8 @@ def start_mock(args, tmp, token):
     for side, m in made.items():
         sets += [f'{fb}:{m["fb"]}:1={(act << 8) | m["act"]}',
                  f'{pid}:{m["pid"]}:1={(act << 8) | m["act"]}', f'{pid}:{m["pid"]}:2={(fb << 8) | m["fb"]}']
+        if gains:
+            sets += [f'{pid}:{m["pid"]}:{item}={gain}' for item, gain in gains.items()]
     # imu.mock's default gyro `rate` is 0.1 rad/s (a turning IMU); at rest it is 0.
     sets.append(f'114:{imu}:1=0')
     mock_cli(args.cli, endpoint, 'set', *sets)

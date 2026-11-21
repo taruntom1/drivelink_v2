@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<robot name="drivelink_example" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="drivelink.ros2_control.xacro"/>
+  <xacro:arg name="agent" default="tcp://127.0.0.1:47620"/>
+  <xacro:arg name="device" default="dev"/>
+  <xacro:arg name="token_file" default="/etc/drivelink/token"/>
+  <xacro:arg name="token" default=""/>
+  <xacro:arg name="left_label" default="left"/>
+  <xacro:arg name="right_label" default="right"/>
+  <xacro:arg name="imu_label" default="imu"/>
+  <xacro:arg name="wheel_separation" default="0.30"/>
+
+  <link name="base_link"/>
+  <xacro:macro name="wheel" params="side offset">
+    <link name="${side}_wheel_link"/>
+    <joint name="${side}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_wheel_link"/>
+      <origin xyz="0 ${offset} 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:property name="half_track" value="${float('$(arg wheel_separation)') / 2}"/>
+  <xacro:wheel side="left" offset="${half_track}"/>
+  <xacro:wheel side="right" offset="${-half_track}"/>
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+
+  <xacro:drivelink_diff_drive name="drivelink" agent="$(arg agent)" device="$(arg device)"
+    token_file="$(arg token_file)" token="$(arg token)" left_joint="left_wheel_joint"
+    left_label="$(arg left_label)" right_joint="right_wheel_joint"
+    right_label="$(arg right_label)" imu_label="$(arg imu_label)"/>
+</robot>

@@ -266,11 +266,11 @@ commands) in H3a. Python bindings are not planned.
 - **Status and faults:** a diagnostics node in `drivelink_bringup` holds its own agent connection as an observer (no lease, `client_kind` Ros), so it keeps working while the component is inactive or in `ERROR`. It publishes `/diagnostics` from the status stream, diag events, the lease holder and the online state, and offers the services `ack_fault` and `recover`.
 - **Losing the device while active.** A disarm (watchdog, fault, a loop stall, or the GUI taking the lease; H4b), a lost lease, the device going offline or rebooting, the agent link dropping or stale data makes `read()` return `ERROR`; `on_error` releases the lease and disconnects, so the component is unconfigured. ros2_control then deactivates the component. Nothing re-arms on its own. Recovery is an explicit act by an operator or a supervisor node:
   1. hand the lease back (the GUI releases it)
-  2. call the diagnostics node's `recover`: it acknowledges any fault, reactivates the component through controller_manager and then its controllers, whose claims ARM again
+  2. call the diagnostics node's `recover`. It acknowledges any fault, reactivates the component through controller_manager and starts inactive controllers from the launch-configured list. Drive controller claims ARM again.
 
   The documented manual equivalent is `ack_fault` (or the GUI) and `ros2 control set_hardware_component_state`, then the controllers.
 - **IMU:** exposed as sensor state interfaces, published with `imu_sensor_broadcaster`. `imu.bno055` runs in a non-real-time loop, so its group is separate from the motor loop's.
-- **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets, for an example two-wheel diff-drive robot with an IMU that runs against vdev mocks. The real robot's config is added when it is on the bench.
+- **`drivelink_bringup`:** launch files, controller YAML, the diagnostics node and URDF snippets for an example two-wheel diff-drive robot with an IMU that runs against vdev mocks. The state broadcasters start active and the drive controller starts inactive. The real robot's config is added when it is on the bench.
 
 ## Link budget
 

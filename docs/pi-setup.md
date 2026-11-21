@@ -158,6 +158,28 @@ interface, and restart. The agent then advertises itself over mDNS:
 Give the GUI the token (`sudo cat /etc/drivelink/token`). There is no TLS:
 use a trusted network only. UDP 5353 (mDNS) and TCP 47620 must be open.
 
+## 7. ROS 2 bringup on the Pi
+
+Use ROS 2 Lyrical on Ubuntu 26.04. With this repository at
+`~/ros_ws/src/drivelink_v2` and the agent set up above, run
+`sudo usermod -aG drivelink "$USER"` to grant token access. Log in again
+before building and launching the workspace.
+
+```sh
+cd ~/ros_ws
+sudo sh src/drivelink_v2/tools/setup_linux.sh ros
+source /opt/ros/lyrical/setup.bash
+colcon build --packages-up-to drivelink_bringup
+source install/setup.bash
+ros2 launch drivelink_bringup example.launch.py device:=robot controllers_file:=/path/to/robot.yaml
+```
+
+Substitute the agent alias and a controller YAML with the robot's measured
+wheel geometry. The launch starts disarmed. Configure device labels and
+follow the first-run and recovery procedures before activating the drive.
+The [bringup guide](../host/ros/drivelink_bringup/README.md) documents the
+ROS topics and services.
+
 ## Upgrades and removal
 
 - **Upgrade:** `sudo apt update && sudo apt upgrade` from the repository, or

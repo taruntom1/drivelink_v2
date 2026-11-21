@@ -24,10 +24,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SEMVER = re.compile(r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')
 
 # Files that must carry the base version literally (CMake reads VERSION itself).
-PACKAGE_XML = ['protocol/package.xml', 'host/libdrivelink/package.xml', 'host/ros/drivelink_hardware/package.xml']
+PACKAGE_XML = ['protocol/package.xml', 'host/libdrivelink/package.xml', 'host/ros/drivelink_hardware/package.xml',
+               'host/ros/drivelink_bringup/package.xml']
 # CMake projects that must take their version from cmake/DriveLinkVersion.cmake.
 CMAKE_PROJECTS = ['protocol/CMakeLists.txt', 'host/libdrivelink/CMakeLists.txt',
-                  'host/superbuild/CMakeLists.txt', 'host/ros/drivelink_hardware/CMakeLists.txt']
+                  'host/superbuild/CMakeLists.txt', 'host/ros/drivelink_hardware/CMakeLists.txt',
+                  'host/ros/drivelink_bringup/CMakeLists.txt']
 CMAKE_PROJECT_VER = ['firmware/CMakeLists.txt', 'firmware/test/uart_comm/CMakeLists.txt']
 
 

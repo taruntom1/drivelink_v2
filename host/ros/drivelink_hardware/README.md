@@ -198,9 +198,9 @@ input, and no two command interfaces may name the same input.
   mapped through the agent's clock model). ros2_control then calls `on_error`,
   which logs the reason and disconnects without a device call; the agent
   clears the plugin's groups and ends its lease. The component is
-  unconfigured, and nothing comes back by itself. Configure and activate it
-  again (`ros2 control set_hardware_component_state drivelink active`) once
-  the cause is fixed; H4c adds the diagnostics node's `recover`. While the
+  unconfigured. Once the cause is fixed, use the
+  [bringup recovery procedure](../drivelink_bringup/README.md#diagnostics-and-recovery)
+  to configure and activate the hardware and restart its controllers. While the
   component is inactive, `read()` returns `OK` and a fault seen then makes the
   next activate fail.
 - **deactivate**: disarms if armed, clears the command and subscription groups
