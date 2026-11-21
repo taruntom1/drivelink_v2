@@ -110,6 +110,8 @@ One script holds the list of checks and their commands. CI calls it with `--only
 | `apt-repo` | `tools/apt_repo.py` (H3d): builds the apt repository from the `deb` check's packages (`build/deb`, or the directory in `DRIVELINK_APT_DEBS`) with a throwaway key, then `verify` checks it with apt itself, rootless: `apt-get update` clean, every package listed at its version and hash, the agent and CLI resolve for the host's suite, and a copy signed by another key, an unsigned copy and a changed index are refused. Layout and signing: [packaging/apt/README.md](../packaging/apt/README.md) | As `deb` (WSL on Windows; the repository is in `~/.cache/drivelink/<worktree>/apt-repo` there, `build/apt` elsewhere). Needs the `base` profile (gpg) and the `deb` check's packages |
 | `ros` | `tools/ros_check.sh` builds the superbuild's agent, vdev and CLI, then runs `colcon build` over `protocol/`, `host/libdrivelink` and `host/ros/*` with warnings as errors. `colcon test` runs hardware mapping and integration tests, recovery tests, and the installed bringup launch against vdev behind the agent. Outputs stay under the build directory | WSL on Windows (Lyrical, under `~/.cache/drivelink/<worktree>/ros`) and `build/ros` elsewhere with the installed ROS. Needs the `ros` profile |
 | `ros-jazzy` | The `ros` steps on ROS 2 Jazzy (Ubuntu 24.04, GCC 13) in Docker: `tools/ros.Dockerfile` builds `drivelink-ros:jazzy` (`ros:jazzy` plus `setup_linux.sh ros`, cached by Docker), then each phase runs with the checkout mounted read-only and the build in the `drivelink-ros-jazzy` volume | Needs Docker (Docker Desktop on Windows; the check names the fix when it is stopped). CI runs `ros` in `ros:jazzy` instead |
+| `ros-deb` | `tools/package_ros.py` stages the four ROS packages, runs Bloom and builds the Debian binaries. It checks the resulting names, versions and exact dependencies between the DriveLink ROS packages. Local packages go in `build/ros-debs/<distro>/` | Docker with the Lyrical and Jazzy images and the `ros-deb` profile. CI runs on the native amd64 and arm64 runners |
+| `ros-deb-install` | Builds the Ubuntu 24.04 CLI and agent packages, combines them with the Ubuntu 26.04 `deb` output and the two `ros-deb` outputs, and signs the repository with a test key. It then installs from the signed repo and runs the bringup launch against the installed agent and vdev in both distros | Docker with clean ROS images. Locally run `--only deb ros-deb ros-deb-install` from Ubuntu 26.04 or Windows with WSL set up for the `deb` check. CI tests from the signed `apt-repo` artifact on each architecture |
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 | `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
@@ -198,6 +200,7 @@ upgrades anything.
 | `agent` | the `base` packages (the GUI-less superbuild; no Qt) | `agent` (WSL and CI), `deb` on 24.04 (CI) |
 | `host` (default) | `base` plus Ubuntu's Qt 6.10 development packages, the QML modules (including Qt Quick Dialogs for the GUI's file picker) and the offscreen platform plugin | `host-linux` and `deb` on 26.04 (WSL and CI) |
 | `ros` | `base` plus ROS 2 (Lyrical on 26.04, Jazzy on 24.04), with `ros-base`, `ros2-control`, `ros2-controllers`, `ament-cmake-gtest`, `xacro`, `robot-state-publisher` and `ros-dev-tools` (colcon, rosdep). The setup script adds the ROS apt source when needed and checks the key fingerprint | `ros` (WSL and CI), `ros-jazzy` (its image) |
+| `ros-deb` | `base` plus Bloom, rosdep and Debian packaging tools. The build installs the Build-Depends from the generated control file inside the container | `ros-deb` |
 
 ```bash
 wsl -d Ubuntu-26.04 -u root sh tools/setup_linux.sh host
@@ -241,14 +244,16 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
   On 26.04 it also runs `installed_gui_smoke.py --deb --vdev`: the installed
   GUI renders every screen against the installed vdev, and the screenshots
   are uploaded as `drivelink-installed-screens-<arch>`.
-- `apt-repo` (after `linux-package`) runs the `apt-repo` check in an
-  `ubuntu:26.04` container on every package artifact (`DRIVELINK_APT_DEBS`)
-  and uploads the throwaway-signed repository as `apt-repo-test`.
-- `apt-install` takes it into a clean container of each release and
-  architecture and runs `host/test/apt_repo_smoke.py`: the key and a deb822
-  source as a user adds them, `apt install drivelink-agent drivelink-cli` at
-  this release's version, the GUI resolving on 26.04, a copy signed by another
-  key refused, purge. `release` waits for it.
+- `ros-deb` builds and uploads four Bloom packages for each combination of
+  ROS distro and architecture.
+- `apt-repo` waits for `linux-package` and `ros-deb`. It verifies the full
+  26-package inventory and uploads the throwaway-signed repository as
+  `apt-repo-test`.
+- `apt-install` uses that repository in clean ROS containers on both
+  architectures. `host/test/apt_repo_smoke.py --ros` verifies install and
+  purge, confirms the GUI resolves on 26.04 and a copy signed by another key
+  is refused, and runs the packaged launch against the installed agent and
+  vdev. `release` waits for it.
 - `apt-publish` runs only on a `v*` tag, after `release`, in the environment
   `apt-repo` that holds the signing key (`APT_SIGNING_KEY`; only `v*` tags
   may deploy to it, so no other job can read the key). It signs, checks the

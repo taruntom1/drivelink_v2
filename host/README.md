@@ -34,7 +34,8 @@ Until the H3a-2 lease no client can arm through it. See
 It connects through the agent, maps joints and IMU signals by instance label,
 and reads state and writes commands in the real-time loop.
 `drivelink_bringup` adds the diff-drive example, diagnostics and recovery.
-Both build with colcon from `host/ros/`. See the
+Both install from the signed DriveLink apt repository or build with colcon
+from `host/ros/`. See the
 [hardware plugin](ros/drivelink_hardware/README.md) and the
 [bringup guide](ros/drivelink_bringup/README.md).
 

@@ -5,7 +5,26 @@ DriveLink connects to the device through `drivelink-agent`. The URDF maps
 the two velocity-controlled joints and the IMU to device instance labels.
 The same wheel separation in the controller YAML sets the URDF joint origins.
 
-## Build and launch
+## Install
+
+### From apt
+
+On Ubuntu 26.04 use Lyrical. On Ubuntu 24.04 use Jazzy. Enable the matching
+[ROS 2 apt source](https://github.com/ros-infrastructure/ros-apt-source) and
+[DriveLink's signed apt source](../../../docs/pi-setup.md#4-install-the-packages).
+With both sources enabled, install from a DriveLink release that includes ROS
+packages.
+
+```sh
+distro=lyrical  # Use jazzy on Ubuntu 24.04.
+sudo apt update
+sudo apt install "ros-$distro-ros-base" "ros-$distro-drivelink-bringup"
+source "/opt/ros/$distro/setup.bash"
+```
+
+Install `drivelink-agent` on the computer that owns the device port.
+
+### From source
 
 From a colcon workspace with this repository at `src/drivelink_v2` and ROS
 installed, run:
@@ -16,6 +35,8 @@ source /opt/ros/$ROS_DISTRO/setup.bash
 colcon build --packages-up-to drivelink_bringup
 source install/setup.bash
 ```
+
+## Launch
 
 The packaged agent keeps `/etc/drivelink/token` at `0640 root:drivelink`.
 Add the ROS user with `sudo usermod -aG drivelink "$USER"` and log in again.
@@ -87,3 +108,5 @@ example launch against vdev behind the agent. `ros-jazzy` runs the same checks
 in the Jazzy container. The mock and real-robot driving checks share
 [`host/test/ros_bringup_check.py`](../../test/ros_bringup_check.py). The real
 run uses an interactive terminal and the first-run safety procedure.
+`ros-deb-install` runs the mock check from apt-installed packages in clean
+containers.

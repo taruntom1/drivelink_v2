@@ -160,10 +160,25 @@ use a trusted network only. UDP 5353 (mDNS) and TCP 47620 must be open.
 
 ## 7. ROS 2 bringup on the Pi
 
-Use ROS 2 Lyrical on Ubuntu 26.04. With this repository at
-`~/ros_ws/src/drivelink_v2` and the agent set up above, run
+Use ROS 2 Lyrical on Ubuntu 26.04. With the agent set up above, run
 `sudo usermod -aG drivelink "$USER"` to grant token access. Log in again
-before building and launching the workspace.
+before launching.
+
+### From apt
+
+Enable the [ROS 2 apt source](https://github.com/ros-infrastructure/ros-apt-source)
+alongside the DriveLink source in step 4. Use a DriveLink release that includes
+ROS packages.
+
+```sh
+sudo apt update
+sudo apt install ros-lyrical-ros-base ros-lyrical-drivelink-bringup
+source /opt/ros/lyrical/setup.bash
+```
+
+### From source
+
+Place this repository at `~/ros_ws/src/drivelink_v2` and build the workspace.
 
 ```sh
 cd ~/ros_ws
@@ -171,6 +186,11 @@ sudo sh src/drivelink_v2/tools/setup_linux.sh ros
 source /opt/ros/lyrical/setup.bash
 colcon build --packages-up-to drivelink_bringup
 source install/setup.bash
+```
+
+### Launch
+
+```sh
 ros2 launch drivelink_bringup example.launch.py device:=robot controllers_file:=/path/to/robot.yaml
 ```
 

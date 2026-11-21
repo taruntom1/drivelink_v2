@@ -1,6 +1,7 @@
 """H3d: DriveLink's signed apt repository, used the way a user does.
 
     sudo python3 host/test/apt_repo_smoke.py --repo build/apt --key build/apt-key.asc
+    sudo python3 host/test/apt_repo_smoke.py --repo build/apt --key build/apt-key.asc --ros
     sudo python3 host/test/apt_repo_smoke.py --url https://<host>/<path> [--key-url URL] --phase install|upgrade
 
 Run as root in a clean ubuntu:26.04 or ubuntu:24.04 container (CI's apt-install
@@ -17,6 +18,9 @@ a recording stub as in installed_packages_smoke.py, whose helpers this reuses;
 its calls are printed, not asserted); on 26.04 the GUI resolves; a copy signed
 by another key is refused (NO_PUBKEY / not signed) and never becomes a
 candidate; the packages purge.
+
+--ros also installs the matching ROS bringup package in a clean ROS image,
+checks its dependencies and launches the installed stack against installed vdev.
 
 --url (the deferred Pi rows) installs from the published repository over
 HTTPS with the real systemd. --phase install does the first install and checks
@@ -123,14 +127,14 @@ def show_key(key, url):
                  Path(home) / 'key.asc').stdout, flush=True)
 
 
-def check_candidates(url, release):
-    found = policy(*PACKAGES)
-    for package in PACKAGES:
+def check_candidates(url, release, packages=PACKAGES):
+    found = policy(*packages)
+    for package in packages:
         version, block = found.get(package, ('(none)', ''))
         expect(version.endswith(f'~ubuntu{release}'), f'the {package} candidate is this release\'s build',
                candidate=version, release=release)
         expect(url in block, f'the {package} candidate comes from the DriveLink repository', policy=block)
-    return {package: found[package][0] for package in PACKAGES}
+    return {package: found[package][0] for package in packages}
 
 
 def install_flow(url, key_bytes, codename, release, stubbed):
@@ -208,22 +212,51 @@ def refusal(repo, key_bytes, codename):
     passed('a repository signed by another key is refused and offers no package')
 
 
+def ros_install(url, release):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
+    from ros_packages import ROS_PACKAGES, ROS_TARGETS, debian_name
+
+    distro = ROS_TARGETS[release]
+    names = [debian_name(distro, name) for name in ROS_PACKAGES]
+    wanted = check_candidates(url, release, (*PACKAGES, *names))
+    expect(len(set(wanted.values())) == 1, 'ROS and agent candidates share the release version',
+           versions=wanted)
+    apt('install', debian_name(distro, 'drivelink_bringup'))
+    for package in names:
+        installed = installed_version(package)
+        expect(installed == f'{wanted[package]} installed', f'{package} installed at its candidate',
+               installed=installed, candidate=wanted[package])
+    passed(f'apt installed all {len(names)} {distro} packages via bringup')
+
+    script = Path(__file__).resolve().with_name('ros_bringup_check.py')
+    result = sh('bash', '-ec', 'source "/opt/ros/$1/setup.bash"; exec python3 -B "$2" --mock '
+                '--vdev /usr/bin/drivelink-vdev --agent-bin /usr/bin/drivelink-agent '
+                '--cli /usr/bin/drivelink-cli', 'ros-deb-smoke', distro, script, check=False, timeout=300)
+    print(result.stdout + result.stderr, flush=True)
+    expect(result.returncode == 0, f'{distro} installed bringup launch test exited 0',
+           exit_code=result.returncode)
+    return names
+
+
 def repo_mode(args):
     codename, release = os_release()
     key_bytes = args.key.read_bytes()
     server, url = serve(args.repo)
     try:
         install_flow(url, key_bytes, codename, release, stubbed=True)
+        ros_packages = ros_install(url, release) if args.ros else []
+        if not shutil.which('gpg'):
+            apt('install', 'gnupg')
         refusal(args.repo, key_bytes, codename)
         stub_on()
         try:
-            apt('purge', *PACKAGES)
+            apt('purge', *ros_packages, *PACKAGES)
         finally:
             stub_off()
-        for package in PACKAGES:
+        for package in (*ros_packages, *PACKAGES):
             expect(not installed_version(package).endswith(' installed'), f'{package} is purged',
                    installed=installed_version(package))
-        passed('drivelink-agent and drivelink-cli purged')
+        passed('DriveLink packages purged')
     finally:
         server.shutdown()
 
@@ -269,6 +302,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--repo', type=Path, help='a repository built by tools/apt_repo.py (served on 127.0.0.1)')
     parser.add_argument('--key', type=Path, help="with --repo: the repository's public key file")
+    parser.add_argument('--ros', action='store_true', help='with --repo: check the ROS packages as well')
     parser.add_argument('--url', help='a published repository (the Pi rows)')
     parser.add_argument('--key-url', help=f'with --url: the public key (default <url>/{KEYRING_NAME})')
     parser.add_argument('--phase', choices=('install', 'upgrade'), help='with --url')
@@ -277,6 +311,8 @@ def main():
         parser.error('give exactly one of --repo and --url')
     if args.repo and not args.key:
         parser.error('--repo needs --key')
+    if args.ros and not args.repo:
+        parser.error('--ros needs --repo')
     if args.url and not args.phase:
         parser.error('--url needs --phase')
     if not hasattr(os, 'geteuid') or os.geteuid() != 0:

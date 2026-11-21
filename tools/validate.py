@@ -388,7 +388,8 @@ def plan_apt_repo(jobs):
     tool = [*wrap, 'python3', 'tools/apt_repo.py']
     return [
         Step('build (throwaway key)', [*tool, 'build', '--debs', debs, '--out', out, '--clean',
-                                       '--throwaway-key', '--public-key-out', key], env=env),
+                                       '--throwaway-key', '--public-key-out', key,
+                                       *(['--complete'] if CI else [])], env=env),
         Step('verify with apt', [*tool, 'verify', '--repo', out, '--key', key], env=env),
     ]
 
@@ -422,15 +423,17 @@ def plan_ros(jobs):
             for title, phase in ROS_PHASES]
 
 
-def plan_ros_jazzy(jobs):
-    """The `ros` build and tests on ROS 2 Jazzy (Ubuntu 24.04) in the ros:jazzy image
-    through Docker. The image adds tools/setup_linux.sh ros once (cached by Docker);
-    the build lives in the drivelink-ros-jazzy volume and the checkout is read only."""
+def need_docker():
     need('docker')
     alive = subprocess.run(['docker', 'info', '--format', '{{.ServerVersion}}'],
                            capture_output=True, text=True, errors='replace')
     if alive.returncode != 0:
-        raise Unavailable('Docker is not running: start Docker Desktop (or skip this check with --skip ros-jazzy)')
+        raise Unavailable('Docker is not running: start Docker Desktop or the Docker daemon')
+
+
+def plan_ros_jazzy(jobs):
+    """Run the source checks in Docker with a read-only checkout and a build volume."""
+    need_docker()
     image = 'drivelink-ros:jazzy'
     env = dict(version_env(None), DRIVELINK_JOBS=jobs)
     run = ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src',
@@ -441,6 +444,56 @@ def plan_ros_jazzy(jobs):
                   '-f', str(ROOT / 'tools/ros.Dockerfile'), str(ROOT / 'tools')], env=env),
             *(Step(title, [*run, 'sh', 'tools/ros_check.sh', phase, build], env=env, warning_free=True)
               for title, phase in ROS_PHASES)]
+
+
+def ros_deb_docker():
+    need_docker()
+    out = ROOT / 'build/ros-debs'
+    out.mkdir(parents=True, exist_ok=True)
+    return ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src', '-v', f'{out}:/out']
+
+
+def plan_ros_deb(jobs):
+    package = ['python3', 'tools/package_ros.py', '--jobs', jobs]
+    if CI:
+        return [Step('Bloom build', package, warning_free=True)]
+    run = ros_deb_docker()
+    env = version_env(None)
+    steps = []
+    for distro in ('jazzy', 'lyrical'):
+        image = f'drivelink-ros-deb:{distro}'
+        steps.extend((
+            Step(f'{distro} package build image',
+                 ['docker', 'build', '-q', '-t', image, '--build-arg', f'DISTRO={distro}',
+                  '--build-arg', 'PROFILE=ros-deb', '-f', str(ROOT / 'tools/ros.Dockerfile'),
+                  str(ROOT / 'tools')]),
+            Step(f'{distro} Bloom build', [*run, '-e', 'DRIVELINK_VERSION_FULL', image,
+                                          *package, '--out', f'/out/{distro}'],
+                 env=env, warning_free=True),
+        ))
+    return steps
+
+
+def plan_ros_deb_install(jobs):
+    smoke = ['python3', 'host/test/apt_repo_smoke.py', '--ros']
+    if CI:
+        return [Step('signed apt install and launch', [*smoke, '--repo', 'apt-repo/apt',
+                                                      '--key', 'apt-repo/apt-key.asc'])]
+    run = ros_deb_docker()
+    smoke += ['--repo', '/out/apt', '--key', '/out/apt-key.asc']
+    image = 'drivelink-ros-deb:jazzy'
+    return [
+        Step('Ubuntu 24.04 agent and CLI packages',
+             [*run, '-e', 'DRIVELINK_VERSION_FULL', '-v', 'drivelink-ros-jazzy:/cache', image,
+              'python3', 'tools/package_linux.py', '--jobs', jobs, '--out', '/out/linux-jazzy',
+              '--build-dir', f'/cache/{worktree_key()}/linux-release'], env=version_env(None)),
+        Step('sign the two suites (throwaway key)',
+             [*run, image, 'python3', 'tools/apt_repo.py', 'build', '--debs', 'build/deb',
+              '--debs', '/out/linux-jazzy', '--debs', '/out/jazzy', '--debs', '/out/lyrical',
+              '--out', '/out/apt', '--clean', '--throwaway-key', '--public-key-out', '/out/apt-key.asc']),
+        *(Step(f'{distro} signed apt install and launch', [*run, f'ros:{distro}', *smoke])
+          for distro in ('jazzy', 'lyrical')),
+    ]
 
 
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
@@ -460,6 +513,9 @@ CHECKS = [
     Check('ros', 'drivelink_hardware: colcon build and tests on ROS 2 (Lyrical through WSL on Windows)',
           plan_ros),
     Check('ros-jazzy', 'drivelink_hardware: the ros check on ROS 2 Jazzy in Docker (ros:jazzy)', plan_ros_jazzy),
+    Check('ros-deb', 'Bloom Debian packages for Jazzy and Lyrical in Docker', plan_ros_deb),
+    Check('ros-deb-install', 'install the signed ROS packages and run the packaged launch in Docker',
+          plan_ros_deb_install),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),

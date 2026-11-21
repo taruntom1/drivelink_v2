@@ -209,12 +209,46 @@ jobs:
           path: build/installed-gui/
           if-no-files-found: ignore
 
-  # H3d: the apt repository from every release's packages, signed with a
+  ros-deb:
+    name: ROS packages (${{ matrix.distro }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ros:${{ matrix.distro }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {distro: lyrical, arch: amd64, runner: ubuntu-latest}
+          - {distro: lyrical, arch: arm64, runner: ubuntu-24.04-arm}
+          - {distro: jazzy, arch: amd64, runner: ubuntu-latest}
+          - {distro: jazzy, arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the Bloom toolchain
+        run: sh tools/setup_linux.sh ros-deb
+      - name: Build the ROS packages
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only ros-deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-debs-ros-${{ matrix.distro }}-${{ matrix.arch }}
+          path: build/ros-debs/*.deb
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-deb-${{ matrix.distro }}-${{ matrix.arch }}-validation
+          path: build/validate/
+
+  # The apt repository from every release's packages, signed with a
   # throwaway key and checked by apt; apt-install installs from it in clean
   # containers. Only apt-publish, on a tag, signs with the real key.
   apt-repo:
     name: apt repository (throwaway key)
-    needs: linux-package
+    needs: [linux-package, ros-deb]
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
@@ -254,15 +288,15 @@ jobs:
     name: apt install from the repository (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
     needs: apt-repo
     runs-on: ${{ matrix.runner }}
-    container: ubuntu:${{ matrix.release }}
+    container: ros:${{ matrix.distro }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {release: '26.04', arch: amd64, runner: ubuntu-latest}
-          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm}
-          - {release: '24.04', arch: amd64, runner: ubuntu-latest}
-          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '26.04', distro: lyrical, arch: amd64, runner: ubuntu-latest}
+          - {release: '26.04', distro: lyrical, arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '24.04', distro: jazzy, arch: amd64, runner: ubuntu-latest}
+          - {release: '24.04', distro: jazzy, arch: arm64, runner: ubuntu-24.04-arm}
     steps:
       # gpg signs the refused copy; the packages' Depends bring the rest.
       - name: Bootstrap git, Python and gpg
@@ -272,8 +306,14 @@ jobs:
         with:
           name: apt-repo-test
           path: apt-repo
-      - name: Add the repository, apt install the agent and CLI, refuse another key
-        run: python3 host/test/apt_repo_smoke.py --repo apt-repo/apt --key apt-repo/apt-key.asc
+      - name: Install from the signed repository and test the ROS launch
+        run: python3 tools/validate.py --only ros-deb-install
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-deb-install-${{ matrix.distro }}-${{ matrix.arch }}-validation
+          path: build/validate/
 
   firmware:
     name: idf.py build (${{ matrix.name }})
@@ -356,11 +396,10 @@ jobs:
           args=$(find dist/drivelink-firmware -name flash_args.json)
           test "$(jq -r .version "$args")" = "$version"
           (cd "$(dirname "$args")" && zip -r "$GITHUB_WORKSPACE/dist/release/$firmware.zip" .)
-          # The .debs: cli and agent for 26.04 and 24.04, the GUI for 26.04,
-          # each for amd64 and arm64 (release and architecture in the name).
+          # Ten Linux packages plus the four ROS packages in each matrix cell.
           find dist -path 'dist/drivelink-debs-*' -name '*.deb' -exec cp {} dist/release/ \;
           count=$(find dist/release -name '*.deb' | wc -l)
-          if [ "$count" -ne 10 ]; then echo "expected 10 .deb packages, found $count" >&2; exit 1; fi
+          if [ "$count" -ne 26 ]; then echo "expected 26 .deb packages, found $count" >&2; exit 1; fi
           for deb in dist/release/*.deb; do
             case "$(basename "$deb")" in
               *_"$version"~ubuntu*_amd64.deb|*_"$version"~ubuntu*_arm64.deb) ;;
@@ -400,7 +439,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 tools/apt_repo.py build --debs debs \
-            --out build/apt-publish --clean --key-env APT_SIGNING_KEY \
+            --out build/apt-publish --clean --complete --key-env APT_SIGNING_KEY \
             --expect-fingerprint packaging/apt/FINGERPRINT
       - name: Check it with apt and the committed public key
         run: python3 tools/apt_repo.py verify --repo build/apt-publish --key packaging/apt/drivelink-archive-keyring.asc

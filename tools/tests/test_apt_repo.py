@@ -32,6 +32,24 @@ def tag_release_debs(version='0.1.0'):
     return debs
 
 
+class CompleteReleaseTest(unittest.TestCase):
+    def setUp(self):
+        self.debs = tag_release_debs()
+        for release, distro in (('24.04', 'jazzy'), ('26.04', 'lyrical')):
+            for arch in ('amd64', 'arm64'):
+                for suffix in ('', '-protocol', '-hardware', '-bringup'):
+                    self.debs.append(make_deb(f'ros-{distro}-drivelink{suffix}', f'0.1.0~ubuntu{release}', arch))
+
+    def test_complete_release_includes_all_26_assets(self):
+        self.assertEqual(len(self.debs), 26)
+        apt_repo.check_complete(self.debs)
+
+    def test_correct_count_cannot_mask_a_wrong_distro(self):
+        wrong = make_deb('ros-jazzy-drivelink-bringup', '0.1.0~ubuntu26.04', 'arm64')
+        with self.assertRaisesRegex(RepoError, 'resolute arm64: missing .*lyrical.*unexpected .*jazzy'):
+            apt_repo.check_complete([*self.debs[:-1], wrong])
+
+
 class VersionTest(unittest.TestCase):
     def test_release_of(self):
         self.assertEqual(apt_repo.release_of('0.1.0~ubuntu26.04'), '26.04')

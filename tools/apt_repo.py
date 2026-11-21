@@ -45,6 +45,8 @@ import sys
 import tempfile
 import threading
 
+from ros_packages import ROS_PACKAGES, ROS_TARGETS, debian_name
+
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = {'24.04': 'noble', '26.04': 'resolute'}
 ARCHES = ('amd64', 'arm64')
@@ -187,6 +189,22 @@ def select(debs):
         listing = ', '.join(f'{base} ({name})' for base, name in sorted(bases.items()))
         raise RepoError(f'the files are of more than one version, but a repository is one release: {listing}')
     return dict(sorted(chosen.items()))
+
+
+def check_complete(debs):
+    """A published repository carries the full Linux and ROS release matrix."""
+    from package_linux import packages_for
+
+    groups = select(debs)
+    for release, suite in SUITES.items():
+        distro = ROS_TARGETS[release]
+        expected = {package.name for package in packages_for('ubuntu', release)}
+        expected.update(debian_name(distro, name) for name in ROS_PACKAGES)
+        for arch in ARCHES:
+            actual = {deb.package for deb in groups.get((suite, arch), [])}
+            if actual != expected:
+                raise RepoError(f'{suite} {arch}: missing {sorted(expected - actual)}, '
+                                f'unexpected {sorted(actual - expected)}')
 
 
 def format_date(dt):
@@ -561,16 +579,19 @@ def signing_key(args, gpg):
 
 def run_build(args):
     need_tools('dpkg-deb', 'gpg', 'gpgconf')
-    source = Path(args.debs).resolve()
-    if not source.is_dir():
-        raise RepoError(f'{source} is not a directory')
+    sources = [path.resolve() for path in args.debs]
+    for source in sources:
+        if not source.is_dir():
+            raise RepoError(f'{source} is not a directory')
+    debs = [read_deb(path) for source in sources for path in sorted(source.glob('*.deb'))]
+    if args.complete:
+        check_complete(debs)
     out = Path(args.out).resolve()
     if args.clean and out.exists():
-        if out == source or out in source.parents or out == Path(out.anchor):
+        if any(out == source or out in source.parents for source in sources) or out == Path(out.anchor):
             raise RepoError(f'refusing to remove {out}: it holds the .deb files or is a root')
         shutil.rmtree(out)
     check_empty(out)
-    debs = [read_deb(path) for path in sorted(source.glob('*.deb'))]
     with Gpg() as gpg:
         fpr = signing_key(args, gpg)
         result = build(debs, out, gpg, fpr, source_date(os.environ), args.url.rstrip('/'), args.index_template)
@@ -585,7 +606,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     commands = parser.add_subparsers(dest='command', required=True)
     build_parser = commands.add_parser('build', help='write the repository')
-    build_parser.add_argument('--debs', required=True, type=Path, help='directory of .deb files')
+    build_parser.add_argument('--debs', required=True, action='append', type=Path,
+                              help='directory of .deb files (repeat for multiple directories)')
+    build_parser.add_argument('--complete', action='store_true', help='require the full release matrix')
     build_parser.add_argument('--out', required=True, type=Path)
     build_parser.add_argument('--clean', action='store_true', help='remove --out first')
     build_parser.add_argument('--url', default=DEFAULT_URL, help='public URL, shown on the index page')

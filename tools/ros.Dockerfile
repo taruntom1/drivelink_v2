@@ -3,5 +3,6 @@
 # Built with tools/ as the context; Docker caches it until setup_linux.sh changes.
 ARG DISTRO=jazzy
 FROM ros:${DISTRO}
+ARG PROFILE=ros
 COPY setup_linux.sh /tmp/setup_linux.sh
-RUN sh /tmp/setup_linux.sh ros && rm -rf /var/lib/apt/lists/*
+RUN sh /tmp/setup_linux.sh "$PROFILE" && rm -rf /var/lib/apt/lists/*
