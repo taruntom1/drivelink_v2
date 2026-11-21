@@ -54,8 +54,10 @@ class Client
     GroupMutation subEnable(uint8_t group, bool enabled);
     GroupMutation groupClear(uint8_t group, bool command);
     bool command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values = {});
+    // keepalive=false: no prefix-only keepalives, so only write()/writeBits()
+    // feed the device watchdog (for a consumer whose own loop must be alive).
     std::shared_ptr<CommandGroup> managedCommand(uint8_t group,uint8_t loop,std::span<const Ref> refs,
-                                                std::span<const uint32_t> hold);
+                                                std::span<const uint32_t> hold,bool keepalive=true);
     OperationResult captureConfig(uint8_t loop, uint16_t divider, uint32_t samples, uint32_t pre_trigger,
                        const CaptureTrigger &trigger, std::span<const Ref> refs);
     OperationResult captureArm();

@@ -98,7 +98,7 @@ Bytes commandPayload(uint8_t epoch, uint16_t counter, std::span<const uint32_t> 
 bool Client::command(uint8_t group, uint8_t epoch, uint16_t counter, std::span<const uint32_t> values)
 { return m_session.sendCommandGroup(group, commandPayload(epoch, counter, values)); }
 std::shared_ptr<CommandGroup> Client::managedCommand(uint8_t group,uint8_t loop,std::span<const Ref> refs,
-                                                   std::span<const uint32_t> hold) {
+                                                   std::span<const uint32_t> hold,bool keepalive) {
     if(refs.size()!=hold.size()) {throw Error(ErrorKind::Usage,"hold width mismatch");}
     std::vector<ItemDescriptor> descriptors;
     for(size_t i=0;i<refs.size();++i) {
@@ -109,7 +109,7 @@ std::shared_ptr<CommandGroup> Client::managedCommand(uint8_t group,uint8_t loop,
     const auto ms=get({&watchdog,1}).values.at(0);
     if(ms<3 || ms>65535) {throw Error(ErrorKind::Usage,"watchdog must allow managed keepalives");}
     const auto result=cmdConfigure(group,loop,refs);
-    return m_session.manageCommand(group,result.epoch,std::move(descriptors),hold,static_cast<uint16_t>(ms),result.generation);
+    return m_session.manageCommand(group,result.epoch,std::move(descriptors),hold,static_cast<uint16_t>(ms),result.generation,keepalive);
 }
 std::optional<SubscriptionSample> decodeSubscription(const Frame &frame,const Group &group,std::span<const ItemDescriptor> descriptors) {
     Reader r(frame.payload.data(),frame.payload.size());const auto version=r.readU8(),epoch=r.readU8();

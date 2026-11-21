@@ -30,8 +30,9 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   complete metadata. Reload publication preserves current link/runtime/loss
   state; a delayed result cannot resurrect a disconnected model. Group data is
   pulled, not dispatched. Seqlock payload words must be atomic C++ objects.
-- Managed commands use a bounded producer queue and prefix-only I/O keepalives.
-  Consumers supply finite holds; no module-specific semantics. Flush both queued
+- Managed commands use a bounded producer queue and prefix-only I/O keepalives
+  (a consumer that must feed the watchdog from its own loop, the ROS plugin,
+  turns them off). Consumers supply finite holds; no module-specific semantics. Flush both queued
   values and pending TX generations before mode changes. Boot, clear and close
   invalidate traffic; never replay values or arm automatically.
 - Correlate type, sequence, family and op. Retry only known-idempotent reads;

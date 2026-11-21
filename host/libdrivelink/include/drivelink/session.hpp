@@ -121,7 +121,8 @@ class Session
     std::shared_ptr<GroupBuffer> subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity=2048,uint64_t generation=0);
     void removeBuffer(uint8_t group);
     std::shared_ptr<CommandGroup> manageCommand(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                                               std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t generation=0);
+                                               std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t generation=0,
+                                               bool keepalive=true);
     void stopCommand(uint8_t group);
     // OTA WRITE only, 1..4 owned request bodies. Holds ordinary call ownership
     // until every reply arrives; timeouts retire missing IDs before throwing.

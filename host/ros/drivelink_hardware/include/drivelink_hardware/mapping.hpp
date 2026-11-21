@@ -12,6 +12,7 @@
 #include <drivelink/types.hpp>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -285,10 +286,9 @@ SwitchPlan planSwitch(const Resolved &resolved, const Claims &current, const std
 //   - otherwise (unclaimed, claimed by another kind, NaN or infinite) the
 //     hold: 0 for Velocity and Duty, `position_hold` for Position.
 // None gives 0.
-constexpr double slotValue(CommandKind kind, bool claimed, double command, double position_hold) noexcept
+inline double slotValue(CommandKind kind, bool claimed, double command, double position_hold) noexcept
 {
-    const bool finite = command == command && command - command == 0; // not NaN, not infinite
-    if (claimed && finite && kind != CommandKind::None)
+    if (claimed && std::isfinite(command) && kind != CommandKind::None)
     {
         return command;
     }

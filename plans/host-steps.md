@@ -39,8 +39,6 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| How the plugin waits for the agent's answers outside the real-time path during the mode switch (configure and activate call the library synchronously, H4a) | H4b |
-| The position hold before a first sample arrives; whether a mode switch while armed needs a DISARM for any controller type | H4b |
 | Which controllers `recover` reactivates (remembered at the `ERROR`, or a parameter) | H4c |
 | The Debian names and version scheme of the ROS packages (bloom's `ros-<distro>-` prefix, the release suffix); how the apt suites hold them | H4d |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |

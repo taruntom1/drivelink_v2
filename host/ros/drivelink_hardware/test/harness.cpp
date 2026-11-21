@@ -296,6 +296,7 @@ struct Harness::Impl
         bool seen = false;
         uint64_t seq = 0;
         ArmStatus status;
+        std::vector<uint8_t> disarms; // last_disarm_reason at each armed -> not armed transition
     };
     std::shared_ptr<GuiWatch> watch = std::make_shared<GuiWatch>();
     uint64_t gui_observer = 0;
@@ -666,6 +667,12 @@ drivelink::Session &Harness::gui()
                     if (status == nullptr) { return; }
                     {
                         std::lock_guard lock(watch->mutex);
+                        // The reason at an armed -> not armed transition (a later
+                        // DISARM of a disarmed device overwrites the status's reason).
+                        if (watch->seen && watch->status.arm_state == 1 && status->arm_state != 1)
+                        {
+                            watch->disarms.push_back(status->last_disarm_reason);
+                        }
                         watch->status = ArmStatus{status->arm_state, status->last_disarm_reason, status->flags};
                         watch->seen = true;
                         ++watch->seq;
@@ -737,6 +744,13 @@ Harness::ArmStatus Harness::armStatus(std::chrono::milliseconds wait)
         m.fail("armStatus", "the GUI client saw no status frame within " + std::to_string(wait.count()) + " ms");
     }
     return watch->status;
+}
+
+std::vector<uint8_t> Harness::disarmReasons()
+{
+    gui();
+    std::lock_guard lock(m_impl->watch->mutex);
+    return m_impl->watch->disarms;
 }
 
 Harness::ArmStatus Harness::waitArm(bool armed, std::chrono::milliseconds timeout)

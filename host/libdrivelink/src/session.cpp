@@ -993,8 +993,9 @@ void Session::removeBuffer(uint8_t group) {
     asio::post(d.io,[&d,group] {if(auto it=d.buffers.find(group);it!=d.buffers.end()) {it->second->invalidate();d.buffers.erase(it);}});
 }
 std::shared_ptr<CommandGroup> Session::manageCommand(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                                                   std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t configured_generation) {
-    auto command=std::shared_ptr<CommandGroup>(new CommandGroup(group,epoch,std::move(descriptors),hold,watchdog_ms));
+                                                   std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t configured_generation,
+                                                   bool keepalive) {
+    auto command=std::shared_ptr<CommandGroup>(new CommandGroup(group,epoch,std::move(descriptors),hold,watchdog_ms,keepalive));
     const auto expected=configured_generation?configured_generation:generation();
     auto &d=*m_impl;std::lock_guard closing(d.close_mutex);if(d.closed) {throw Error(ErrorKind::Connection,"session closed");}
     asio::post(d.io,[&d,command,expected] {

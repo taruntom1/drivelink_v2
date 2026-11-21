@@ -1123,9 +1123,10 @@ TEST_F(Integration, WatchdogTripFailsTheComponent)
     EXPECT_GE(took.count(), 100) << "the failure came before the watchdog could have tripped";
     EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
     ASSERT_NO_THROW(h->waitArm(false));
-    const auto status = h->armStatus();
-    EXPECT_EQ(status.arm_state, 0);
-    EXPECT_EQ(status.last_disarm_reason, 2) << "the device was not disarmed by its watchdog";
+    EXPECT_EQ(h->armStatus().arm_state, 0);
+    const auto reasons = h->disarmReasons();
+    ASSERT_FALSE(reasons.empty()) << "the GUI client saw no armed -> disarmed transition";
+    EXPECT_EQ(reasons.front(), 2) << "the device was not disarmed by its watchdog";
 }
 
 TEST_F(Integration, RefusedArmFailsTheSwitch)

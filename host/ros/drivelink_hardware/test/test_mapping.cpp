@@ -1999,14 +1999,6 @@ TEST(SlotValue, NoneIsZero)
     EXPECT_EQ(slotValue(CommandKind::None, true, std::numeric_limits<double>::quiet_NaN(), 9.0), 0.0);
 }
 
-TEST(SlotValue, IsConstexpr)
-{
-    static_assert(slotValue(CommandKind::Velocity, true, 2.0, 0.0) == 2.0);
-    static_assert(slotValue(CommandKind::Position, true, std::numeric_limits<double>::quiet_NaN(), 7.0) == 7.0);
-    static_assert(slotValue(CommandKind::Position, false, 1.0, 7.0) == 7.0);
-    // (An infinite command is not constant-evaluable with the header's `command - command == 0` test.)
-}
-
 // ---- commandKind and commandName ---------------------------------------
 
 TEST(CommandKindNames, RoundTrip)

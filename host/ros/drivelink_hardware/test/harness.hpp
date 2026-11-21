@@ -109,6 +109,10 @@ class Harness
     };
     ArmStatus armStatus(std::chrono::milliseconds wait = std::chrono::milliseconds(2000));
     ArmStatus waitArm(bool armed, std::chrono::milliseconds timeout = std::chrono::milliseconds(3000));
+    // last_disarm_reason at every armed -> not armed transition the GUI client
+    // has seen, oldest first. (A later DISARM of a disarmed device, such as the
+    // agent's at a lease end, overwrites the status's reason.)
+    std::vector<uint8_t> disarmReasons();
     // A param of an instance found by label, read through the GUI client
     // (Client::get), as a double (enums and integers by value, f32 by bit cast).
     double param(const std::string &label, const std::string &item);

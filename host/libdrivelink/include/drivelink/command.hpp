@@ -5,7 +5,8 @@
 namespace drivelink
 {
 // One producer per handle; write() is bounded, noexcept and allocation-free.
-// The I/O thread owns wire counters and prefix-only watchdog keepalives.
+// The I/O thread owns wire counters and prefix-only watchdog keepalives
+// (unless created without them: then only written frames feed the watchdog).
 class CommandGroup
 {
   public:
@@ -26,7 +27,7 @@ class CommandGroup
     struct Impl;
     std::unique_ptr<Impl> m_impl;
     CommandGroup(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                 std::span<const uint32_t> hold,uint16_t watchdog_ms);
+                 std::span<const uint32_t> hold,uint16_t watchdog_ms,bool keepalive);
     bool poll(uint64_t now,Bytes &payload,uint64_t &generation);
     uint64_t queueGeneration() const noexcept;
     uint8_t id() const;

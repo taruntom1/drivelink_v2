@@ -1,10 +1,13 @@
 // drivelink_hardware/DriveLinkSystem (README.md; the design is
-// plans/host-architecture.md "drivelink_hardware (ROS 2)"). H4a: the state path.
+// plans/host-architecture.md "drivelink_hardware (ROS 2)"). H4a: the state
+// path. H4b: the command path (command groups, the mode switch, ARM/DISARM,
+// write(), ERROR on a disarm while armed).
 #include "drivelink_hardware/system.hpp"
 #include "drivelink_hardware/mapping.hpp"
 
 #include <drivelink/buffers.hpp>
 #include <drivelink/client.hpp>
+#include <drivelink/command.hpp>
 #include <drivelink/model.hpp>
 #include <drivelink/session.hpp>
 #include <drivelink/protocol/gen/registry.hpp>
@@ -15,10 +18,14 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <limits>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <tuple>
+#include <variant>
 
 namespace drivelink_hardware
 {
@@ -41,6 +48,10 @@ enum class Fault : uint8_t
     Rebooted,
     EventsLost,
     Stale,
+    Disarmed,
+    SwitchAbandoned,
+    ModeUncertain,
+    DisarmFailed,
     Internal
 };
 
@@ -56,9 +67,66 @@ const char *describe(Fault fault)
     case Fault::Rebooted: return "the device rebooted; configure again to reload the mapping";
     case Fault::EventsLost: return "agent events were dropped, so the lease state is unknown";
     case Fault::Stale: return "no fresh sample within stale_timeout_ms";
-    case Fault::Internal: return "internal error in read()";
+    case Fault::Disarmed: return "the device disarmed while armed; nothing re-arms by itself";
+    case Fault::SwitchAbandoned:
+        return "a prepared command mode switch was not performed within timeout_ms (a joint's mode may not match "
+               "its controller)";
+    case Fault::ModeUncertain: return "a mode write while armed got no answer, so a joint's mode is unknown";
+    case Fault::DisarmFailed: return "the DISARM after the last release failed";
+    case Fault::Internal: return "internal error in read() or write()";
     }
     return "unknown fault";
+}
+
+// Status `last_disarm_reason` (core.md).
+const char *disarmReason(uint8_t reason)
+{
+    switch (reason)
+    {
+    case 0: return "boot";
+    case 1: return "explicit DISARM (another client, the agent or a lease change)";
+    case 2: return "watchdog (no command frame within system.watchdog_ms: write() stopped)";
+    case 3: return "fault";
+    case 4: return "loop stall";
+    case 5: return "shutdown";
+    default: return "unknown reason";
+    }
+}
+
+// The refusals ARM can answer, by name (registry.hpp Result / Detail).
+std::string refusal(uint8_t result, uint8_t detail)
+{
+    const char *r = nullptr;
+    switch (defs::Result(result))
+    {
+    case defs::Result::InvalidArgument: r = "InvalidArgument"; break;
+    case defs::Result::Busy: r = "Busy"; break;
+    case defs::Result::Armed: r = "Armed"; break;
+    case defs::Result::NotArmed: r = "NotArmed"; break;
+    case defs::Result::Fault: r = "Fault"; break;
+    default: break;
+    }
+    const char *d = nullptr;
+    switch (defs::Detail(detail))
+    {
+    case defs::Detail::SafeMode: d = "SafeMode"; break;
+    case defs::Detail::FaultLatched: d = "FaultLatched (acknowledge the fault)"; break;
+    case defs::Detail::BlocksArm: d = "BlocksArm (a module blocks arming; see the device's faults)"; break;
+    case defs::Detail::LayoutInvalid: d = "LayoutInvalid"; break;
+    case defs::Detail::NoCommandGroup: d = "NoCommandGroup"; break;
+    case defs::Detail::DisarmRaced: d = "DisarmRaced"; break;
+    case defs::Detail::FaultActive: d = "FaultActive (a fault condition is still active)"; break;
+    case defs::Detail::MonitorUnavailable: d = "MonitorUnavailable"; break;
+    case defs::Detail::RebootPending: d = "RebootPending"; break;
+    case defs::Detail::OtaActive: d = "OtaActive"; break;
+    case defs::Detail::OtaPendingConfirm: d = "OtaPendingConfirm"; break;
+    case defs::Detail::WrongState: d = "WrongState"; break;
+    case defs::Detail::LeaseRequired: d = "LeaseRequired (the plugin no longer holds the lease)"; break;
+    case defs::Detail::DeviceOffline: d = "DeviceOffline"; break;
+    default: break;
+    }
+    return "result " + std::to_string(result) + (r ? std::string(" ") + r : std::string()) + ", detail " +
+           std::to_string(detail) + (d ? std::string(" ") + d : std::string());
 }
 
 // A mapped sample time further ahead than this is a bad clock model: the time
@@ -66,6 +134,8 @@ const char *describe(Fault fault)
 constexpr uint64_t kFutureToleranceUs = 1000000;
 // The observer mailbox: agent events share it with status and diag frames.
 constexpr size_t kEventCapacity = 1024;
+constexpr uint8_t kArmed = 1;     // status arm_state
+constexpr uint8_t kNoStatus = 0xFF;
 
 // Shared with the library's callback thread (observer), which may outlive a
 // teardown by one callback: it holds this by shared_ptr, never the plugin.
@@ -79,10 +149,41 @@ struct Watch
     std::atomic<Fault> fault{Fault::None};
     std::atomic<uint8_t> stale_loop{0};
 
+    // The status stream (H4b). last_arm: the newest arm_state processed.
+    // arm_stage, for confirming our ARM: 1 = waiting for a disarmed status
+    // processed after the request, 2 = waiting for an armed one, 3 = armed
+    // seen. Frames are processed in device order and only the lease holder
+    // (us) can ARM, so an armed status after a disarmed one is our ARM.
+    std::atomic<uint8_t> last_arm{kNoStatus};
+    std::atomic<uint8_t> arm_stage{0};
+    std::atomic<bool> armed_expected{false}; // a disarmed status is then a fault
+    std::atomic<uint8_t> disarm_reason{kNoStatus};
+
     void raise(Fault value) noexcept
     {
         Fault expected = Fault::None;
         fault.compare_exchange_strong(expected, value, std::memory_order_acq_rel);
+    }
+
+    void status(uint8_t arm_state, uint8_t reason) noexcept
+    {
+        last_arm.store(arm_state);
+        if (arm_state != kArmed)
+        {
+            uint8_t stage = 1;
+            arm_stage.compare_exchange_strong(stage, 2);
+            if (armed_expected.load())
+            {
+                uint8_t none = kNoStatus;
+                disarm_reason.compare_exchange_strong(none, reason);
+                raise(Fault::Disarmed);
+            }
+        }
+        else
+        {
+            uint8_t stage = 2;
+            arm_stage.compare_exchange_strong(stage, 3);
+        }
     }
 };
 
@@ -107,6 +208,8 @@ bool withdrawn(const drivelink::Error &e)
     return e.kind == drivelink::ErrorKind::Rejected && e.result == uint8_t(defs::Result::Busy) &&
            e.detail == uint8_t(defs::Detail::Withdrawn);
 }
+
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 } // namespace
 
 struct DriveLinkSystem::Impl
@@ -119,6 +222,11 @@ struct DriveLinkSystem::Impl
     std::shared_ptr<Watch> watch = std::make_shared<Watch>();
     uint64_t observer = 0;
     uint64_t generation = 0; // the device boot the mapping was resolved on
+
+    // Device calls off the real-time loop (lifecycle, prepare, the worker)
+    // hold this. The worker only try-locks it, so a holder may join it.
+    std::mutex device;
+    std::atomic<bool> closing{false}; // on_error: the session is closing; waits stop
 
     // One configured subscription group and what read() copies out of it.
     struct Copy
@@ -140,29 +248,204 @@ struct DriveLinkSystem::Impl
     std::vector<hardware_interface::StateInterface::SharedPtr> handles; // parallel to resolved.states
     drivelink::GroupSample sample{};                                     // read()'s scratch
     std::atomic<bool> running{false};
+
+    // --- H4b: the command path ---
+    // Per joint (parallel to resolved.joints): the claimed interface, bumped
+    // epoch per claim change, and the position hold. Shared between prepare,
+    // perform (either thread) and write() (the real-time loop).
+    struct JointState
+    {
+        std::atomic<CommandKind> claim{CommandKind::None};
+        std::atomic<uint32_t> epoch{0};
+        std::atomic<double> position_hold{0};
+    };
+    std::unique_ptr<JointState[]> joints;
+    size_t joint_count = 0;
+    std::vector<hardware_interface::CommandInterface::SharedPtr> command_handles; // parallel to resolved.commands
+    std::vector<std::string> command_names;                                       // "<joint>/<interface>", parallel
+    // write()'s own: the last command read per binding and the claim epoch it was read under.
+    std::vector<double> last_command;
+    std::vector<uint32_t> last_epoch;
+    struct Slot
+    {
+        std::array<size_t, kCommandKinds> bindings{}; // indexes into resolved.commands (one joint)
+        uint8_t count = 0;
+    };
+    struct CommandRun
+    {
+        uint8_t id = 0, loop = 0;
+        std::shared_ptr<drivelink::CommandGroup> group;
+        std::vector<Slot> slots;
+        std::array<double, 64> values{};
+    };
+    std::vector<CommandRun> command_runs;
+    std::atomic<bool> commanding{false}; // write() sends value frames (arming, armed, or until the DISARM)
+    std::atomic<uint64_t> command_drops{0};
+    // prepare -> perform. pending is written by prepare before pending_ready
+    // (release) and read by perform after taking it (acquire).
+    SwitchPlan pending;
+    std::atomic<bool> pending_ready{false};
+    std::atomic<uint64_t> pending_since_us{0};
+    std::atomic<std::thread::id> rt_thread{};
+    drivelink::GroupSample prepare_sample{}, perform_sample{};
+    // The worker: the DISARM after the last release, off the real-time loop.
+    std::thread worker;
+    std::atomic<uint32_t> worker_signal{0};
+    std::atomic<bool> worker_stop{false};
+    std::atomic<bool> disarm_requested{false};
 };
 
 namespace
 {
+using Impl = DriveLinkSystem::Impl;
+
+bool anyClaim(const Impl &m) noexcept
+{
+    for (size_t j = 0; j < m.joint_count; ++j)
+    {
+        if (m.joints[j].claim.load(std::memory_order_acquire) != CommandKind::None) { return true; }
+    }
+    return false;
+}
+
+Claims currentClaims(const Impl &m)
+{
+    Claims claims(m.joint_count, CommandKind::None);
+    for (size_t j = 0; j < m.joint_count; ++j) { claims[j] = m.joints[j].claim.load(); }
+    return claims;
+}
+
+// The joint's measured position from its group buffer (the position hold's
+// source); nullopt without a readable sample. Allocation-free; `scratch` is
+// the caller thread's own.
+std::optional<double> measure(const Impl &m, size_t joint, drivelink::GroupSample &scratch) noexcept
+{
+    if (joint >= m.resolved.joints.size()) { return std::nullopt; }
+    const auto &j = m.resolved.joints[joint];
+    if (!j.position_group || *j.position_group >= m.runs.size()) { return std::nullopt; }
+    if (!m.runs[*j.position_group].buffer->latest(scratch)) { return std::nullopt; }
+    const double value = toDouble(j.position_type, scratch.values[j.position_slot]);
+    return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+}
+
+void holdHere(Impl &m, size_t joint, drivelink::GroupSample &scratch) noexcept
+{
+    if (const auto position = measure(m, joint, scratch))
+    {
+        m.joints[joint].position_hold.store(*position);
+    }
+}
+
+void stopWorker(Impl &m)
+{
+    if (!m.worker.joinable()) { return; }
+    m.worker_stop = true;
+    m.worker_signal.fetch_add(1);
+    m.worker_signal.notify_all();
+    m.worker.join();
+    m.worker_stop = false;
+}
+
+// DISARM with the device mutex held. Stops our frames first-hand either way:
+// without keepalives the device watchdog then disarms it even if this fails.
+bool disarmDevice(Impl &m, const rclcpp::Logger &logger)
+{
+    m.watch->armed_expected = false;
+    m.watch->arm_stage = 0;
+    m.disarm_requested = false;
+    bool ok = true;
+    if (m.client)
+    {
+        try
+        {
+            m.client->disarm();
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(logger, "DISARM failed: %s (command frames stopped; the device watchdog disarms it)",
+                         e.what());
+            ok = false;
+        }
+    }
+    m.commanding = false;
+    return ok;
+}
+
+void workerLoop(Impl &m, rclcpp::Logger logger)
+{
+    for (;;)
+    {
+        const uint32_t seen = m.worker_signal.load();
+        if (m.worker_stop.load()) { return; }
+        if (m.disarm_requested.load())
+        {
+            if (!m.device.try_lock())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            std::lock_guard lock(m.device, std::adopt_lock);
+            // A claim prepared meanwhile handled (or superseded) the request.
+            if (m.disarm_requested.exchange(false) && !anyClaim(m) && m.commanding.load())
+            {
+                if (disarmDevice(m, logger))
+                {
+                    RCLCPP_INFO(logger, "disarmed: the last command interface was released");
+                }
+                else
+                {
+                    m.watch->raise(Fault::DisarmFailed);
+                }
+            }
+            continue;
+        }
+        m.worker_signal.wait(seen);
+    }
+}
+
+void startWorker(Impl &m, const rclcpp::Logger &logger)
+{
+    stopWorker(m);
+    m.disarm_requested = false;
+    m.worker = std::thread([&m, logger] { workerLoop(m, logger); });
+}
+
 // Ends the connection and forgets everything the device gave us. Never waits
 // on the agent or the device (Session::close does not), so on_error may call
 // it from the controller_manager's loop. The agent then clears our groups and
-// ends our lease (and a Take still waiting) itself. Idempotent.
+// ends our lease (and a Take still waiting) itself; ending the lease DISARMs.
+// The caller holds m.device (or nothing else can use the connection).
+// Idempotent.
 void disconnect(DriveLinkSystem::Impl &m)
 {
     m.running = false;
+    m.commanding = false;
     m.watch->leased = false;
+    m.watch->armed_expected = false;
+    m.closing = true;
     if (m.session)
     {
         if (m.observer) { m.session->unobserve(m.observer); } // waits for a running handler
         m.session->close();
     }
+    stopWorker(m); // it only try-locks m.device, so it ends while we hold it
+    for (auto &run : m.command_runs)
+    {
+        if (run.group) { run.group->stop(); }
+    }
+    m.command_runs.clear();
+    m.pending_ready = false;
+    m.pending_since_us = 0;
+    for (size_t j = 0; j < m.joint_count; ++j) { m.joints[j].claim = CommandKind::None; }
     m.observer = 0;
     m.runs.clear();
     m.handles.clear();
     m.client.reset();
     m.session.reset();
-    m.resolved = {};
+    // resolved.joints, the joint states and the command handles stay until the
+    // next configure: a perform_command_mode_switch racing a teardown finds
+    // them (with no claims and nothing running).
+    m.closing = false;
 }
 
 // Clears our subscription groups and gives the lease back, on the
@@ -207,6 +490,85 @@ bool release(DriveLinkSystem::Impl &m, const rclcpp::Logger &logger)
     }
     return cleared;
 }
+
+// Waits (bounded) until the observer's arm_stage reaches `stage`.
+bool waitStage(const Impl &m, uint8_t stage, std::chrono::steady_clock::time_point deadline)
+{
+    while (m.watch->arm_stage.load() < stage)
+    {
+        if (std::chrono::steady_clock::now() > deadline || m.closing.load() ||
+            m.watch->fault.load() != Fault::None)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return true;
+}
+
+// ARM after the mode write, with the device mutex held; write() feeds hold
+// frames from the start. True once the status stream shows our ARM.
+bool armDevice(Impl &m, const rclcpp::Logger &logger)
+{
+    auto &w = *m.watch;
+    m.commanding = true;
+    w.armed_expected = false;
+    w.disarm_reason = kNoStatus;
+    w.arm_stage = 1;
+    if (w.last_arm.load() != kNoStatus && w.last_arm.load() != kArmed)
+    {
+        uint8_t stage = 1;
+        w.arm_stage.compare_exchange_strong(stage, 2);
+    }
+    if (!waitStage(m, 2, std::chrono::steady_clock::now() + m.config.timeout))
+    {
+        RCLCPP_ERROR(logger, "not arming: the status stream did not show the device disarmed within timeout_ms");
+        w.arm_stage = 0;
+        m.commanding = false;
+        return false;
+    }
+    try
+    {
+        m.client->arm();
+    }
+    catch (const drivelink::Error &e)
+    {
+        if (e.kind == drivelink::ErrorKind::Rejected && !e.outcome_unknown)
+        {
+            RCLCPP_ERROR(logger, "ARM refused: %s", refusal(e.result, e.detail).c_str());
+            w.arm_stage = 0;
+            m.commanding = false;
+            return false;
+        }
+        RCLCPP_ERROR(logger, "ARM got no definite answer (%s); disarming", e.what());
+        disarmDevice(m, logger);
+        return false;
+    }
+    if (!waitStage(m, 3, std::chrono::steady_clock::now() + m.config.timeout))
+    {
+        RCLCPP_ERROR(logger, "ARM was accepted but the status stream did not show the device armed within "
+                             "timeout_ms (it may have disarmed at once); disarming");
+        disarmDevice(m, logger);
+        return false;
+    }
+    // From here a disarmed status is a fault (a disarm in between still shows
+    // in the next periodic status frame).
+    w.armed_expected = true;
+    w.arm_stage = 0;
+    return true;
+}
+
+bool namesOurs(const Impl &m, const std::vector<std::string> &names) noexcept
+{
+    for (const auto &name : names)
+    {
+        for (const auto &ours : m.command_names)
+        {
+            if (name == ours) { return true; }
+        }
+    }
+    return false;
+}
 } // namespace
 
 DriveLinkSystem::DriveLinkSystem() : m_impl(std::make_unique<Impl>()) {}
@@ -215,6 +577,7 @@ DriveLinkSystem::~DriveLinkSystem()
 {
     // ros2_control normally deactivates and cleans up first; this only makes
     // sure the connection (and with it the lease) ends.
+    std::lock_guard lock(m_impl->device);
     disconnect(*m_impl);
 }
 
@@ -236,18 +599,25 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_init(
         m.specs.clear();
         auto add = [&](const hardware_interface::ComponentInfo &component, bool sensor) {
             ComponentSpec spec{component.name, sensor, toParams(component.parameters), {}, {}};
-            for (const auto &i : component.state_interfaces)
-            {
-                // read() writes doubles; another data_type's handle holds no double.
+            auto doubles = [&](const hardware_interface::InterfaceInfo &i, const char *what) {
+                // read() and write() use doubles; another data_type's handle holds no double.
                 if (!i.data_type.empty() && i.data_type != "double")
                 {
-                    throw MappingError(std::string(sensor ? "sensor '" : "joint '") + component.name +
-                                       "' state interface '" + i.name + "' has data_type '" + i.data_type +
+                    throw MappingError(std::string(sensor ? "sensor '" : "joint '") + component.name + "' " + what +
+                                       " '" + i.name + "' has data_type '" + i.data_type +
                                        "'; only double is supported");
                 }
+            };
+            for (const auto &i : component.state_interfaces)
+            {
+                doubles(i, "state interface");
                 spec.state_interfaces.push_back(i.name);
             }
-            for (const auto &i : component.command_interfaces) { spec.command_interfaces.push_back(i.name); }
+            for (const auto &i : component.command_interfaces)
+            {
+                doubles(i, "command interface");
+                spec.command_interfaces.push_back(i.name);
+            }
             m.specs.push_back(std::move(spec));
         };
         for (const auto &joint : info_.joints) { add(joint, false); }
@@ -264,6 +634,7 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_init(
 hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_lifecycle::State &)
 {
     auto &m = *m_impl;
+    std::lock_guard lock(m.device);
     disconnect(m);
     m.watch = std::make_shared<Watch>();
     try
@@ -280,9 +651,10 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         m.client = std::make_unique<drivelink::Client>(*m.session);
         const auto hello = m.session->agentHello();
         m.watch->client_id = hello ? hello->client_id : 0;
-        // Agent events, the device's Boot and the link's end arrive on the
-        // library's callback thread; only atomics cross to read(). Installed
-        // before the model loads, so a Boot from here on is seen.
+        // Agent events, the status stream, the device's Boot and the link's
+        // end arrive on the library's callback thread; only atomics cross to
+        // read() and write(). Installed before the model loads, so a Boot
+        // from here on is seen.
         m.observer = m.session->observe([watch = m.watch, session = m.session.get()](const drivelink::Frame &frame) {
             if (frame.type == 0)
             {
@@ -300,6 +672,22 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
             if (watch->leased.load(std::memory_order_acquire) && session->droppedNotifications() != watch->dropped)
             {
                 watch->raise(Fault::EventsLost);
+            }
+            if (frame.type == msg::kStatusStream)
+            {
+                try
+                {
+                    const auto event = drivelink::Client::decodeEvent(frame);
+                    if (const auto *status = std::get_if<drivelink::StatusFrame>(&event))
+                    {
+                        watch->status(status->arm_state, status->last_disarm_reason);
+                    }
+                }
+                catch (const std::exception &)
+                {
+                    // A malformed status frame says nothing about the arm state.
+                }
+                return;
             }
             if (frame.type != msg::kAgentEvent) { return; }
             const auto event = drivelink::agent::decodeEvent(frame.payload);
@@ -342,14 +730,31 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
         {
             m.handles.push_back(get_state_interface_handle(state.component + "/" + state.interface_name));
         }
+        m.command_handles.clear();
+        m.command_names.clear();
+        for (const auto &command : m.resolved.commands)
+        {
+            m.command_names.push_back(command.component + "/" + command.interface_name);
+            m.command_handles.push_back(get_command_interface_handle(m.command_names.back()));
+        }
+        m.last_command.assign(m.resolved.commands.size(), kNaN);
+        m.last_epoch.assign(m.resolved.commands.size(), std::numeric_limits<uint32_t>::max());
+        m.joint_count = m.resolved.joints.size();
+        m.joints = std::make_unique<Impl::JointState[]>(m.joint_count);
+        m.pending.after.assign(m.joint_count, CommandKind::None);
+        m.pending.claimed.reserve(m.joint_count);
+        m.pending.released.reserve(m.joint_count);
         if (const auto fault = m.watch->fault.load(); fault != Fault::None)
         {
             throw std::runtime_error(describe(fault));
         }
         const auto device = hello ? hello->device : drivelink::agent::DeviceRecord{};
-        RCLCPP_INFO(get_logger(), "configured: device '%s' (%s) through %s, %zu state interfaces in %zu loop group(s)",
+        RCLCPP_INFO(get_logger(),
+                    "configured: device '%s' (%s) through %s, %zu state and %zu command interfaces, %zu loop "
+                    "group(s), %zu command group(s)",
                     device.alias.c_str(), drivelink::agent::formatDeviceId(device.device_id).c_str(),
-                    m.config.agent.c_str(), m.resolved.states.size(), m.resolved.groups.size());
+                    m.config.agent.c_str(), m.resolved.states.size(), m.resolved.commands.size(),
+                    m.resolved.groups.size(), m.resolved.command_groups.size());
         for (const auto &group : m.resolved.groups)
         {
             RCLCPP_INFO(get_logger(), "loop %u at %u Hz: divider %u (%.1f Hz), %zu signals, stale after %.1f ms",
@@ -369,6 +774,7 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_configure(const rclcpp_li
 hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lifecycle::State &)
 {
     auto &m = *m_impl;
+    std::lock_guard lock(m.device);
     if (!m.client)
     {
         RCLCPP_ERROR(get_logger(), "activate without a configured connection; configure again");
@@ -415,15 +821,22 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lif
         drivelink::agentLeaseTake(*m.session);
 
         auto groups = m.client->groups();
-        std::vector<uint8_t> free;
+        std::vector<uint8_t> free, free_commands;
         for (const auto &g : groups.groups)
         {
-            if (g.kind == drivelink::GroupKind::Subscription && !g.configured) { free.push_back(g.id); }
+            if (g.configured) { continue; }
+            if (g.kind == drivelink::GroupKind::Subscription) { free.push_back(g.id); }
+            else { free_commands.push_back(g.id); }
         }
         if (free.size() < m.resolved.groups.size())
         {
             throw std::runtime_error("needs " + std::to_string(m.resolved.groups.size()) +
                                      " subscription group(s), only " + std::to_string(free.size()) + " are free");
+        }
+        if (free_commands.size() < m.resolved.command_groups.size())
+        {
+            throw std::runtime_error("needs " + std::to_string(m.resolved.command_groups.size()) +
+                                     " command group(s), only " + std::to_string(free_commands.size()) + " are free");
         }
         m.runs.clear();
         for (size_t i = 0; i < m.resolved.groups.size(); ++i)
@@ -481,12 +894,66 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lif
             run.counter = m.sample.counter;
             run.seen_us = drivelink::monotonicUs();
         }
+        // H4b: one command group per loop with a command input, without
+        // keepalives: only write() feeds the device watchdog, so a stalled
+        // control loop disarms the device. Configured now, disarmed
+        // (CMD_CONFIG is refused while armed); nothing is sent until a claim.
+        m.command_runs.clear();
+        for (size_t i = 0; i < m.resolved.command_groups.size(); ++i)
+        {
+            const auto &group = m.resolved.command_groups[i];
+            Impl::CommandRun run;
+            run.id = free_commands[i];
+            run.loop = group.loop;
+            run.slots.resize(group.refs.size());
+            const std::vector<uint32_t> zeros(group.refs.size(), 0);
+            for (int attempt = 1;; ++attempt)
+            {
+                try
+                {
+                    run.group = m.client->managedCommand(run.id, group.loop, group.refs, zeros, false);
+                    break;
+                }
+                catch (const drivelink::Error &e)
+                {
+                    if (withdrawn(e) && attempt < 3) { continue; }
+                    throw;
+                }
+            }
+            m.command_runs.push_back(std::move(run));
+            if (m.session->generation() != m.generation)
+            {
+                throw std::runtime_error("the device rebooted since configure; configure again");
+            }
+        }
+        for (size_t c = 0; c < m.resolved.commands.size(); ++c)
+        {
+            const auto &command = m.resolved.commands[c];
+            auto &slot = m.command_runs[command.group].slots[command.slot];
+            slot.bindings[slot.count++] = c;
+        }
+        m.last_command.assign(m.resolved.commands.size(), kNaN);
+        m.last_epoch.assign(m.resolved.commands.size(), std::numeric_limits<uint32_t>::max());
+        for (size_t j = 0; j < m.joint_count; ++j)
+        {
+            m.joints[j].claim = CommandKind::None;
+            m.joints[j].epoch.fetch_add(1);
+            m.joints[j].position_hold = 0;
+            holdHere(m, j, m.prepare_sample);
+        }
+        m.commanding = false;
+        m.pending_ready = false;
+        m.pending_since_us = 0;
+        m.watch->armed_expected = false;
+        m.watch->arm_stage = 0;
         if (const auto fault = m.watch->fault.load(); fault != Fault::None)
         {
             throw std::runtime_error(describe(fault));
         }
+        if (!m.command_runs.empty()) { startWorker(m, get_logger()); }
         m.running = true;
-        RCLCPP_INFO(get_logger(), "active: lease held, %zu group(s) streaming", m.runs.size());
+        RCLCPP_INFO(get_logger(), "active: lease held, %zu group(s) streaming, %zu command group(s) ready (disarmed)",
+                    m.runs.size(), m.command_runs.size());
     }
     catch (const std::exception &e)
     {
@@ -499,11 +966,35 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_activate(const rclcpp_lif
 
 hardware_interface::CallbackReturn DriveLinkSystem::on_deactivate(const rclcpp_lifecycle::State &)
 {
-    if (!release(*m_impl, get_logger()))
+    auto &m = *m_impl;
+    stopWorker(m); // before the lock: it may be finishing a DISARM
+    std::lock_guard lock(m.device);
+    bool ok = true;
+    m.pending_ready = false;
+    m.pending_since_us = 0;
+    if (m.commanding.load() || anyClaim(m) || m.watch->armed_expected.load())
     {
-        // The lease may still be ours: closing the connection ends it for certain.
-        RCLCPP_ERROR(get_logger(), "a group clear or the lease release was not confirmed; disconnecting (configure again)");
-        disconnect(*m_impl);
+        ok = disarmDevice(m, get_logger());
+    }
+    for (size_t j = 0; j < m.joint_count; ++j) { m.joints[j].claim = CommandKind::None; }
+    for (auto &run : m.command_runs)
+    {
+        run.group->stop();
+        if (!m.client) { continue; }
+        try { m.client->groupClear(run.id, true); }
+        catch (const std::exception &e)
+        {
+            RCLCPP_WARN(get_logger(), "clearing command group %u: %s", unsigned(run.id), e.what());
+            ok = false;
+        }
+    }
+    m.command_runs.clear();
+    if (!release(m, get_logger()) || !ok)
+    {
+        // The lease may still be ours: closing the connection ends it for certain (and DISARMs).
+        RCLCPP_ERROR(get_logger(),
+                     "a DISARM, a group clear or the lease release was not confirmed; disconnecting (configure again)");
+        disconnect(m);
         return CallbackReturn::ERROR;
     }
     return CallbackReturn::SUCCESS;
@@ -511,12 +1002,14 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_deactivate(const rclcpp_l
 
 hardware_interface::CallbackReturn DriveLinkSystem::on_cleanup(const rclcpp_lifecycle::State &)
 {
+    std::lock_guard lock(m_impl->device);
     disconnect(*m_impl);
     return CallbackReturn::SUCCESS;
 }
 
 hardware_interface::CallbackReturn DriveLinkSystem::on_shutdown(const rclcpp_lifecycle::State &)
 {
+    std::lock_guard lock(m_impl->device);
     disconnect(*m_impl);
     return CallbackReturn::SUCCESS;
 }
@@ -525,13 +1018,24 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_error(const rclcpp_lifecy
 {
     // Called from the controller_manager's loop after read() returned ERROR:
     // no device call here, only the connection's end (the agent then clears
-    // our groups and lease).
+    // our groups and lease, and the lease end DISARMs). Closing first makes a
+    // prepare or the worker holding the device mutex give up at once.
     auto &m = *m_impl;
+    m.closing = true;
+    m.running = false;
+    m.commanding = false;
+    if (m.session) { m.session->close(); }
+    std::lock_guard lock(m.device);
     const auto fault = m.watch->fault.load();
     if (fault == Fault::Stale)
     {
         RCLCPP_ERROR(get_logger(), "%s (loop %u); disconnected, the component is unconfigured", describe(fault),
                      unsigned(m.watch->stale_loop.load()));
+    }
+    else if (fault == Fault::Disarmed)
+    {
+        RCLCPP_ERROR(get_logger(), "%s (%s); disconnected, the component is unconfigured", describe(fault),
+                     disarmReason(m.watch->disarm_reason.load()));
     }
     else if (fault != Fault::None)
     {
@@ -544,6 +1048,8 @@ hardware_interface::CallbackReturn DriveLinkSystem::on_error(const rclcpp_lifecy
 return_type DriveLinkSystem::read(const rclcpp::Time &, const rclcpp::Duration &) noexcept
 {
     auto &m = *m_impl;
+    // prepare_command_mode_switch refuses claims made on this thread.
+    m.rt_thread.store(std::this_thread::get_id(), std::memory_order_relaxed);
     if (!m.running.load(std::memory_order_acquire))
     {
         return return_type::OK; // inactive: nothing streams; a fault found now refuses the next activate
@@ -555,6 +1061,12 @@ return_type DriveLinkSystem::read(const rclcpp::Time &, const rclcpp::Duration &
             return return_type::ERROR;
         }
         const uint64_t now = drivelink::monotonicUs();
+        if (const uint64_t since = m.pending_since_us.load(std::memory_order_acquire);
+            since != 0 && now > since && now - since > uint64_t(m.config.timeout.count()) * 1000)
+        {
+            m.watch->raise(Fault::SwitchAbandoned);
+            return return_type::ERROR;
+        }
         for (auto &run : m.runs)
         {
             if (!run.buffer->latest(m.sample))
@@ -603,9 +1115,247 @@ return_type DriveLinkSystem::read(const rclcpp::Time &, const rclcpp::Duration &
     return return_type::OK;
 }
 
-return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration &)
+return_type DriveLinkSystem::write(const rclcpp::Time &, const rclcpp::Duration &) noexcept
 {
-    return return_type::OK; // H4a has no command interfaces
+    auto &m = *m_impl;
+    if (!m.running.load(std::memory_order_acquire) || !m.commanding.load(std::memory_order_acquire))
+    {
+        return return_type::OK; // disarmed and unclaimed: no frames (and no keepalives)
+    }
+    try
+    {
+        for (auto &run : m.command_runs)
+        {
+            for (size_t s = 0; s < run.slots.size(); ++s)
+            {
+                const auto &slot = run.slots[s];
+                // The binding of the interface its joint claims, else the first.
+                size_t chosen = slot.bindings[0];
+                const size_t joint = m.resolved.commands[chosen].joint;
+                auto &state = m.joints[joint];
+                const CommandKind claim = state.claim.load(std::memory_order_acquire);
+                const uint32_t epoch = state.epoch.load(std::memory_order_acquire);
+                bool claimed = false;
+                for (uint8_t k = 0; k < slot.count; ++k)
+                {
+                    if (m.resolved.commands[slot.bindings[k]].kind == claim)
+                    {
+                        chosen = slot.bindings[k];
+                        claimed = true;
+                        break;
+                    }
+                }
+                double command = kNaN;
+                if (claimed)
+                {
+                    double value = kNaN;
+                    // try_lock: a controller holding the handle leaves last cycle's value (same claim only).
+                    if (get_command(m.command_handles[chosen], value, false))
+                    {
+                        m.last_command[chosen] = value;
+                        m.last_epoch[chosen] = epoch;
+                        command = value;
+                    }
+                    else if (m.last_epoch[chosen] == epoch)
+                    {
+                        command = m.last_command[chosen];
+                    }
+                }
+                const CommandKind kind = m.resolved.commands[chosen].kind;
+                const double value =
+                    slotValue(kind, claimed, command, state.position_hold.load(std::memory_order_relaxed));
+                // A position hold is the last position sent while claimed.
+                if (kind == CommandKind::Position && claimed && std::isfinite(command))
+                {
+                    state.position_hold.store(command, std::memory_order_relaxed);
+                }
+                run.values[s] = value;
+            }
+            if (!run.group->write({run.values.data(), run.slots.size()}))
+            {
+                m.command_drops.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    catch (...)
+    {
+        m.watch->raise(Fault::Internal);
+        return return_type::ERROR;
+    }
+    return return_type::OK;
+}
+
+return_type DriveLinkSystem::prepare_command_mode_switch(const std::vector<std::string> &start,
+                                                         const std::vector<std::string> &stop)
+{
+    auto &m = *m_impl;
+    if (!m.running.load())
+    {
+        if (namesOurs(m, start))
+        {
+            RCLCPP_ERROR(get_logger(), "cannot claim a command interface: the component is not active");
+            return return_type::ERROR;
+        }
+        return return_type::OK;
+    }
+    if (m.pending_ready.load())
+    {
+        // The previous prepare was never performed: its mode writes may not
+        // match the running controllers.
+        m.watch->raise(Fault::SwitchAbandoned);
+        RCLCPP_ERROR(get_logger(), "%s; refusing this switch", describe(Fault::SwitchAbandoned));
+        return return_type::ERROR;
+    }
+    SwitchPlan plan;
+    try
+    {
+        plan = planSwitch(m.resolved, currentClaims(m), start, stop);
+    }
+    catch (const std::exception &e)
+    {
+        RCLCPP_ERROR(get_logger(), "command mode switch refused: %s", e.what());
+        return return_type::ERROR;
+    }
+    const auto store = [&] {
+        if (plan.claimed.empty() && plan.released.empty()) { return; } // nothing of ours to perform
+        m.pending = std::move(plan);
+        m.pending_since_us.store(drivelink::monotonicUs(), std::memory_order_release);
+        m.pending_ready.store(true, std::memory_order_release);
+    };
+    if (plan.claimed.empty())
+    {
+        store(); // releases only: perform applies them, the worker DISARMs; no I/O here
+        return return_type::OK;
+    }
+    if (std::this_thread::get_id() == m.rt_thread.load(std::memory_order_relaxed))
+    {
+        RCLCPP_ERROR(get_logger(), "a command interface claim from the real-time loop (a fallback controller) is not "
+                                   "supported: claiming needs a mode write and ARM, which would block the loop");
+        return return_type::ERROR;
+    }
+    std::lock_guard lock(m.device);
+    if (!m.client || !m.running.load() || m.watch->fault.load() != Fault::None)
+    {
+        RCLCPP_ERROR(get_logger(), "cannot claim a command interface: the component is failing or inactive");
+        return return_type::ERROR;
+    }
+    try
+    {
+        // A DISARM still owed after the last release goes first, so ARM
+        // starts from a known disarmed device.
+        if (m.disarm_requested.exchange(false) && m.commanding.load() && !anyClaim(m))
+        {
+            if (!disarmDevice(m, get_logger()))
+            {
+                m.watch->raise(Fault::DisarmFailed);
+                return return_type::ERROR;
+            }
+        }
+        // Holds before the mode write: until perform the claimed slots are
+        // unclaimed, so write() sends these, and they are the first values
+        // the controller sees in its new mode. At ARM every position hold is
+        // refreshed: an unclaimed joint in position mode holds where it is.
+        for (size_t j = 0; j < m.joint_count; ++j)
+        {
+            const bool claiming = std::find(plan.claimed.begin(), plan.claimed.end(), j) != plan.claimed.end();
+            if (plan.arm || claiming) { holdHere(m, j, m.prepare_sample); }
+        }
+        std::vector<drivelink::Ref> refs;
+        std::vector<uint32_t> values;
+        std::string modes;
+        for (const size_t j : plan.claimed)
+        {
+            const auto &joint = m.resolved.joints[j];
+            if (!joint.mode) { continue; }
+            const auto kind = plan.after[j];
+            refs.push_back(*joint.mode);
+            values.push_back(joint.mode_values[size_t(kind)]);
+            modes += (modes.empty() ? "" : ", ") + joint.name + " " + commandName(kind);
+        }
+        if (!refs.empty())
+        {
+            try
+            {
+                m.client->set(refs, values);
+            }
+            catch (const drivelink::Error &e)
+            {
+                if (e.outcome_unknown && m.commanding.load())
+                {
+                    // While armed a joint may now be in a mode no controller drives.
+                    m.watch->raise(Fault::ModeUncertain);
+                }
+                RCLCPP_ERROR(get_logger(), "command mode switch failed: writing the mode (%s): %s", modes.c_str(),
+                             e.what());
+                return return_type::ERROR;
+            }
+        }
+        if (plan.arm)
+        {
+            if (!armDevice(m, get_logger())) { return return_type::ERROR; }
+            RCLCPP_INFO(get_logger(), "armed (%s)", modes.empty() ? "no mode writes" : modes.c_str());
+        }
+        else if (!modes.empty())
+        {
+            RCLCPP_INFO(get_logger(), "mode switch while armed (%s)", modes.c_str());
+        }
+    }
+    catch (const std::exception &e)
+    {
+        RCLCPP_ERROR(get_logger(), "command mode switch failed: %s", e.what());
+        return return_type::ERROR;
+    }
+    store();
+    return return_type::OK;
+}
+
+return_type DriveLinkSystem::perform_command_mode_switch(const std::vector<std::string> &start,
+                                                         const std::vector<std::string> &)
+{
+    // Real-time (or the switching thread beside it): no allocation, no lock,
+    // no device call. Applies what prepare planned.
+    auto &m = *m_impl;
+    if (!m.pending_ready.exchange(false, std::memory_order_acq_rel))
+    {
+        // Nothing of ours was prepared: fine unless this claims one of ours.
+        return namesOurs(m, start) ? return_type::ERROR : return_type::OK;
+    }
+    m.pending_since_us.store(0, std::memory_order_release);
+    if (m.pending.after.size() != m.joint_count) { return return_type::ERROR; }
+    const bool before = anyClaim(m);
+    for (size_t j = 0; j < m.joint_count; ++j)
+    {
+        auto &state = m.joints[j];
+        const auto next = m.pending.after[j];
+        const auto previous = state.claim.load();
+        // A released position claim holds where the joint is now.
+        if (previous == CommandKind::Position && next != CommandKind::Position)
+        {
+            holdHere(m, j, m.perform_sample);
+        }
+        if (next != previous) { state.claim.store(next, std::memory_order_release); }
+    }
+    for (const size_t j : m.pending.claimed)
+    {
+        auto &state = m.joints[j];
+        // The new claim starts unset: a value a previous controller left in
+        // the handle is not a command, so write() holds until it writes.
+        if (const auto index = m.resolved.joints[j].commands[size_t(m.pending.after[j])])
+        {
+            for (int attempt = 0; attempt < 100; ++attempt)
+            {
+                if (set_command(m.command_handles[*index], kNaN, false)) { break; }
+            }
+        }
+        state.epoch.fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (before && !anyClaim(m) && m.running.load())
+    {
+        m.disarm_requested.store(true);
+        m.worker_signal.fetch_add(1);
+        m.worker_signal.notify_one();
+    }
+    return return_type::OK;
 }
 } // namespace drivelink_hardware
 
