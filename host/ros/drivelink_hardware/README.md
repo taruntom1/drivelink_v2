@@ -214,5 +214,14 @@ is set, as `tools/ros_check.sh` does) runs the plugin through
 lease refusal and `preempt`, `ERROR` on a lost lease, a stopped agent, a
 device reboot (vdev on a PTY) and stale data, a reboot between configure and
 activate, deactivate and activate again, cleanup and configure again, and a
-wrong label or token. `host/test/ros_state_check.py` is the robot check (wheels turned by
-hand, the IMU tilted) with a `--mock` mode against vdev.
+wrong label or token. The command path runs with a 100 Hz read/write loop
+thread as controller_manager would: claims arming and moving the mock plant,
+releases disarming, a mode change while armed, duty in `open_loop`, NaN holds,
+refused switches (two interfaces on a joint, a refused or unanswered ARM, a
+claim from the loop thread, an unprepared claim), `ERROR` on a GUI Take, an
+injected fault, a GUI DISARM and a watchdog trip, an abandoned prepare, no jump
+after a velocity → position switch, and deactivating while claimed.
+`host/test/ros_state_check.py` is the robot's state check (wheels turned by
+hand, the IMU tilted) and `host/test/ros_command_check.py` its command check
+(wheels off the ground, `forward_command_controller` per wheel and mode); both
+have a `--mock` mode against vdev.
