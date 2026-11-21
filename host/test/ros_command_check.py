@@ -376,10 +376,11 @@ class Probe:
         self.node = rclpy.create_node('drivelink_command_check')
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST)
-        self.pub = self.node.create_publisher(String, '/robot_description', latched)
-        msg = String()
-        msg.data = urdf
-        self.pub.publish(msg)
+        if urdf is not None:
+            self.pub = self.node.create_publisher(String, '/robot_description', latched)
+            msg = String()
+            msg.data = urdf
+            self.pub.publish(msg)
         self.command_pubs = {c: self.node.create_publisher(Float64MultiArray, f'/{c}/commands', 10)
                              for c in controllers}
         self.lock = threading.Lock()

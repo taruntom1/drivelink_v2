@@ -30,11 +30,13 @@ several TCP clients; the CLI reaches it with `--device NAME --token TOKEN`.
 Until the H3a-2 lease no client can arm through it. See
 [the agent](agent/README.md) and [its protocol](../docs/protocol/agent.md).
 
-`drivelink_hardware` (H4a) is the ros2_control plugin for ROS 2 Lyrical and
-Jazzy: it reaches a device through the agent, maps joints and the IMU by
-instance label and reads their state in real time (commands arrive in H4b).
-It builds with colcon from `host/ros/`. See
-[its README](ros/drivelink_hardware/README.md).
+`drivelink_hardware` is the ros2_control plugin for ROS 2 Lyrical and Jazzy.
+It connects through the agent, maps joints and IMU signals by instance label,
+and reads state and writes commands in the real-time loop.
+`drivelink_bringup` adds the diff-drive example, diagnostics and recovery.
+Both build with colcon from `host/ros/`. See the
+[hardware plugin](ros/drivelink_hardware/README.md) and the
+[bringup guide](ros/drivelink_bringup/README.md).
 
 ## Using the GUI on Windows (H2g)
 

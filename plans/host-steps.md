@@ -39,7 +39,6 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| Which controllers `recover` reactivates (remembered at the `ERROR`, or a parameter) | H4c |
 | The Debian names and version scheme of the ROS packages (bloom's `ros-<distro>-` prefix, the release suffix); how the apt suites hold them | H4d |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
@@ -109,7 +108,7 @@ Review: independent (arming, the command path, the lease).
 
 Scope:
 - `host/ros/drivelink_bringup`: a xacro macro for the `<ros2_control>` block, an example two-wheel diff-drive robot with an IMU (URDF), controllers YAML (`diff_drive_controller`, `joint_state_broadcaster`, `imu_sensor_broadcaster`), launch files with arguments for the agent, device and token, and a vdev layout for the example (two velocity controllers on mock actuators and encoders, an `imu.mock`). The real robot's config is added when it is on the bench.
-- The diagnostics node: its own agent connection as an observer (no lease, `client_kind` Ros), so it keeps working while the component is inactive or in `ERROR`. `/diagnostics` from the status stream, diag events, the lease holder and the online state. Services `ack_fault` and `recover` (above).
+- The diagnostics node uses its own agent observer connection (no lease, `client_kind` Ros) and publishes `/diagnostics` while the component is inactive or in `ERROR`. It reports the status stream, diag events, lease holder and online state. `ack_fault` only acknowledges the device fault. `recover` reactivates the launch-configured controller list (user decision 2026-11-21).
 - The launch test, full loop, in both `ros` checks: `cmd_vel` drives the vdev plant, `/odom` and `/joint_states` change, `/imu` publishes; an injected disarming fault ends in `ERROR` and `recover` brings it back; a Take from a second client ends in `ERROR`.
 - Docs: the bringup README, the recovery procedure, the token and group setup, and a ROS section in `docs/pi-setup.md`.
 
