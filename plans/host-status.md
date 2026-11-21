@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step** H4d packages the ROS stack for Lyrical and Jazzy after H4c merges. HW runs as hardware arrives.
+- **Next step** H6 closes out the host overhaul after H4d merges. HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -33,13 +33,11 @@ Every session reads all of this file, so it holds only what has no other home.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for H4d / HW
+## Handoff for H6 / HW
 
-- Read the [H4d brief](host-steps.md#h4d-ros-deb-packages), the [bringup guide](../host/ros/drivelink_bringup/README.md), [ROS checks](../docs/development.md#validation-toolsvalidatepy), and [apt packaging](../packaging/apt/README.md).
-- H4c installs the example launch, controller YAML, xacro and diagnostics under `drivelink_bringup`. The source test `host/test/ros_bringup_check.py --mock` launches the installed package and accepts `--vdev`, `--agent-bin` and `--cli` to point at installed programs for the H4d container check.
-- `tools/setup_linux.sh ros` supplies Lyrical on 26.04 and Jazzy on 24.04, including xacro and robot_state_publisher. In mirrored WSL, the local smoke sets `FASTDDS_BUILTIN_TRANSPORTS=SHM` for Fast DDS. The Jazzy container uses its own network environment.
-- H3c publishes `drivelink-cli` (CLI and vdev) and `drivelink-agent` for both Ubuntu releases and architectures. The GUI `drivelink` is a 26.04 package. H3d publishes the signed apt repository on release tags. v0.1.0 has already been tagged. H6 bumps `VERSION` before its tag.
-- The Pi setup and robot tests remain in the deferred rows. The [Pi guide](../docs/pi-setup.md) includes agent setup and the ROS source build.
+- Read the [H6 brief](host-steps.md#h6-close-out) and [apt packaging](../packaging/apt/README.md).
+- The next release will publish the ROS packages alongside the CLI, agent and GUI. Keep the four ROS manifests in sync with the root `VERSION` when bumping it.
+- The Pi setup and robot tests remain in the deferred rows. The [Pi guide](../docs/pi-setup.md#7-ros-2-bringup-on-the-pi) covers both the apt and source install.
 - **Traps:**
   - **WSL runs in mirrored networking** (the user's `.wslconfig`, 2026-11-20): WSL holds the PC's LAN address on eth1, localhost forwarding still works (the `benchRemote` setup), but the GUI on the same PC cannot find or reach a WSL agent's LAN address. See [docs/bench.md](../docs/bench.md), "Finding the agent (mDNS)".
   - **vdev serves one TCP client** and closes its TCP link on REBOOT: through the agent a TCP vdev reboot is device loss. A vdev on a PTY (`--pty`) keeps its port.
@@ -50,7 +48,7 @@ Every session reads all of this file, so it holds only what has no other home.
   - **dpkg runs maintainer scripts with a fixed PATH without `/usr/local`** (seen in H3c): a `systemctl` stand-in for container tests must be in `/usr/sbin`. `runuser` stays between a test and the agent and dies by the signal; `setpriv` execs it.
   - **`gui-backend` `firmwareUpdateAbortAndLostReboot` is timing sensitive** (seen in H3c, no GUI change): it failed twice inside the gate's `host-linux` ctest in WSL and passed alone, as a whole suite and on the next gate run. Rerun the gate before suspecting a change.
   - **Docker Desktop** is installed on the PC (`%LOCALAPPDATA%\Programs\DockerDesktop`) and stopped by default. H3c and H3d started it to run the CI container tests locally and stopped it afterwards.
-  - **apt in the H3d checks:** apt-get update exits 100 on every refusal (another key, unsigned, a changed index) and does not download a size-0 `Packages`, so an empty architecture is never fetched; a local build has only 26.04 amd64, so the `noble` and arm64 paths run only in CI.
+  - **apt in the H3d checks:** apt-get update exits 100 on every refusal (another key, unsigned, a changed index) and does not download a size-0 `Packages`. The local `ros-deb-install` check covers both Ubuntu suites on this PC; CI exercises both architectures.
   - **ROS in Docker:** mount the checkout read-only and give colcon `--log-base` for every verb (`test-result` too) or it writes `log/` into the checkout. Images `drivelink-ros:jazzy` and `drivelink-ros:lyrical` are cached locally (rebuilt when `setup_linux.sh` changes). Start Docker Desktop for `ros-jazzy`, stop it afterwards.
   - **ros2_control:** Jazzy's URDF parser needs links and joints beside the `<ros2_control>` block; `ros2_control_node` aborts when a component fails its initial activation; after every fault it logs a harmless "state interface not in available list (multiple cleanup calls)" warning.
   - **GCC 13 at -O2 (ros-jazzy):** a false `-Wstringop-overflow` on a small vector grown by push_back then insert (fixed in `Session::Impl::begin` by reserving); the other builds are -O0 or GCC 15 and never saw it.
@@ -72,8 +70,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | in review | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
-| H4d | ROS `.deb` packages (bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | container; deferred: Pi | high, self | planned | |
+| H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | merged | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
+| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | in review | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
 | HW | Hardware campaign on `host_overhaul`: run every open row of "Deferred hardware checks"; firmware fixes go to `host_overhaul` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
 
@@ -81,9 +79,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 Each note is deleted by the step that uses it.
 
-- **H4d.** libdrivelink's `package.xml` names the package `drivelink`, the GUI's Debian name too; bloom would make it `ros-<distro>-drivelink`. H4d settles the ROS package names. The packages' CMake reads the root `VERSION` and `host/cmake/` outside their directories and FetchContent downloads Asio and mdns at configure: a bloom (offline) build needs both handled.
-
-- **H6.** The `vX.Y.Z` tag's `release` job publishes the firmware zip, the installer and the ten `.deb` files (H3c), then `apt-publish` replaces `gh-pages` (H3d). v0.1.0 is already taken (tagged after H3d), so H6 bumps `VERSION` first. Release installers come from CI (open-source Qt); the local Qt carries an educational licence file.
+- **H6.** The `vX.Y.Z` tag's `release` job publishes the firmware zip, the installer and 26 `.deb` files, then `apt-publish` replaces `gh-pages`. v0.1.0 is already taken, so H6 bumps `VERSION` first. Release installers come from CI (open-source Qt); the local Qt carries an educational licence file.
 - **H6.** `drivelink-cli` has an unversioned `Replaces: drivelink` (H3c) so H2g's single package upgrades in place: H2g's and H3c's builds share `0.1.0+g<sha>`, so no version bound separates them. Once a released version is out, it may become `Replaces`/`Breaks: drivelink (<< that version)`.
 
 ## Deferred hardware checks
@@ -111,6 +107,7 @@ A check that needs motors, a real IMU, the Pi or the robot doesn't block its ste
 | H4a | On the Pi 5 with the packaged agent and the real ESP (the robot on stands, wheels free; nothing is commanded): build the workspace (`colcon build --packages-up-to drivelink_hardware`, README "Build"), source it, then `python3 host/test/ros_state_check.py --device <alias> --token-file /etc/drivelink/token --joint left_wheel=<left label> --joint right_wheel=<right label> --imu imu=<imu label> --state-rate 100 --report ros-state-check.json` (the ROS user in the `drivelink` group). Dry run passed on Jazzy in Docker (2026-11-21): `--mock` against vdev behind the agent, checks 1, 2 and 5 PASS, 3 and 4 SKIPPED | The Pi with ROS Lyrical, the agent installed, the robot on stands | The real stack: `ros2_control_node` with the plugin, `joint_state_broadcaster` and `imu_sensor_broadcaster`; /joint_states and the IMU at the state rate; the IMU at rest; each wheel turned one revolution forward by hand; the robot tilted nose up | Exit 0: streaming ≥ 80 % of the rate with finite values and \|q\| within 0.02 of 1; at rest \|a\| 9.81 ± 0.5 m/s² and \|ω\| < 0.05 rad/s; each wheel +2π ± 15 % (negative: the polarity is inverted) and still < 0.05 rad/s; pitch changes 20..40° with REP 103's sign; the component active |
 | H4b | On the Pi 5 with the packaged agent and the real ESP (robot on stands, wheels OFF the ground; first-run procedure; controller `duty_limit` at most 0.2 or `--set-duty-limit`): source ROS and the workspace, then `python3 host/test/ros_command_check.py --device <alias> --token-file /etc/drivelink/token --joint left_wheel=<left label> --joint right_wheel=<right label> --confirm-first-run --report ros-command-check.json` (the ROS user in the `drivelink` group; on one machine `FASTDDS_BUILTIN_TRANSPORTS=SHM` if DDS delivers nothing). Dry run passed on Lyrical in WSL (2026-11-21): `--mock` against vdev behind the agent, all 33 results PASS | The Pi with ROS Lyrical, the agent installed, the robot on stands, motors and encoders wired | The command path through `ros2_control_node` and `forward_command_controller` per wheel: velocity, position and duty (mode written, ARM on claim, DISARM on release), polarity, a NaN hold, a velocity → position switch while armed (5b), a GUI Take ending the component, the device disarmed on every exit | Exit 0: velocity within 30 % of +2 rad/s with the same sign and back under 0.2 rad/s; a +1 rad step within 0.15 rad in 3 s; duty +0.15 gives positive velocity; armed and still with no command; after the Take the component is not active within 1 s and the device disarmed; cleanup reads disarmed |
 | H4c | On the Pi with the ROS workspace sourced, run `python3 host/test/ros_bringup_check.py --device <alias> --token-file /etc/drivelink/token --left-label <left label> --right-label <right label> --imu-label <imu label> --controllers-file <robot YAML> --report ros-bringup-check.json` from an interactive terminal. The ROS user must be in the `drivelink` group | Pi, ESP, drive motors and encoders, calibrated IMU, GUI client, clear floor and stands | Confirm wheels off the floor, current-limited supply, duty cap and power switch. Check forward polarity, then floor travel, IMU yaw, a deliberate DISARM that raises component ERROR, explicit recovery and a GUI Take | Exit 0. Positive wheel travel, floor odometry within 20% or 3 cm of measured travel, positive IMU yaw after a positive turn, recovery restores drive with a fresh command, and status confirms disarmed after shutdown |
+| H4d | After the next release, follow the [Pi apt setup](../docs/pi-setup.md#7-ros-2-bringup-on-the-pi) and install `ros-lyrical-ros-base ros-lyrical-drivelink-bringup` with apt. Source `/opt/ros/lyrical/setup.bash` in a fresh terminal and run the H4c command above. Dry run passed with `ros-deb-install` against vdev in both amd64 ROS containers | Ubuntu 26.04 arm64 on the Pi 5 and the H4c bench equipment | The published signed suite supplies the four Lyrical packages, and the apt-installed launch works with the real robot through the packaged agent | The four ROS packages are installed at the release's arm64 version, `ros2 pkg prefix drivelink_bringup` prints `/opt/ros/lyrical`, and the H4c check passes |
 | H2f | `DRIVELINK_GUI_BENCH_ENDPOINT=serial://COM3 DRIVELINK_GUI_BENCH_IMU=48:0 DRIVELINK_GUI_BENCH_CAL_WAIT=300 gui_panel_tests benchCalibration` with an `imu.bno055` instance (sensor loop, SDA 8 / SCL 9, address 0x28, NDOF), normal firmware, no unsaved changes. Dry run passed on a vdev with a calibrated `imu.mock` (`_IMU=114:0`, `_CAL_WAIT=30`) | BNO055, suitable I2C wiring/pull-ups | The operator calibrates while the script prints the levels every 5 s; then through the GUI panel: Read (all four levels at 3), Export, Import of that file (no warnings), Apply (write, then apply), a new valid sample; the staged `calibration.*` params equal the file; REVERT at the end. Then by hand in the GUI: the Calibration tab during the calibration motions (levels, the orientation preview against the sensor's real axes and the heading convention), a file from another device (warning), Apply with Cancel, Esc during Apply | 3/3/3/3 reached; Read, Export and Apply ok and "Applied" with fresh samples; staged params equal the file; levels stay at 3 after Apply; no unsaved changes at the end. By hand: the preview axes turn with the sensor, yaw increases clockwise, the warning shows, Cancel sends nothing |
 
 ## Board state
@@ -127,6 +124,7 @@ Found by H3b-1 (2026-11-20), not as H2e-1 recorded it and left as found (H3c's p
 - **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change it in the same PR and log the reason.
 - **Per-step exceptions** are approved by the user in the step plan and recorded here until the step merges. The usual pattern (H2e-3 to H3b-2): Opus 5.5 (high) plans, writes the contracts, integrates, fixes and reviews; Sonnet 5.5 subagents (high) build parts from written contracts, reviewed by the session. Past exceptions are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
 - **H4c exception (user-approved 2026-11-21).** This Codex session planned, built and tested H4c. GPT-6.2 Sol reviewed the recovery and launch paths independently at high effort.
+- **H4d exception (user-approved 2026-11-21).** One Codex session planned, built, tested and self-reviewed H4d.
 
 ## Decision log
 
@@ -135,6 +133,7 @@ Choices that the plans don't cover or that change them, and that a later step mu
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
 | 2026-11-21 | H4c | The user approved the launch-configured recovery controller list and an independent Sol review. The example starts with drive inactive. The controller YAML supplies wheel separation. Recovery checks for outstanding claims before activating and stops only its attempted controllers on failure. It requests INACTIVE even when a controller or hardware reply is uncertain. | Keep the startup and fault paths disarmed until explicit operator action and verify rollback when the manager partially applies a request. | yes (H4c brief and bringup guide) |
+| 2026-11-21 | H4d | Stage the shared CMake files and prefetch the pinned sources for Bloom. Use debhelper compatibility 13 in the generated metadata and publish only the four primary ROS packages per distro and architecture. | Build offline after dependency preparation and keep the signed inventory consistent with the package matrix. | yes (H4d brief and apt packaging guide) |
 
 ## Hardware results
 

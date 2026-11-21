@@ -39,7 +39,6 @@ Settled by the step's own plan (an internal choice, logged), or put to the user 
 
 | Item | Step |
 |---|---|
-| The Debian names and version scheme of the ROS packages (bloom's `ros-<distro>-` prefix, the release suffix); how the apt suites hold them | H4d |
 | Whether open HW rows must pass before `host_overhaul` merges into `main`; what of the temporary workflow is removed | H6 |
 
 Not planned: a descriptor disk cache (until connecting gets slow), a USB transport, a higher baud rate, Python bindings, installer signing, a devcontainer.
@@ -123,6 +122,7 @@ Review: independent (`recover` acknowledges faults and reactivates the hardware)
 Scope:
 - bloom-generated Debian packages of `drivelink_protocol`, `drivelink` (libdrivelink), `drivelink_hardware` and `drivelink_bringup` for Lyrical (resolute) and Jazzy (noble), amd64 and arm64, versioned from the root `VERSION` like the other packages (one version for the repo; `tools/version.py --check`).
 - CI builds them, installs them in clean ROS containers, and runs the launch test from the installed packages against the installed agent. Tags publish them to the H3d apt repository next to the agent packages (and as release assets).
+- Bloom uses `ros-<distro>-drivelink{,-protocol,-hardware,-bringup}` and the existing `<full-version>~ubuntu<release>` scheme. Dependencies between DriveLink ROS packages pin the exact Debian version. See the [apt package layout](../packaging/apt/README.md#ros-2-packages).
 - Docs: installing with apt (the ROS repository plus ours), beside the source build.
 
 Hardware check: container. Deferred row: on the Pi after the next tag, `apt install` of the Lyrical arm64 packages and the H4c launch file against the real device.

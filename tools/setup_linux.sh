@@ -3,8 +3,8 @@
 # (Ubuntu 26.04: the WSL distro, the ubuntu:26.04 CI containers; the `agent`
 # profile also on Ubuntu 24.04, where CI builds the packages without the GUI).
 #
-#   sudo sh tools/setup_linux.sh [base|agent|host|ros]   (default: host)
-#   sh tools/setup_linux.sh --check [base|agent|host|ros] report missing packages, install nothing
+#   sudo sh tools/setup_linux.sh [base|agent|host|ros|ros-deb]   (default: host)
+#   sh tools/setup_linux.sh --check [base|agent|host|ros|ros-deb] report missing packages, install nothing
 #
 #   base  compilers, CMake, Ninja, Python 3 and PyYAML: the generator and
 #         firmware native tests (CI job native-tests)
@@ -19,6 +19,7 @@
 #         (noble). Adds the ROS apt repository first when it is missing (its
 #         key is checked against the published fingerprint); the ros:lyrical
 #         and ros:jazzy images already have it.
+#   ros-deb  base plus Bloom and Debian tools, in a disposable ROS build container.
 #
 # Packages already installed are skipped; nothing is removed or upgraded.
 # ci.yml holds no package list.
@@ -59,7 +60,8 @@ case "$profile" in
         wanted="$base curl ros-$distro-ros-base ros-$distro-ros2-control ros-$distro-ros2-controllers \
 ros-$distro-ament-cmake-gtest ros-$distro-xacro ros-$distro-robot-state-publisher ros-dev-tools"
         ;;
-    *) echo "usage: $0 [base|agent|host|ros]" >&2; exit 2 ;;
+    ros-deb) wanted="$base python3-bloom python3-rosdep debhelper fakeroot" ;;
+    *) echo "usage: $0 [base|agent|host|ros|ros-deb]" >&2; exit 2 ;;
 esac
 
 missing=""
@@ -85,7 +87,8 @@ export DEBIAN_FRONTEND=noninteractive
 # The ROS 2 apt repository (https://docs.ros.org), unless a source already names it.
 ros_key=/usr/share/keyrings/ros-archive-keyring.gpg
 ros_fingerprint=C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
-if [ "$profile" = ros ] && ! grep -rqsE '^[^#]*packages\.ros\.org/ros2' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+if { [ "$profile" = ros ] || [ "$profile" = ros-deb ]; } &&
+   ! grep -rqsE '^[^#]*packages\.ros\.org/ros2' /etc/apt/sources.list /etc/apt/sources.list.d/; then
     apt-get update
     apt-get install -y --no-install-recommends curl ca-certificates gnupg
     tmp=$(mktemp)

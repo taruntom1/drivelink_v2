@@ -1,4 +1,4 @@
-# apt repository (H3d)
+# DriveLink apt repository
 
 DriveLink's signed apt repository, served by GitHub Pages from the `gh-pages`
 branch at <https://taruntom1.github.io/drivelink_v2/>. Installing from it is
@@ -26,16 +26,35 @@ pool/main/d/<package>/<package>_<version>_<arch>.deb
 `gh-pages` holds one commit: the latest release, force-pushed by each tag.
 Older packages stay on their GitHub release pages.
 
+## ROS 2 packages
+
+The `resolute` suite carries ROS 2 Lyrical and the `noble` suite carries Jazzy.
+Both have amd64 and arm64 builds of these packages.
+
+- `ros-<distro>-drivelink-protocol`
+- `ros-<distro>-drivelink` (the C++ host library)
+- `ros-<distro>-drivelink-hardware` (the ros2_control plugin)
+- `ros-<distro>-drivelink-bringup` (launch files, config and diagnostics)
+
+Install the bringup package to pull in the other three at the same DriveLink
+version. Apt obtains upstream ROS dependencies from the
+[ROS 2 apt repository](https://github.com/ros-infrastructure/ros-apt-source).
+See the [bringup install and launch guide](../../host/ros/drivelink_bringup/README.md).
+
 ## How it is built and published
 
+- `tools/package_ros.py` runs Bloom and dpkg in the matching ROS build container.
+  It stages each package with the shared version and CMake files and fetches the
+  existing SHA256-pinned Asio and mDNS sources before the Debian build.
 - `tools/apt_repo.py build` writes the tree from the `.deb` files and signs
   `Release` (InRelease and Release.gpg); `verify` checks it with apt itself,
   rootless: the signature, the indices and their hashes, resolution, and that
   a copy signed by another key, an unsigned copy and a changed index are
   refused.
 - The `apt-repo` validate check and CI job do that with a throwaway key on
-  every run; CI's `apt-install` job then installs from it in clean 26.04 and
-  24.04 containers (`host/test/apt_repo_smoke.py`).
+  every run. CI requires all 26 release packages. The `apt-install` job then
+  installs from it in clean Lyrical and Jazzy containers on both architectures
+  and runs the packaged bringup against the packaged agent and vdev.
 - Only a `vX.Y.Z` tag publishes: CI's `apt-publish` job, after `release`,
   signs with the real key, checks it against `FINGERPRINT` and the committed
   public key, and replaces `gh-pages`. It is the only job that reads the key.
