@@ -13,13 +13,19 @@
 //     actuator.mock  "right_act", feedback.mock "right_fb" (actuator -> right_act)
 //     controller.cascade_pid "left"  (actuator -> left_act,  feedback -> left_fb),  mode velocity
 //     controller.cascade_pid "right" (actuator -> right_act, feedback -> right_fb), mode velocity
+//     (H4b: both controllers also get velocity and position gains, saved, so
+//     that velocity_sp and position_sp make the mock plant track within the
+//     tolerances test_integration uses; duty_sp drives it open loop)
 //   sensor loop (the lowest non-realtime loop that imu.mock's loop mask allows):
 //     imu.mock "imu"
 // Type ids, item ids and ref params come from the device (the CLI's `types`
 // and `items` commands), never literals copied from the YAML, except where the
 // CLI needs a numeric id it has just looked up.
 #include <drivelink/session.hpp>
+#include <array>
 #include <chrono>
+#include <cstdint>
+#include <vector>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -71,6 +77,50 @@ class Harness
     //       orientation.x/y/z/w, angular_velocity.x/y/z, linear_acceleration.x/y/z</sensor>
     //   </ros2_control></robot>
     std::string urdf(const std::string &component = "drivelink", const std::string &extra_hardware_params = {}) const;
+
+    // H4b: a URDF with chosen joints. Each joint is written as
+    //   <joint name="NAME"><param name="instance">INSTANCE</param> EXTRA
+    //     <state_interface name="S"/>... <command_interface name="C"/>... </joint>
+    // (EXTRA: raw <param> XML appended verbatim), with its <link> and
+    // continuous <joint> outside the block as in urdf(); the IMU sensor is
+    // added as in urdf() when `imu` is true.
+    struct JointSpec
+    {
+        std::string name;
+        std::string instance;
+        std::vector<std::string> state{"position", "velocity"};
+        std::vector<std::string> command;
+        std::string extra_params;
+    };
+    std::string urdf(const std::string &component, const std::string &extra_hardware_params,
+                     const std::vector<JointSpec> &joints, bool imu = true) const;
+
+    // --- H4b helpers on the GUI client (gui()); each opens it if needed. ---
+    // The newest status-stream frame the GUI client has seen (it observes the
+    // status stream from the moment gui() opens it): arm_state (0 disarmed,
+    // 1 armed) and last_disarm_reason (core.md: Boot 0, Explicit 1, Watchdog 2,
+    // Fault 3, LoopStalled 4, Shutdown 5). waitArm waits (bounded) until a
+    // status frame received after the call shows `armed`, else HarnessError.
+    struct ArmStatus
+    {
+        uint8_t arm_state = 0;
+        uint8_t last_disarm_reason = 0;
+        uint8_t flags = 0; // status flags (fault_latched 1, ...)
+    };
+    ArmStatus armStatus(std::chrono::milliseconds wait = std::chrono::milliseconds(2000));
+    ArmStatus waitArm(bool armed, std::chrono::milliseconds timeout = std::chrono::milliseconds(3000));
+    // A param of an instance found by label, read through the GUI client
+    // (Client::get), as a double (enums and integers by value, f32 by bit cast).
+    double param(const std::string &label, const std::string &item);
+    // The enum entry name of an Enum param (e.g. mode -> "velocity").
+    std::string enumParam(const std::string &label, const std::string &item);
+    // Runs a loop action of an instance found by label through the GUI client
+    // (Client::action), args as f32/bool bits by the action's descriptor order
+    // (the test passes them already encoded). Throws on a refusal.
+    void action(const std::string &label, const std::string &item, std::array<uint32_t, 4> args = {});
+    // DISARM and ACK_FAULT from the GUI client (any client may do both).
+    void disarm();
+    void acknowledgeFault();
 
     // A second agent client of the device (a drivelink::Session with
     // AgentHello kind Gui (1), client_name "harness-gui"), opened on demand.
