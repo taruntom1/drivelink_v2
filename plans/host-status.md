@@ -71,7 +71,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
 | H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | merged | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
-| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | in review | |
+| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | in review | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
 | H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
 | HW | Hardware campaign on `host_overhaul`: run every open row of "Deferred hardware checks"; firmware fixes go to `host_overhaul` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
 
