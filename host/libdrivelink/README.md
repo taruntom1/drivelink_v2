@@ -455,6 +455,9 @@ Include `<drivelink/command.hpp>` and call
 `client.managedCommand(group, loop, input_refs, finite_hold_bits)` while disarmed.
 It discovers input descriptors, reads the watchdog and starts prefix-only
 keepalives on I/O at one third of its interval. It never arms automatically.
+With the optional last argument `keepalive = false` (H4b, the ROS plugin) no
+keepalive is sent: only written frames feed the device watchdog, so the
+watchdog disarms the device when the producer's own loop stops writing.
 One producer calls `write(span<double>)` or `writeBits(span<uint32_t>)`; both
 are bounded, allocation-free and noexcept, returning false on invalid values,
 concurrent producers or a full queue. NaN in `write` maps to the supplied finite

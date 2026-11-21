@@ -31,15 +31,16 @@ struct CommandGroup::Impl
     std::atomic<bool> active{true};
     std::atomic_flag producing=ATOMIC_FLAG_INIT;
     uint64_t last=0,interval;
-    Impl(uint8_t g,uint8_t e,std::vector<ItemDescriptor> d,uint16_t watchdog)
-        :group(g),epoch(e),descriptors(std::move(d)),interval(uint64_t(watchdog)*1000/3) {}
+    bool keepalive;
+    Impl(uint8_t g,uint8_t e,std::vector<ItemDescriptor> d,uint16_t watchdog,bool k)
+        :group(g),epoch(e),descriptors(std::move(d)),interval(uint64_t(watchdog)*1000/3),keepalive(k) {}
 };
 CommandGroup::CommandGroup(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
-                           std::span<const uint32_t> values,uint16_t watchdog_ms) {
+                           std::span<const uint32_t> values,uint16_t watchdog_ms,bool keepalive) {
     if(group>=protocol::defs::kCmdGroupChannelCount || descriptors.size()>64 ||
        descriptors.size()!=values.size() || watchdog_ms<3) {throw Error(ErrorKind::Usage,"invalid managed command group");}
     for(const auto &d:descriptors) {if(d.kind!=ItemKind::Input || d.value_type==ValueType::None) {throw Error(ErrorKind::Usage,"command refs must describe inputs");}}
-    m_impl=std::make_unique<Impl>(group,epoch,std::move(descriptors),watchdog_ms);hold(values);
+    m_impl=std::make_unique<Impl>(group,epoch,std::move(descriptors),watchdog_ms,keepalive);hold(values);
 }
 CommandGroup::~CommandGroup() {stop();}
 void CommandGroup::hold(std::span<const uint32_t> values) {
@@ -87,7 +88,7 @@ bool CommandGroup::poll(uint64_t now,Bytes &payload,uint64_t &generation) {
         if(packet.generation!=d.generation.load()) {continue;}
         generation=packet.generation;payload=commandPayload(d.epoch,d.counter++,{packet.values.data(),d.descriptors.size()});d.last=now;return true;
     }
-    if(now-d.last>=d.interval) {generation=d.generation.load();payload=commandPayload(d.epoch,d.counter++,{});d.last=now;return true;}
+    if(d.keepalive && now-d.last>=d.interval) {generation=d.generation.load();payload=commandPayload(d.epoch,d.counter++,{});d.last=now;return true;}
     return false;
 }
 void CommandGroup::discardQueued() noexcept {++m_impl->generation;}

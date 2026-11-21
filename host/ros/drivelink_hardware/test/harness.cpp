@@ -4,6 +4,7 @@
 
 #include <drivelink/client.hpp>
 #include <drivelink/session.hpp>
+#include <drivelink/protocol/gen/registry.hpp>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -20,6 +21,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <deque>
+#include <bit>
 #include <filesystem>
 #include <iomanip>
 #include <map>
@@ -27,9 +29,11 @@
 #include <optional>
 #include <random>
 #include <regex>
+#include <span>
 #include <sstream>
 #include <thread>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 extern char **environ;
@@ -284,6 +288,34 @@ struct Harness::Impl
     std::unique_ptr<Child> vdev, agent;
     std::string vdev_endpoint, agent_endpoint, token;
     std::unique_ptr<drivelink::Session> gui;
+    // The newest status-stream frame the GUI client has seen (see armStatus).
+    struct GuiWatch
+    {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool seen = false;
+        uint64_t seq = 0;
+        ArmStatus status;
+        std::vector<uint8_t> disarms; // last_disarm_reason at each armed -> not armed transition
+    };
+    std::shared_ptr<GuiWatch> watch = std::make_shared<GuiWatch>();
+    uint64_t gui_observer = 0;
+
+    void closeGui()
+    {
+        if (!gui) { return; }
+        try
+        {
+            if (gui_observer != 0) { gui->unobserve(gui_observer); }
+            gui->close();
+        }
+        catch (...)
+        {
+        }
+        gui_observer = 0;
+        gui.reset();
+        watch = std::make_shared<GuiWatch>();
+    }
 
     std::string diag()
     {
@@ -415,6 +447,12 @@ struct Harness::Impl
         auto inst_ref = [](int type, int instance) { return std::to_string((type << 8) | instance); };
         const auto &fb_items = look.items.at(fb_t);
         const auto &ctl_items = look.items.at(ctl_t);
+        // H4b: gains so that velocity_sp and position_sp make the mock plant
+        // (gain 10, tau 0.1 s, deadband 0.02) track: a 3 rad/s step settles
+        // within a few percent of its mean in 1 s, a +1 rad step within 0.01
+        // rad in 1 s (measured with the CLI against this layout).
+        const std::vector<std::pair<std::string, std::string>> gains{
+            {"vel.kp", "0.3"}, {"vel.ki", "2"}, {"pos.kp", "4"}};
         auto item = [&](const std::map<std::string, int> &items, const std::string &name) {
             const auto it = items.find(name);
             if (it == items.end()) { fail("layout", "the type has no item " + name); }
@@ -430,6 +468,7 @@ struct Harness::Impl
             set.push_back(ref(ctl_t, ctl, item(ctl_items, "actuator")) + "=" + inst_ref(act_t, act));
             set.push_back(ref(ctl_t, ctl, item(ctl_items, "feedback")) + "=" + inst_ref(fb_t, fb));
             set.push_back(ref(ctl_t, ctl, item(ctl_items, "mode")) + "=velocity");
+            for (const auto &[name, value] : gains) { set.push_back(ref(ctl_t, ctl, item(ctl_items, name)) + "=" + value); }
         }
         cli(set);
         cli({"save"});
@@ -518,14 +557,7 @@ std::unique_ptr<Harness> Harness::start(bool pty)
 Harness::~Harness()
 {
     auto &m = *m_impl;
-    try
-    {
-        if (m.gui) { m.gui->close(); }
-    }
-    catch (...)
-    {
-    }
-    m.gui.reset();
+    m.closeGui();
     if (m.agent) { m.agent->terminate(5s); }
     if (m.vdev) { m.vdev->terminate(5s); }
     m.agent.reset();
@@ -547,6 +579,16 @@ void Harness::vdevScenario(unsigned sequence, const std::string &action)
         if (!out) { m_impl->fail("vdev scenario", "cannot write " + temp.string()); }
     }
     fs::rename(temp, file);
+    // The vdev polls the file every 100 ms and prints "SCENARIO <sequence> <action>" when it
+    // runs the line: wait for it, so the action has run when this returns.
+    try
+    {
+        m_impl->vdev->waitLine("SCENARIO " + std::to_string(sequence) + " ", 5s);
+    }
+    catch (const HarnessError &e)
+    {
+        m_impl->fail("vdev scenario '" + action + "'", std::string("the vdev did not run it: ") + e.what());
+    }
 }
 
 std::string Harness::diag() const { return m_impl->diag(); }
@@ -564,27 +606,43 @@ std::string wheelJoint(const std::string &name)
 
 std::string Harness::urdf(const std::string &component, const std::string &extra_hardware_params) const
 {
+    return urdf(component, extra_hardware_params,
+                {JointSpec{"left_wheel", "left", {"position", "velocity"}, {}, {}},
+                 JointSpec{"right_wheel", "right", {"position", "velocity"}, {}, {}}});
+}
+
+std::string Harness::urdf(const std::string &component, const std::string &extra_hardware_params,
+                          const std::vector<JointSpec> &joints, bool imu) const
+{
     const auto &m = *m_impl;
     std::ostringstream out;
-    out << "<?xml version=\"1.0\"?>\n<robot name=\"test\"><link name=\"base_link\"/>"
-        << wheelJoint("left_wheel") << wheelJoint("right_wheel") << "<ros2_control name=\"" << component << "\" type=\"system\">"
+    out << "<?xml version=\"1.0\"?>\n<robot name=\"test\"><link name=\"base_link\"/>";
+    for (const auto &joint : joints) { out << wheelJoint(joint.name); }
+    out << "<ros2_control name=\"" << component << "\" type=\"system\">"
         << "<hardware><plugin>drivelink_hardware/DriveLinkSystem</plugin>"
         << "<param name=\"agent\">" << m.agent_endpoint << "</param>"
         << "<param name=\"token\">" << m.token << "</param>"
         << "<param name=\"device\">" << kDevice << "</param>" << extra_hardware_params << "</hardware>\n";
-    for (const auto &[joint, instance] : {std::pair{"left_wheel", "left"}, std::pair{"right_wheel", "right"}})
+    for (const auto &joint : joints)
     {
-        out << "<joint name=\"" << joint << "\"><param name=\"instance\">" << instance << "</param>"
-            << "<state_interface name=\"position\"/><state_interface name=\"velocity\"/></joint>\n";
+        out << "<joint name=\"" << joint.name << "\"><param name=\"instance\">" << joint.instance << "</param>"
+            << joint.extra_params;
+        for (const auto &name : joint.state) { out << "<state_interface name=\"" << name << "\"/>"; }
+        for (const auto &name : joint.command) { out << "<command_interface name=\"" << name << "\"/>"; }
+        out << "</joint>\n";
     }
-    out << "<sensor name=\"imu\"><param name=\"instance\">imu</param>";
-    for (const char *name : {"orientation.x", "orientation.y", "orientation.z", "orientation.w", "angular_velocity.x",
-                             "angular_velocity.y", "angular_velocity.z", "linear_acceleration.x",
-                             "linear_acceleration.y", "linear_acceleration.z"})
+    if (imu)
     {
-        out << "<state_interface name=\"" << name << "\"/>";
+        out << "<sensor name=\"imu\"><param name=\"instance\">imu</param>";
+        for (const char *name : {"orientation.x", "orientation.y", "orientation.z", "orientation.w", "angular_velocity.x",
+                                 "angular_velocity.y", "angular_velocity.z", "linear_acceleration.x",
+                                 "linear_acceleration.y", "linear_acceleration.z"})
+        {
+            out << "<state_interface name=\"" << name << "\"/>";
+        }
+        out << "</sensor>";
     }
-    out << "</sensor></ros2_control></robot>\n";
+    out << "</ros2_control></robot>\n";
     return out.str();
 }
 
@@ -599,21 +657,245 @@ drivelink::Session &Harness::gui()
         try
         {
             m.gui = std::make_unique<drivelink::Session>(m.agent_endpoint, options);
+            // From here on every status-stream frame updates the watch.
+            m.gui_observer = m.gui->observe([watch = m.watch](const drivelink::Frame &frame) {
+                if (frame.type != drivelink::protocol::defs::msg::kStatusStream) { return; }
+                try
+                {
+                    const auto event = drivelink::Client::decodeEvent(frame);
+                    const auto *status = std::get_if<drivelink::StatusFrame>(&event);
+                    if (status == nullptr) { return; }
+                    {
+                        std::lock_guard lock(watch->mutex);
+                        // The reason at an armed -> not armed transition (a later
+                        // DISARM of a disarmed device overwrites the status's reason).
+                        if (watch->seen && watch->status.arm_state == 1 && status->arm_state != 1)
+                        {
+                            watch->disarms.push_back(status->last_disarm_reason);
+                        }
+                        watch->status = ArmStatus{status->arm_state, status->last_disarm_reason, status->flags};
+                        watch->seen = true;
+                        ++watch->seq;
+                    }
+                    watch->cv.notify_all();
+                }
+                catch (...)
+                {
+                }
+            });
         }
         catch (const std::exception &e)
         {
+            m.gui.reset();
             m.fail("open the GUI client", e.what());
         }
     }
     return *m.gui;
 }
 
-void Harness::closeGui()
+namespace
+{
+// An instance's item by label and name, read from the device (never literal ids).
+struct FoundItem
+{
+    drivelink::Ref ref;
+    drivelink::ItemDescriptor descriptor;
+    uint8_t type = 0;
+};
+
+FoundItem findItem(drivelink::Client &client, const std::string &label, const std::string &item)
+{
+    for (const auto &instance : client.instances())
+    {
+        if (instance.label != label) { continue; }
+        for (const auto &descriptor : client.items(instance.type))
+        {
+            if (descriptor.name == item)
+            {
+                return {drivelink::Ref{instance.type, instance.instance, descriptor.id}, descriptor, instance.type};
+            }
+        }
+        throw std::runtime_error("the instance '" + label + "' has no item '" + item + "'");
+    }
+    throw std::runtime_error("the device has no instance labelled '" + label + "'");
+}
+
+uint32_t readBits(drivelink::Client &client, const FoundItem &found)
+{
+    const auto result = client.get(std::span<const drivelink::Ref>(&found.ref, 1));
+    if (result.result != 0 || result.values.size() != 1)
+    {
+        throw std::runtime_error("GET of '" + found.descriptor.name + "' was refused (result " +
+                                 std::to_string(int(result.result)) + ")");
+    }
+    return result.values[0];
+}
+} // namespace
+
+Harness::ArmStatus Harness::armStatus(std::chrono::milliseconds wait)
+{
+    gui();
+    auto &m = *m_impl;
+    const auto watch = m.watch;
+    std::unique_lock lock(watch->mutex);
+    if (!watch->cv.wait_for(lock, wait, [&] { return watch->seen; }))
+    {
+        lock.unlock();
+        m.fail("armStatus", "the GUI client saw no status frame within " + std::to_string(wait.count()) + " ms");
+    }
+    return watch->status;
+}
+
+std::vector<uint8_t> Harness::disarmReasons()
+{
+    gui();
+    std::lock_guard lock(m_impl->watch->mutex);
+    return m_impl->watch->disarms;
+}
+
+Harness::ArmStatus Harness::waitArm(bool armed, std::chrono::milliseconds timeout)
+{
+    gui();
+    auto &m = *m_impl;
+    const auto watch = m.watch;
+    std::unique_lock lock(watch->mutex);
+    const uint64_t first = watch->seq;
+    // "Not armed" is any arm_state other than Armed (1): Disarmed 0 or Fault 2.
+    const auto matches = [&] { return watch->seq > first && (watch->status.arm_state == 1) == armed; };
+    if (!watch->cv.wait_for(lock, timeout, matches))
+    {
+        const ArmStatus last = watch->status;
+        const bool seen = watch->seen;
+        lock.unlock();
+        m.fail(armed ? "waitArm(armed)" : "waitArm(disarmed)",
+               std::string("no status frame showing ") + (armed ? "armed" : "not armed") + " within " +
+                   std::to_string(timeout.count()) + " ms; the last frame " +
+                   (seen ? "had arm_state " + std::to_string(int(last.arm_state)) + ", last_disarm_reason " +
+                               std::to_string(int(last.last_disarm_reason))
+                         : std::string("never came")));
+    }
+    return watch->status;
+}
+
+double Harness::param(const std::string &label, const std::string &item)
 {
     auto &m = *m_impl;
-    if (m.gui) { m.gui->close(); }
-    m.gui.reset();
+    try
+    {
+        drivelink::Client client(gui());
+        const FoundItem found = findItem(client, label, item);
+        const uint32_t bits = readBits(client, found);
+        switch (found.descriptor.value_type)
+        {
+        case drivelink::ValueType::F32: return double(std::bit_cast<float>(bits));
+        case drivelink::ValueType::I32: return double(int32_t(bits));
+        default: return double(bits);
+        }
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("param " + label + "." + item, e.what());
+    }
 }
+
+std::string Harness::enumParam(const std::string &label, const std::string &item)
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        const FoundItem found = findItem(client, label, item);
+        if (found.descriptor.value_type != drivelink::ValueType::Enum)
+        {
+            throw std::runtime_error("'" + item + "' is not an Enum param");
+        }
+        const uint32_t bits = readBits(client, found);
+        for (const auto &entry : client.enums(found.type, found.ref.item))
+        {
+            if (entry.value == bits) { return entry.name; }
+        }
+        throw std::runtime_error("the value " + std::to_string(bits) + " has no entry name");
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("enumParam " + label + "." + item, e.what());
+    }
+}
+
+void Harness::setEnumParam(const std::string &label, const std::string &item, const std::string &entry)
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        const FoundItem found = findItem(client, label, item);
+        if (found.descriptor.value_type != drivelink::ValueType::Enum)
+        {
+            throw std::runtime_error("'" + item + "' is not an Enum param");
+        }
+        std::optional<uint32_t> value;
+        for (const auto &e : client.enums(found.type, found.ref.item))
+        {
+            if (e.name == entry) { value = e.value; }
+        }
+        if (!value) { throw std::runtime_error("the param has no entry '" + entry + "'"); }
+        const auto result = client.set(std::span<const drivelink::Ref>(&found.ref, 1),
+                                       std::span<const uint32_t>(&*value, 1));
+        if (result.result != 0 && result.result != 8)
+        {
+            throw std::runtime_error("SET was refused (result " + std::to_string(int(result.result)) + ")");
+        }
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("setEnumParam " + label + "." + item, e.what());
+    }
+}
+
+void Harness::action(const std::string &label, const std::string &item, std::array<uint32_t, 4> args)
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        const FoundItem found = findItem(client, label, item);
+        client.action(found.ref, args);
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("action " + label + "." + item, e.what());
+    }
+}
+
+void Harness::disarm()
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        client.disarm();
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("disarm", e.what());
+    }
+}
+
+void Harness::acknowledgeFault()
+{
+    auto &m = *m_impl;
+    try
+    {
+        drivelink::Client client(gui());
+        client.acknowledgeFault();
+    }
+    catch (const std::exception &e)
+    {
+        m.fail("acknowledgeFault", e.what());
+    }
+}
+
+void Harness::closeGui() { m_impl->closeGui(); }
 
 void Harness::stopAgent()
 {

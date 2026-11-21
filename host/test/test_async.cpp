@@ -327,6 +327,24 @@ TEST_CASE("managed command groups map NaN to finite hold and keepalives stay pre
     REQUIRE(ready.wait_for(std::chrono::seconds(2))==std::future_status::ready);
     command->stop();CHECK_FALSE(command->write({&nan,1}));CHECK(command->rejected()>=2);
 }
+TEST_CASE("managed command groups without keepalives send only written frames") {
+    // Watchdog 60 ms: a keepalive would go out every 20 ms. The first two
+    // frames the peer sees must be the two written values, 150 ms apart.
+    std::promise<void> observed;auto ready=observed.get_future();
+    Peer peer([&](Socket &s) {
+        for(uint32_t expected:{1u,2u}) {
+            auto packet=read(s);CHECK(packet.type==0xa0);const auto &b=packet.payload;
+            REQUIRE(b.size()==8);p::wire::Reader r(b.data()+4,4);CHECK(r.readU32Le()==std::bit_cast<uint32_t>(float(expected)));
+        }observed.set_value();untilClosed(s);
+    });
+    Session session(peer.endpoint(),testOptions());ItemDescriptor descriptor;descriptor.kind=ItemKind::Input;descriptor.value_type=ValueType::F32;
+    const uint32_t hold=0;auto command=session.manageCommand(0,7,{descriptor},{&hold,1},60,0,false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const double one=1;REQUIRE(command->write({&one,1}));
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    const double two=2;REQUIRE(command->write({&two,1}));
+    REQUIRE(ready.wait_for(std::chrono::seconds(2))==std::future_status::ready);command->stop();
+}
 TEST_CASE("managed command queue stays coherent across producer backpressure and flushes") {
     std::promise<void> last;auto done=last.get_future();
     Peer peer([&](Socket &s) {

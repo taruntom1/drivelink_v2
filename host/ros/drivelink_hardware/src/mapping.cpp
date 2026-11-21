@@ -16,6 +16,10 @@ namespace
 constexpr size_t kMaxGroupRefs = 64; // drivelink::GroupSample::values
 constexpr unsigned kLayoutPendingReboot = 0x01;
 constexpr unsigned kLayoutInvalid = 0x02;
+// ItemDescriptor::flags
+constexpr unsigned kItemRebootRequired = 0x01;
+constexpr unsigned kItemReadOnly = 0x04;
+constexpr unsigned kItemLockedWhileArmed = 0x08;
 
 std::string join(const std::vector<std::string> &items)
 {
@@ -107,6 +111,13 @@ std::string typeName(drivelink::ValueType type)
     return "unknown type " + std::to_string(static_cast<unsigned>(type));
 }
 
+// "a signal", "an input": the kind with its article, for messages.
+std::string withArticle(drivelink::ItemKind kind)
+{
+    const std::string name = kindName(kind);
+    return (kind == drivelink::ItemKind::Input || kind == drivelink::ItemKind::Action ? "an " : "a ") + name;
+}
+
 bool isScalarNumeric(drivelink::ValueType type)
 {
     switch (type)
@@ -152,15 +163,65 @@ std::string describe(const ComponentSpec &component)
     return std::string(component.sensor ? "sensor " : "joint ") + sq(component.name);
 }
 
-std::string describe(const ComponentSpec &component, const std::string &interface_name)
+std::string describe(const ComponentSpec &component, const std::string &interface_name, const char *what = "state")
 {
-    return describe(component) + " state interface " + sq(interface_name);
+    return describe(component) + " " + what + " interface " + sq(interface_name);
 }
 
-// Validates the structure of one component and returns its item-name overrides.
-std::map<std::string, std::string> checkParams(const ComponentSpec &component)
+bool contains(const std::vector<std::string> &items, const std::string &item)
 {
-    std::map<std::string, std::string> overrides;
+    return std::find(items.begin(), items.end(), item) != items.end();
+}
+
+// The param overrides of one component.
+struct ParamSet
+{
+    std::map<std::string, std::string> state;   // state.<interface> -> signal name
+    std::map<std::string, std::string> command; // command.<interface> -> input name
+    std::optional<std::string> mode_param;      // mode_param
+    std::map<std::string, std::string> mode;    // mode.<interface> -> enum entry name
+};
+
+// The default input item of a command interface.
+const char *defaultInputName(CommandKind kind)
+{
+    switch (kind)
+    {
+    case CommandKind::Position:
+        return "position_sp";
+    case CommandKind::Velocity:
+        return "velocity_sp";
+    case CommandKind::Duty:
+        return "duty_sp";
+    case CommandKind::None:
+        break;
+    }
+    return "";
+}
+
+// The default enum entry written to the mode param when a kind is claimed.
+const char *defaultModeEntry(CommandKind kind)
+{
+    switch (kind)
+    {
+    case CommandKind::Position:
+        return "position";
+    case CommandKind::Velocity:
+        return "velocity";
+    case CommandKind::Duty:
+        return "open_loop";
+    case CommandKind::None:
+        break;
+    }
+    return "";
+}
+
+constexpr const char *kCommandNames = "position, velocity, duty";
+
+// Validates the structure of one component and returns its param overrides.
+ParamSet checkParams(const ComponentSpec &component)
+{
+    ParamSet set;
     for (const auto &[name, value] : component.params)
     {
         if (name == "instance")
@@ -168,21 +229,190 @@ std::map<std::string, std::string> checkParams(const ComponentSpec &component)
         if (name.starts_with("state."))
         {
             const std::string interface_name = name.substr(6);
-            if (std::find(component.state_interfaces.begin(), component.state_interfaces.end(), interface_name) ==
-                component.state_interfaces.end())
+            // A position command holds the measured position, which may be a
+            // hidden signal: its `state.position` is allowed without the state interface.
+            const bool hold_override = interface_name == "position" && !component.sensor &&
+                                       contains(component.command_interfaces, "position");
+            if (!contains(component.state_interfaces, interface_name) && !hold_override)
                 throw MappingError(describe(component) + ": param " + sq(name) + " overrides state interface " +
                                    sq(interface_name) + ", which the component does not declare (declared: " +
                                    join(component.state_interfaces) + ")");
             if (value.empty())
                 throw MappingError(describe(component) + ": param " + sq(name) +
                                    " is empty; give the name of a signal of the instance");
-            overrides[interface_name] = value;
+            set.state[interface_name] = value;
+            continue;
+        }
+        if (!component.sensor && name.starts_with("command."))
+        {
+            const std::string interface_name = name.substr(8);
+            if (!contains(component.command_interfaces, interface_name))
+                throw MappingError(describe(component) + ": param " + sq(name) + " overrides command interface " +
+                                   sq(interface_name) + ", which the joint does not declare (declared: " +
+                                   join(component.command_interfaces) + ")");
+            if (value.empty())
+                throw MappingError(describe(component) + ": param " + sq(name) +
+                                   " is empty; give the name of an input of the instance");
+            set.command[interface_name] = value;
+            continue;
+        }
+        if (!component.sensor && name == "mode_param")
+        {
+            if (component.command_interfaces.empty())
+                throw MappingError(describe(component) + ": param 'mode_param' is set, but the joint declares no " +
+                                   "command interface (declared: (none))");
+            if (value.empty())
+                throw MappingError(describe(component) + ": param 'mode_param' is empty; give the name of an enum " +
+                                   "param of the instance, or 'none' for no mode writes");
+            set.mode_param = value;
+            continue;
+        }
+        if (!component.sensor && name.starts_with("mode."))
+        {
+            const std::string interface_name = name.substr(5);
+            if (!contains(component.command_interfaces, interface_name))
+                throw MappingError(describe(component) + ": param " + sq(name) + " names the mode entry of command " +
+                                   "interface " + sq(interface_name) + ", which the joint does not declare " +
+                                   "(declared: " + join(component.command_interfaces) + ")");
+            if (value.empty())
+                throw MappingError(describe(component) + ": param " + sq(name) +
+                                   " is empty; give the name of an entry of the mode param");
+            set.mode[interface_name] = value;
             continue;
         }
         throw MappingError(describe(component) + ": unknown param " + sq(name) +
-                           " (known: instance, state.<interface>)");
+                           (component.sensor
+                                ? " (known: instance, state.<interface>)"
+                                : " (known: instance, state.<interface>, command.<interface>, mode_param, "
+                                  "mode.<interface>)"));
     }
-    return overrides;
+    return set;
+}
+
+// The item `item_name` of `want` kind of the instance's type (a scalar numeric
+// Signal, or an F32 Input), or a MappingError that says what was found.
+const drivelink::ModelItem &requireItem(const drivelink::ModelType &type, const std::string &label,
+                                        const std::string &item_name, drivelink::ItemKind want,
+                                        const std::string &where)
+{
+    const drivelink::ModelItem *found = nullptr;
+    std::vector<std::string> available;
+    for (const auto &[id, item] : type.items)
+    {
+        (void)id;
+        if (item.descriptor.name == item_name)
+            found = &item;
+        if (item.descriptor.kind == want)
+            available.push_back(item.descriptor.name);
+    }
+    if (!found)
+    {
+        std::sort(available.begin(), available.end());
+        throw MappingError(where + ": instance " + sq(label) + " (type " + sq(type.descriptor.name) +
+                           ") has no such item; available " + kindName(want) + "s: " + join(available));
+    }
+    const auto &descriptor = found->descriptor;
+    if (descriptor.kind != want)
+        throw MappingError(where + ": item is " + withArticle(descriptor.kind) + ", not " + withArticle(want) +
+                           " (type " + typeName(descriptor.value_type) + ")");
+    if (want == drivelink::ItemKind::Input && descriptor.value_type != drivelink::ValueType::F32)
+        throw MappingError(where + ": input has value type " + typeName(descriptor.value_type) +
+                           "; command inputs must be f32 (write() sends doubles as f32)");
+    if (!isScalarNumeric(descriptor.value_type))
+        throw MappingError(where + ": " + kindName(want) + " has value type " + typeName(descriptor.value_type) +
+                           ", which is not a scalar number");
+    return *found;
+}
+
+// The mode param of a joint: nullopt for no mode writes (the mode enum values
+// land in `joint.mode_values`).
+std::optional<drivelink::Ref> resolveMode(const ComponentSpec &component, const ParamSet &set,
+                                          const drivelink::ModelType &type, const drivelink::ModelInstance &instance,
+                                          JointCommands &joint)
+{
+    const bool explicit_param = set.mode_param.has_value();
+    const std::string mode_name = explicit_param ? *set.mode_param : "mode";
+    const auto find_item = [&](const std::string &name) -> const drivelink::ModelItem * {
+        for (const auto &[id, item] : type.items)
+        {
+            (void)id;
+            if (item.descriptor.name == name)
+                return &item;
+        }
+        return nullptr;
+    };
+
+    const drivelink::ModelItem *item = nullptr;
+    if (mode_name != "none" || !explicit_param)
+        item = find_item(mode_name);
+    if (!explicit_param && !item)
+    {
+        if (!set.mode.empty())
+            throw MappingError(describe(component) + ": param " + sq("mode." + set.mode.begin()->first) +
+                               " is set, but the type " + sq(type.descriptor.name) +
+                               " has no item named 'mode' and mode_param is not set, so no mode is written; " +
+                               "name the mode param with 'mode_param'");
+        return std::nullopt;
+    }
+    if (explicit_param && mode_name == "none")
+    {
+        if (!set.mode.empty())
+            throw MappingError(describe(component) + ": param " + sq("mode." + set.mode.begin()->first) +
+                               " is set, but 'mode_param' = 'none' turns mode writes off");
+        return std::nullopt;
+    }
+
+    const std::string where = describe(component) + " mode param " + sq(mode_name) +
+                              (explicit_param ? " (param 'mode_param')" : " (default)");
+    if (!item)
+    {
+        std::vector<std::string> params;
+        for (const auto &[id, other] : type.items)
+        {
+            (void)id;
+            if (other.descriptor.kind == drivelink::ItemKind::Param)
+                params.push_back(other.descriptor.name);
+        }
+        std::sort(params.begin(), params.end());
+        throw MappingError(where + ": instance " + sq(component.params.at("instance")) + " (type " +
+                           sq(type.descriptor.name) + ") has no such item; available params: " + join(params));
+    }
+    const auto &descriptor = item->descriptor;
+    if (descriptor.kind != drivelink::ItemKind::Param)
+        throw MappingError(where + ": item is " + withArticle(descriptor.kind) + ", not a param (type " +
+                           typeName(descriptor.value_type) + ")");
+    if (descriptor.value_type != drivelink::ValueType::Enum)
+        throw MappingError(where + ": param has value type " + typeName(descriptor.value_type) +
+                           ", not enum");
+    if ((descriptor.flags & kItemReadOnly) != 0)
+        throw MappingError(where + ": param is read-only (flag ReadOnly), so the plugin cannot write it");
+    if ((descriptor.flags & kItemRebootRequired) != 0)
+        throw MappingError(where + ": param needs a reboot to change (flag RebootRequired), so the plugin cannot " +
+                           "write it");
+    if ((descriptor.flags & kItemLockedWhileArmed) != 0)
+        throw MappingError(where + ": param is locked while armed (flag LockedWhileArmed), but the plugin writes " +
+                           "it while armed");
+
+    std::vector<std::string> entries;
+    for (const auto &entry : item->enums)
+        entries.push_back(entry.name);
+    for (const auto &interface_name : component.command_interfaces)
+    {
+        const CommandKind kind = *commandKind(interface_name);
+        const auto override_it = set.mode.find(interface_name);
+        const bool overridden = override_it != set.mode.end();
+        const std::string entry_name = overridden ? override_it->second : defaultModeEntry(kind);
+        const auto entry = std::find_if(item->enums.begin(), item->enums.end(),
+                                        [&](const drivelink::EnumEntry &e) { return e.name == entry_name; });
+        if (entry == item->enums.end())
+            throw MappingError(describe(component, interface_name, "command") + " (mode " +
+                               (overridden ? "param " + sq("mode." + interface_name) + " = " + sq(entry_name)
+                                           : "default entry " + sq(entry_name)) +
+                               "): mode param " + sq(mode_name) + " has no such enum entry; available entries: " +
+                               join(entries));
+        joint.mode_values[static_cast<size_t>(kind)] = entry->value;
+    }
+    return drivelink::Ref{instance.instance.type, instance.instance.instance, descriptor.id};
 }
 
 const drivelink::ModelInstance &findInstance(const drivelink::DeviceSnapshot &snapshot,
@@ -371,15 +601,64 @@ double toDouble(drivelink::ValueType type, uint32_t bits) noexcept
     }
 }
 
+std::optional<CommandKind> commandKind(std::string_view interface_name) noexcept
+{
+    if (interface_name == "position")
+        return CommandKind::Position;
+    if (interface_name == "velocity")
+        return CommandKind::Velocity;
+    if (interface_name == "duty")
+        return CommandKind::Duty;
+    return std::nullopt;
+}
+
+const char *commandName(CommandKind kind) noexcept
+{
+    switch (kind)
+    {
+    case CommandKind::Position:
+        return "position";
+    case CommandKind::Velocity:
+        return "velocity";
+    case CommandKind::Duty:
+        return "duty";
+    case CommandKind::None:
+        break;
+    }
+    return "none";
+}
+
 Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<ComponentSpec> &components,
                  const ConnectionConfig &config)
 {
     if (!(config.state_rate_hz >= 1) || config.state_rate_hz > 10000 || !std::isfinite(config.state_rate_hz))
         throw MappingError("state_rate_hz " + std::to_string(config.state_rate_hz) + " is invalid: expected [1, 10000]");
 
+    // One signal a group must hold: a state interface's, or a position hold's
+    // (hidden when no state interface maps it). Kept in order so the hidden
+    // slot lands after its component's state refs.
+    struct SignalUse
+    {
+        std::optional<size_t> state; // index into Resolved::states
+        std::optional<size_t> joint; // index into Resolved::joints (a position hold)
+        drivelink::Ref ref;
+        drivelink::ValueType type = drivelink::ValueType::F32;
+        uint8_t loop = 0;
+        std::string at; // for the 64-refs message
+    };
+    // The owner of every command input ref taken so far.
+    struct InputOwner
+    {
+        drivelink::Ref ref;
+        std::string component;
+        std::string what;
+    };
+
     Resolved resolved;
     std::set<std::string> component_names;
     std::map<uint8_t, uint32_t> loop_rates; // loops that hold a mapped signal
+    std::vector<SignalUse> uses;
+    std::vector<InputOwner> owners;
 
     for (const auto &component : components)
     {
@@ -387,12 +666,8 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
             throw MappingError(std::string(component.sensor ? "a sensor" : "a joint") + " has an empty name");
         if (!component_names.insert(component.name).second)
             throw MappingError(describe(component) + ": duplicate component name");
-        if (!component.command_interfaces.empty())
-            throw MappingError(describe(component) + ": command interface " +
-                               sq(component.command_interfaces.front()) +
-                               " is not supported; command interfaces arrive in H4b");
-        if (component.state_interfaces.empty())
-            throw MappingError(describe(component) + ": declares no state interface");
+        if (component.state_interfaces.empty() && component.command_interfaces.empty())
+            throw MappingError(describe(component) + ": declares no state interface and no command interface");
         std::set<std::string> interface_names;
         for (const auto &name : component.state_interfaces)
         {
@@ -401,8 +676,22 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
             if (!interface_names.insert(name).second)
                 throw MappingError(describe(component, name) + ": declared more than once");
         }
+        std::set<std::string> command_names;
+        for (const auto &name : component.command_interfaces)
+        {
+            if (component.sensor)
+                throw MappingError(describe(component, name, "command") +
+                                   ": a sensor has no command interfaces (joints only)");
+            if (name.empty())
+                throw MappingError(describe(component) + ": has a command interface with an empty name");
+            if (!commandKind(name))
+                throw MappingError(describe(component, name, "command") + ": unknown command interface; known: " +
+                                   kCommandNames);
+            if (!command_names.insert(name).second)
+                throw MappingError(describe(component, name, "command") + ": declared more than once");
+        }
 
-        const auto overrides = checkParams(component);
+        const auto params = checkParams(component);
         const drivelink::ModelInstance &instance = findInstance(snapshot, component);
         const std::string &label = component.params.at("instance");
 
@@ -424,8 +713,8 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
 
         for (const auto &interface_name : component.state_interfaces)
         {
-            const auto override_it = overrides.find(interface_name);
-            const bool overridden = override_it != overrides.end();
+            const auto override_it = params.state.find(interface_name);
+            const bool overridden = override_it != params.state.end();
             const std::string item_name = overridden ? override_it->second
                                           : component.sensor ? sensorItemName(interface_name)
                                                              : interface_name;
@@ -434,30 +723,8 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
                                                   : "default item " + sq(item_name);
             const std::string where = describe(component, interface_name) + " (" + origin + ")";
 
-            const drivelink::ModelItem *found = nullptr;
-            std::vector<std::string> signals;
-            for (const auto &[id, item] : type.items)
-            {
-                (void)id;
-                if (item.descriptor.name == item_name)
-                    found = &item;
-                if (item.descriptor.kind == drivelink::ItemKind::Signal)
-                    signals.push_back(item.descriptor.name);
-            }
-            if (!found)
-            {
-                std::sort(signals.begin(), signals.end());
-                throw MappingError(where + ": instance " + sq(label) + " (type " +
-                                   sq(type.descriptor.name) + ") has no such item; available signals: " +
-                                   join(signals));
-            }
-            const auto &descriptor = found->descriptor;
-            if (descriptor.kind != drivelink::ItemKind::Signal)
-                throw MappingError(where + ": item is a " + kindName(descriptor.kind) + ", not a signal (type " +
-                                   typeName(descriptor.value_type) + ")");
-            if (!isScalarNumeric(descriptor.value_type))
-                throw MappingError(where + ": signal has value type " + typeName(descriptor.value_type) +
-                                   ", which is not a scalar number");
+            const auto &descriptor =
+                requireItem(type, label, item_name, drivelink::ItemKind::Signal, where).descriptor;
 
             StateBinding binding;
             binding.component = component.name;
@@ -465,9 +732,94 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
             binding.ref = drivelink::Ref{instance.instance.type, instance.instance.instance, descriptor.id};
             binding.type = descriptor.value_type;
             binding.loop = instance.instance.loop;
+            SignalUse use;
+            use.state = resolved.states.size();
+            use.ref = binding.ref;
+            use.type = binding.type;
+            use.loop = binding.loop;
+            use.at = sq(component.name) + " state interface " + sq(interface_name);
+            uses.push_back(std::move(use));
             resolved.states.push_back(std::move(binding));
             loop_rates[instance.instance.loop] = loop_it->rate_hz;
         }
+
+        if (component.command_interfaces.empty())
+            continue;
+
+        // Command interfaces: joints only (checked above).
+        JointCommands joint;
+        joint.name = component.name;
+        const size_t joint_index = resolved.joints.size();
+        for (const auto &interface_name : component.command_interfaces)
+        {
+            const CommandKind kind = *commandKind(interface_name);
+            const auto override_it = params.command.find(interface_name);
+            const bool overridden = override_it != params.command.end();
+            const std::string item_name = overridden ? override_it->second : defaultInputName(kind);
+            const std::string origin = overridden ? "param " + sq("command." + interface_name) + " = " +
+                                                        sq(item_name)
+                                                  : "default item " + sq(item_name);
+            const std::string where = describe(component, interface_name, "command") + " (" + origin + ")";
+
+            const auto &descriptor =
+                requireItem(type, label, item_name, drivelink::ItemKind::Input, where).descriptor;
+
+            CommandBinding binding;
+            binding.component = component.name;
+            binding.interface_name = interface_name;
+            binding.kind = kind;
+            binding.ref = drivelink::Ref{instance.instance.type, instance.instance.instance, descriptor.id};
+            binding.type = descriptor.value_type;
+            binding.loop = instance.instance.loop;
+            binding.joint = joint_index;
+
+            for (const auto &owner : owners)
+            {
+                if (owner.ref == binding.ref)
+                    throw MappingError(where + ": input " + sq(descriptor.name) + " of instance " + sq(label) +
+                                       " is already commanded by joint " + owner.what +
+                                       "; one input has one command interface");
+            }
+            owners.push_back({binding.ref, component.name,
+                              sq(component.name) + " command interface " + sq(interface_name)});
+
+            joint.commands[static_cast<size_t>(kind)] = resolved.commands.size();
+            resolved.commands.push_back(std::move(binding));
+        }
+
+        joint.mode = resolveMode(component, params, type, instance, joint);
+
+        if (joint.commands[static_cast<size_t>(CommandKind::Position)])
+        {
+            const auto override_it = params.state.find("position");
+            const bool overridden = override_it != params.state.end();
+            const std::string item_name = overridden ? override_it->second : "position";
+            const std::string where = describe(component) + " position command hold (" +
+                                      (overridden ? "param 'state.position' = " + sq(item_name)
+                                                  : "default item " + sq(item_name)) +
+                                      ")";
+            const drivelink::ItemDescriptor *descriptor = nullptr;
+            try
+            {
+                descriptor = &requireItem(type, label, item_name, drivelink::ItemKind::Signal, where).descriptor;
+            }
+            catch (const MappingError &e)
+            {
+                throw MappingError(std::string(e.what()) +
+                                   "; the position command needs the measured position for its hold");
+            }
+            SignalUse use;
+            use.joint = joint_index;
+            use.ref = drivelink::Ref{instance.instance.type, instance.instance.instance, descriptor->id};
+            use.type = descriptor->value_type;
+            use.loop = instance.instance.loop;
+            use.at = sq(component.name) + " position hold";
+            joint.position_group = 0; // set below, with the slot
+            joint.position_type = use.type;
+            uses.push_back(std::move(use));
+            loop_rates[instance.instance.loop] = loop_it->rate_hz;
+        }
+        resolved.joints.push_back(std::move(joint));
     }
 
     // One group per loop, ascending loop id (std::map order).
@@ -485,10 +837,56 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
         resolved.groups.push_back(std::move(group));
     }
 
-    for (auto &binding : resolved.states)
+    for (const auto &use : uses)
     {
-        binding.group = group_index.at(binding.loop);
-        LoopGroup &group = resolved.groups[binding.group];
+        const size_t group_number = group_index.at(use.loop);
+        LoopGroup &group = resolved.groups[group_number];
+        size_t slot = 0;
+        const auto it = std::find(group.refs.begin(), group.refs.end(), use.ref);
+        if (it != group.refs.end())
+        {
+            slot = static_cast<size_t>(it - group.refs.begin());
+        }
+        else
+        {
+            if (group.refs.size() >= kMaxGroupRefs)
+                throw MappingError("loop " + std::to_string(group.loop) + " would map more than " +
+                                   std::to_string(kMaxGroupRefs) + " distinct signals (at " + use.at +
+                                   "); a subscription group holds at most " + std::to_string(kMaxGroupRefs));
+            slot = group.refs.size();
+            group.refs.push_back(use.ref);
+            group.types.push_back(use.type);
+        }
+        if (use.state)
+        {
+            resolved.states[*use.state].group = group_number;
+            resolved.states[*use.state].slot = slot;
+        }
+        else
+        {
+            resolved.joints[*use.joint].position_group = group_number;
+            resolved.joints[*use.joint].position_slot = slot;
+        }
+    }
+
+    // Command groups: one per loop that holds a command input, ascending loop id.
+    std::map<uint8_t, size_t> command_group_index;
+    {
+        std::set<uint8_t> command_loops;
+        for (const auto &binding : resolved.commands)
+            command_loops.insert(binding.loop);
+        for (const uint8_t loop : command_loops)
+        {
+            CommandLoopGroup group;
+            group.loop = loop;
+            command_group_index[loop] = resolved.command_groups.size();
+            resolved.command_groups.push_back(std::move(group));
+        }
+    }
+    for (auto &binding : resolved.commands)
+    {
+        binding.group = command_group_index.at(binding.loop);
+        CommandLoopGroup &group = resolved.command_groups[binding.group];
         const auto it = std::find(group.refs.begin(), group.refs.end(), binding.ref);
         if (it != group.refs.end())
         {
@@ -496,14 +894,85 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
             continue;
         }
         if (group.refs.size() >= kMaxGroupRefs)
-            throw MappingError("loop " + std::to_string(group.loop) + " would map more than " +
-                               std::to_string(kMaxGroupRefs) + " distinct signals (at " + sq(binding.component) +
-                               " state interface " + sq(binding.interface_name) +
-                               "); a subscription group holds at most " + std::to_string(kMaxGroupRefs));
+            throw MappingError("loop " + std::to_string(group.loop) + " would command more than " +
+                               std::to_string(kMaxGroupRefs) + " distinct inputs (at " + sq(binding.component) +
+                               " command interface " + sq(binding.interface_name) +
+                               "); a command group holds at most " + std::to_string(kMaxGroupRefs));
         binding.slot = group.refs.size();
         group.refs.push_back(binding.ref);
         group.types.push_back(binding.type);
     }
     return resolved;
+}
+
+SwitchPlan planSwitch(const Resolved &resolved, const Claims &current, const std::vector<std::string> &start,
+                      const std::vector<std::string> &stop)
+{
+    if (current.size() != resolved.joints.size())
+        throw MappingError("command switch: " + std::to_string(current.size()) + " claims given for " +
+                           std::to_string(resolved.joints.size()) + " joints with command interfaces");
+
+    // "<joint>/<interface>" -> (joint index, kind), for the declared command interfaces only.
+    std::map<std::string, std::pair<size_t, CommandKind>> known;
+    for (size_t j = 0; j < resolved.joints.size(); ++j)
+    {
+        for (size_t k = 1; k < kCommandKinds; ++k)
+        {
+            if (resolved.joints[j].commands[k])
+                known[resolved.joints[j].name + "/" + commandName(static_cast<CommandKind>(k))] = {
+                    j, static_cast<CommandKind>(k)};
+        }
+    }
+
+    SwitchPlan plan;
+    plan.after = current;
+    for (const auto &name : stop)
+    {
+        const auto it = known.find(name);
+        if (it == known.end())
+            continue;
+        const auto [joint, kind] = it->second;
+        if (current[joint] == kind)
+            plan.after[joint] = CommandKind::None;
+    }
+
+    std::vector<CommandKind> started(resolved.joints.size(), CommandKind::None);
+    for (const auto &name : start)
+    {
+        const auto it = known.find(name);
+        if (it == known.end())
+            continue;
+        const auto [joint, kind] = it->second;
+        const std::string &joint_name = resolved.joints[joint].name;
+        if (started[joint] != CommandKind::None)
+            throw MappingError("command switch: joint " + sq(joint_name) + " is asked to start " +
+                               sq(joint_name + "/" + commandName(started[joint])) + " and " + sq(name) +
+                               "; a joint has one command interface at a time");
+        if (plan.after[joint] != CommandKind::None)
+            throw MappingError("command switch: cannot start " + sq(name) + ": joint " + sq(joint_name) +
+                               " still claims " + sq(joint_name + "/" + commandName(plan.after[joint])) +
+                               "; stop it in the same switch (one command interface per joint at a time)");
+        started[joint] = kind;
+    }
+
+    bool claimed_before = false;
+    bool claimed_after = false;
+    for (size_t j = 0; j < resolved.joints.size(); ++j)
+    {
+        if (started[j] != CommandKind::None)
+        {
+            plan.after[j] = started[j];
+            plan.claimed.push_back(j);
+        }
+        else if (current[j] != CommandKind::None && plan.after[j] == CommandKind::None)
+        {
+            plan.released.push_back(j);
+        }
+        claimed_before = claimed_before || current[j] != CommandKind::None;
+        claimed_after = claimed_after || plan.after[j] != CommandKind::None;
+    }
+    plan.arm = !claimed_before && claimed_after;
+    plan.disarm = claimed_before && !claimed_after;
+    return plan;
 }
 } // namespace drivelink_hardware

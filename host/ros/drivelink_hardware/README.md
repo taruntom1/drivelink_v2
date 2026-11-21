@@ -8,10 +8,11 @@ Built for ROS 2 Lyrical (Ubuntu 26.04) and Jazzy (Ubuntu 24.04) with the API
 both share. The design is [host-architecture.md](../../../plans/host-architecture.md),
 "`drivelink_hardware` (ROS 2)".
 
-**H4a: state interfaces only.** Joints export `position`, `velocity`, `duty`
-(or any other signal), sensors the IMU's orientation, angular velocity and
-linear acceleration. Command interfaces, ARM and the mode switch arrive in
-H4b; a `<command_interface>` is refused at configure until then.
+Joints export state interfaces (`position`, `velocity`, `duty` or any other
+signal) and the command interfaces `position`, `velocity` and `duty`; sensors
+export the IMU's orientation, angular velocity and linear acceleration. A
+controller claiming a command interface sets the joint's controller mode and
+arms the device; the last release disarms it (H4b).
 
 ## Build
 
@@ -48,6 +49,9 @@ build and test it the same way ([development.md](../../../docs/development.md)).
   </hardware>
   <joint name="left_wheel_joint">
     <param name="instance">left</param>
+    <command_interface name="velocity"/>
+    <command_interface name="position"/>
+    <command_interface name="duty"/>
     <state_interface name="position"/>
     <state_interface name="velocity"/>
   </joint>
@@ -74,7 +78,7 @@ build and test it the same way ([development.md](../../../docs/development.md)).
 | `take_lease` | `refuse` | `refuse`: activation fails, naming the holder, while another client (the GUI tuning) holds the lease. `preempt`: take it anyway; the agent disarms the device and clears the old holder's command groups first |
 | `state_rate_hz` | `100` | 1..10000 Hz: how often the plugin needs fresh state, normally the controller_manager's `update_rate`. Each loop's group runs at its loop rate divided by `max(1, floor(loop rate / state_rate_hz))`, so it is never slower than this and spends no more of the link than needed |
 | `stale_timeout_ms` | `auto` | `read()` returns `ERROR` when a group's newest sample is older than this. `auto`: ten group periods, at least 100 ms; `0` turns the check off |
-| `timeout_ms` | `3000` | Each agent and device request while configuring and activating |
+| `timeout_ms` | `3000` | Each agent and device request while configuring and activating, each stage of a command mode switch, and how long a prepared switch may wait for its perform |
 
 An unknown parameter name is refused, so a typo never falls back to a default.
 
@@ -97,6 +101,70 @@ signal, so another controller type or naming needs no code. `duty` is a custom
 interface (open-loop duty, -1..1), not `effort`. The IMU's interfaces are
 published with `imu_sensor_broadcaster`.
 
+### Command interfaces
+
+Joints only, and only these three; each writes one input of the instance and
+claiming it writes the instance's `mode` param:
+
+| Interface | Input | Mode entry |
+|---|---|---|
+| `position` | `position_sp` (rad) | `position` |
+| `velocity` | `velocity_sp` (rad/s) | `velocity` |
+| `duty` | `duty_sp` (-1..1, open loop) | `open_loop` |
+
+Joint params override the defaults: `command.INTERFACE` (the input item),
+`mode.INTERFACE` (the enum entry), and `mode_param` (the mode param's name,
+default `mode`; `none` writes no mode). A controller type without a `mode`
+param gets no mode writes. A `position` command needs the joint's measured
+position for its hold (`state.position`, else the signal `position`); it is
+subscribed even when the joint exports no `position` state interface. The
+command interfaces' `data_type` must be double, every input must be an `f32`
+input, and no two command interfaces may name the same input.
+
+- **One command interface per joint at a time**; joints may be in different
+  modes. A switch that claims two interfaces of one joint, or claims a joint
+  whose current interface is not released, fails.
+- **Arming.** The first claim arms the device: the mode is written, then ARM,
+  and the switch waits until the status stream shows the device armed
+  (about two status periods, 0.2 s at the default 10 Hz). A refused ARM fails
+  the switch and the log names its result and detail (a latched fault, a
+  module blocking arming, ...). An ARM without an answer is followed by a
+  DISARM and fails the switch. The last release disarms the device. A mode
+  change while armed needs no DISARM: the firmware switches bumplessly and
+  holds the joint until a fresh command arrives.
+- **Holds.** Every armed cycle `write()` sends one frame with every declared
+  input. An unclaimed input, or a claimed one whose command is NaN (the
+  ros2_control default before a controller writes) or infinite, carries the
+  hold: 0 for `velocity` and `duty`, and for `position` the last position
+  sent, which starts at the measured position when the claim begins or ends.
+  A new claim starts unset, so a value a previous controller left in the
+  interface is never sent as a command (if the reset cannot take the
+  interface at once, `write()` retries it and holds meanwhile; a command the
+  new controller wrote before that retry is dropped, which fails safe). A
+  position hold is always taken from
+  a readable measured position (the switch fails without one), and a mode
+  change while armed first drops the frames queued before the new holds, so
+  the controller's first value in its new mode is never an old one.
+- **The watchdog.** The plugin sends no keepalives: only `write()` feeds the
+  device watchdog (`system.watchdog_ms`, 200 ms by default). If the
+  controller_manager's loop stops, the device disarms within that time and
+  `read()` then fails. The update rate must stay well above
+  `1000 / watchdog_ms` Hz.
+- **Link cost.** One frame of 4 + 4·n bytes (n declared command inputs of the
+  loop) plus framing per `write()` while armed; at 100 Hz and six inputs
+  about 4 KB/s of the 92 KB/s link.
+- **Threads.** `prepare_command_mode_switch` does the mode write and ARM. It
+  blocks, each stage bounded by `timeout_ms`: the holds and the queue flush,
+  the mode write, ARM, and the two status waits around it.
+  `perform_command_mode_switch` only applies the claims. A claim prepared on the real-time thread (ros2_control's
+  fallback controllers) is refused, because it would block the loop; so is
+  `is_async` (the real-time thread is the one running `read()`). A stop-only
+  prepare only validates, and perform applies stops from its own list. A
+  prepared claim that is not performed within `timeout_ms` (another component
+  refused the switch, or it timed out), or a second claim prepared before it
+  is, makes `read()` fail, since a joint's mode may then not match its
+  running controller.
+
 ## Lifecycle
 
 - **configure**: reads the token, connects to the agent (its Hello says
@@ -109,7 +177,9 @@ published with `imu_sensor_broadcaster`.
 - **activate**: refuses while another client holds the lease (unless
   `take_lease` is `preempt`; the component stays inactive), takes the lease,
   and sets up one subscription group per loop that holds a mapped signal; it
-  waits for the first sample of each. State-only use never arms. A device
+  waits for the first sample of each. It also configures one command group
+  per loop that holds a command input (disarmed; nothing is sent until a
+  claim). State-only use never arms. A device
   reboot since configure, or any failure after the Take, disconnects and
   returns `ERROR` (the component ends unconfigured): closing the connection is
   the only certain end of a lease. The holder check and the Take are two
@@ -117,7 +187,11 @@ published with `imu_sensor_broadcaster`.
   sees its lease end and fails the activation.
 - **read()** (real time: `noexcept`, no allocation, blocking lock or device call)
   copies the newest sample of each group into the state interfaces. It returns
-  `ERROR` when the lease is lost (another client took it), the agent reports
+  `ERROR` when the device disarms while armed (the watchdog, a fault, a loop
+  stall, or a DISARM from another client; the log names the status stream's
+  disarm reason), the status stream is silent for three status periods (at
+  least 300 ms) while armed, a prepared switch was not performed in time, a mode write
+  while armed got no answer, the lease is lost (another client took it), the agent reports
   the device offline or shuts down, the connection drops, the device reboots,
   agent events were dropped (the lease state is then unknown), or a group's
   newest sample is older than `stale_timeout_ms` (by the sample's device time
@@ -129,8 +203,10 @@ published with `imu_sensor_broadcaster`.
   the cause is fixed; H4c adds the diagnostics node's `recover`. While the
   component is inactive, `read()` returns `OK` and a fault seen then makes the
   next activate fail.
-- **deactivate**: clears the groups and releases the lease; if a clear or the
-  release is not confirmed it disconnects and returns `ERROR`.
+- **deactivate**: disarms if armed, clears the command and subscription groups
+  and releases the lease; if the DISARM, a clear or the release is not
+  confirmed it disconnects (the agent then disarms and clears) and returns
+  `ERROR`.
 
 ## Tests
 
@@ -142,5 +218,14 @@ is set, as `tools/ros_check.sh` does) runs the plugin through
 lease refusal and `preempt`, `ERROR` on a lost lease, a stopped agent, a
 device reboot (vdev on a PTY) and stale data, a reboot between configure and
 activate, deactivate and activate again, cleanup and configure again, and a
-wrong label or token. `host/test/ros_state_check.py` is the robot check (wheels turned by
-hand, the IMU tilted) with a `--mock` mode against vdev.
+wrong label or token. The command path runs with a 100 Hz read/write loop
+thread as controller_manager would: claims arming and moving the mock plant,
+releases disarming, a mode change while armed, duty in `open_loop`, NaN holds,
+refused switches (two interfaces on a joint, a refused or unanswered ARM, a
+claim from the loop thread, an unprepared claim), `ERROR` on a GUI Take, an
+injected fault, a GUI DISARM and a watchdog trip, an abandoned prepare, no jump
+after a velocity → position switch, and deactivating while claimed.
+`host/test/ros_state_check.py` is the robot's state check (wheels turned by
+hand, the IMU tilted) and `host/test/ros_command_check.py` its command check
+(wheels off the ground, `forward_command_controller` per wheel and mode); both
+have a `--mock` mode against vdev.

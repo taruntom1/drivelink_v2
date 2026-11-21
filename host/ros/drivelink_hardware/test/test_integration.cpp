@@ -10,6 +10,7 @@
 #include <drivelink/session.hpp>
 
 #include <gtest/gtest.h>
+#include <hardware_interface/loaned_command_interface.hpp>
 #include <hardware_interface/loaned_state_interface.hpp>
 #include <hardware_interface/resource_manager.hpp>
 #include <hardware_interface/types/hardware_interface_return_values.hpp>
@@ -21,22 +22,29 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <span>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -88,6 +96,8 @@ class Rm
     }
     ~Rm()
     {
+        stopLoop();
+        m_commands.clear();
         m_loans.clear();
         try
         {
@@ -149,11 +159,168 @@ class Rm
         return it == m_loans.end() ? std::nullopt : it->second.get_optional();
     }
 
+    // --- H4b: controller_manager's real-time loop and its mode switches ---
+
+    // A thread calling read() then write() at `rate_hz` (100 by default), as
+    // controller_manager's update loop does. Returns when a few cycles have run.
+    void startLoop(unsigned rate_hz = 100)
+    {
+        if (m_loop.joinable()) { return; }
+        m_stop = false;
+        m_period = std::chrono::microseconds(1000000 / rate_hz);
+        m_loop = std::thread([this] { loopMain(); });
+        waitCycles(3, 5s);
+    }
+    void stopLoop()
+    {
+        m_stop = true;
+        if (m_loop.joinable()) { m_loop.join(); }
+    }
+    // Waits (bounded) for `n` more loop cycles; false when they did not run.
+    bool waitCycles(unsigned n, std::chrono::milliseconds limit = 10s)
+    {
+        const unsigned target = m_cycles + n;
+        const auto deadline = Clock::now() + limit;
+        while (m_cycles < target)
+        {
+            if (Clock::now() >= deadline) { return false; }
+            std::this_thread::sleep_for(2ms);
+        }
+        return true;
+    }
+    // While paused the loop still calls read() but no longer calls write().
+    void pauseWrite(bool paused) { m_write_paused = paused; }
+    // True once any read() or write() of the loop failed (ERROR for the component).
+    bool failed() const { return m_failed; }
+    // Waits (bounded) for failed(); returns whether it happened.
+    bool waitFailed(std::chrono::milliseconds limit)
+    {
+        const auto deadline = Clock::now() + limit;
+        while (!m_failed)
+        {
+            if (Clock::now() >= deadline) { return false; }
+            std::this_thread::sleep_for(5ms);
+        }
+        return true;
+    }
+    std::string failure()
+    {
+        std::lock_guard lock(m_mutex);
+        return m_failure;
+    }
+    // Runs `task` on the loop thread (before its next read()) and waits for it;
+    // false when it did not run in time (the task may still run later, so it
+    // must not hold references a failing test would invalidate).
+    bool onLoop(std::function<void()> task, std::chrono::milliseconds limit = 5s)
+    {
+        auto done = std::make_shared<std::promise<void>>();
+        auto result = done->get_future();
+        {
+            std::lock_guard lock(m_mutex);
+            m_tasks.push_back([task = std::move(task), done] {
+                try
+                {
+                    task();
+                    done->set_value();
+                }
+                catch (...)
+                {
+                    done->set_exception(std::current_exception());
+                }
+            });
+        }
+        if (result.wait_for(limit) != std::future_status::ready) { return false; }
+        result.get();
+        return true;
+    }
+
+    // controller_manager's non-real-time half of a switch: the RM's prepare.
+    bool prepare(const std::vector<std::string> &start, const std::vector<std::string> &stop)
+    {
+        return m_rm->prepare_command_mode_switch(start, stop);
+    }
+    bool perform(const std::vector<std::string> &start, const std::vector<std::string> &stop)
+    {
+        return m_rm->perform_command_mode_switch(start, stop);
+    }
+    // A whole switch as controller_manager does it, from the calling thread:
+    // prepare, perform, then the controller gives up the stopped interfaces
+    // and claims the started ones (their values start unset, NaN).
+    bool switchTo(const std::vector<std::string> &start, const std::vector<std::string> &stop)
+    {
+        if (!prepare(start, stop) || !perform(start, stop)) { return false; }
+        for (const auto &key : stop) { m_commands.erase(key); }
+        for (const auto &key : start) { m_commands.emplace(key, m_rm->claim_command_interface(key)); }
+        return true;
+    }
+    // Drops the loans, then prepares and performs the stop.
+    bool release(const std::vector<std::string> &stop)
+    {
+        for (const auto &key : stop) { m_commands.erase(key); }
+        return prepare({}, stop) && perform({}, stop);
+    }
+    // Sets a claimed command interface; false when it is not claimed or refused.
+    bool command(const std::string &key, double value)
+    {
+        const auto it = m_commands.find(key);
+        return it != m_commands.end() && setLoaned(it->second, value);
+    }
+
   private:
+    // set_value returns bool ([[nodiscard]]) in newer ros2_control and void in older.
+    template <class Loan> static bool setLoaned(Loan &loan, double value)
+    {
+        if constexpr (std::is_void_v<decltype(loan.set_value(value))>)
+        {
+            loan.set_value(value);
+            return true;
+        }
+        else
+        {
+            return loan.set_value(value);
+        }
+    }
+
+    void loopMain()
+    {
+        auto next = Clock::now();
+        while (!m_stop)
+        {
+            std::deque<std::function<void()>> tasks;
+            {
+                std::lock_guard lock(m_mutex);
+                tasks.swap(m_tasks);
+            }
+            for (auto &task : tasks) { task(); }
+            const auto time = m_clock->now();
+            const auto period = rclcpp::Duration::from_seconds(std::chrono::duration<double>(m_period).count());
+            if (readFailed(m_rm->read(time, period))) { noteFailure("read()"); }
+            if (!m_write_paused && readFailed(m_rm->write(time, period))) { noteFailure("write()"); }
+            ++m_cycles;
+            next += m_period;
+            if (Clock::now() > next + 100ms) { next = Clock::now(); } // a stall: do not burst to catch up
+            std::this_thread::sleep_until(next);
+        }
+    }
+    void noteFailure(const char *where)
+    {
+        std::lock_guard lock(m_mutex);
+        if (!m_failed) { m_failure = std::string(where) + " returned ERROR in loop cycle " + std::to_string(m_cycles.load()); }
+        m_failed = true;
+    }
+
     std::string m_name;
     rclcpp::Clock::SharedPtr m_clock;
     std::unique_ptr<hardware_interface::ResourceManager> m_rm;
     std::map<std::string, hardware_interface::LoanedStateInterface> m_loans;
+    std::map<std::string, hardware_interface::LoanedCommandInterface> m_commands;
+    std::thread m_loop;
+    std::atomic<bool> m_stop{false}, m_write_paused{false}, m_failed{false};
+    std::atomic<unsigned> m_cycles{0};
+    std::chrono::microseconds m_period{10000};
+    std::mutex m_mutex;
+    std::deque<std::function<void()>> m_tasks;
+    std::string m_failure;
 };
 
 // The example device through the GUI client: type, item and loop ids by name.
@@ -253,6 +420,33 @@ class Integration : public ::testing::Test
     {
         rm = std::make_unique<Rm>(h->urdf(kComponent, extra));
         return *rm;
+    }
+
+    // H4b: both wheels declare position, velocity and duty commands.
+    static std::vector<Harness::JointSpec> commandJoints()
+    {
+        const std::vector<std::string> commands{"position", "velocity", "duty"};
+        return {Harness::JointSpec{"left_wheel", "left", {"position", "velocity"}, commands, {}},
+                Harness::JointSpec{"right_wheel", "right", {"position", "velocity"}, commands, {}}};
+    }
+
+    Rm &makeCommandRm(const std::string &extra = {})
+    {
+        rm = std::make_unique<Rm>(h->urdf(kComponent, extra, commandJoints()));
+        return *rm;
+    }
+
+    // The H4b setup: the component with command interfaces, configured and
+    // activated, its state interfaces loaned, controller_manager's loop running.
+    // The device stays disarmed until a claim.
+    void upCommanded(const std::string &extra = {}, unsigned loop_hz = 100)
+    {
+        Rm &r = makeCommandRm(extra);
+        ASSERT_NO_FATAL_FAILURE(bringUp(r));
+        r.claimAll();
+        r.startLoop(loop_hz);
+        ASSERT_TRUE(r.waitCycles(5)) << "the loop did not run";
+        ASSERT_FALSE(r.failed()) << r.failure();
     }
 
     // Configure and activate; fails the test with the state when it does not work.
@@ -625,6 +819,528 @@ TEST_F(Integration, ConfigureRefusesAWrongToken)
     Rm r(urdf);
     ASSERT_TRUE(r.exists());
     EXPECT_NE(r.configure(), return_type::OK);
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+}
+
+// ---------------------------------------------------------------------------
+// H4b: the command path. The plant is actuator.mock (gain 10, tau 0.1 s,
+// deadband 0.02) behind a cascade controller whose velocity and position gains
+// the harness sets, so a velocity or position setpoint makes it track. The
+// measured velocity ripples (the mock encoder is quantised), so velocities are
+// judged by their mean over a window.
+
+constexpr const char *kLeftVel = "left_wheel/velocity", *kLeftPos = "left_wheel/position",
+                     *kLeftDuty = "left_wheel/duty", *kRightVel = "right_wheel/velocity",
+                     *kRightPos = "right_wheel/position";
+
+template <class F> bool waitFor(F predicate, std::chrono::milliseconds limit, std::chrono::milliseconds step = 10ms)
+{
+    const auto deadline = Clock::now() + limit;
+    for (;;)
+    {
+        if (predicate()) { return true; }
+        if (Clock::now() >= deadline) { return false; }
+        std::this_thread::sleep_for(step);
+    }
+}
+
+double state(Rm &r, const std::string &key) { return r.value(key).value_or(NAN); }
+
+// The mean of a state interface over a window of 10 ms samples.
+double meanOver(Rm &r, const std::string &key, std::chrono::milliseconds window)
+{
+    std::vector<double> samples;
+    const auto end = Clock::now() + window;
+    while (Clock::now() < end)
+    {
+        const auto v = r.value(key);
+        if (v) { samples.push_back(*v); }
+        std::this_thread::sleep_for(10ms);
+    }
+    return samples.empty() ? NAN : std::accumulate(samples.begin(), samples.end(), 0.0) / double(samples.size());
+}
+
+// The mock arm blocker's action arguments, placed by the descriptor's names.
+std::array<uint32_t, 4> blockerArgs(drivelink::Session &gui, bool disarms, bool active)
+{
+    drivelink::Client client(gui);
+    uint8_t type = 0;
+    for (const auto &i : client.instances())
+    {
+        if (i.label == "left_act") { type = i.type; }
+    }
+    for (const auto &item : client.items(type))
+    {
+        if (item.name != "diagnostic") { continue; }
+        std::array<uint32_t, 4> args{};
+        for (size_t n = 0; n < item.args.size() && n < args.size(); ++n)
+        {
+            if (item.args[n].value_type != drivelink::ValueType::Bool) { throw std::runtime_error("diagnostic arg is not a bool"); }
+            if (item.args[n].name == "disarms") { args[n] = disarms ? 1u : 0u; }
+            else if (item.args[n].name == "active") { args[n] = active ? 1u : 0u; }
+            else { throw std::runtime_error("unexpected diagnostic arg " + item.args[n].name); }
+        }
+        return args;
+    }
+    throw std::runtime_error("left_act has no diagnostic action");
+}
+
+// The harness's own GUI-client helpers, with no plugin: the status stream, the
+// params and actions by label and name, the fault and the disarm.
+TEST_F(Integration, HarnessGuiHelpers)
+{
+    auto &gui = h->gui();
+    const auto first = h->armStatus();
+    EXPECT_EQ(first.arm_state, 0) << "the device starts disarmed";
+    EXPECT_LE(first.last_disarm_reason, 5);
+    std::cout << "[  stats   ] first status: arm_state " << int(first.arm_state) << ", last_disarm_reason "
+              << int(first.last_disarm_reason) << ", flags " << int(first.flags) << std::endl;
+    EXPECT_NO_THROW(h->waitArm(false, 2s));
+
+    EXPECT_EQ(h->enumParam("left", "mode"), "velocity");
+    EXPECT_EQ(h->enumParam("right", "mode"), "velocity");
+    EXPECT_EQ(h->param("left", "mode"), 1.0);
+    EXPECT_NEAR(h->param("left", "vel.kp"), 0.3, 1e-6);
+    EXPECT_NEAR(h->param("right", "vel.ki"), 2.0, 1e-6);
+    EXPECT_NEAR(h->param("right", "pos.kp"), 4.0, 1e-6);
+    EXPECT_THROW(h->param("left", "no_such_item"), HarnessError);
+    EXPECT_THROW(h->param("no_such_label", "mode"), HarnessError);
+
+    // The raised blocker refuses an ARM and the cleared one lets it through; DISARM and the
+    // status stream follow. (A command group is needed to ARM at all.)
+    Device dev(gui);
+    uint16_t velocity_sp = 0xFFFF;
+    for (const auto &i : dev.client.items(dev.controller))
+    {
+        if (i.name == "velocity_sp") { velocity_sp = i.id; }
+    }
+    ASSERT_NE(velocity_sp, 0xFFFF);
+    drivelink::agentLeaseTake(gui);
+    dev.client.cmdConfigure(0, dev.rt_loop, std::vector<drivelink::Ref>{{dev.controller, dev.left, velocity_sp}});
+
+    h->action("left_act", "diagnostic", blockerArgs(gui, false, true));
+    EXPECT_ANY_THROW(dev.client.arm()) << "ARM was accepted with a blocker raised";
+    EXPECT_EQ(h->armStatus().arm_state, 0);
+    h->action("left_act", "diagnostic", blockerArgs(gui, false, false));
+    ASSERT_NO_THROW(dev.client.arm());
+    const auto armed = h->waitArm(true);
+    EXPECT_EQ(armed.arm_state, 1);
+    h->disarm();
+    const auto disarmed = h->waitArm(false);
+    EXPECT_NE(disarmed.arm_state, 1);
+    const auto after = h->armStatus();
+    EXPECT_EQ(after.arm_state, 0);
+    EXPECT_EQ(after.last_disarm_reason, 1) << "an explicit DISARM is reason Explicit (1)";
+
+    // A disarming fault: latched, then cleared and acknowledged.
+    h->vdevScenario(1, "fault");
+    EXPECT_TRUE(waitFor([&] { return (h->armStatus().flags & 1) != 0; }, 3s)) << "no fault_latched flag after a fault";
+    h->vdevScenario(2, "fault-clear");
+    EXPECT_TRUE(waitFor(
+        [&] {
+            h->acknowledgeFault();
+            return (h->armStatus().flags & 1) == 0;
+        },
+        5s, 200ms))
+        << "the fault stayed latched after fault-clear and ACK_FAULT";
+}
+
+// The loop helper of Rm, with a state-only component (no command path needed).
+TEST_F(Integration, ControllerManagerLoopHelper)
+{
+    Rm &r = makeRm("<param name=\"stale_timeout_ms\">0</param>");
+    ASSERT_NO_FATAL_FAILURE(bringUp(r));
+    r.claimAll();
+    r.startLoop();
+    ASSERT_TRUE(r.waitCycles(10));
+    EXPECT_FALSE(r.failed());
+    // A task runs on the loop thread, not on this one.
+    const auto main_id = std::this_thread::get_id();
+    auto loop_id = std::make_shared<std::atomic<bool>>(false);
+    ASSERT_TRUE(r.onLoop([loop_id, main_id] { loop_id->store(std::this_thread::get_id() != main_id); }));
+    EXPECT_TRUE(loop_id->load());
+    EXPECT_THROW(r.onLoop([] { throw std::runtime_error("from the task"); }), std::runtime_error);
+    // write() pauses and resumes; read() goes on (the state stays finite and the loop cycles).
+    r.pauseWrite(true);
+    EXPECT_TRUE(r.waitCycles(20));
+    r.pauseWrite(false);
+    EXPECT_TRUE(std::isfinite(state(r, "left_wheel/position")));
+    // A stops-only switch of nothing, and an unknown start, as controller_manager would try them.
+    EXPECT_TRUE(r.prepare({}, {}));
+    EXPECT_FALSE(r.prepare({kLeftVel}, {})) << "an interface the component does not export was accepted";
+    // A read() ERROR from the loop is recorded.
+    drivelink::agentLeaseTake(h->gui());
+    EXPECT_TRUE(r.waitFailed(5s));
+    EXPECT_FALSE(r.failure().empty());
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+}
+
+TEST_F(Integration, ClaimArmsAndVelocityMovesThePlant)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel, kRightVel}, {})) << "the claim was refused; state " << r.stateLabel();
+    EXPECT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_EQ(h->enumParam("left", "mode"), "velocity");
+    EXPECT_EQ(h->enumParam("right", "mode"), "velocity");
+
+    const double p0 = state(r, "left_wheel/position");
+    ASSERT_TRUE(r.command(kLeftVel, 3.0));
+    ASSERT_TRUE(r.command(kRightVel, 3.0));
+    ASSERT_TRUE(waitFor([&] { return state(r, "left_wheel/position") > p0 + 1.0; }, 4s))
+        << "the left wheel's position did not increase: " << state(r, "left_wheel/position") << " from " << p0;
+    EXPECT_NEAR(meanOver(r, "left_wheel/velocity", 500ms), 3.0, 0.45) << "left velocity";
+    EXPECT_NEAR(meanOver(r, "right_wheel/velocity", 500ms), 3.0, 0.45) << "right velocity";
+    EXPECT_FALSE(r.failed()) << r.failure();
+
+    ASSERT_TRUE(r.release({kLeftVel, kRightVel}));
+    EXPECT_NO_THROW(h->waitArm(false));
+    EXPECT_TRUE(r.waitCycles(30));
+    EXPECT_FALSE(r.failed()) << "releasing the claims failed the component: " << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+TEST_F(Integration, ModeChangeWhileArmed)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel, kRightVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kRightVel, 2.0));
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    ASSERT_TRUE(waitFor([&] { return state(r, "right_wheel/velocity") > 1.0; }, 3s));
+
+    // Left velocity -> position in one switch, right keeps running.
+    ASSERT_TRUE(r.switchTo({kLeftPos}, {kLeftVel})) << "the mode switch was refused";
+    EXPECT_TRUE(h->waitArm(true).arm_state == 1) << "the switch disarmed the device";
+    EXPECT_EQ(h->enumParam("left", "mode"), "position");
+    EXPECT_EQ(h->enumParam("right", "mode"), "velocity");
+    EXPECT_FALSE(r.failed()) << r.failure();
+
+    const double target = state(r, "left_wheel/position") + 1.0;
+    ASSERT_TRUE(r.command(kLeftPos, target));
+    EXPECT_TRUE(waitFor([&] { return std::abs(state(r, "left_wheel/position") - target) < 0.1; }, 4s))
+        << "left position " << state(r, "left_wheel/position") << " did not reach " << target;
+    EXPECT_NEAR(meanOver(r, "right_wheel/velocity", 500ms), 2.0, 0.3) << "the right wheel's velocity was disturbed";
+    EXPECT_EQ(h->enumParam("right", "mode"), "velocity");
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, DutyClaimSetsOpenLoop)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftDuty}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_EQ(h->enumParam("left", "mode"), "open_loop");
+    ASSERT_TRUE(r.command(kLeftDuty, 0.3));
+    ASSERT_TRUE(waitFor([&] { return state(r, "left_wheel/velocity") > 1.0; }, 3s)) << "the wheel did not turn";
+    const double mean = meanOver(r, "left_wheel/velocity", 500ms);
+    // gain 10 x duty 0.3 = 3 rad/s, less the deadband's share.
+    EXPECT_GT(mean, 2.4);
+    EXPECT_LT(mean, 3.2);
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, NaNIsSentAsHold)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    const double right_position = state(r, "right_wheel/position");
+    ASSERT_TRUE(r.switchTo({kLeftVel, kRightPos}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    // Neither command is ever set: more than the device watchdog (200 ms) passes on holds.
+    ASSERT_TRUE(r.waitCycles(100)) << "the loop stopped";
+    EXPECT_FALSE(r.failed()) << "the component failed with unset commands: " << r.failure();
+    EXPECT_EQ(h->waitArm(true).arm_state, 1) << "the device disarmed";
+    EXPECT_NEAR(meanOver(r, "left_wheel/velocity", 300ms), 0.0, 0.2);
+    EXPECT_NEAR(state(r, "right_wheel/position"), right_position, 0.05);
+}
+
+TEST_F(Integration, TwoInterfacesOnOneJointRefused)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    EXPECT_FALSE(r.prepare({kLeftPos, kLeftVel}, {})) << "two interfaces of one joint were accepted";
+    const auto status = h->waitArm(false);
+    EXPECT_NE(status.arm_state, 1) << "the refused switch armed the device";
+    EXPECT_TRUE(r.waitCycles(20));
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+TEST_F(Integration, GuiTakeFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    drivelink::agentLeaseTake(h->gui());
+    const auto start = Clock::now();
+    ASSERT_TRUE(r.waitFailed(5s)) << "no ERROR after the GUI took the lease";
+    EXPECT_LT(since(start).count(), 2000);
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    EXPECT_NE(h->waitArm(false).arm_state, 1) << "the device is still armed";
+}
+
+TEST_F(Integration, DisarmingFaultFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    h->vdevScenario(1, "fault");
+    const auto start = Clock::now();
+    ASSERT_TRUE(r.waitFailed(5s)) << "no ERROR after a disarming fault";
+    EXPECT_LT(since(start).count(), 3000);
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    EXPECT_NE(h->waitArm(false).arm_state, 1);
+    // Cleanup: the fault goes away and is acknowledged.
+    h->vdevScenario(2, "fault-clear");
+    EXPECT_TRUE(waitFor(
+        [&] {
+            h->acknowledgeFault();
+            return (h->armStatus().flags & 1) == 0;
+        },
+        5s, 200ms))
+        << "the fault stayed latched";
+}
+
+TEST_F(Integration, WatchdogTripFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    // write() stops (read() continues): there are no keepalives, so the 200 ms device watchdog disarms.
+    r.pauseWrite(true);
+    const auto start = Clock::now();
+    const bool failed = r.waitFailed(3s);
+    const auto took = since(start);
+    r.pauseWrite(false);
+    ASSERT_TRUE(failed) << "no ERROR within 3 s of write() stopping";
+    EXPECT_GE(took.count(), 100) << "the failure came before the watchdog could have tripped";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    ASSERT_NO_THROW(h->waitArm(false));
+    EXPECT_EQ(h->armStatus().arm_state, 0);
+    const auto reasons = h->disarmReasons();
+    ASSERT_FALSE(reasons.empty()) << "the GUI client saw no armed -> disarmed transition";
+    EXPECT_EQ(reasons.front(), 2) << "the device was not disarmed by its watchdog";
+}
+
+TEST_F(Integration, RefusedArmFailsTheSwitch)
+{
+    // Before activation nobody holds the lease and the device is disarmed: raise an arm blocker.
+    h->action("left_act", "diagnostic", blockerArgs(h->gui(), false, true));
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    EXPECT_FALSE(r.prepare({kLeftVel}, {})) << "the switch was accepted although the device refuses to arm";
+    EXPECT_NE(h->waitArm(false).arm_state, 1);
+    EXPECT_TRUE(r.waitCycles(20));
+    EXPECT_FALSE(r.failed()) << "a refused switch failed the component: " << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+    ASSERT_EQ(r.deactivate(), return_type::OK) << r.stateLabel();
+    h->action("left_act", "diagnostic", blockerArgs(h->gui(), false, false));
+}
+
+TEST_F(Integration, LostArmReplyDisarms)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded("<param name=\"timeout_ms\">1000</param>"));
+    Rm &r = *rm;
+    h->vdevScenario(1, "drop-arm-reply 1");
+    const auto start = Clock::now();
+    EXPECT_FALSE(r.prepare({kLeftVel}, {})) << "the switch was accepted without an ARM reply";
+    const auto took = since(start);
+    EXPECT_GE(took.count(), 800) << "the refusal did not wait for the timeout";
+    EXPECT_LT(took.count(), 4000) << "the refusal took " << took.count() << " ms";
+    // The ARM did reach the device, so the plugin must have disarmed it again.
+    EXPECT_NE(h->waitArm(false, 3s).arm_state, 1);
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the next claim was refused";
+    EXPECT_EQ(h->waitArm(true).arm_state, 1);
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, DeactivateWhileClaimedDisarmsAndReleases)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel, kRightVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    ASSERT_EQ(r.deactivate(), return_type::OK) << r.stateLabel();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_INACTIVE);
+    EXPECT_NE(h->waitArm(false).arm_state, 1) << "the device is still armed after deactivate";
+    const auto list = clients();
+    for (const auto &c : list)
+    {
+        EXPECT_FALSE(c.holder) << "somebody holds the lease after deactivate:" << describe(list);
+    }
+}
+
+TEST_F(Integration, AbandonedSwitchFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded("<param name=\"timeout_ms\">500</param>"));
+    Rm &r = *rm;
+    ASSERT_TRUE(r.prepare({kLeftVel}, {})) << "the switch was refused; state " << r.stateLabel();
+    // controller_manager never performs it.
+    const auto start = Clock::now();
+    ASSERT_TRUE(r.waitFailed(2s)) << "no ERROR within 2 s of an unperformed switch";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED)
+        << r.stateLabel() << " after " << since(start).count() << " ms";
+    EXPECT_NE(h->waitArm(false).arm_state, 1);
+}
+
+TEST_F(Integration, ClaimFromTheRtThreadIsRefused)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    auto accepted = std::make_shared<std::atomic<bool>>(true);
+    ASSERT_TRUE(r.onLoop([&r, accepted] { accepted->store(r.prepare({kLeftVel}, {})); })) << "the task did not run";
+    EXPECT_FALSE(accepted->load()) << "a claim from the real-time thread was accepted";
+    EXPECT_NE(h->waitArm(false).arm_state, 1);
+    EXPECT_TRUE(r.waitCycles(20));
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+// ---------------------------------------------------------------------------
+// H4b review tests: no jump on a mode switch, no stale command on a re-claim,
+// the hold of an unclaimed joint, and the ways the component must fail.
+
+// Runs the wheel for `duration` at `rad_s` on `key`, bounded by the loop running.
+void driveFor(Rm &r, const char *key, double rad_s, std::chrono::milliseconds duration)
+{
+    ASSERT_TRUE(r.command(key, rad_s));
+    std::this_thread::sleep_for(duration);
+}
+
+TEST_F(Integration, NoJumpAfterVelocityToPositionSwitch)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded({}, 500));
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    const double armed_at = state(r, "left_wheel/position");
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kLeftVel, 3.0, 1500ms));
+    ASSERT_GT(state(r, "left_wheel/position"), armed_at + 2.0) << "the wheel did not move away from its ARM-time position";
+    ASSERT_FALSE(r.failed()) << r.failure();
+
+    // Velocity -> position with no position command (NaN): hold where the wheel is. The wheel
+    // is turning at 3 rad/s, so it brakes forward by about v / pos.kp = 0.75 rad (measured in
+    // the CLI trace: 0.81 rad) and settles there; a jump to the ARM-time position, or a
+    // command left over from the velocity mode, would show as a move back or a larger lurch.
+    ASSERT_TRUE(r.switchTo({kLeftPos}, {kLeftVel})) << "the mode switch was refused";
+    const double at_switch = state(r, "left_wheel/position");
+    double highest = at_switch, lowest = at_switch;
+    std::vector<double> tail;
+    const auto start = Clock::now();
+    while (since(start) < 1s)
+    {
+        const double p = state(r, "left_wheel/position");
+        highest = std::max(highest, p);
+        lowest = std::min(lowest, p);
+        if (since(start) > 700ms) { tail.push_back(p); }
+        std::this_thread::sleep_for(5ms);
+    }
+    EXPECT_GT(lowest, at_switch - 0.3) << "the wheel headed back towards the ARM-time position (" << armed_at
+                                       << "): lowest " << lowest << ", at the switch " << at_switch;
+    EXPECT_LT(highest, at_switch + 1.0) << "the wheel lurched " << highest - at_switch << " rad past the switch position";
+    ASSERT_FALSE(tail.empty());
+    EXPECT_LT(*std::max_element(tail.begin(), tail.end()) - *std::min_element(tail.begin(), tail.end()), 0.1)
+        << "the position had not settled after 0.7 s";
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(h->enumParam("left", "mode"), "position");
+}
+
+TEST_F(Integration, ReclaimDoesNotResendTheOldCommand)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kLeftVel, 3.0, 1000ms));
+    ASSERT_TRUE(r.release({kLeftVel}));
+    ASSERT_NO_THROW(h->waitArm(false));
+
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the second claim was refused";
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_LT(std::abs(meanOver(r, "left_wheel/velocity", 500ms)), 0.2) << "the old 3 rad/s command was sent again";
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, UnclaimedPositionModeJointHoldsAtArm)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kRightVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_NO_FATAL_FAILURE(driveFor(r, kRightVel, 3.0, 1000ms));
+    ASSERT_TRUE(r.release({kRightVel}));
+    ASSERT_NO_THROW(h->waitArm(false));
+    ASSERT_TRUE(waitFor([&] { return std::abs(meanOver(r, "right_wheel/velocity", 100ms)) < 0.1; }, 3s))
+        << "the right wheel did not stop";
+
+    // The right controller is left in position mode, and is never claimed.
+    h->setEnumParam("right", "mode", "position");
+    ASSERT_EQ(h->enumParam("right", "mode"), "position");
+    const double recorded = state(r, "right_wheel/position");
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the claim was refused";
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    double worst = 0;
+    const auto end = Clock::now() + 1s;
+    while (Clock::now() < end)
+    {
+        worst = std::max(worst, std::abs(state(r, "right_wheel/position") - recorded));
+        std::this_thread::sleep_for(5ms);
+    }
+    EXPECT_LT(worst, 0.1) << "the unclaimed right wheel moved " << worst << " rad from " << recorded;
+    EXPECT_FALSE(r.failed()) << r.failure();
+}
+
+TEST_F(Integration, GuiDisarmFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    ASSERT_TRUE(r.command(kLeftVel, 1.0));
+    h->disarm(); // the GUI client's DISARM; the lease does not change
+    ASSERT_TRUE(r.waitFailed(5s)) << "no ERROR after another client's DISARM";
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
+    ASSERT_NO_THROW(h->waitArm(false));
+    const auto reasons = h->disarmReasons();
+    ASSERT_FALSE(reasons.empty());
+    EXPECT_EQ(reasons.front(), 1) << "an explicit DISARM is reason Explicit (1)";
+}
+
+TEST_F(Integration, ReclaimRightAfterLastRelease)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    // The release owes a DISARM; the claim follows at once, without a wait.
+    ASSERT_TRUE(r.release({kLeftVel}));
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {})) << "the immediate re-claim was refused";
+    ASSERT_TRUE(r.waitCycles(100)) << "the loop stopped";
+    EXPECT_FALSE(r.failed()) << "the component failed: " << r.failure();
+    EXPECT_EQ(h->waitArm(true).arm_state, 1) << "the device is not armed after the re-claim";
+    EXPECT_FALSE(r.failed()) << r.failure();
+    EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_ACTIVE) << r.stateLabel();
+}
+
+TEST_F(Integration, UnpreparedClaimFailsTheComponent)
+{
+    ASSERT_NO_FATAL_FAILURE(upCommanded());
+    Rm &r = *rm;
+    ASSERT_TRUE(r.switchTo({kLeftVel}, {}));
+    ASSERT_TRUE(h->waitArm(true).arm_state == 1);
+    EXPECT_FALSE(r.perform({kRightVel}, {})) << "a perform that claims what nobody prepared was accepted";
+    EXPECT_TRUE(r.waitFailed(3s)) << "the component did not fail after the unprepared claim";
     EXPECT_EQ(r.state(), LifecycleState::PRIMARY_STATE_UNCONFIGURED) << r.stateLabel();
 }
 } // namespace
