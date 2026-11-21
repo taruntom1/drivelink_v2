@@ -289,8 +289,8 @@ ParamSet checkParams(const ComponentSpec &component)
     return set;
 }
 
-// The scalar numeric item `item_name` of `want` kind (Signal or Input) of the
-// instance's type, or a MappingError that says what was found.
+// The item `item_name` of `want` kind of the instance's type (a scalar numeric
+// Signal, or an F32 Input), or a MappingError that says what was found.
 const drivelink::ModelItem &requireItem(const drivelink::ModelType &type, const std::string &label,
                                         const std::string &item_name, drivelink::ItemKind want,
                                         const std::string &where)
@@ -315,6 +315,9 @@ const drivelink::ModelItem &requireItem(const drivelink::ModelType &type, const 
     if (descriptor.kind != want)
         throw MappingError(where + ": item is " + withArticle(descriptor.kind) + ", not " + withArticle(want) +
                            " (type " + typeName(descriptor.value_type) + ")");
+    if (want == drivelink::ItemKind::Input && descriptor.value_type != drivelink::ValueType::F32)
+        throw MappingError(where + ": input has value type " + typeName(descriptor.value_type) +
+                           "; command inputs must be f32 (write() sends doubles as f32)");
     if (!isScalarNumeric(descriptor.value_type))
         throw MappingError(where + ": " + kindName(want) + " has value type " + typeName(descriptor.value_type) +
                            ", which is not a scalar number");
@@ -772,10 +775,10 @@ Resolved resolve(const drivelink::DeviceSnapshot &snapshot, const std::vector<Co
 
             for (const auto &owner : owners)
             {
-                if (owner.ref == binding.ref && owner.component != component.name)
+                if (owner.ref == binding.ref)
                     throw MappingError(where + ": input " + sq(descriptor.name) + " of instance " + sq(label) +
                                        " is already commanded by joint " + owner.what +
-                                       "; one input has one owner");
+                                       "; one input has one command interface");
             }
             owners.push_back({binding.ref, component.name,
                               sq(component.name) + " command interface " + sq(interface_name)});

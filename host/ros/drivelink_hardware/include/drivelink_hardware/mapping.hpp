@@ -212,8 +212,9 @@ void checkDevice(const drivelink::DeviceSnapshot &snapshot);
 //   - Default input item: position -> position_sp, velocity -> velocity_sp,
 //     duty -> duty_sp. A param `command.<interface>` overrides it (refused
 //     for an interface the joint does not declare as a command interface).
-//     The item must exist, be ItemKind::Input and have a scalar numeric value
-//     type (as for signals); otherwise refused with what was found.
+//     The item must exist, be ItemKind::Input and have value type F32 (write()
+//     sends doubles as f32; an integer input would refuse a whole frame for a
+//     fractional value); otherwise refused with what was found.
 //   - Mode. A param `mode_param` names the mode param item (default "mode");
 //     the value "none" turns mode writes off for the joint. A param
 //     `mode.<interface>` (only for a declared command interface) names the
@@ -238,9 +239,9 @@ void checkDevice(const drivelink::DeviceSnapshot &snapshot);
 //     interface. Missing or wrong: refused ("the position command needs the
 //     measured position for its hold").
 //   - Command groups: one per loop that holds a command input, ascending loop
-//     id; at most 64 refs each (more is refused). Two command interfaces of
-//     different joints that name the same input ref are refused (one input,
-//     one owner).
+//     id; at most 64 refs each (more is refused). Any two command
+//     interfaces (of one joint or of different joints) that name the same
+//     input ref are refused (one input, one interface).
 //
 // Known joint params: `instance`, `state.<interface>`, `command.<interface>`,
 // `mode_param`, `mode.<interface>`; sensors: `instance`, `state.<interface>`.

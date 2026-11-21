@@ -1415,36 +1415,33 @@ TEST(ResolveCommands, CommandItemMustBeAnInput)
                   {"'nope'", "available inputs: alt_sp, blob_sp, duty_sp, position_sp, velocity_sp"});
 }
 
-TEST(ResolveCommands, CommandInputMustBeNumeric)
+TEST(ResolveCommands, CommandInputMustBeF32)
 {
     expectRefused([] { resolveCommands({cjoint("j", "wl", {}, {"velocity"}, {{"command.velocity", "blob_sp"}})}); },
-                  {"'j'", "'blob_sp'", "input has value type none", "not a scalar number"});
-}
-
-TEST(ResolveCommands, EveryScalarInputTypeAccepted)
-{
+                  {"'j'", "'blob_sp'", "input has value type none", "command inputs must be f32"});
+    // Every other scalar type is refused too, naming the actual type.
+    const std::vector<std::pair<const char *, ValueType>> others = {
+        {"in_bool", ValueType::Bool}, {"in_u8", ValueType::U8},   {"in_u16", ValueType::U16},
+        {"in_u32", ValueType::U32},   {"in_i32", ValueType::I32}, {"in_enum", ValueType::Enum}};
     auto snap = makeCommandDevice();
-    const std::vector<std::pair<const char *, ValueType>> inputs = {
-        {"in_bool", ValueType::Bool}, {"in_u8", ValueType::U8},   {"in_u16", ValueType::U16}, {"in_u32", ValueType::U32},
-        {"in_i32", ValueType::I32},   {"in_f32", ValueType::F32}, {"in_enum", ValueType::Enum}};
-    std::vector<Item> items;
+    std::vector<Item> items = {{599, "in_f32", ItemKind::Input, ValueType::F32}};
     uint16_t id = 600;
-    for (const auto &[name, type] : inputs)
+    for (const auto &[name, type] : others)
         items.push_back({id++, name, ItemKind::Input, type});
     addType(snap, 8, "typed", items);
     addInstance(snap, 8, 0, "typed", 0);
-    const auto r = resolve(snap,
-                           {cjoint("a", "typed", {}, {"velocity", "duty"}, {{"command.velocity", "in_bool"}, {"command.duty", "in_u8"}}),
-                            cjoint("b", "typed", {}, {"velocity", "duty"}, {{"command.velocity", "in_u16"}, {"command.duty", "in_u32"}}),
-                            cjoint("c", "typed", {}, {"velocity", "duty"}, {{"command.velocity", "in_i32"}, {"command.duty", "in_f32"}}),
-                            cjoint("d", "typed", {}, {"velocity"}, {{"command.velocity", "in_enum"}})},
-                           config());
-    ASSERT_EQ(r.commands.size(), inputs.size());
-    for (size_t i = 0; i < inputs.size(); ++i)
+    EXPECT_NO_THROW(resolve(snap, {cjoint("j", "typed", {}, {"velocity"}, {{"command.velocity", "in_f32"}})}, config()));
+    for (const auto &entry : others)
     {
-        EXPECT_EQ(r.commands[i].type, inputs[i].second) << inputs[i].first;
-        EXPECT_EQ(r.command_groups[0].types[i], inputs[i].second) << inputs[i].first;
+        const std::string name = entry.first;
+        SCOPED_TRACE(name);
+        expectRefused([&] { resolve(snap, {cjoint("j", "typed", {}, {"velocity"}, {{"command.velocity", name}})}, config()); },
+                      {"'j'", name, "input has value type", "command inputs must be f32"});
     }
+    expectRefused([&] { resolve(snap, {cjoint("j", "typed", {}, {"velocity"}, {{"command.velocity", "in_u8"}})}, config()); },
+                  {"value type u8"});
+    expectRefused([&] { resolve(snap, {cjoint("j", "typed", {}, {"velocity"}, {{"command.velocity", "in_i32"}})}, config()); },
+                  {"value type i32"});
 }
 
 TEST(ResolveCommands, DuplicateCommandInterfaceRefused)
@@ -1462,13 +1459,13 @@ TEST(ResolveCommands, TwoJointsCommandingOneInputRefused)
 {
     expectRefused([] { resolveCommands({cjoint("a", "wl", {}, {"velocity"}), cjoint("b", "wl", {}, {"velocity"})}); },
                   {"joint 'b'", "command interface 'velocity'", "'velocity_sp'", "'wl'", "joint 'a' command interface 'velocity'",
-                   "one owner"});
+                   "one input has one command interface"});
     // Different interfaces mapped onto the same input are caught too.
     expectRefused([] {
         resolveCommands({cjoint("a", "wl", {}, {"velocity"}),
                          cjoint("b", "wl", {}, {"duty"}, {{"command.duty", "velocity_sp"}})});
     },
-                  {"joint 'b'", "command interface 'duty'", "joint 'a'", "one owner"});
+                  {"joint 'b'", "command interface 'duty'", "joint 'a'", "one input has one command interface"});
     // The same input item of different instances is two inputs.
     EXPECT_NO_THROW(resolveCommands({cjoint("a", "wl", {}, {"velocity"}), cjoint("b", "wr", {}, {"velocity"})}));
     // Different inputs of one instance are fine too.
@@ -1709,16 +1706,16 @@ TEST(ResolveCommands, CommandGroupsPerLoopAscending)
     }
 }
 
-TEST(ResolveCommands, SameJointSharingAnInputSharesTheSlot)
+TEST(ResolveCommands, OneJointTwoInterfacesOnOneInputRefused)
 {
-    // Two interfaces of one joint on one input: the refs are deduplicated.
-    const auto r = resolveCommands({cjoint("j", "wl", {}, {"velocity", "duty"}, {{"command.duty", "velocity_sp"}})});
-    ASSERT_EQ(r.commands.size(), 2u);
-    EXPECT_EQ(r.commands[0].slot, 0u);
-    EXPECT_EQ(r.commands[1].slot, 0u);
-    ASSERT_EQ(r.command_groups.size(), 1u);
-    EXPECT_EQ(r.command_groups[0].refs.size(), 1u);
-    EXPECT_EQ(r.command_groups[0].types.size(), 1u);
+    // command.position = velocity_sp would send a position hold into the velocity input.
+    expectRefused([] { resolveCommands({cjoint("j", "wl", {}, {"velocity", "position"}, {{"command.position", "velocity_sp"}})}); },
+                  {"joint 'j'", "command interface 'position'", "param 'command.position' = 'velocity_sp'", "input 'velocity_sp'",
+                   "instance 'wl'", "already commanded by joint 'j' command interface 'velocity'", "one input has one command interface"});
+    expectRefused([] { resolveCommands({cjoint("j", "wl", {}, {"velocity", "duty"}, {{"command.duty", "velocity_sp"}})}); },
+                  {"command interface 'duty'", "command interface 'velocity'", "one command interface"});
+    // Distinct inputs of one joint are fine.
+    EXPECT_NO_THROW(resolveCommands({cjoint("j", "wl", {}, {"velocity", "duty"}, {{"command.duty", "alt_sp"}})}));
 }
 
 TEST(ResolveCommands, JointsListHoldsOnlyCommandJoints)
