@@ -74,7 +74,7 @@ and [host](archive/host-overhaul-done.md) archives.
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H6 | Cleanup, docs and promotion into `main` | reused prior bare-board and installed-GUI results | self | in review | |
+| H6 | Cleanup, docs and promotion into `main` | reused prior bare-board and installed-GUI results | self | in review | [#108](https://github.com/taruntom1/drivelink_v2/pull/108) |
 | HW | Run every open deferred check and fix issues found | motors, IMU, Pi, robot | per fix | planned | |
 
 ## Deferred hardware checks
