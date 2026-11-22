@@ -82,7 +82,7 @@ If the plan proves wrong while you build, decide small internal choices and log 
 
 ## 4. Review
 
-Review your own diff against the integration branch twice.
+Review your own diff against the integration branch.
 
 - **As the reader.** Walk each journey you touched on the built site, using only the guide and the released artifacts. Look for:
   - a step the reader cannot do from the page alone;
@@ -106,21 +106,10 @@ When the brief requires an independent review, run one, and run one also when th
 
 Check every finding against the site and the code. Fix the ones that hold and rerun `validate.py full`. Note rejected findings and their reasons for the PR.
 
-## 5. Checks
-
-- **Browser checks** on the built site, through the build script's `serve` on `localhost`:
-  - desktop and phone width;
-  - light and dark;
-  - keyboard only;
-  - print preview;
-  - a search for each new page;
-  - the interactive pieces the step touched.
-- **The bare board**, only where the brief names a check. Read `docs/bench.md` first. Ask the user before anything that erases or reflashes the board, and afterwards restore the "Board state" in `plans/host-status.md`. If the port is missing or the board doesn't answer, stop and tell the user.
-- **Motors, a real IMU, the Pi or the robot** are not guide checks. Their runs are rows in `plans/host-status.md`, and HW corrects the guide.
 
 Log each bare-board run as one row in `plans/hardware-log.md`.
 
-## 6. Finish
+## 5. Finish
 
 1. Update the status file:
    - set the step's row to `in review`;
