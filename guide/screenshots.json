@@ -8,5 +8,9 @@
   "tune",
   "tune-identify",
   "layout-calibration-applied",
-  "update-confirmed"
+  "update-confirmed",
+  "remote-agent-found",
+  "remote-agent",
+  "remote-monitor-observer",
+  "remote-take-ros"
 ]

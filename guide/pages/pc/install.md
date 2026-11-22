@@ -9,6 +9,8 @@ You need a 64-bit PC running Windows 11 or Ubuntu 26.04 and an internet connecti
 2. Open the setup file and follow the installer. You should see **DriveLink** in the Start menu when setup finishes.
 3. Open **DriveLink**. The window should say **Connect to a device**.
 
+The installer is unsigned. Verify the [download checksum]({{base}}downloads/#verify-a-download) first if Windows shows a SmartScreen prompt. A current-user install is the default. The installer also offers an all-users install. You can remove DriveLink from **Settings → Apps → Installed apps**.
+
 </div>
 <div data-choice="Ubuntu">
 

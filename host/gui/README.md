@@ -27,6 +27,9 @@ and the Windows installer, and H3b-1 remote mode through drivelink-agent
 | `app/` | `drivelink-gui`, static QML module `DriveLink.Shell`, screenshot mode |
 | `tests/` | `gui-quick`, `gui-gallery`, real-vdev `gui-backend`, `gui-screenshots`, scenario script |
 
+For released packages, see [Install the app](https://taruntom1.github.io/drivelink_v2/pc/install/) and
+[Desktop app screens](https://taruntom1.github.io/drivelink_v2/reference/gui/).
+
 ## Application and backend
 
 Run `drivelink-gui`, or pass `--endpoint tcp://127.0.0.1:8765` (vdev) or
@@ -663,7 +666,7 @@ the Qt install (`C:/Qt/6.12.0/mingw_64/sbom/`), as a superset.
 `python3 tools/package_linux.py` (the `deb` check of `validate.py`, through WSL
 on Windows; CI's linux-package job uploads the result) builds the GUI's
 `drivelink` package beside `drivelink-cli` and `drivelink-agent` (H3c,
-[host/README.md](../README.md), "Using the GUI on Linux"). It holds
+[host/README.md](../README.md#released-host-packages)). It holds
 `/usr/bin/drivelink-gui` (stripped), `/usr/share/applications/drivelink.desktop`
 and `/usr/share/drivelink/` (`LICENSE.txt`, `THIRD_PARTY_NOTICES.txt`; not under
 `/usr/share/doc`, which minimised systems drop) with
@@ -679,6 +682,8 @@ modules; a new `import Qt…` in the GUI needs its `qml6-module-*` package there
 (`host/test/installed_gui_smoke.py --deb`).
 
 ## Remote mode (H3b-1)
+
+See the [remote connection walkthrough](https://taruntom1.github.io/drivelink_v2/pi/connect/) and [control handoff procedure](https://taruntom1.github.io/drivelink_v2/pi/control/).
 
 A connection through `drivelink-agent` ([agent.md](../../docs/protocol/agent.md),
 agent protocol v3) is the same `LocalConnection` on a TCP link that sent the

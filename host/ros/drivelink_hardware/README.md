@@ -199,7 +199,7 @@ input, and no two command interfaces may name the same input.
   which logs the reason and disconnects without a device call; the agent
   clears the plugin's groups and ends its lease. The component is
   unconfigured. Once the cause is fixed, use the
-  [bringup recovery procedure](../drivelink_bringup/README.md#diagnostics-and-recovery)
+  [bringup recovery procedure](https://taruntom1.github.io/drivelink_v2/ros/recover/)
   to configure and activate the hardware and restart its controllers. While the
   component is inactive, `read()` returns `OK` and a fault seen then makes the
   next activate fail.

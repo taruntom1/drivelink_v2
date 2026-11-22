@@ -30,11 +30,34 @@
     {"title": "Add and calibrate the IMU", "slug": "pc/imu", "source": "pc/imu.md"},
     {"title": "Update firmware", "slug": "pc/update", "source": "pc/update.md"}
   ]},
-  {"title": "Pi robot", "pages": []},
-  {"title": "ROS 2 robot", "pages": []},
-  {"title": "Reference", "pages": [
-    {"title": "Reference build", "slug": "reference/bench", "source": "reference/bench.md"}
+  {"title": "Pi robot", "pages": [
+    {"title": "Prepare the Raspberry Pi", "slug": "pi/prepare", "source": "pi/prepare.md"},
+    {"title": "Wire the Pi to the ESP", "slug": "pi/wire", "source": "pi/wire.md"},
+    {"title": "Install the agent and add the device", "slug": "pi/agent", "source": "pi/agent.md"},
+    {"title": "Connect the desktop app over the LAN", "slug": "pi/connect", "source": "pi/connect.md"},
+    {"title": "Share the device safely", "slug": "pi/control", "source": "pi/control.md"},
+    {"title": "Upgrade or remove the agent", "slug": "pi/maintenance", "source": "pi/maintenance.md"}
   ]},
-  {"title": "Troubleshooting and FAQ", "pages": []},
-  {"title": "About", "pages": []}
+  {"title": "ROS 2 robot", "pages": [
+    {"title": "Install ROS 2 and DriveLink", "slug": "ros/install", "source": "ros/install.md"},
+    {"title": "Start the two-wheel example", "slug": "ros/example", "source": "ros/example.md"},
+    {"title": "Drive with the keyboard", "slug": "ros/drive", "source": "ros/drive.md"},
+    {"title": "Describe your own robot", "slug": "ros/robot", "source": "ros/robot.md"},
+    {"title": "Diagnose and recover the ROS drive", "slug": "ros/recover", "source": "ros/recover.md"}
+  ]},
+  {"title": "Reference", "pages": [
+    {"title": "Reference build", "slug": "reference/bench", "source": "reference/bench.md"},
+    {"title": "Module types and parameters", "slug": "reference/modules", "source": "reference/modules.md"},
+    {"title": "Status, fault, and diagnostic codes", "slug": "reference/codes", "source": "reference/codes.md"},
+    {"title": "Desktop app screens", "slug": "reference/gui", "source": "reference/gui.md"},
+    {"title": "Agent configuration, service, and network", "slug": "reference/agent", "source": "reference/agent.md"},
+    {"title": "ROS 2 hardware and launch reference", "slug": "reference/ros", "source": "reference/ros.md"},
+    {"title": "Packages, versions, and limits", "slug": "reference/packages", "source": "reference/packages.md"}
+  ]},
+  {"title": "Troubleshooting", "pages": [
+    {"title": "Troubleshooting and FAQ", "slug": "troubleshooting", "source": "troubleshooting.md"}
+  ]},
+  {"title": "About", "pages": [
+    {"title": "About DriveLink", "slug": "about", "source": "about.md"}
+  ]}
 ]

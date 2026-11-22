@@ -20,4 +20,6 @@ Start with the ESP and USB data cable. You can install the app, flash the board,
 
 > **Safety.** Before a step that can move a motor, lift the wheels clear of the ground, use a current-limited supply, set a low duty cap, and keep one hand on the power switch. Disconnect power before changing wiring.
 
-[Install the app and start the PC bench walkthrough]({{base}}pc/install/).
+- [Install the app and start the PC bench walkthrough]({{base}}pc/install/).
+- [Prepare the Pi and connect over the LAN]({{base}}pi/prepare/).
+- [Install ROS 2 and start the robot example]({{base}}ros/install/).

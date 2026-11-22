@@ -1,9 +1,8 @@
 # DriveLink apt repository
 
-GitHub Pages serves DriveLink's signed apt repository and user guide at
-<https://taruntom1.github.io/drivelink_v2/>. Start with the guide’s
-“Install from apt” page when it is published. Instructions for v0.1.0
-are in [docs/pi-setup.md](../../docs/pi-setup.md), "Install the packages".
+GitHub Pages serves the signed apt repository and the DriveLink user guide.
+See [Install from apt](https://taruntom1.github.io/drivelink_v2/apt/) for the guide commands. For v0.1.0, see the
+[tagged installation instructions](https://github.com/taruntom1/drivelink_v2/blob/v0.1.0/docs/pi-setup.md#4-install-the-packages).
 
 | File | What |
 |---|---|
@@ -40,7 +39,7 @@ Both have amd64 and arm64 builds of these packages.
 Install the bringup package to pull in the other three at the same DriveLink
 version. Apt obtains upstream ROS dependencies from the
 [ROS 2 apt repository](https://github.com/ros-infrastructure/ros-apt-source).
-See the [bringup install and launch guide](../../host/ros/drivelink_bringup/README.md).
+See the [ROS 2 installation guide](https://taruntom1.github.io/drivelink_v2/ros/install/).
 
 ## How it is built and published
 
@@ -83,8 +82,8 @@ sh packaging/apt/create_signing_key.sh <backup file outside the repository>
 ```
 
 Then commit the new `drivelink-archive-keyring.asc` and `FINGERPRINT`.
-After a rotation, existing users must fetch the new key (the commands in
-docs/pi-setup.md), because apt refuses the repository until they do.
+After a rotation, existing users must [fetch the new key](https://taruntom1.github.io/drivelink_v2/apt/#add-the-repository)
+before apt accepts the repository.
 Before the key expires, extend it from the backup
 (`gpg --quick-set-expire <fingerprint> 5y`), export the public key again and
 replace the secret.

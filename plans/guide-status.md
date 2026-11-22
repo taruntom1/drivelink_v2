@@ -5,18 +5,17 @@ The working state of the user guide: the steps in [guide-steps.md](guide-steps.m
 ## Current
 
 - **Planned with the user on 2026-11-22.** The guide comes before the host overhaul's close-out (H6).
-- **Next step:** UG3 after UG2 merges.
+- **Next step:** H6 closes out the host overhaul after UG3 merges.
 - **Branches.** Guide steps branch from `origin/host_overhaul` and target `host_overhaul` until H6 merges it into `main`; H6 updates this line.
 
 ## Keeping this file short
 
 The rules of [host-status.md](host-status.md) apply ("Keeping this file short"). A fact goes where its subject lives: what a step does is in `guide-steps.md`, how to write a page is in `guide/CLAUDE.md` (from UG1 on), and how to build and check the site is in `docs/development.md`. The handoff is replaced, not appended. A note is deleted by the step that uses it.
 
-## Handoff for UG3
+## Handoff for H6
 
-- Read the [UG3 brief](guide-steps.md#ug3-pi-ros-reference-and-troubleshooting), the [writing rules](../guide/CLAUDE.md) and the [site build commands](../docs/development.md#build-and-preview-the-user-guide). Link the Pi and ROS 2 choices on the home page to their journeys.
-- Continue the [reference build](../guide/pages/reference/bench.md) from the [PC layout](../guide/pages/pc/layout.md). Use the [remote GUI scenarios](../host/gui/README.md#shell-screenshots) for Pi screenshots and the [host handoff](host-status.md) for ROS container commands and deferred hardware checks.
-- Move the Pi and ROS user instructions into the site and regenerate the protocol tables from `protocol/defs/` at build time.
+- Read the [host handoff](host-status.md#handoff-for-h6--hw) and the [H6 brief](host-steps.md#h6-close-out). Update the guide's branch policy when the overhaul merges into `main`.
+- The [deferred hardware checks](host-status.md#deferred-hardware-checks) cover the Pi GPIO UART, discovery from a second computer, the physical IMU and motors, and floor driving. Update the guide if the real runs differ from the package walkthroughs.
 - Before the first guide release tag, follow the [Pages setup](../packaging/apt/README.md#the-signing-key) to switch the source to GitHub Actions and allow deployment tags matching `v*`.
 
 ## Steps
@@ -26,8 +25,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | Step | Content | Checks | Review | State | PR |
 |---|---|---|---|---|---|
 | UG1 | Site, build and `guide` check, theme, Pagefind, web flasher, screenshots in CI, publishing with the apt repository on tags. Home, downloads, apt and flasher pages, plus `guide/CLAUDE.md`. Depends on H4d | Edge desktop and phone, keyboard, print and search. Bare board web flash, esptool and packaged GUI passed. | high, independent CI/publish review passed | merged | [#104](https://github.com/taruntom1/drivelink_v2/pull/104) |
-| UG2 | Start here, concepts and glossary, PC bench journey, reference build and wiring diagrams. Depends on UG1 | Edge desktop and phone in both themes, keyboard, print and search. Windows and Ubuntu packages exercised with vdev. | high, self | in review | [#106](https://github.com/taruntom1/drivelink_v2/pull/106) |
-| UG3 | Pi and ROS 2 journeys, generated reference, troubleshooting, About; user text moves out of the repository docs. Depends on UG2 | browser; commands in ROS containers and WSL | high, self | planned | |
+| UG2 | Start here, concepts and glossary, PC bench journey, reference build and wiring diagrams. Depends on UG1 | Edge desktop and phone in both themes, keyboard, print and search. Windows and Ubuntu packages exercised with vdev. | high, self | merged | [#106](https://github.com/taruntom1/drivelink_v2/pull/106) |
+| UG3 | Pi and ROS 2 journeys, generated reference, troubleshooting, About; user text moves out of the repository docs. Depends on UG2 | Full gate, release-mode site and apt checks, packaged GUI with vdev in WSL, and installed ROS commands with vdev on Lyrical and Jazzy. Browser review skipped at the user's request. | high, self | in review | |
 
 ## Product issues found
 
@@ -49,4 +48,5 @@ Choices the plans don't cover or that change them, and that a later step must re
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-22 | UG2 | Use one Pololu G2 18v17 per motor in the reference build. | The released firmware uses 25 kHz PWM. The MDD10A is rated to 20 kHz. | yes (`guide-steps.md`) |
+| 2026-11-22 | UG3 | Use the Pi 5 `uart0-pi5` overlay for GPIO 14/15. | The Pi firmware documents this overlay for the reference header. The on-device check remains deferred. | no |
+| 2026-11-22 | UG3 | Use the default ROS switch timeout and give `ros2 topic echo` the message types. | The installed Lyrical control CLI misparsed an explicit `--switch-timeout`. Giving the topic type avoids a discovery race observed on Jazzy. The revised commands passed in both distros. | no |

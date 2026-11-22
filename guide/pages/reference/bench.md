@@ -18,4 +18,4 @@ Use this list when choosing parts for the PC bench or a later Pi robot. Start wi
 - Use an encoder with two quadrature channels. Keep ESP inputs at 3.3 V logic. If the encoder outputs 5 V, use suitable level translation. Open-drain outputs need pull-ups to a compatible rail. Check the datasheet before connecting anything.
 - Use free [GPIOs]({{base}}concepts/glossary/) that can perform the intended function. Keep the UART pins free for the USB-to-UART link, and avoid the board’s boot-strapping, USB, flash, PSRAM, and on-board LED pins. The ESP configuration permits up to six PWM actuator instances and four quadrature feedback instances, subject to available pins and device limits.
 
-When you have the parts, [install the app]({{base}}pc/install/) or open the [wiring page]({{base}}pc/wire/) to check the connections.
+When you have the parts, [install the app]({{base}}pc/install/) or open the [wiring page]({{base}}pc/wire/) to check the connections. For the robot, start at [Pi preparation]({{base}}pi/prepare/) and continue to the [Pi UART wiring]({{base}}pi/wire/).

@@ -131,6 +131,21 @@ The guide’s writing rules are in [guide/CLAUDE.md](../guide/CLAUDE.md).
   desktop app and vdev. Give `scenarios.py` the packaged `--gui`, `--vdev`
   and `--cli` paths. Its figures use mock hardware. Check the wiring diagram
   links with a keyboard and confirm the pin tables are visible in print.
+- For the Pi journey, run the `remote-` entries in `guide/screenshots.json`
+  with `host/gui/tests/remote_scenarios.py` on Linux. Pass the packaged
+  `--gui`, `--agent`, `--vdev` and `--cli` paths and the same `--out` directory
+  as the PC scenarios. The discovery screenshot uses simulated discovery.
+  The other screens connect to the agent and a virtual device.
+- Build the ROS install preview with `python tools/validate.py --only deb
+  ros-deb ros-deb-install`. The last check installs from a test-signed
+  repository and tests the launch and recovery with vdev behind the installed
+  agent on both Jazzy and Lyrical. See the deferred rows in
+  [host status](../plans/host-status.md#deferred-hardware-checks) for the Pi
+  UART and floor runs.
+- The guide renders its module, result, detail, and diagnostic tables from
+  `protocol/defs/` at build time using the protocol generator’s model and
+  Markdown emitters. Edit definitions in their source files. See
+  [Definitions](protocol/definitions.md) for regeneration of the wire reference.
 - `build --release` requires both inputs, the exact release firmware version,
   and the committed apt fingerprint. CI supplies the images and firmware
   packaged for the same tag.

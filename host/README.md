@@ -39,67 +39,18 @@ from `host/ros/`. See the
 [hardware plugin](ros/drivelink_hardware/README.md) and the
 [bringup guide](ros/drivelink_bringup/README.md).
 
-## Using the GUI on Windows (H2g)
+## Released host packages
 
-Install `DriveLink-<version>-setup.exe`, the `drivelink-windows-installer`
-artifact of the host-windows CI job (or `build/installer/` after
-`python tools/package_win.py`). It is unsigned, so SmartScreen names an unknown
-publisher: choose "More info", then "Run anyway". It installs for the current
-user by default (no administrator rights); the wizard offers an all-users
-install. It puts `drivelink-gui.exe`, `drivelink-cli.exe`, `drivelink-vdev.exe`,
-Qt and the MinGW runtime in one folder, adds a Start-menu entry, and changes
-nothing on PATH. Uninstall from Windows' installed apps.
+Follow [Install the app](https://taruntom1.github.io/drivelink_v2/pc/install/) on Windows or Ubuntu, or
+[Install the agent](https://taruntom1.github.io/drivelink_v2/pi/agent/) on a Raspberry Pi. See
+[Packages, versions, and limits](https://taruntom1.github.io/drivelink_v2/reference/packages/) for the release matrix.
 
-1. Start **DriveLink** from the Start menu. Connect lists the serial ports
-   without opening them; pick the ESP's port (921600 baud) or type a vdev
-   address (`tcp://127.0.0.1:<port>`). Recent devices are listed by name and id.
-2. After the model loads, the nav rail has Device, Layout, Tune and Monitor
-   (Ctrl+1 to Ctrl+4) and, at the bottom, **Settings**: the theme (Dark,
-   Light or Follow system) and About (the version, Qt, the licence and the
-   third-party notices). Settings also opens before connecting.
-3. **Esc or DISARM** disarms from every page and dialog.
+For development builds and package artifacts, see
+[Windows installer and notices](gui/README.md#windows-installer-and-notices-h2g)
+and [Linux package](gui/README.md#linux-package-deb).
 
-To try it without hardware, run the installed `drivelink-vdev.exe --port 8765`
-in a terminal and connect the GUI to `tcp://127.0.0.1:8765`.
-
-The GUI keeps recent devices, the theme and the command limits in
-`%LOCALAPPDATA%\DriveLink\drivelink-gui.ini`; tuning sessions and calibration
-files go where you save them. Device configuration lives only on the device.
-The installed folder also holds `THIRD_PARTY_NOTICES.txt` and `LICENSE.txt`.
-Release installers come from CI, which builds with the open-source Qt; the
-version is the root `VERSION` (with `+g<commit>` on a build that isn't the
-`v<VERSION>` tag).
-
-## Using the GUI on Linux
-
-The Linux programs ship as three `.deb` packages (H3c), each versioned
-`<VERSION>~ubuntu<release>` and built for amd64 and arm64:
-
-| Package | Holds | Ubuntu |
-|---|---|---|
-| `drivelink-cli` | `drivelink-cli`, `drivelink-vdev` (no Qt) | 26.04, 24.04 |
-| `drivelink` | `drivelink-gui` and its desktop entry; Depends `drivelink-cli` at the same version | 26.04 only (24.04's Qt 6.4 is below the 6.10 floor) |
-| `drivelink-agent` | the agent as a service ([agent/README.md](agent/README.md), "Install") | 26.04, 24.04 |
-
-Get them from DriveLink's signed apt repository (H3d, Ubuntu 26.04 for the GUI:
-add it as in [docs/pi-setup.md](../docs/pi-setup.md) step 4, then
-`sudo apt install drivelink`), from a release, from the `drivelink-debs-<release>-<arch>` artifact
-of CI's linux-package job, or from `build/deb/` after
-`python3 tools/package_linux.py`. Install the GUI with its CLI:
-
-```bash
-sudo apt install ./drivelink_<version>_amd64.deb ./drivelink-cli_<version>_amd64.deb
-```
-
-apt brings Ubuntu's Qt 6 and QML modules with it; nothing is bundled. The
-packages install their programs in `/usr/bin`, a **DriveLink** application
-entry, and the licence and third-party notices in `/usr/share/<package>/`.
-H2g's single `drivelink` package (GUI, CLI and vdev) upgrades to the pair in
-place. Remove them with `sudo apt remove drivelink drivelink-cli`.
-The GUI works as on Windows (above). Serial ports need your user in the
-`dialout` group (`sudo usermod -aG dialout $USER`, then log in again). The GUI
-keeps its settings in `~/.config/DriveLink/drivelink-gui.ini`. Other releases
-need a build from source ("Build" below).
+The desktop app stores its settings in `%LOCALAPPDATA%\DriveLink\drivelink-gui.ini`
+on Windows and `~/.config/DriveLink/drivelink-gui.ini` on Linux.
 
 ## Device identity (H1c)
 

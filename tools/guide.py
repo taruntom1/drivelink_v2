@@ -54,6 +54,14 @@ FIGURES = {
                                    'A simulated IMU with four calibration levels at 3.'),
     'update-confirmed': ('The firmware update dialog shows Confirmed after reconnecting.',
                          'The example virtual device has booted and confirmed its new image.'),
+    'remote-agent-found': ('The Agent tab lists an agent found on the local network.',
+                           'Select a discovered agent to fill in its address.'),
+    'remote-agent': ('The Agent tab lists the available devices and their connection state.',
+                     'Choose an online device from the agent’s list.'),
+    'remote-monitor-observer': ('Monitor shows live data while ROS holds the control lease.',
+                                'You can watch the device while another client controls it.'),
+    'remote-take-ros': ('The Take lease confirmation identifies ROS as the current holder.',
+                        'A takeover stops the current holder. Confirm only when it is safe to stop.'),
 }
 SUBSTITUTION = re.compile(r'\{\{([^{}]+)\}\}')
 
@@ -95,7 +103,7 @@ def heading_ids(state):
 
 def markdown():
     # Guide contributors own the templates as well as the Markdown.
-    parser = MarkdownIt('commonmark', {'html': True}).enable('table')
+    parser = MarkdownIt('commonmark', {'html': True}).enable(['table', 'strikethrough'])
     parser.core.ruler.after('inline', 'guide_ids', heading_ids)
     parser.renderer.rules['table_open'] = lambda *_: '<div class="table-scroll"><table>\n'
     parser.renderer.rules['table_close'] = lambda *_: '</table></div>\n'
@@ -277,6 +285,39 @@ def screenshot(out, shots, scenario, strict):
             f'</picture><figcaption>{caption}</figcaption></figure>')
 
 
+def protocol_reference():
+    # Use the same validated model and Markdown emitters as the wire reference.
+    sys.path.insert(0, str(ROOT / 'tools/gen'))
+    try:
+        import emit_docs
+        import model
+    finally:
+        sys.path.pop(0)
+    try:
+        defs = model.load_defs(ROOT / 'protocol/defs')
+    except model.SpecError as exc:
+        raise GuideError(f'protocol reference: {exc}') from exc
+
+    modules = []
+    for spec in defs['types']:
+        document = emit_docs.type_doc(spec)
+        modules.append('#' + document.replace('\n## ', '\n### '))
+
+    enums = defs['registry']['wire_enums']
+    status = ['| Code | Result |', '| --- | --- |']
+    status.extend(f'| {value} | `{name}` |' for name, value in enums['Result'].items())
+    detail = ['| Code | Detail |', '| --- | --- |']
+    detail.extend(f'| {value} | `{name}` |' for name, value in enums['Detail'].items())
+    diagnostics = emit_docs.diag_block(defs).removeprefix(emit_docs.DIAG_BEGIN)
+    diagnostics = diagnostics.removesuffix(emit_docs.DIAG_END).strip()
+    return {
+        'module_reference': '\n'.join(modules),
+        'status_reference': '\n'.join(status),
+        'detail_reference': '\n'.join(detail),
+        'diagnostic_reference': diagnostics,
+    }
+
+
 def build_site(out, args):
     release = version.base()
     apt_url = args.apt_url.rstrip('/')
@@ -296,6 +337,7 @@ def build_site(out, args):
         raise GuideError('release builds must use the committed apt fingerprint')
     references = {
         **asset_links(release), 'base': BASE, 'apt_url': apt_url, 'release_url': release_url,
+        'release_version': release,
         'release_label': f'[DriveLink {release} release notes]({release_url})',
         'fingerprint': key_fingerprint,
         'fingerprint_source': ('[Check the published fingerprint]'
@@ -303,6 +345,7 @@ def build_site(out, args):
                                if key_fingerprint == public_fingerprint else
                                'This preview uses a temporary signing key. Use it in a disposable Ubuntu environment.'),
         'esptool': esptool_command(info),
+        **protocol_reference(),
     }
     copy_assets(out)
     references['flasher'] = flash_files(out, args.firmware, info)
