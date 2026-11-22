@@ -38,6 +38,22 @@ FIGURES = {
                 'Connect to your controller with the DriveLink desktop app.'),
     'device': ('The Device page lists the controller status and firmware version.',
                'See the controller’s status and firmware version in the app.'),
+    'layout-add-instance': ('The Add instance dialog lists module types and their compatible loops.',
+                            'Choose a module type and the loop it will run on.'),
+    'layout-review': ('The Layout review lists staged changes with their old and new values.',
+                      'Review pending changes before saving and rebooting.'),
+    'monitor-command-disarmed': ('The Manual command card shows duty_sp and velocity_sp while disarmed.',
+                                 'Set up the duty input while disarmed. The example uses a simulated drive.'),
+    'monitor': ('The Monitor plots show live traces beside the signal list and Manual command card.',
+                'Monitor plots and manual commands on a simulated drive.'),
+    'tune': ('The Tune page shows step traces with the target and measured velocity.',
+             'Compare step runs on the same plot.'),
+    'tune-identify': ('Plant identification shows a fitted response and suggested PI gains.',
+                      'A simulated response and its fit. Use the duty you verified on your own bench.'),
+    'layout-calibration-applied': ('The Calibration tab shows four levels at 3 and the sensor orientation.',
+                                   'A simulated IMU with four calibration levels at 3.'),
+    'update-confirmed': ('The firmware update dialog shows Confirmed after reconnecting.',
+                         'The example virtual device has booted and confirmed its new image.'),
 }
 SUBSTITUTION = re.compile(r'\{\{([^{}]+)\}\}')
 
@@ -137,6 +153,8 @@ def asset_links(release):
         'windows': (f'DriveLink-{release}-setup.exe', 'Download the Windows installer'),
         'gui_amd64': (f'drivelink_{release}~ubuntu26.04_amd64.deb', 'Download the amd64 package'),
         'gui_arm64': (f'drivelink_{release}~ubuntu26.04_arm64.deb', 'Download the arm64 package'),
+        'cli_amd64': (f'drivelink-cli_{release}~ubuntu26.04_amd64.deb', 'Download the amd64 dependency'),
+        'cli_arm64': (f'drivelink-cli_{release}~ubuntu26.04_arm64.deb', 'Download the arm64 dependency'),
         'firmware': (f'drivelink-firmware-{release}.zip', 'Download the firmware zip'),
         'checksums': ('SHA256SUMS', 'Download SHA256SUMS'),
     }

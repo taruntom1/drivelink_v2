@@ -1,6 +1,22 @@
 const themeControl = document.querySelector(".theme-button");
 const darkMode = matchMedia("(prefers-color-scheme: dark)");
 
+const navToggle = document.querySelector(".nav-toggle");
+const navigation = document.getElementById("guide-navigation");
+const compactLayout = matchMedia("(max-width: 52rem)");
+
+function syncNavigation() {
+  navToggle.hidden = !compactLayout.matches;
+  navigation.hidden = compactLayout.matches;
+  navToggle.setAttribute("aria-expanded", String(!navigation.hidden));
+}
+syncNavigation();
+compactLayout.addEventListener("change", syncNavigation);
+navToggle.addEventListener("click", () => {
+  navigation.hidden = !navigation.hidden;
+  navToggle.setAttribute("aria-expanded", String(!navigation.hidden));
+});
+
 function updatePictures() {
   const dark = document.documentElement.dataset.theme === "dark" ||
     (!document.documentElement.dataset.theme && darkMode.matches);

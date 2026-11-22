@@ -127,6 +127,10 @@ The guide’s writing rules are in [guide/CLAUDE.md](../guide/CLAUDE.md).
   extracted firmware package containing `flash_args.json` and the merged
   image. Use the scenarios listed in `guide/screenshots.json`. A local build
   without those inputs shows screenshot placeholders and the esptool fallback.
+- To review the PC bench guide, render the scenario list with the packaged
+  desktop app and vdev. Give `scenarios.py` the packaged `--gui`, `--vdev`
+  and `--cli` paths. Its figures use mock hardware. Check the wiring diagram
+  links with a keyboard and confirm the pin tables are visible in print.
 - `build --release` requires both inputs, the exact release firmware version,
   and the committed apt fingerprint. CI supplies the images and firmware
   packaged for the same tag.

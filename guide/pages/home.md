@@ -6,6 +6,7 @@ Set up an ESP32-S3 and connect it to the DriveLink app to configure and monitor 
 
 [Get DriveLink]({{base}}downloads/)
 [Flash in the browser]({{base}}flash/)
+[Start here]({{base}}start/)
 
 </div>
 
@@ -21,7 +22,7 @@ Pick the setup that fits the hardware in front of you.
 
 ### PC bench
 
-You have a Windows or Ubuntu computer and an ESP32-S3 connected over USB. [Download the desktop app]({{base}}downloads/#desktop-app), then [flash the board]({{base}}flash/).
+You have a Windows or Ubuntu computer and an ESP32-S3 you can plug in over USB. [Start the PC bench walkthrough]({{base}}pc/install/).
 
 </div>
 <div data-choice="Pi robot">
