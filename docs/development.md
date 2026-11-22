@@ -240,14 +240,15 @@ worktree. vdev reports `<VERSION>-vdev`. The `package.xml` files repeat it
 literally. `python tools/version.py --check` (in `gen`) fails on any
 mismatch, and `python tools/version.py` prints the full version.
 
-To release: edit `VERSION` and the two `package.xml` files, merge, then push
+To release, edit `VERSION` and the four `package.xml` files, merge, then push
 tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
 its `release` job checks the tag against `VERSION` and that every package
 carries the plain version, and publishes a GitHub Release with
-`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, the ten
-`.deb` packages (`<package>_<version>~ubuntu<release>_<arch>.deb`: the CLI and
-agent for 26.04 and 24.04, the GUI for 26.04, each for amd64 and arm64) and
-their `SHA256SUMS`. Then `apt-publish` signs those packages into the apt
+`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, 26
+`.deb` packages, and `SHA256SUMS`. The Debian packages include the CLI and
+agent for Ubuntu 26.04 and 24.04, the GUI for 26.04, and the four DriveLink
+ROS packages for Lyrical and Jazzy, all for amd64 and arm64. Then
+`apt-publish` signs those packages into the apt
 repository on GitHub Pages ([packaging/apt/README.md](../packaging/apt/README.md)).
 
 ## Linux packages (`tools/setup_linux.sh`)

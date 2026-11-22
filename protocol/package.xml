@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>drivelink_protocol</name><version>0.1.0</version>
+  <name>drivelink_protocol</name><version>0.1.1</version>
   <description>DriveLink shared wire protocol.</description>
   <maintainer email="taruntom1@users.noreply.github.com">DriveLink maintainers</maintainer>
   <license>Proprietary</license><buildtool_depend>cmake</buildtool_depend>
