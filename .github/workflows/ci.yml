@@ -478,6 +478,8 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     environment: apt-repo
+    outputs:
+      artifact_name: ${{ steps.pages-artifact.outputs.name }}
     permissions:
       contents: write
     steps:
@@ -497,10 +499,8 @@ jobs:
         with:
           name: drivelink-firmware
           path: firmware-artifact
-      - name: Install the guide tools and gpg
-        run: |
-          sh tools/setup_linux.sh base
-          sh tools/setup_linux.sh guide
+      - name: Install Python and gpg for signing
+        run: sh tools/setup_linux.sh base
       - name: Sign with the repository key (its fingerprint must be the committed one)
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
@@ -512,15 +512,13 @@ jobs:
       - name: Build and verify the combined Pages tree
         run: |
           set -eu
+          sh tools/setup_linux.sh guide
           args=$(find firmware-artifact -name flash_args.json)
           test -f "$args"
           guide=build/guide-venv/bin/python
           "$guide" tools/guide.py build --release --screenshots screenshots --firmware "$(dirname "$args")"
           "$guide" tools/guide.py combine --apt build/apt-publish --out build/guide-publish
           python3 tools/apt_repo.py verify --repo build/guide-publish --key packaging/apt/drivelink-archive-keyring.asc
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: build/guide-publish
       - name: Replace gh-pages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -533,6 +531,14 @@ jobs:
           git add -A
           git commit -q -m "DriveLink guide and apt repository for $GITHUB_REF_NAME"
           git push --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages
+      - name: Name this attempt's Pages artifact
+        id: pages-artifact
+        run: echo "name=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          name: ${{ steps.pages-artifact.outputs.name }}
+          path: build/guide-publish
+          include-hidden-files: true
 
   guide-deploy:
     name: Deploy the release guide and apt repository
@@ -549,6 +555,8 @@ jobs:
       - name: Deploy the checked Pages artifact
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.apt-publish.outputs.artifact_name }}
 
   native-tests:
     name: Native unit tests

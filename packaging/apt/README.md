@@ -1,7 +1,7 @@
 # DriveLink apt repository
 
-DriveLink's signed apt repository, served by GitHub Pages from the `gh-pages`
-site at <https://taruntom1.github.io/drivelink_v2/>. Start with the guide’s
+GitHub Pages serves DriveLink's signed apt repository and user guide at
+<https://taruntom1.github.io/drivelink_v2/>. Start with the guide’s
 “Install from apt” page when it is published. Instructions for v0.1.0
 are in [docs/pi-setup.md](../../docs/pi-setup.md), "Install the packages".
 

@@ -36,7 +36,7 @@ Use Ubuntu 24.04 or 26.04 on a 64-bit Intel, AMD or ARM computer. You need an in
 | ROS 2 bringup, the files that start the example robot | 26.04 (Lyrical) | ros-lyrical-drivelink-bringup |
 | ROS 2 bringup | 24.04 (Jazzy) | ros-jazzy-drivelink-bringup |
 
-For the ROS 2 packages, set up the [official ROS 2 apt repository for Lyrical](https://docs.ros.org/en/lyrical/Installation/Ubuntu-Install-Debs.html) or [Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) first. The bringup package pulls in its other DriveLink ROS packages.
+For the ROS 2 packages, set up the [official ROS 2 apt repository for Lyrical](https://docs.ros.org/en/lyrical/Get-Started/Installation/Ubuntu-Install-Debs.html) or [Jazzy](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) first. The bringup package pulls in its other DriveLink ROS packages.
 
 Replace PACKAGE with the name from the table. Apt should list the package and its dependencies and report that installation finished.
 
