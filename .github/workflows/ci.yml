@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, host_overhaul]
+    branches: [main]
     # A v<VERSION> tag also publishes a GitHub Release (job release).
     tags: ['v*']
   pull_request:

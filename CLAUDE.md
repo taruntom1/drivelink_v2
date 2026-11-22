@@ -1,9 +1,9 @@
 # Repository rules
 
 DriveLink is an ESP32-S3 motion stack with a self-describing device and generic
-host. Read [plans/host-status.md](plans/host-status.md) first for current
-work, handoff and hardware state. User guide work (the Pages website) reads
-[plans/guide-status.md](plans/guide-status.md) instead.
+host. Read [plans/host-status.md](plans/host-status.md) for the hardware
+backlog and bench state. For work on the Pages website, see the
+[guide rules](guide/CLAUDE.md) and [guide status](plans/guide-status.md).
 
 ## Read for the task
 
@@ -30,25 +30,13 @@ Before editing an area, read its scoped rules:
   Use `quick` while iterating. Update affected API/Kconfig READMEs in the same PR;
   new components need a README. Pure-logic changes need native tests.
 
-## Host overhaul in progress
-
-This temporary policy wins over conflicting area rules until `host_overhaul`
-merges into `main`. Architecture targets and decisions live in `plans/`.
-
-- Start each step with `/overhaul-step`; one session and one PR per step.
-  Branch from `origin/host_overhaul`, target `host_overhaul`, never frozen `main`.
-  HW firmware fixes use the same base. Every PR updates status, decisions and handoff.
-- User guide steps (UG1 to UG3, before H6) start with the `guide-step` skill
-  instead and follow [plans/guide-steps.md](plans/guide-steps.md); their
-  state is in [plans/guide-status.md](plans/guide-status.md).
-- Log small internal choices in the status decision log. Ask the user before
-  changing the wire protocol, a safety rule or a later step; update the plan too.
-- The session plans, builds and reviews its step. Model/effort and independent
-  review criteria are in the status file's "Models and effort" and the skill.
 - Do not restore retired legacy managers/handlers (`motor_manager`, `imu_bmo_055`,
   `time_sync`) or reuse their diagnostic IDs; history is at `legacy-final`.
-- After review, run bare-board checks directly; stop/report a missing port or
-  unresponsive board. For motors/IMU/robot, write and dry-run scripts and list
-  deferred checks in the status file. For Pi/PC-only checks, supply the user's
-  script and wait in `waiting on hardware`. Real motor/IMU behavior is unverified
-  until those checks pass; use the status file for current results.
+- Ask before changing the wire protocol or a safety rule.
+
+## Hardware checks
+
+- Follow the [bench instructions](docs/bench.md) for bare-board checks. Stop
+  and report a missing port or unresponsive board.
+- Keep deferred checks and pass criteria in [host status](plans/host-status.md).
+  Log actual runs in [the hardware log](plans/hardware-log.md).

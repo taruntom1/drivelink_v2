@@ -277,7 +277,7 @@ runs it first. `.gitattributes` keeps
 
 ## CI (`.github/workflows/ci.yml`)
 
-Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script. The Ubuntu jobs install only git for the checkout; their packages come from `tools/setup_linux.sh` ("Linux packages" below), so `ci.yml` holds no package list.
+CI runs on every pull request, on pushes to `main` and on pushed release tags. Each job provides a toolchain and calls `tools/validate.py --only <checks>`; the commands are in the script. The Ubuntu jobs install only git for the checkout; their packages come from `tools/setup_linux.sh` ("Linux packages" below), so `ci.yml` holds no package list.
 - `fw`, `fw-nolog` and `fw-hil-app`, one job each, in the `espressif/idf:v5.5.2` container.
 - `firmware-package` runs `fw-package` in the same container (git marked safe,
   so the version has its `+g<sha7>`) and uploads `drivelink-firmware`.

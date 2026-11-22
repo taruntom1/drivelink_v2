@@ -1,25 +1,14 @@
 # Plan: host software architecture
 
-Status: architecture target, re-planned 2026-11-14 after the firmware overhaul
-(F1–F10, LP) against the firmware as built. The first host slice exists:
-`libdrivelink` (transport, session, the core families, the F8 clock estimator
-and the F9 OTA service), `drivelink-cli`, `drivelink-vdev` and the superbuild.
-H1a-1 adds typed services/errors and moves JSON formatting into the CLI;
-H1a-2 adds the discovered device snapshot/reload API and Windows host CI.
-H1b adds the asynchronous runtime, live model, group buffers, managed commands
-and timestamp mapping. H1c adds device identity. H2 built the local GUI. H3a-1 adds
-`drivelink-agent` without its lease ([agent.md](../docs/protocol/agent.md)). Still to build: the
-agent lease, clock model and history (H3a-2), remote mode and ROS.
+This design record was re-planned on 2026-11-14 after the firmware overhaul.
+The host library, CLI, virtual device, local and remote GUI, agent with
+leases, and ROS 2 packages shipped in v0.1.1.
+The implementation briefs are in [the archive](archive/host-steps.md), and
+[host status](host-status.md) tracks H6 and the open hardware checks.
 
-This file is the design record. The steps that build it (T0, H1a–H6, HW), with
-a brief per step, are in [host-steps.md](host-steps.md); their state and PRs are
-in [host-status.md](host-status.md). Everything runs on the
-`host_overhaul` branch.
-
-**Baseline.** The host is written against the firmware on `host_overhaul`
-([firmware-architecture.md](firmware-architecture.md) is the design record;
-`docs/protocol/` is the wire spec and wins where they differ). That firmware is
-core v9, time v1, diag v3, and is:
+**Firmware baseline.** The v0.1.1 release uses core v10, time v1, and diag v3.
+See the [firmware design](firmware-architecture.md) and
+[wire specification](../docs/protocol/). The firmware is:
 - self-describing: module types, instances, params, signals, inputs, actions,
   sources and diag codes, all served by the device
 - configured through a pending layout that SAVE writes to NVS (A/B) and a
@@ -80,10 +69,10 @@ then the agent and the GUI's remote mode, then ROS.
 | Configuration | Lives on the ESP (NVS). The host reads it and writes it, and never stores it. Host-side files hold only GUI settings, recent devices, tuning sessions and calibration exports. |
 | Transport | UART at 921600 baud, behind a transport interface. USB can be added later without changes above the transport. No baud-rate change is planned. |
 | Python bindings | Not in this plan. The CLI's `--json` stays the scripting interface, and `firmware/test/uart_comm/protocol.py` stays for HIL. Decided 2026-11-14. |
-| Repo and branches | One repo. The firmware is in `firmware/`, definitions and codecs shared with the host in `protocol/`. The host steps and the HW campaign run on `host_overhaul`, cut from `main` after F10; `main` stays frozen until `host_overhaul` merges (H6). HW fixes to the firmware also go to `host_overhaul`. |
+| Repo and branches | One repo. The firmware is in `firmware/`, and shared definitions and codecs are in `protocol/`. The host implementation steps ran on `host_overhaul`. After H6 promotion, development and HW fixes target `main`. |
 | License | Proprietary, all rights reserved (root `LICENSE`, `package.xml` `Proprietary`). The repo is public to read only. Distributed artifacts (the installer, the `.deb` packages, the firmware package) ship third-party notices for what they bundle (the firmware's: ESP-IDF and the third-party code it links, `firmware/notices/`; added 2026-11-19): Qt (LGPLv3, dynamically linked), Inter and JetBrains Mono (OFL), Lucide (ISC), Asio (BSL-1.0), nlohmann JSON (MIT) and any later dependency. Decided 2026-11-14. |
 | Installer signing | Unsigned for now (SmartScreen shows an unknown publisher). Signing can be added to the CI job later. Decided 2026-11-14. |
-| Versioning | One semver version for the whole repo in a root `VERSION` file, read by the firmware (`PROJECT_VER`), the CMake projects, the `package.xml` files, the installer and the `.deb`; `validate.py` checks they match, and dev builds add the `git describe` suffix. Introduced in H2g; H6 tags `vX.Y.Z` on `main`. Decided 2026-11-14. The host compares the core protocol version and the descriptor hash, and refuses to connect on a protocol mismatch with a clear message. Every wire change bumps the version byte of the protocol it changes; the agent protocol has its own version in its hello. |
+| Versioning | One semver version for the whole repo in a root `VERSION` file, read by the firmware (`PROJECT_VER`), the CMake projects, the `package.xml` files, the installer and the `.deb`. `validate.py` checks they match, and dev builds add the `git describe` suffix. v0.1.1 was released before H6. Future releases follow the [tag procedure](../docs/development.md#version-version). The host compares the core protocol version and the descriptor hash, and refuses to connect on a protocol mismatch. Every wire change bumps the version byte of the protocol it changes. The agent protocol has its own version in its hello. |
 
 ## Architecture
 
@@ -240,7 +229,7 @@ commands) in H3a. Python bindings are not planned.
 
 ### `drivelink_hardware` (ROS 2)
 
-- A ros2_control `SystemInterface` for ROS 2 Lyrical (Ubuntu 26.04) and Jazzy (Ubuntu 24.04), using only the ros2_control API both share. Built with colcon from source, and shipped as bloom `.deb` files in the apt repository (H4d). Re-planned with the user 2026-11-21 (H4a to H4d in [host-steps.md](host-steps.md)).
+- A ros2_control `SystemInterface` for ROS 2 Lyrical (Ubuntu 26.04) and Jazzy (Ubuntu 24.04), using only the ros2_control API both share. Built with colcon from source, and shipped as bloom `.deb` files in the apt repository (H4d). Re-planned with the user 2026-11-21 (H4a to H4d in [the step archive](archive/host-steps.md)).
 - **Parameters:**
   - how to connect, always through the agent: `agent` (default `tcp://127.0.0.1:47620`), `token_file` (default `/etc/drivelink/token`, readable by the `drivelink` group) or an inline `token` for tests, and `device` (alias or device id). The plugin never opens a serial port. Its Hello sends `client_kind` Ros. One hardware component per device; a robot with two ESPs has two components.
   - `take_lease`: by default `on_activate` fails, naming the holder, when another client holds the lease; `preempt` takes it anyway (LeaseTake always preempts on the wire).
@@ -401,7 +390,8 @@ Every check is defined once in `tools/validate.py`; CI jobs only provide the too
 
 ## Phases
 
-The steps, their dependencies and briefs are in [host-steps.md](host-steps.md); their state is in [host-status.md](host-status.md).
+The implementation briefs are in [the step archive](archive/host-steps.md).
+The close-out and hardware backlog are in [host status](host-status.md).
 
 | Phase | Steps |
 |---|---|

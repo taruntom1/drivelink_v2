@@ -9,25 +9,17 @@ pulled group buffers, managed command keepalives and timestamp mapping. CI build
 and tests it on Windows and Linux.
 See [the library API](libdrivelink/README.md).
 
-`drivelink-gui` provides the local Qt shell and backend: Connect (serial ports,
-baud, a TCP address for vdev, recent devices by id, loading steps, protocol
-mismatch) and Device (identity and Rename, loops with run time and budget, CPU,
-limits, ARM checks, faults, SAVE/REVERT, reboot, factory reset, safe-mode exit),
-the faults drawer, link-lost and reboot-notice overlays. Esc disarms through
-focused text fields and popups; the status bar remains above page scrims. GUI
-command groups send keepalives only, leaving input values unchanged. H2b-2
-adds the firmware update dialog and the Device page's Firmware update card.
-H2c-1 adds Layout: the instance tree by loop, loop and instance detail with
-typed param editors, wiring and source targets, Add instance/loop, Remove,
-labels, limits and the pending review with Discard all. H2d adds Monitor
-(plots and the manual command), H2e Tune (runs, sessions, plant
-identification), H2f the IMU calibration panel and H2g the Settings page, the
-Windows installer and the Linux `.deb`.
+`drivelink-gui` is the Qt desktop app. It connects directly over serial or
+TCP, or remotely through the agent. Device shows identity, loop budgets,
+faults, and firmware updates. Layout manages loops, instances, parameter
+edits, and signal sources. Monitor plots signals and provides manual
+commands. Tune supports test runs, sessions, and plant identification. The
+BNO055 panel supports IMU calibration.
 See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
 
-`drivelink-agent` (Linux, H3a-1) owns device ports and shares each device with
-several TCP clients; the CLI reaches it with `--device NAME --token TOKEN`.
-Until the H3a-2 lease no client can arm through it. See
+`drivelink-agent` on Linux owns device ports and shares each device with
+several authenticated TCP clients. One client holds the command lease at a
+time. The CLI selects a device with `--device NAME --token TOKEN`. See
 [the agent](agent/README.md) and [its protocol](../docs/protocol/agent.md).
 
 `drivelink_hardware` is the ros2_control plugin for ROS 2 Lyrical and Jazzy.

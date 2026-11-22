@@ -7,13 +7,10 @@ The PC GUI: Qt 6 and QML, built from the Figma design
 Linux build enforces. The superbuild builds it unless `DRIVELINK_BUILD_GUI=OFF`
 (the `linux-no-gui` preset). colcon ignores this directory.
 
-H2a-1 provides the style layer; H2a-2 adds the application, local device
-backend and shell; H2b-1 adds Connect and Device, H2b-2 the firmware update,
-H2c-1/H2c-2 Layout, H2d-1/H2d-2 Monitor and its manual command, and H2e-1
-to H2e-3 Tune: runs, the session (gain history, A/B compare, session files)
-and plant identification, H2f custom panels, and H2g Settings, the notices
-and the Windows installer, and H3b-1 remote mode through drivelink-agent
-(below; [host-steps.md](../../plans/host-steps.md)).
+The app supports direct connections and remote operation through the agent.
+Its pages cover firmware updates, layout editing, monitoring and manual
+commands, tuning and plant identification. Custom panels provide controls
+for a module type, such as the BNO055 calibration panel.
 
 | Path | What |
 |---|---|

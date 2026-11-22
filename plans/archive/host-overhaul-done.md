@@ -1,8 +1,8 @@
 # Host overhaul: finished steps
 
-Merged steps through H4b from [host-steps.md](../host-steps.md) and
-[host-status.md](../host-status.md). The
-live files keep the rules and the remaining steps. Each step's own plan and
+Merged steps through H4d from [host-steps.md](host-steps.md) and
+[host-status.md](../host-status.md). Host status tracks H6 and the open
+hardware checks. Each step's own plan and
 results are the `h*-implementation.md` files in this folder; hardware results
 are in [hardware-log.md](../hardware-log.md).
 
@@ -36,6 +36,13 @@ are in [hardware-log.md](../hardware-log.md).
 | H3d | Signed apt repository on GitHub Pages, published by tags. Depends on H3c | container (local Docker 26.04, CI matrix), WSL systemd dry run; deferred: Pi | high, self | merged | [#94](https://github.com/taruntom1/drivelink_v2/pull/94) |
 | H4a | ROS toolchain (Lyrical in WSL, Jazzy in Docker and CI), colcon packages, `drivelink_hardware` state path: agent connection, mapping, lease, `read()`. Depends on H3d | vdev; deferred: robot (read only) | high, independent | merged | [#96](https://github.com/taruntom1/drivelink_v2/pull/96) |
 | H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()` without keepalives, `ERROR` on a disarm. Depends on H4a | vdev (Lyrical and Jazzy), `ros_command_check.py --mock`; deferred: robot (wheels off the ground) | high, independent | merged | [#97](https://github.com/taruntom1/drivelink_v2/pull/97) |
+| H4c | Diff-drive bringup, diagnostics, fault acknowledgment and recovery | vdev; deferred: robot driving | high, independent | merged | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
+| H4d | ROS Debian packages for Lyrical and Jazzy, amd64 and arm64 | amd64 containers; deferred: Pi | high, self | merged | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
+
+H4c ran in Codex with an independent GPT-6.2 Sol review of recovery and
+launch. H4d used Codex self-review. The user approved both exceptions on
+2026-11-21. See the [H4c](host-steps.md#h4c-drivelink_bringup-and-diagnostics)
+and [H4d](host-steps.md#h4d-ros-deb-packages) briefs for implementation decisions.
 
 ## Overview rows
 
