@@ -113,7 +113,7 @@ A check that needs motors, a real IMU, the Pi or the robot doesn't block its ste
 
 ## Board state
 
-Found by H3b-1 (2026-11-20), not as H2e-1 recorded it and left as found (H3c's package check left it unchanged): normal firmware `0.1.0+gf3469f3` (ELF build id `876fcf142f4e43df`; the commit is not in this repository) runs in `ota_1` (boot slot 1). Device id `1cdbd446ff38`, empty saved name; control and sensor loops at 100/100 Hz with an `imu.mock` instance labelled "hgj" on the sensor loop. Disarmed; `bench-stall` refused (result 1 detail 9). Ask the user before restoring the H2e-1 state (`tools/bench_fw.py normal`, factory loops at 1000/100/10 Hz). The CH343 (busid 1-1) is bound for usbipd and the WSL user is in `dialout`, so `tools/wsl_serial.py run` can lend it to the agent. Ports/traps: [docs/bench.md](../docs/bench.md).
+UG1 (2026-11-22) left the bare board on released normal firmware `0.1.0` (ELF build id `cfb947195b71f8d1`), running and booting from `ota_0`. Device id `1cdbd446ff38`, empty saved name, factory control and sensor loops at 1000/100 Hz, no added instances, disarmed and no active faults. The user approved leaving the board on the release after the flash checks. The CH343 (busid 1-1) is bound for usbipd and the WSL user is in `dialout`, so `tools/wsl_serial.py run` can lend it to the agent. See [bench ports and traps](../docs/bench.md).
 
 ## Models and effort
 
