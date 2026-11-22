@@ -26,7 +26,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 |---|---|---|---|---|---|
 | UG1 | Site, build and `guide` check, theme, Pagefind, web flasher, screenshots in CI, publishing with the apt repository on tags. Home, downloads, apt and flasher pages, plus `guide/CLAUDE.md`. Depends on H4d | Edge desktop and phone, keyboard, print and search. Bare board web flash, esptool and packaged GUI passed. | high, independent CI/publish review passed | merged | [#104](https://github.com/taruntom1/drivelink_v2/pull/104) |
 | UG2 | Start here, concepts and glossary, PC bench journey, reference build and wiring diagrams. Depends on UG1 | Edge desktop and phone in both themes, keyboard, print and search. Windows and Ubuntu packages exercised with vdev. | high, self | merged | [#106](https://github.com/taruntom1/drivelink_v2/pull/106) |
-| UG3 | Pi and ROS 2 journeys, generated reference, troubleshooting, About; user text moves out of the repository docs. Depends on UG2 | Full gate, release-mode site and apt checks, packaged GUI with vdev in WSL, and installed ROS commands with vdev on Lyrical and Jazzy. Browser review skipped at the user's request. | high, self | in review | |
+| UG3 | Pi and ROS 2 journeys, generated reference, troubleshooting, About; user text moves out of the repository docs. Depends on UG2 | Full gate, release-mode site and apt checks, packaged GUI with vdev in WSL, and installed ROS commands with vdev on Lyrical and Jazzy. Browser review skipped at the user's request. | high, self | in review | [#107](https://github.com/taruntom1/drivelink_v2/pull/107) |
 
 ## Product issues found
 
