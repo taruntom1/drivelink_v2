@@ -29,14 +29,14 @@ You have a Windows or Ubuntu computer and an ESP32-S3 you can plug in over USB. 
 
 ### Pi robot
 
-You have a Raspberry Pi running Ubuntu and want to connect to it from the desktop app. [Install the agent on the Pi]({{base}}apt/#install-a-package), then [flash the board]({{base}}flash/).
+You have a Raspberry Pi and want to reach the ESP32-S3 from the desktop app. [Start the Pi robot walkthrough]({{base}}pi/prepare/).
 
 </div>
 <div data-choice="ROS 2 robot">
 
 ### ROS 2 robot
 
-You have a robot that runs ROS 2 and want to connect it to DriveLink. [Find the ROS 2 packages for your Ubuntu version]({{base}}apt/#install-a-package), then [flash the board]({{base}}flash/).
+You want to bring up a two-wheel robot in ROS 2. [Start the ROS 2 walkthrough]({{base}}ros/install/).
 
 </div>
 </div>

@@ -31,6 +31,17 @@ class GuideTest(unittest.TestCase):
         self.assertIn('id="device-2"', rendered)
         self.assertIn('class="callout safety"', rendered)
 
+    def test_protocol_reference_keeps_tables_and_headings(self):
+        reference = guide.protocol_reference()
+        modules = guide.markdown().render(reference['module_reference'])
+        self.assertIn('<h2 id="actuator-pwm-dir">', modules)
+        self.assertIn('<th>Range</th>', modules)
+        self.assertIn('| 9 | `Fault` |', reference['status_reference'])
+        self.assertIn('| 38 | `FaultLatched` |', reference['detail_reference'])
+        diagnostic = guide.markdown().render(reference['diagnostic_reference'])
+        self.assertIn('<th>Severity</th>', diagnostic)
+        self.assertIn('CrcError', diagnostic)
+
     def test_unknown_page_and_no_search_fail(self):
         self.minimal_site()
         self.page('unlisted')

@@ -95,7 +95,11 @@ jobs:
           python3 host/gui/tests/scenarios.py \
             --gui "$build/gui/app/drivelink-gui" --vdev "$build/vdev/drivelink-vdev" \
             --out build/guide-screenshots \
-            --only $(python3 -c 'import json; print(*json.load(open("guide/screenshots.json")))')
+            --only $(python3 -c 'import json; print(*(name for name in json.load(open("guide/screenshots.json")) if not name.startswith("remote-")))')
+          python3 host/gui/tests/remote_scenarios.py \
+            --gui "$build/gui/app/drivelink-gui" --vdev "$build/vdev/drivelink-vdev" \
+            --agent "$build/agent/drivelink-agent" --out build/guide-screenshots \
+            --only $(python3 -c 'import json; print(*(name for name in json.load(open("guide/screenshots.json")) if name.startswith("remote-")))')
       - uses: actions/upload-artifact@v4
         with:
           name: guide-screenshots

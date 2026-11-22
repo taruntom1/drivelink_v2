@@ -33,18 +33,9 @@ On Windows, `python tools/validate.py --only agent` builds and tests it in WSL
 
 ## Install
 
-The `drivelink-agent` package (H3c) is the way to run it on a robot. It is
-built for Ubuntu 26.04 and 24.04, amd64 and arm64, from `VERSION` with the
-release in the package version (`<version>~ubuntu26.04`). Get it from a
-release, from DriveLink's signed apt repository (H3d; adding it is step 4 of
-[docs/pi-setup.md](../../docs/pi-setup.md), then `sudo apt install drivelink-agent`)
-or from `python3 tools/package_linux.py` (`build/deb/`). It
-Recommends `drivelink-cli`. A Raspberry Pi walk-through, from the UART to the
-LAN bind, is [docs/pi-setup.md](../../docs/pi-setup.md).
-
-```sh
-sudo apt install ./drivelink-cli_<version>_<arch>.deb ./drivelink-agent_<version>_<arch>.deb
-```
+Follow the [agent installation guide](https://taruntom1.github.io/drivelink_v2/pi/agent/) for released packages.
+See [agent configuration](https://taruntom1.github.io/drivelink_v2/reference/agent/) for service settings and network requirements.
+The [maintenance guide](https://taruntom1.github.io/drivelink_v2/pi/maintenance/) covers upgrades and removal.
 
 - **What it installs:**
   - `/usr/bin/drivelink-agent`;
@@ -58,24 +49,6 @@ sudo apt install ./drivelink-cli_<version>_<arch>.deb ./drivelink-agent_<version
   `/etc/drivelink/token` (0640 `root:drivelink`), then enables and starts the
   service. With no devices it answers device lists only and logs
   `no devices configured`.
-- **Adding a device:** `drivelink-agent --list-ports` prints a ready-to-paste
-  `{"alias", "endpoint", "baud"}` line for each ESP port it finds:
-  - `/dev/drivelink/<USB serial>`: the udev rule's names for a CH343 adapter
-    or an ESP32-S3's native USB, which is the firmware's console, not its
-    protocol port;
-  - `/dev/serial0` and `/dev/ttyAMA*`.
-
-  It never opens a port, since opening one can reset an ESP. Paste the line
-  into `devices`, then run `sudo systemctl restart drivelink-agent`. The rule
-  also tells ModemManager to leave these ports alone.
-- **Upgrade never restarts the agent** (safety, user decision 2026-11-20).
-  Stopping it DISARMs every device, so `apt upgrade` leaves the old process
-  serving and prints that `sudo systemctl restart drivelink-agent` loads the
-  new version. Only a first install, or a reinstall after remove, starts the
-  service.
-- **Remove and purge:** remove stops and disables the service and keeps
-  `/etc/drivelink`. Purge also deletes the config, the token and the
-  `drivelink` user.
 - **The unit:**
   - runs as `drivelink` with `--config /etc/drivelink/agent.json`;
   - stops with SIGTERM (`TimeoutStopSec=30`, room to DISARM 8 devices);
@@ -87,7 +60,9 @@ sudo apt install ./drivelink-cli_<version>_<arch>.deb ./drivelink-agent_<version
 
   `/dev` is not restricted, because serial device numbers vary.
 
-## Run
+## Development run
+
+Run the agent in the foreground for development and testing.
 
 ```sh
 drivelink-agent --token-file /etc/drivelink/token \

@@ -131,6 +131,21 @@ The guide’s writing rules are in [guide/CLAUDE.md](../guide/CLAUDE.md).
   desktop app and vdev. Give `scenarios.py` the packaged `--gui`, `--vdev`
   and `--cli` paths. Its figures use mock hardware. Check the wiring diagram
   links with a keyboard and confirm the pin tables are visible in print.
+- For the Pi journey, run the `remote-` entries in `guide/screenshots.json`
+  with `host/gui/tests/remote_scenarios.py` on Linux. Pass the packaged
+  `--gui`, `--agent`, `--vdev` and `--cli` paths and the same `--out` directory
+  as the PC scenarios. The discovery screenshot uses simulated discovery.
+  The other screens connect to the agent and a virtual device.
+- Build the ROS install preview with `python tools/validate.py --only deb
+  ros-deb ros-deb-install`. The last check installs from a test-signed
+  repository and tests the launch and recovery with vdev behind the installed
+  agent on both Jazzy and Lyrical. See the deferred rows in
+  [host status](../plans/host-status.md#deferred-hardware-checks) for the Pi
+  UART and floor runs.
+- The guide renders its module, result, detail, and diagnostic tables from
+  `protocol/defs/` at build time using the protocol generator’s model and
+  Markdown emitters. Edit definitions in their source files. See
+  [Definitions](protocol/definitions.md) for regeneration of the wire reference.
 - `build --release` requires both inputs, the exact release firmware version,
   and the committed apt fingerprint. CI supplies the images and firmware
   packaged for the same tag.
@@ -225,14 +240,15 @@ worktree. vdev reports `<VERSION>-vdev`. The `package.xml` files repeat it
 literally. `python tools/version.py --check` (in `gen`) fails on any
 mismatch, and `python tools/version.py` prints the full version.
 
-To release: edit `VERSION` and the two `package.xml` files, merge, then push
+To release, edit `VERSION` and the four `package.xml` files, merge, then push
 tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
 its `release` job checks the tag against `VERSION` and that every package
 carries the plain version, and publishes a GitHub Release with
-`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, the ten
-`.deb` packages (`<package>_<version>~ubuntu<release>_<arch>.deb`: the CLI and
-agent for 26.04 and 24.04, the GUI for 26.04, each for amd64 and arm64) and
-their `SHA256SUMS`. Then `apt-publish` signs those packages into the apt
+`drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, 26
+`.deb` packages, and `SHA256SUMS`. The Debian packages include the CLI and
+agent for Ubuntu 26.04 and 24.04, the GUI for 26.04, and the four DriveLink
+ROS packages for Lyrical and Jazzy, all for amd64 and arm64. Then
+`apt-publish` signs those packages into the apt
 repository on GitHub Pages ([packaging/apt/README.md](../packaging/apt/README.md)).
 
 ## Linux packages (`tools/setup_linux.sh`)
