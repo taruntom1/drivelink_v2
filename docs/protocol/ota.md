@@ -1,4 +1,4 @@
-# OTA (core v8, family 0x09)
+# OTA (core v10, family 0x09)
 
 OTA uses ordinary core requests/replies, with the core version/sequence/family/
 op header and result/detail. Integers are little-endian. There is no separate
@@ -58,7 +58,7 @@ acceptance, not proof of commit or reboot. Query STATUS after an uncertain
 outcome; never automatically repeat REBOOT. Other reset paths, including
 EXIT_SAFE_MODE, do not commit a prepared image; a physical reset before commit
 keeps the confirmed baseline. The new app boots pending confirmation.
-The host reconnects, checks GET_INFO/core v8, the running slot, and the full
+The host reconnects, checks GET_INFO/core v10, the running slot, and the full
 ELF hash against its uploaded app descriptor, then sends CONFIRM. Firmware
 never confirms itself at startup. The next reset without confirmation rolls
 back; there is no confirmation timeout. CONFIRM is idempotent on an already
@@ -120,6 +120,17 @@ build. `--upload-only` stops in Ready; `--no-confirm` leaves the booted candidat
 pending for a deliberate rollback check. Cancellation before reboot attempts
 ABORT; cancellation after reboot leaves the candidate unconfirmed. An uncertain
 cleanup reports recovery commands. It never confirms as an error-cleanup step.
+An observed Boot invalidating a request sets the host-only `Error::boot_changed`
+marker. If it interrupts REBOOT acceptance, the outcome is uncertain; if it
+interrupts readiness GET_INFO/STATUS, those reads may restart. The CLI then
+verifies the full image identity and slots before confirmation. It never repeats
+REBOOT, and other protocol/identity errors remain fatal. No wire format changes.
+
+The library holds this workflow (`drivelink/ota.hpp`): the CLI runs it through
+`otaUpdate`, and the GUI runs the same steps on its connection. The GUI sends
+CONFIRM automatically only after the identity check of the image it uploaded
+("Install without confirming" skips it); an unconfirmed build it did not
+install is confirmed only by the user, and a roll back is one explicit REBOOT.
 
 ## Partition table and simulator
 

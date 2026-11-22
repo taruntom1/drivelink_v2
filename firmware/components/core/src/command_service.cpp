@@ -206,6 +206,11 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
     switch (static_cast<defs::Family>(h.family)) {
     case defs::Family::Ota:return ota(h,r,w);
     case defs::Family::System: {
+        if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::SetName) {
+            std::array<char, drivelink::protocol::kDeviceNameBytes + 1> name{};
+            if (!drivelink::protocol::readDeviceName(r, name) || !r.done()) { return bad(Detail::BadValue); }
+            return m_core.setName(name.data());
+        }
         if (static_cast<defs::SystemOp>(h.op) == defs::SystemOp::BenchStall) {
             const auto loop = r.readU8(); const auto ms = r.readU16Le();
             if (!r.done() || !ms || ms > 10000) { return bad(); }
@@ -230,6 +235,8 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
                 w.appendU8(l->id());cw::string(w,l->name());w.appendU32Le(hz);
                 w.appendU8(l->realtime()?1:0);
             }
+            w.appendBytes(m_info.device_id.data(), m_info.device_id.size());
+            (void)drivelink::protocol::writeDeviceName(w, m_core.name());
             return {};
         case defs::SystemOp::BenchCrash:
             if(!m_info.bench_crash) { return bad(Detail::Unsupported); }
@@ -268,6 +275,9 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
                 const PendingEntry *entry=nullptr;
                 if(pending) { entry=&m_core.pendingLayout().entries()[next]; }
                 else { rec=m_core.recordAt(next); }
+                // recordAt is non-null below configuredCount(); the explicit
+                // check keeps GCC -O3 (vdev's Release build) from assuming null.
+                if(!entry && !rec) { break; }
                 const char *name=entry ? entry->label : rec->label;
                 if(w.remaining()<6+std::strlen(name)) { break; }
                 w.appendU8(entry?entry->type_id:rec->type_id);w.appendU8(entry?entry->instance:rec->instance);

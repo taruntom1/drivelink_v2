@@ -3,7 +3,7 @@
 The self-describing firmware core: module registry, configurable loop instances,
 params and actions, validated pending layouts, NVS A/B persistence and safe mode.
 F4a adds preallocated groups on the configurable loops. The wire contract is
-[core v8](../../../docs/protocol/core.md).
+[core v10](../../../docs/protocol/core.md).
 
 **The core is pure.** It includes no ESP-IDF or FreeRTOS header, no `sdkconfig.h` and no `CONFIG_` symbol. It uses only `core_os` (the OS adapters, NVS included), `protocol/` and the C++ standard library, so all of it but `src/idf/` also builds natively (`firmware/test/native`). Kconfig reaches it through `CoreConfig`, which `src/idf/core_config_idf.cpp` fills.
 
@@ -54,6 +54,16 @@ Getters for F3b's `GET_INFO`: `safeMode()`, `layoutInvalid()`, `configLoadedFrom
 
 ## Loops and concurrency
 
+- **Placement.** `loop.core` is the byte-sized enum `core_0=0`, `core_1=1`,
+  `any=2`; new loops default to `any`. `Core::createLoop` explicitly maps it
+  to OS affinity 0, 1 or `core_os::kNoAffinity`; invalid internal choices fail
+  loop startup. Factory loops retain their explicit cores 1/0, and saved 0/1
+  values keep their meaning. A missing stored pair follows the new descriptor
+  default. Selection is reboot-required: SET stages, SAVE/reboot applies, and
+  DISCARD cancels pending edits (REVERT restores live params only). Any core
+  delegates initial placement to FreeRTOS; ESP-IDF's FPU use pins the task early
+  because `runTick` computes float `dt_s`. It does not rebalance running loops.
+
 - **The loops.** Each built-in loop instance owns config-task params and tick-owned statistic signals. Its id is the loop id, its label the name, and its own loop is kNoLoop. `core_loop_<id>` tasks use persisted rate, core, priority, stack and real-time settings. Configured loop count defaults to at most 4, configurable up to 8; sparse ids are supported. Capacity for modules (default 16) is separate. The factory control loop is 1 kHz, real-time, core 1, priority 20; sensor is 100 Hz, non-real-time, core 0, priority 10. Each stack defaults to 4096 bytes. Live rate changes restart the timer from the config task. Every real-time task subscribes to the Task WDT; paused actions on it are refused while armed. A tick longer than its period counts core.LoopOverBudget using the loop id as diagnostic instance. All loop stalls remain subject to F4b's unchanged disarm rule.
 - **A tick:** the heartbeat, then the staged param batch, then a queued action, then group swaps/commands, each instance's `tick()` with `dt = elapsed × period`, subscription latching, then the stats. Instances tick in the wiring's tick order, fixed at boot (see Boot, step 6). Creation is always dependencies first.
 - **The staging slot.** A param batch reaches a loop only through its one staging slot, an atomic state (Empty → Filling → Ready → Applying → Applied) that the config task and the loop move with stores and compare-and-swaps. The config task waits on a `core_os::Event` for up to 3 periods plus 5 ms, then withdraws the batch (Ready → Empty). The loop never waits for the config task.
@@ -68,6 +78,7 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 - `removeInstance(type, inst)`: refused while another entry is wired to it (`Referenced`).
 - `setLabel`, `discardPending`, `getPending(refs, values)` (added instances and `reboot_required` params from the pending values, other params from the records).
 - A `reboot_required` param SET, and any SET on an instance that exists only in the pending layout, goes to the pending values and answers `PendingReboot` with the applied values (`Status::accepted()`).
+- A `reboot_required` **system** param is refused (`Unsupported`): the system instance is not a layout entry and has no pending copy. None exist today.
 - The pending copy is made at the first op from the configured records. The whole layout is validated on every op; an op is undone and refused when an entry that passed before fails after it, or the entry it added or changed fails.
 - Layout ops are refused while armed (`Armed`) and before `boot()`.
 - `pendingReboot()`: the pending copy is active, or the last SAVE wrote it.
@@ -82,11 +93,24 @@ A layout entry is `{type, inst, loop, label}` plus the instance's params. Change
 - `get()` and the applied values come from the shadow the config task keeps, never from loop-owned storage. `stage()` and `complete(timeout)` are public, so tests drive a batch without threads.
 - `nvsDirty()` is set by an applied `persist` param or a pending op, and cleared by SAVE.
 
+## Device identity
+
+IDF CoreLink reads the immutable factory MAC using `esp_efuse_mac_get_default`,
+checks errors, and injects six bytes into pure CommandService. Native callers
+inject a stable id. `Core::setName` and `name()` belong to the config caller,
+never loops/RX. SET_NAME changes RAM only, also armed, validates UTF-8 (0..16
+bytes, no C0/C1 controls), and marks dirty. GET_INFO appends the id/name.
+REVERT restores the saved name after parameter batches succeed; reset clears it.
+
 ## NVS A/B persistence
+
+Layout format 3 includes the name in its CRC-protected commit record. LP
+format 2 loads with an empty name, preserving records/params. New writes use
+format 3; wire compatibility requires core v10.
 
 - **Blobs** (`config_blob.hpp`, little-endian through `wire::Reader` / `Writer`, closed by a CRC-32):
   - instance: `fmt u8 | gen u32 | count u16 | count × (id u16, value u32) | crc32`, in namespace `t<type>i<inst>` (`t00i00` is the system), keys `p_a` / `p_b`
-  - layout: `fmt u8 | gen u32 | count u8 | count × (type u8, inst u8, loop u8, label[16]) | crc32`, in namespace `core`, keys `layout_a` / `layout_b`
+  - layout: `fmt u8 | gen u32 | count u8 | count × (type u8, inst u8, loop u8, label[16]) | name_len u8 | name bytes | crc32`, in namespace `core`, keys `layout_a` / `layout_b`
 - **SAVE** (`save()`): refused while armed. Generation `newest + 1` goes to slot `gen & 1`: every instance blob (every `persist` param of every record, or of the pending layout when there is one), the system's, then the layout blob as the commit record. Then the namespaces of instances no longer in the layout are erased. A failed write reports `core.NvsWriteFailed` and answers `Fault` / `StorageFailed`; the previous generation stays intact, so a power loss at any point leaves it loadable.
 - **Load**: the valid layout slot with the highest generation, with every instance blob (and the system's) of that same generation; else the other slot's generation; else the defaults with `core.ConfigLoadFailed` (not on a blank store). Unknown and retired ids and non-`persist` params are ignored, a missing id takes its default, an invalid value its default, and a value out of range is clamped.
 - **REVERT** (`revert()`): reloads every live, persisted param of the configured instances and the system from the newest complete generation, through `ParamService::set`, per domain in batches of at most 64. `NoSavedConfig` when there is none.

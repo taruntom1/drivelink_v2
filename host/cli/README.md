@@ -1,5 +1,9 @@
 # drivelink-cli
 
+Since core v9, `info` includes `device_id` (12 lowercase hex digits) and `name`.
+`name [TEXT]` reads or renames; `name ""` clears. Names allow 0..16 UTF-8 bytes
+without C0/C1 controls, also while armed. SAVE persists; REVERT restores.
+
 Generic CLI over libdrivelink. `--help` lists commands and arguments.
 Options precede the command; supply `--endpoint tcp://127.0.0.1:8765` or
 `--endpoint serial://COM3` (921600 baud by default).
@@ -27,7 +31,7 @@ args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
 watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
 `revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
 services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v7 before any requested mutation.
+vdev. Every connection checks core v10 before any requested mutation.
 
 F4c source parameters have `is_source: true` in item JSON (flag 0x80).
 Configure them through `set`, using the numeric packed reference
@@ -44,6 +48,16 @@ Watch commands produce one JSON envelope per line (NDJSON). Exit codes: 0
 success, 1 internal failure, 2 usage/value error, 3 connection, 4 timeout,
 5 device rejection, 6 malformed/incompatible protocol. Help does not open a port.
 Writes never retry; a write timeout has an unknown outcome.
+
+The CLI consumes typed library results and owns JSON formatting in
+`src/format.cpp`. CTest's `host-cli-golden` compares 60 readable/JSON outputs
+against vdev; `host-cli-replay` compares 12 deterministic event, action,
+subscription, capture and CSV outputs. Fixtures were captured from the original
+2793125 CLI before migration, with only documented dynamic fields normalized.
+Linux replay also interrupts an in-flight testgen START and requires DISARM
+plus the original null-status output when no STATUS has been read. Run these
+through the normal host validation checks; do not re-record fixtures to make
+a changed implementation pass.
 
 Loops are built-in type 5. For example, `add 5 fusion` allocates its loop id;
 `set 5:2:1=250` changes its rate, and `set 5:2:2=true` stages its real-time flag.
@@ -70,8 +84,9 @@ less than half watchdog_ms. With no values it sends prefix-only keepalives.
 `keepalive GROUP PERIOD_MS COUNT` sends those frames without arming or taking
 ownership of an existing arm session. Both workflows stop on connection errors;
 command streams have no acknowledgement, so status/diag supervision is separate.
-NaN remains rejected; automatic hold conversion needs semantic device modeling
-in the later host work.
+CLI values remain finite and explicit. The library's managed command API can
+map NaN through consumer-supplied finite holds; these CLI commands keep their
+existing manual command/keepalive behavior.
 
 `sub-csv GROUP COUNT` writes timestamp_us, counter and descriptor-typed values
 to stdout as CSV. Redirect to a file; omit --json. `sub-stream` retains NDJSON.
@@ -89,6 +104,71 @@ CaptureDone event when it arrived during the call. `capture-read` pages every
 sample of a done capture and adds typed rows; `capture-read --csv` prints
 `index,time_us,REF...`, where time is relative to the trigger sample
 (`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.
+
+## Through an agent
+
+`drivelink-agent` (Linux; [agent protocol](../../docs/protocol/agent.md)) owns
+the device ports and shares each device with several clients. Point the CLI at
+the agent's `tcp://` endpoint and name the device:
+
+```sh
+export DRIVELINK_AGENT_TOKEN=...            # or --token TOKEN
+drivelink-cli --endpoint tcp://127.0.0.1:47620 agent-devices
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base info
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device 02444c000001 --json get 0:0:4
+```
+
+`--device` takes an alias or a 12-hex device id; with it every command above
+works through the agent. It needs a `tcp://` endpoint and a token (`--token`,
+else the `DRIVELINK_AGENT_TOKEN` environment variable); otherwise it is a usage
+error (exit 2). Without `--device` the token is ignored. `--client-name NAME`
+(default `drivelink-cli`) is what the agent shows other clients; the CLI's
+Hello names its kind `cli` (agent protocol v3).
+
+`agent-devices` (no `--device`) lists the agent's devices, one line each:
+`ALIAS online|offline ID NAME ENDPOINT clients=N`, followed by
+` holder=CLIENT_ID:NAME (KIND)` when a client holds the device's lease (`-`
+for an unknown ID or an empty name; KIND is `gui`, `cli`, `ros` or `other`).
+With `--json` the envelope's `data.devices` is an array of `{alias, online,
+device_id, name, endpoint, clients, holder_id, holder_name, holder_kind}`;
+`device_id` is `null` until the agent has read it, `holder_id` is 0,
+`holder_name` empty and `holder_kind` `null` when nobody holds the lease. Agent refusals (bad token, unknown or offline
+device, a missing lease) are device rejections: exit 5, with the agent's
+`result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
+for a direct endpoint.
+
+`agent-browse [--timeout-ms N]` needs no endpoint, device or token (giving
+`--endpoint`, `--device`, `--token`, `--lease` or arguments is a usage error,
+exit 2). It does one mDNS browse round (`_drivelink._tcp`, IPv4, N ms, default
+1500, allowed 100..10000, else exit 2) and prints one line per agent:
+`INSTANCE ADDRESS protocol N DriveLink VERSION HOST` (`?` when the agent did
+not advertise the value), or `No agents found.` (exit 0). With `--json` the
+envelope's `data.agents` is an array of `{instance, host, port, address,
+endpoint, addresses, from, proto, version}` (`proto` is `null` when absent;
+empty when no agent answered). `address` is `a.b.c.d:port` and `endpoint` the
+`tcp://` form to pass to `--endpoint`. Agents on loopback or with
+`--no-advertise` do not appear.
+
+`--lease` (a global option before the command, needs `--device`) takes the
+device's control lease before the command runs, preempting the current holder
+(who is disarmed). Arming, command groups and the exclusive operations (SAVE,
+REVERT, FACTORY_RESET, REBOOT, layout edits, capture, test signals, OTA) need
+the lease, or a device nobody holds that is not armed; otherwise they are
+refused `Busy/LeaseRequired` (exit 5, detail 58). The lease ends when the CLI
+process exits: the agent then disarms the device and clears the process's
+command groups, so `--lease arm` disarms again at once; use a long-lived
+client to keep an armed device. A refused take is a device rejection (exit 5).
+`--lease` does not apply to `ota-upload` (it opens its own session), so OTA
+through an agent works only while nobody holds the device's lease.
+
+`agent-clients` (needs `--device`) lists the clients connected to the device,
+one line each, `CLIENT_ID NAME (KIND)`, with ` [holder]` on the lease holder.
+With `--json`, `data.clients` is an array of `{client_id, name, kind, holder}`.
+
+Each CLI process is one agent client, and the agent clears a client's group
+slots when it disconnects. `sub-config` therefore does not outlive its process:
+`sub-stream` and `cmd-send` in a later process find the group unconfigured.
+Use a long-lived client (the GUI, a script on the agent protocol) for groups.
 
 ## Test signals (F7b)
 
@@ -120,7 +200,15 @@ retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.
 to 180 s (1–3600), using a 100 ms warmup cadence for five seconds and 1 s
 thereafter. Both support readable/JSON output. The measurement command reports
 raw samples, bounded-estimator snapshots, held-out predictions, timeouts and
-dropped event counts. Interrupt stops sampling; no firmware clock is set.
+dropped event counts. JSON samples additionally expose `mapping_valid`,
+`mapping_generation`, `mapped_host_us` and `mapped_uncertainty_us` from the
+production Session fit; readable output is unchanged. Invalid mappings use null
+host/uncertainty fields. Interrupt stops sampling; no firmware clock is set.
+CLI sessions disable background periodic pings and retain this explicit cadence.
+Through an agent (`--device`) both commands ping the agent: the `esp_*` fields
+are the agent's monotonic times and the estimator fits the agent's clock;
+`mapping_valid` says whether the Session's composed device clock (the agent's
+ClockModel with this fit) is valid, and the mapped host fields stay null.
 Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
 and repeat with `--traffic` for the bare-board stability check. See the
 [time contract](../../docs/protocol/time.md) for the accuracy limits.

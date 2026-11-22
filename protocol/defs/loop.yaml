@@ -4,7 +4,7 @@ description: A built-in periodic loop, configured through the layout.
 items:
   - {id: 0x0001, kind: param, name: rate_hz, type: u16, unit: Hz, min: 1, max: 2000, default: 100, flags: [locked_while_armed]}
   - {id: 0x0002, kind: param, name: realtime, type: bool, default: false, flags: [reboot_required]}
-  - {id: 0x0003, kind: param, name: core, type: u8, min: 0, max: 1, default: 0, flags: [reboot_required]}
+  - {id: 0x0003, kind: param, name: core, type: enum, values: {core_0: 0, core_1: 1, any: 2}, default: any, flags: [reboot_required], description: "Configured placement: Any core lets the scheduler choose initially; floating-point use can pin the task."}
   - {id: 0x0004, kind: param, name: priority, type: u8, min: 1, max: 20, default: 10, flags: [reboot_required]}
   - {id: 0x0005, kind: param, name: stack_bytes, type: u16, unit: bytes, min: 3072, max: 16384, default: 4096, flags: [reboot_required]}
   - {id: 0x0100, kind: signal, name: ticks, type: u32}

@@ -23,8 +23,10 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #ifdef _WIN32
 #include <windows.h>
+#include <timeapi.h>
 #else
 #include <fcntl.h>
 #include <sys/file.h>
@@ -38,6 +40,24 @@ namespace p = drivelink::protocol;
 namespace msg = p::defs::msg;
 namespace dp = diag::protocol;
 using drivelink::Bytes;
+#ifdef _WIN32
+// Native loops wait on steady-clock deadlines. Request process-local 1 ms
+// waits rather than relying on the desktop/runner's coarse default quantum.
+// Keep this alive outside Server so all core threads stop before release.
+struct TimerResolution
+{
+    TimerResolution()
+    {
+        if (timeBeginPeriod(1) != TIMERR_NOERROR)
+        {
+            throw std::runtime_error("cannot request 1 ms Windows timer resolution");
+        }
+    }
+    ~TimerResolution() { timeEndPeriod(1); }
+    TimerResolution(const TimerResolution &) = delete;
+    TimerResolution &operator=(const TimerResolution &) = delete;
+};
+#endif
 struct DirectoryLock
 {
 #ifdef _WIN32
@@ -132,7 +152,9 @@ struct Peer : std::enable_shared_from_this<Peer>
     p::Scanner scanner{1024};
     asio::steady_timer stale;
     asio::steady_timer write_deadline;
+    asio::steady_timer drain;
     std::array<uint8_t, 2048> input{};
+    std::array<uint8_t, 256> discard{};
     struct Output
     {
         std::shared_ptr<Bytes> bytes;
@@ -142,9 +164,10 @@ struct Peer : std::enable_shared_from_this<Peer>
         std::chrono::steady_clock::time_point expires;
     };
     std::deque<Output> output;
-    bool closed = false, reset_pending = false;
+    bool closed = false, reset_pending = false, draining = false;
     uint64_t generation = 0;
-    explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io) {}
+    unsigned delayed = 0;
+    explicit Peer(Server &s, asio::io_context &io) : server(s), socket(io), stale(io), write_deadline(io), drain(io) {}
     ~Peer()
     {
 #ifndef _WIN32
@@ -159,6 +182,9 @@ struct Peer : std::enable_shared_from_this<Peer>
     void read();
     void write();
     void close();
+    void closeAfterReply();
+    void drainRead();
+    void finishDrain();
     void armDeadline();
     void recoverPty();
 };
@@ -177,7 +203,18 @@ struct Server
     uint16_t counter = 0;
     uint64_t last_rt_violations = 0;
     int64_t next_status = 0;
+    p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
     bool crash_enabled = false, stopping = false;
+    // Opt-in, local test controls. No device wire operation is added.
+    std::filesystem::path scenario_file;
+    uint64_t scenario_sequence=0;
+    int64_t scenario_poll=0;
+    unsigned slow_ms=0;
+    unsigned drop_config_reply=0;
+    unsigned drop_disarm=0,drop_arm_reply=0,drop_reboot=0,drop_action_reply=0;
+    uint64_t disarm_requests=0,reboot_requests=0,action_requests=0;
+    bool link_stalled=false;
+    uint64_t prefix_commands=0,value_commands=0;
     std::array<char,17> ota_build_id{};
     std::string ota_version;
     explicit Server(bool bench) : crash_enabled(bench) {}
@@ -220,7 +257,7 @@ struct Server
         ota_version=boot_info.version.data();
         if (!ota_version.ends_with("-vdev")) { ota_version+="-vdev"; }
         commands = std::make_unique<core::CommandService>(
-            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow});
+            *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow, device_id});
         counter = 0;
         next_status = 0;
         if (peer && !peer->closed)
@@ -233,8 +270,24 @@ struct Server
             peer->send(msg::kDiagEvent, reply.data(), n);
         }
     }
-    void receive(Peer &from, const p::Scanner::Frame &frame)
+    void receive(Peer &from, const p::Scanner::Frame &frame,bool delay=true)
     {
+        if(link_stalled) {return;}
+        if(delay && slow_ms && (frame.msg_type==msg::kCoreCommand || frame.msg_type==msg::kDiagQuery)) {
+            if(from.delayed>=4) {from.close();return;}
+            ++from.delayed;
+            auto owner=from.shared_from_this();auto timer=std::make_shared<asio::steady_timer>(io);
+            timer->expires_after(std::chrono::milliseconds(slow_ms));
+            Bytes payload(frame.payload,frame.payload+frame.len);const auto type=frame.msg_type;
+            const auto generation=from.generation;
+            timer->async_wait([this,owner,timer,payload=std::move(payload),type,generation](auto ec) {
+                --owner->delayed;
+                if(!ec && !owner->closed && owner->generation==generation && !stopping) {
+                    receive(*owner,{type,payload.size(),payload.data()},false);
+                }
+            });
+            return;
+        }
         if (frame.msg_type == msg::kTimeRequest) {
             const auto rx=static_cast<uint64_t>(core_os::nowUs());uint16_t id=0;
             if(!p::time_wire::decodeRequest(frame.payload,frame.len,id)) {
@@ -245,6 +298,8 @@ struct Server
         }
         else if (frame.msg_type == msg::kDisarm)
         {
+            if(!scenario_file.empty()) {++disarm_requests;}
+            if(drop_disarm) {--drop_disarm;return;}
             const auto n = core::fastDisarm(*core, {frame.payload, frame.len}, reply);
             from.send(msg::kCoreResponse, reply.data(), n);
         }
@@ -258,12 +313,32 @@ struct Server
                 p::core_wire::response(w,h,core::Result::Busy,core::Detail::StagingBusy);
                 from.send(msg::kCoreResponse,reply.data(),w.size());return;
             }
+            if(!scenario_file.empty() && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
+               frame.payload[3]==static_cast<uint8_t>(p::defs::SystemOp::Reboot)) {
+                ++reboot_requests;
+                // A lost REBOOT: neither applied nor answered.
+                if(drop_reboot) {--drop_reboot;return;}
+            }
+            const bool run=frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::Action) &&
+                frame.payload[3]==static_cast<uint8_t>(p::defs::ActionOp::Run);
+            if(run && !scenario_file.empty()) {++action_requests;}
             const auto n = commands->handle({frame.payload, frame.len}, reply);
+            // An action that ran, with its reply lost.
+            if(run && drop_action_reply && --drop_action_reply==0) {(void)commands->takeAfterReply();return;}
+            if(drop_arm_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
+               frame.payload[3]==static_cast<uint8_t>(p::defs::SystemOp::Arm) && --drop_arm_reply==0) {
+                (void)commands->takeAfterReply();return;
+            }
+            if(drop_config_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::Group) &&
+               frame.payload[3]==static_cast<uint8_t>(p::defs::GroupOp::CmdConfig) && --drop_config_reply==0) {
+                (void)commands->takeAfterReply();return;
+            }
             from.send(msg::kCoreResponse, reply.data(), n, commands->takeAfterReply());
         }
         else if (frame.msg_type >= p::defs::kCmdGroupChannelFirst &&
                  frame.msg_type < p::defs::kCmdGroupChannelFirst + p::defs::kCmdGroupChannelCount)
         {
+            if(!scenario_file.empty()) {if(frame.len==4) {++prefix_commands;}else {++value_commands;}}
             core->groups().receiveCommand(frame.msg_type - p::defs::kCmdGroupChannelFirst,
                 {frame.payload, frame.len}, core_os::nowUs());
         }
@@ -291,7 +366,7 @@ struct Server
                 info.safe_mode = core->safeMode();
                 info.records_dropped = diag->dropped;
                 info.events_tx_dropped = diag->tx_dropped;
-                info.version = "0.1.0-vdev";
+                info.version = DRIVELINK_VDEV_VERSION;
                 info.version_len = 10;
                 n = dp::encodeInfoBody(info, bytes.data(), bytes.size());
                 result = dp::ResultCode::Ok;
@@ -340,12 +415,57 @@ struct Server
         n = dp::encodeQueryResponse(h, result, bytes.data(), n, reply.data(), reply.size());
         from.send(msg::kDiagQueryResponse, reply.data(), n);
     }
+    void scenario()
+    {
+        const auto now=core_os::nowUs();
+        if(scenario_file.empty() || now<scenario_poll) {return;}
+        scenario_poll=now+100000;
+        std::ifstream input(scenario_file);std::array<char,129> line{};
+        input.getline(line.data(),line.size());
+        if(!input || input.gcount()>128) {return;}
+        std::istringstream command(line.data());uint64_t sequence=0;std::string action;
+        if(!(command>>sequence>>action) || sequence<=scenario_sequence) {return;}
+        scenario_sequence=sequence;
+        if(action=="fault") {core_os::raiseDiag(p::defs::diag::codes::core::kLoopStalled,0);}
+        else if(action=="fault-clear") {core_os::clearDiag(p::defs::diag::codes::core::kLoopStalled,0);}
+        else if(action=="stall") {link_stalled=true;}
+        else if(action=="resume") {link_stalled=false;}
+        else if(action=="slow") {unsigned ms=0;if(command>>ms && ms<=1000) {slow_ms=ms;}}
+        else if(action=="drop-config-reply") {unsigned n=0;if(command>>n && n<=32) {drop_config_reply=n;}}
+        else if(action=="drop-disarm") {unsigned n=0;if(command>>n && n<=32) {drop_disarm=n;}}
+        else if(action=="drop-arm-reply") {unsigned n=0;if(command>>n && n<=32) {drop_arm_reply=n;}}
+        else if(action=="loop-stall") {
+            // Busy-wait one tick of a running loop (the bench stall, without its
+            // wire gate): its sources age and its subscriptions pause.
+            unsigned loop=0,ms=0;
+            if(command>>loop>>ms && ms>=1 && ms<=10000) {if(auto *l=core->findLoop(uint8_t(loop))) {l->benchStall(ms*1000U);}}
+        }
+        else if(action=="drop-action-reply") {unsigned n=0;if(command>>n && n<=32) {drop_action_reply=n;}}
+        else if(action=="drop-reboot") {unsigned n=0;if(command>>n && n<=32) {drop_reboot=n;}}
+        else if(action=="stats") {
+            std::ofstream output(scenario_file.string()+".stats",std::ios::trunc);
+            output<<"prefix "<<prefix_commands<<"\nvalues "<<value_commands<<'\n';
+            output<<"disarms "<<disarm_requests<<'\n';
+            output<<"reboots "<<reboot_requests<<'\n';
+            output<<"actions "<<action_requests<<'\n';
+            for(size_t i=0;i<core->groups().capacity(core::GroupKind::Command);++i) {
+                const auto &g=*core->groups().info(core::GroupKind::Command,uint8_t(i));
+                if(g.configured) {output<<"group "<<i<<' '<<unsigned(g.loop)<<' '<<unsigned(g.count)<<'\n';}
+            }
+        }
+        else if(action=="reboot") {
+            if(peer) {peer->recoverPty();}
+            boot();scenario_poll=0;
+        }
+        std::cout<<"SCENARIO "<<sequence<<' '<<action<<std::endl;
+    }
     void tick()
     {
         if (stopping)
         {
             return;
         }
+        scenario();
         if (!core_os::native::bootFileHealthy())
         {
             throw std::runtime_error("crash state persistence failed");
@@ -516,6 +636,10 @@ void Peer::close()
 {
     if (closed)
     {
+        if (draining)
+        {
+            finishDrain();
+        }
         return;
     }
     closed = true;
@@ -530,9 +654,66 @@ void Peer::close()
     }
 #endif
 }
+// A device that reboots after its reply leaves that reply readable. Closing a
+// TCP socket with unread input (a frame pipelined behind REBOOT) makes the OS
+// send RST, and on Windows an RST discards the client's unread reply. So send
+// FIN after the reply, discard input like a rebooting device, and close once
+// the client closes or after a bound. The peer is closed for accept() at once.
+void Peer::closeAfterReply()
+{
+    if (closed)
+    {
+        return;
+    }
+    closed = true;
+    draining = true;
+    stale.cancel();
+    write_deadline.cancel();
+    asio::error_code ec;
+    socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+    if (ec)
+    {
+        finishDrain();
+        return;
+    }
+    socket.cancel(ec); // the read loop's pending read completes as closed
+    auto self = shared_from_this();
+    drain.expires_after(std::chrono::seconds(1));
+    drain.async_wait([self](auto) { self->finishDrain(); });
+    drainRead();
+}
+void Peer::drainRead()
+{
+    auto self = shared_from_this();
+    socket.async_read_some(asio::buffer(discard),
+                           [self](auto ec, size_t)
+                           {
+                               if (!self->draining)
+                               {
+                                   return;
+                               }
+                               if (ec)
+                               {
+                                   self->finishDrain();
+                                   return;
+                               }
+                               self->drainRead();
+                           });
+}
+void Peer::finishDrain()
+{
+    if (!draining)
+    {
+        return;
+    }
+    draining = false;
+    drain.cancel();
+    asio::error_code ec;
+    socket.close(ec);
+}
 bool Peer::send(uint8_t type, const uint8_t *data, size_t n, core::AfterReply after, bool stream)
 {
-    if (closed || !n)
+    if (closed || !n || server.link_stalled)
     {
         return false;
     }
@@ -664,7 +845,7 @@ void Peer::write()
             else
 #endif
             {
-                self->close();
+                self->closeAfterReply();
                 self->server.boot();
                 return;
             }
@@ -763,7 +944,10 @@ int main(int argc, char **argv)
     {
         std::filesystem::path state = "vdev-state";
         unsigned port = 8765;
+        p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
         bool pty = false, bench = false;
+        bool safe_mode=false;
+        std::filesystem::path scenario_file;
         int64_t fail_after = -1;
         for (int i = 1; i < argc; ++i)
         {
@@ -784,6 +968,12 @@ int main(int argc, char **argv)
             {
                 port = drivelink::parseUnsigned(value(), 65535);
             }
+            else if (arg == "--device-id")
+            {
+                const auto bytes = drivelink::parseHex(value());
+                if (bytes.size() != device_id.size()) { throw std::runtime_error("device id needs 12 hex digits"); }
+                std::copy(bytes.begin(), bytes.end(), device_id.begin());
+            }
             else if (arg == "--pty")
             {
                 pty = true;
@@ -792,6 +982,8 @@ int main(int argc, char **argv)
             {
                 bench = true;
             }
+            else if(arg=="--scenario-file") {scenario_file=value();}
+            else if(arg=="--safe-mode") {safe_mode=true;}
             else if (arg == "--fail-writes-after")
             {
                 fail_after = drivelink::parseUnsigned(value());
@@ -799,7 +991,7 @@ int main(int argc, char **argv)
             else if (arg == "--help")
             {
                 std::cout << "drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] "
-                             "[--fail-writes-after N]\n";
+                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode]\n";
                 return 0;
             }
             else
@@ -812,9 +1004,14 @@ int main(int argc, char **argv)
         p::Sha256Digest baseline_elf{};
         const auto source_id=drivelink::parseHex(DRIVELINK_BUILD_ID);
         std::copy_n(source_id.begin(),std::min(source_id.size(),baseline_elf.size()),baseline_elf.begin());
-        core_os::native::setOtaBaseline(baseline_elf,"0.1.0-vdev");
+        core_os::native::setOtaBaseline(baseline_elf,DRIVELINK_VDEV_VERSION);
         core_os::native::setOtaDirectory(state);
+#ifdef _WIN32
+        TimerResolution timer_resolution;
+#endif
         Server s(bench);
+        s.scenario_file=scenario_file;
+        s.device_id = device_id;
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)
         {
@@ -824,6 +1021,7 @@ int main(int argc, char **argv)
         {
             core_os::native::failWritesAfter(s.store, static_cast<uint32_t>(fail_after));
         }
+        if(safe_mode) {core_os::storeCrashCount(3);core_os::native::setResetWasCrash(true);}
         s.boot(true);
         if (pty)
         {

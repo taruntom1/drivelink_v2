@@ -18,18 +18,27 @@ def main():
         source.mkdir()
         (source / 'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.24)
 project(consumer LANGUAGES CXX)
+set(CMAKE_DISABLE_FIND_PACKAGE_nlohmann_json TRUE)
 find_package(drivelink REQUIRED)
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE drivelink::drivelink)
 ''')
-        (source / 'main.cpp').write_text('''#include <drivelink/client.hpp>
+        (source / 'main.cpp').write_text('''#include <drivelink/model.hpp>
+#include <expected>
+#if __cplusplus <= 202002L
+#error drivelink must propagate its C++23 requirement to consumers
+#endif
 int main() {
-    drivelink::Json descriptor={{"value_type",1}};
+    std::expected<int, int> value = 42;
+    if (value.value() != 42) { return 4; }
+    const auto descriptor=drivelink::ValueType::U8;
     if(drivelink::parseValue(descriptor,"42")!=42) { return 1; }
     try {
         drivelink::Session session("invalid-endpoint");
         drivelink::Client client(session);
-        client.info();
+        drivelink::DeviceModel model(client);
+        model.reload();
+        if(model.snapshot().types.empty()) { return 5; }
         return 2;
     } catch(const drivelink::Error &error) {
         return error.kind==drivelink::ErrorKind::Usage ? 0 : 3;

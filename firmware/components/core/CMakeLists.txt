@@ -28,5 +28,5 @@ idf_component_register(
          "src/idf/core_link.cpp"
     INCLUDE_DIRS "include"
     REQUIRES core_os protocol
-    PRIV_REQUIRES uart_comm esp_app_format diag
+    PRIV_REQUIRES uart_comm esp_app_format esp_hw_support diag
 )

@@ -1,17 +1,29 @@
-#include "drivelink/client.hpp"
+#include "format.hpp"
+#include "drivelink/ota.hpp"
 #include "drivelink/protocol/defs.hpp"
 #include "drivelink/protocol/ota_image.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <thread>
 #include <csignal>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace
 {
 using namespace drivelink;
+using cli::Json;
+using cli::toJson;
+using cli::valueJson;
 volatile std::sig_atomic_t interrupted = 0;
 struct InterruptScope {
     using Handler = void (*)(int);
@@ -21,6 +33,11 @@ struct InterruptScope {
 };
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
   [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
+  [--device ALIAS|ID12 --token TOKEN [--client-name NAME]]   (through drivelink-agent)
+  [--lease]                    Through an agent: take the control lease first (needs --device)
+  agent-devices                Through an agent: list its devices and lease holders (needs --token, no --device)
+  agent-clients                Through an agent: list the device's clients and the lease holder (needs --device)
+  agent-browse                 Find agents on the local network (mDNS); --timeout-ms N (default 1500)
   time-ping | time-sync [DURATION_S]
   ota-status | ota-abort | ota-confirm
   ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]
@@ -28,6 +45,7 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   info | types | items TYPE | enums TYPE ITEM | codes
   instances [pending] | add TYPE LABEL [LOOP] | remove TYPE INSTANCE
   label TYPE INSTANCE LABEL | discard
+  name [TEXT]                  Read or rename device (empty TEXT clears)
   get REF... | get-pending REF... | set REF=VALUE...
   action REF [ARG...] [--blob HEX]
   save | revert | factory-reset | reboot | exit-safe-mode
@@ -54,6 +72,11 @@ REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried. A write timeout has an unknown outcome.
 JSON is one envelope per command or one per watched event (NDJSON).
+Through an agent: --endpoint tcp://HOST:47620 --device NAME_OR_12HEX --token TOKEN.
+The token may come from DRIVELINK_AGENT_TOKEN; --client-name defaults to drivelink-cli.
+--lease takes the device's control lease (preempting a holder) before the command; it
+ends when this process exits, and the agent then disarms the device and clears this
+client's command groups. Exclusive operations (arm, save, reboot, ...) need the lease.
 Exit: 0 success, 1 internal, 2 usage, 3 connection, 4 timeout, 5 rejection, 6 protocol.
 )";
 [[noreturn]] void usage(const std::string &message)
@@ -128,12 +151,18 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     if (cmd == "info")
     {
         count(0);
-        return client.info();
+        return toJson(client.info());
     }
-    if (cmd=="ota-status") { count(0);return client.otaStatus(); }
-    if (cmd=="ota-abort") { count(0);return client.otaAbort(); }
-    if (cmd=="ota-confirm") { count(0);return client.otaConfirm(); }
-    if (cmd=="ota-finish") { count(0);return client.otaFinish(); }
+    if (cmd == "name")
+    {
+        if (args.size() > 2) { usage("name takes zero or one argument"); }
+        if (args.size() == 2) { (void)client.setName(args[1]); }
+        return Json{{"name", client.info().name}};
+    }
+    if (cmd=="ota-status") { count(0);return toJson(client.otaStatus()); }
+    if (cmd=="ota-abort") { count(0);return Json{{"aborted",client.otaAbort().ok}}; }
+    if (cmd=="ota-confirm") { count(0);return Json{{"confirmed",client.otaConfirm().ok}}; }
+    if (cmd=="ota-finish") { count(0);return Json{{"finished",client.otaFinish().ok}}; }
     if (cmd=="ota-begin") {
         count(2);const auto bytes=parseHex(args[2]);if (bytes.size()!=32) { usage("OTA SHA256 must be 32 bytes"); }
         protocol::Sha256Digest digest{};std::copy(bytes.begin(),bytes.end(),digest.begin());
@@ -143,22 +172,22 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     if (cmd == "types")
     {
         count(0);
-        return client.types();
+        return toJson(client.types());
     }
     if (cmd == "items")
     {
         count(1);
-        return client.items(static_cast<uint8_t>(id(1, 255)));
+        return toJson(client.items(static_cast<uint8_t>(id(1, 255))));
     }
     if (cmd == "enums")
     {
         count(2);
-        return client.enums(static_cast<uint8_t>(id(1, 255)), static_cast<uint16_t>(id(2, 65535)));
+        return toJson(client.enums(static_cast<uint8_t>(id(1, 255)), static_cast<uint16_t>(id(2, 65535))));
     }
     if (cmd == "codes")
     {
         count(0);
-        return client.codes();
+        return toJson(client.codes());
     }
     if (cmd == "instances")
     {
@@ -166,7 +195,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         {
             usage("instances [pending]");
         }
-        return client.instances(args.size() == 2);
+        return toJson(client.instances(args.size() == 2));
     }
     if (cmd == "add")
     {
@@ -174,46 +203,46 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         {
             usage("add TYPE LABEL [LOOP]");
         }
-        return client.add(static_cast<uint8_t>(id(1, 255)), args[2],
-                          static_cast<uint8_t>(args.size() == 4 ? id(3, 255) : 255));
+        return toJson(client.add(static_cast<uint8_t>(id(1, 255)), args[2],
+                          static_cast<uint8_t>(args.size() == 4 ? id(3, 255) : 255)));
     }
     if (cmd == "remove")
     {
         count(2);
-        return client.remove(static_cast<uint8_t>(id(1, 255)), static_cast<uint8_t>(id(2, 254)));
+        return toJson(client.remove(static_cast<uint8_t>(id(1, 255)), static_cast<uint8_t>(id(2, 254))));
     }
     if (cmd == "label")
     {
         count(3);
-        return client.label(static_cast<uint8_t>(id(1, 255)), static_cast<uint8_t>(id(2, 254)), args[3]);
+        return toJson(client.label(static_cast<uint8_t>(id(1, 255)), static_cast<uint8_t>(id(2, 254)), args[3]));
     }
     if (cmd == "discard")
     {
         count(0);
-        return client.discard();
+        return toJson(client.discard());
     }
     const std::map<std::string, uint8_t> ops{{"arm", 2}, {"disarm", 3}, {"ack-fault", 4}, {"save", 5}, {"revert", 6}, {"factory-reset", 7},
                                              {"reboot", 8}, {"exit-safe-mode", 9}, {"bench-crash", 254}};
     if (auto it = ops.find(cmd); it != ops.end())
     {
         count(0);
-        return client.system(it->second);
+        return toJson(client.system(it->second));
     }
     if (cmd == "diag-info")
     {
         count(0);
-        return client.diagInfo();
+        return toJson(client.diagInfo());
     }
-    if (cmd == "bench-stall") { count(2); return client.benchStall(static_cast<uint8_t>(id(1,254)),static_cast<uint16_t>(id(2,10000))); }
+    if (cmd == "bench-stall") { count(2); return toJson(client.benchStall(static_cast<uint8_t>(id(1,254)),static_cast<uint16_t>(id(2,10000)))); }
     if (cmd == "diag-entries")
     {
         count(0);
-        return client.diagEntries();
+        return toJson(client.diagEntries());
     }
     if (cmd == "diag-clear")
     {
         count(0);
-        return client.diagClear();
+        return toJson(client.diagClear());
     }
     if (cmd == "get" || cmd == "get-pending" || cmd == "set")
     {
@@ -223,7 +252,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         }
         std::vector<Ref> refs;
         std::vector<uint32_t> values;
-        std::vector<Json> descriptors;
+        std::vector<ItemDescriptor> descriptors;
         for (size_t i = 1; i < args.size(); ++i)
         {
             const auto equal = args[i].find('=');
@@ -233,7 +262,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             }
             const auto ref = parseRef(args[i].substr(0, equal));
             const auto d = client.item(ref);
-            if (d.at("kind") != 0)
+            if (d.kind != ItemKind::Param)
             {
                 usage("get/set accepts parameter items");
             }
@@ -241,17 +270,18 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             descriptors.push_back(d);
             if (cmd == "set")
             {
-                auto enums = d.at("value_type") == 6 ? client.enums(ref.type, ref.item) : Json::array();
+                auto enums = d.value_type == ValueType::Enum ? client.enums(ref.type, ref.item) : std::vector<EnumEntry>{};
                 values.push_back(parseValue(d, args[i].substr(equal + 1), enums));
             }
         }
         auto result = cmd == "set" ? client.set(refs, values) : client.get(refs, cmd == "get-pending");
-        result["typed_values"] = Json::array();
+        Json output=toJson(result);
+        output["typed_values"] = Json::array();
         for (size_t i = 0; i < refs.size(); ++i)
         {
-            result["typed_values"].push_back(valueJson(descriptors[i].at("value_type"), result["values"][i]));
+            output["typed_values"].push_back(valueJson(descriptors[i].value_type, result.values[i]));
         }
-        return result;
+        return output;
     }
     if (cmd == "action")
     {
@@ -261,7 +291,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         }
         auto ref = parseRef(args[1]);
         auto d = client.item(ref);
-        if (d.at("kind") != 3)
+        if (d.kind != ItemKind::Action)
         {
             usage("target must be an action");
         }
@@ -280,25 +310,26 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             }
             else
             {
-                if (index >= d.at("args").size() || index >= 4)
+                if (index >= d.args.size() || index >= 4)
                 {
                     usage("too many action arguments");
                 }
-                values[index] = parseValue(d["args"][index], args[i]);
+                values[index] = parseValue(d.args[index], args[i]);
                 ++index;
             }
         }
-        if (index != d.at("args").size())
+        if (index != d.args.size())
         {
             usage("wrong action argument count");
         }
         auto result = client.action(ref, values, blob);
-        result["typed_values"] = Json::array();
-        for (size_t i = 0; i < d.at("results").size(); ++i)
+        Json output=toJson(result);
+        output["typed_values"] = Json::array();
+        for (size_t i = 0; i < d.results.size(); ++i)
         {
-            result["typed_values"].push_back(valueJson(d["results"][i]["value_type"], result["values"][i]));
+            output["typed_values"].push_back(valueJson(d.results[i].value_type, result.values[i]));
         }
-        return result;
+        return output;
     }
     if (cmd=="time-ping" || cmd=="time-sync") {
         if(args.size()>(cmd=="time-ping"?1U:2U)) { usage("time-ping | time-sync [DURATION_S]"); }
@@ -315,6 +346,11 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 const auto prediction=before.drift_valid?before.map(s.esp_rx_us):0.0;
                 const bool accepted=estimator.add(s);
                 const auto m=estimator.model(s.host_rx_us);
+                // Through an agent the sample measures the agent's clock (esp_* are agent
+                // times): report whether the composed device clock is valid, map nothing.
+                const bool via_agent=session.agentHello().has_value();
+                auto mapped=mapTime(session.clockModel(),s.esp_rx_us,s.boot_generation);
+                if(session.generation()!=s.boot_generation) {mapped.valid=false;}
                 samples.push_back({{"id",s.id},{"host_tx_us",s.host_tx_us},{"esp_rx_us",s.esp_rx_us},
                     {"esp_tx_us",s.esp_tx_us},{"host_rx_us",s.host_rx_us},{"boot_generation",s.boot_generation},
                     {"accepted",accepted},{"rtt_us",valid?Json(rtt):Json(nullptr)},
@@ -324,6 +360,11 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                         {"slope",m.slope},{"drift_ppm",m.drift_ppm},{"samples",m.samples},
                         {"span_us",m.span_us},{"updated_us",m.updated_us},{"age_us",m.age_us},{"residual_us",m.residual_us},
                         {"min_rtt_us",m.min_rtt_us},{"max_rtt_us",m.max_rtt_us}}}});
+                if(json) {
+                    auto &sample=samples.back();sample["mapping_valid"]=mapped.valid;sample["mapping_generation"]=mapped.generation;
+                    sample["mapped_host_us"]=mapped.valid && !via_agent?Json(mapped.host_us):Json(nullptr);
+                    sample["mapped_uncertainty_us"]=mapped.valid && !via_agent?Json(mapped.uncertainty_us):Json(nullptr);
+                }
             } catch(const Error &e) { if(e.kind!=ErrorKind::Timeout || !duration) { throw; } ++timeouts; }
             if(!duration || interrupted) { break; }
             const auto elapsed=std::chrono::steady_clock::now()-start;
@@ -335,7 +376,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         } while(!interrupted);
         return {{"samples",samples},{"timeouts",timeouts},{"dropped_events",session.droppedEvents()}};
     }
-    if (cmd == "groups") { count(0); return client.groups(); }
+    if (cmd == "groups") { count(0); return toJson(client.groups()); }
     if (cmd == "sub-config" || cmd == "cmd-config") {
         const bool sub = cmd == "sub-config";
         const size_t first = sub ? 4 : 3;
@@ -344,16 +385,16 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         const auto loop = static_cast<uint8_t>(id(2, 254));
         std::vector<Ref> refs;
         for (size_t i = first; i < args.size(); ++i) { refs.push_back(parseRef(args[i])); }
-        return sub ? client.subConfigure(group, loop, static_cast<uint16_t>(id(3, 65535)), refs) :
-            client.cmdConfigure(group, loop, refs);
+        return toJson(sub ? client.subConfigure(group, loop, static_cast<uint16_t>(id(3, 65535)), refs) :
+            client.cmdConfigure(group, loop, refs));
     }
     if (cmd == "sub-enable") {
         count(2);
         if (args[2] != "true" && args[2] != "false") { usage("sub-enable expects true or false"); }
-        return client.subEnable(static_cast<uint8_t>(id(1, 255)), args[2] == "true");
+        return toJson(client.subEnable(static_cast<uint8_t>(id(1, 255)), args[2] == "true"));
     }
     if (cmd == "sub-clear" || cmd == "cmd-clear") {
-        count(1); return client.groupClear(static_cast<uint8_t>(id(1, 255)), cmd == "cmd-clear");
+        count(1); return toJson(client.groupClear(static_cast<uint8_t>(id(1, 255)), cmd == "cmd-clear"));
     }
     if (cmd == "sub-stream" || cmd == "sub-csv" || cmd == "cmd-send" || cmd == "cmd-run" || cmd == "keepalive") {
         const bool repeat = cmd == "cmd-run" || cmd == "keepalive";
@@ -365,28 +406,28 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             usage(send ? "cmd-send GROUP COUNTER [VALUE...]" : "sub-stream GROUP [COUNT]");
         }
         const auto group_id = id(1, 255);
-        Json group;
+        Group group;
         const auto listing = client.groups();
-        for (const auto &g : listing["groups"]) {
-            if (g["id"] == group_id && g["kind"] == (send ? "command" : "subscription")) { group = g; break; }
+        for (const auto &g : listing.groups) {
+            if (g.id == group_id && g.kind == (send ? GroupKind::Command : GroupKind::Subscription)) { group = g; break; }
         }
-        if (group.is_null() || !group["configured"].get<bool>()) { usage("group is not configured"); }
-        Json descriptors = Json::array();
-        for (const auto &ref : group["refs"]) { descriptors.push_back(client.item({ref["type"], ref["instance"], ref["item"]})); }
+        if (!group.configured) { usage("group is not configured"); }
+        std::vector<ItemDescriptor> descriptors;
+        for (const auto &ref : group.refs) { descriptors.push_back(client.item(ref)); }
         if (send) {
             const size_t first = repeat ? 4 : 3;
             if (args.size() != first && args.size() - first != descriptors.size()) { usage("command values must match the configured refs"); }
             std::vector<uint32_t> values;
             for (size_t i = first; i < args.size(); ++i) {
                 const auto &d = descriptors[i - first];
-                const auto &ref = group["refs"][i - first];
-                const Json enums = d["value_type"] == 6 ? client.enums(ref["type"], ref["item"]) : Json::array();
+                const auto &ref = group.refs[i - first];
+                const auto enums = d.value_type == ValueType::Enum ? client.enums(ref.type,ref.item) : std::vector<EnumEntry>{};
                 values.push_back(parseValue(d, args[i], enums));
             }
             if (repeat) {
                 InterruptScope interrupt_scope;
                 const auto period = id(2, 1000), n = id(3, 1000000);
-                const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1})["values"][0].get<uint32_t>();
+                const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1}).values[0];
                 if (!period || !n || period * 2 >= limit) { usage("period must be less than half watchdog_ms, and count must be positive"); }
                 bool owns_arm = false;
                 try {
@@ -394,7 +435,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                     auto next = std::chrono::steady_clock::now();
                     uint32_t sent = 0;
                     while (sent < n && !interrupted) {
-                        if (!client.command(static_cast<uint8_t>(group_id), group["epoch"], static_cast<uint16_t>(sent), values)) {
+                        if (!client.command(static_cast<uint8_t>(group_id), group.epoch, static_cast<uint16_t>(sent), values)) {
                             throw Error(ErrorKind::Connection, "command stream queue full");
                         }
                         ++sent;
@@ -407,18 +448,18 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                     throw;
                 }
             }
-            if (!client.command(static_cast<uint8_t>(group_id), group["epoch"], static_cast<uint16_t>(id(2, 65535)), values)) {
+            if (!client.command(static_cast<uint8_t>(group_id), group.epoch, static_cast<uint16_t>(id(2, 65535)), values)) {
                 throw Error(ErrorKind::Connection, "command stream queue full");
             }
             // An ordered read drains the frame before this short-lived session
             // closes. The command stream itself has no acknowledgement.
-            client.info(); return {{"sent", true}, {"epoch", group["epoch"]}};
+            client.info(); return {{"sent", true}, {"epoch", group.epoch}};
         }
         const auto n = args.size() == 3 ? id(2, 1000000) : 1;
         if (csv) {
             std::cout << "timestamp_us,counter";
-            for (const auto &ref : group["refs"]) {
-                std::cout << ',' << ref["type"].get<unsigned>() << ':' << ref["instance"].get<unsigned>() << ':' << ref["item"].get<unsigned>();
+            for (const auto &ref : group.refs) {
+                std::cout << ',' << unsigned(ref.type) << ':' << unsigned(ref.instance) << ':' << unsigned(ref.item);
             }
             std::cout << '\n';
         }
@@ -427,14 +468,14 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             Frame frame;
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
             if (remaining.count() <= 0 || !session.nextEvent(frame, remaining)) { throw Error(ErrorKind::Timeout, "no subscription sample received"); }
-            if (frame.type != group["channel"]) { continue; }
+            if (frame.type != group.channel) { continue; }
             auto sample = decodeSubscription(frame, group, descriptors);
-            if (sample.is_null()) { continue; }
+            if (!sample) { continue; }
             if (csv) {
-                std::cout << sample["timestamp_us"] << ',' << sample["counter"];
-                for (const auto &value : sample["typed_values"]) { std::cout << ',' << value; }
+                std::cout << sample->timestamp_us << ',' << sample->counter;
+                for (const auto &value : sample->typed_values) { std::cout << ',' << toJson(value); }
                 std::cout << '\n';
-            } else { emit(sample, json); }
+            } else { emit(toJson(*sample), json); }
             ++i;
             deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         }
@@ -447,23 +488,23 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         TestgenConfig c;
         c.loop = static_cast<uint8_t>(id(first, 254)); c.target = parseRef(args[first+1]);
         c.waveform = parseTestgenWaveform(args[first+2]);
-        const Json scalar{{"value_type", 5}}; // f32; parseValue rejects nonfinite/overflow/trailing data
+        const auto scalar=ValueType::F32; // f32; parseValue rejects nonfinite/overflow/trailing data
         c.offset = protocol::defs::f32FromBits(parseValue(scalar, args[first+3]));
         c.amplitude = protocol::defs::f32FromBits(parseValue(scalar, args[first+4]));
         c.frequency_start = protocol::defs::f32FromBits(parseValue(scalar, args[first+5]));
         c.frequency_end = protocol::defs::f32FromBits(parseValue(scalar, args[first+6]));
         c.duration_ms = id(first+7, UINT32_MAX); c.repeat = id(first+8, UINT32_MAX);
-        if (!run) { return client.testgenStart(c); }
+        if (!run) { return toJson(client.testgenStart(c)); }
         const auto group_id = static_cast<uint8_t>(id(1, 255));
         const auto period = id(2, 1000), timeout = id(3, 3600000);
-        const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1})["values"][0].get<uint32_t>();
+        const Ref watchdog{0,0,4}; const auto limit = client.get({&watchdog,1}).values[0];
         if (!period || !timeout || period*2 >= limit) { usage("positive timeout/period required; period must be less than half watchdog_ms"); }
-        Json group;
+        Group group;
         const auto listing = client.groups();
-        for (const auto &g : listing["groups"]) {
-            if (g["kind"] == "command" && g["id"] == group_id) { group = g; }
+        for (const auto &g : listing.groups) {
+            if (g.kind == GroupKind::Command && g.id == group_id) { group = g; }
         }
-        if (group.is_null() || !group["configured"].get<bool>()) { usage("command group is not configured"); }
+        if (!group.configured) { usage("command group is not configured"); }
         InterruptScope interrupt_scope;
         bool owns_arm = false;
         try {
@@ -471,22 +512,22 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             client.arm();
             uint16_t counter = 0;
             const auto feed = [&] {
-                if (!client.command(group_id, group["epoch"], counter++)) { throw Error(ErrorKind::Connection, "keepalive queue full"); }
+                if (!client.command(group_id, group.epoch, counter++)) { throw Error(ErrorKind::Connection, "keepalive queue full"); }
             };
             feed();
             const auto started = client.testgenStart(c);
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
             auto next = std::chrono::steady_clock::now();
-            Json status;
+            std::optional<TestgenStatus> status;
             while (!interrupted) {
                 feed(); status = client.testgenStatus(c.loop);
-                if (status["run"] != started["run"]) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
-                if (status["state"] == "done") { break; }
+                if (status->run != started.run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
+                if (status->state == TestgenState::Done) { break; }
                 if (std::chrono::steady_clock::now() >= deadline) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
                 next += std::chrono::milliseconds(period); std::this_thread::sleep_until(next);
             }
             client.disarm(); owns_arm = false;
-            return {{"status", status}, {"interrupted", interrupted != 0}};
+            return {{"status", toJson(status)}, {"interrupted", interrupted != 0}};
         } catch (...) {
             if (owns_arm) { try { client.disarm(); } catch (...) {} }
             throw;
@@ -494,29 +535,29 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
     }
     if (cmd == "testgen-stop" || cmd == "testgen-status") {
         count(1); const auto loop = static_cast<uint8_t>(id(1, 254));
-        return cmd == "testgen-stop" ? client.testgenStop(loop) : client.testgenStatus(loop);
+        return cmd == "testgen-stop" ? toJson(client.testgenStop(loop)) : toJson(client.testgenStatus(loop));
     }
     if (cmd == "testgen-wait") {
         if (args.size() < 2 || args.size() > 3) { usage("testgen-wait LOOP [TIMEOUT_MS]"); }
         const auto loop = static_cast<uint8_t>(id(1, 254));
         const auto timeout = args.size() == 3 ? id(2, 3600000) : 10000;
-        auto status = client.testgenStatus(loop); const auto run = status["run"];
-        if (status["state"] == "idle") { usage("testgen is idle"); }
+        auto status = client.testgenStatus(loop); const auto run = status.run;
+        if (status.state == TestgenState::Idle) { usage("testgen is idle"); }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
         Json done;
-        while (status["state"] == "running") {
+        while (status.state == TestgenState::Running) {
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
             if (remaining.count() <= 0) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
             Frame frame;
             if (session.nextEvent(frame, std::min(remaining, std::chrono::milliseconds(500))) &&
                 frame.type == protocol::defs::msg::kCoreEvent) {
                 auto event = client.event(frame);
-                if (event["name"] == "testgen_done" && event["loop"] == loop && event["run"] == run) { done = event; }
+                if (const auto *value=std::get_if<TestgenDone>(&event); value && value->loop==loop && value->run==run) { done=toJson(event); }
             }
             status = client.testgenStatus(loop);
-            if (status["run"] != run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
+            if (status.run != run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
         }
-        return {{"status", status}, {"event", done}};
+        return {{"status", toJson(status)}, {"event", done}};
     }
     if (cmd == "capture-config")
     {
@@ -537,19 +578,19 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
                 if (edge != "rising" && edge != "falling") { usage("edge must be rising or falling"); }
                 trigger.edge = edge == "falling" ? 1 : 0;
                 const auto d = client.item(trigger.ref);
-                const Json enums = d["value_type"] == 6 ? client.enums(trigger.ref.type, trigger.ref.item) : Json::array();
+                const auto enums = d.value_type == ValueType::Enum ? client.enums(trigger.ref.type, trigger.ref.item) : std::vector<EnumEntry>{};
                 trigger.value = parseValue(d, args[next++], enums);
             }
         }
         std::vector<Ref> refs;
         for (; next < args.size(); ++next) { refs.push_back(parseRef(args[next])); }
         if (refs.empty()) { usage("capture-config needs at least one REF"); }
-        return client.captureConfig(loop, divider, samples, pre, trigger, refs);
+        return toJson(client.captureConfig(loop, divider, samples, pre, trigger, refs));
     }
-    if (cmd == "capture-arm") { count(0); return client.captureArm(); }
-    if (cmd == "capture-trigger") { count(0); return client.captureTrigger(); }
-    if (cmd == "capture-abort") { count(0); return client.captureAbort(); }
-    if (cmd == "capture-status") { count(0); return client.captureStatus(); }
+    if (cmd == "capture-arm") { count(0); return toJson(client.captureArm()); }
+    if (cmd == "capture-trigger") { count(0); return toJson(client.captureTrigger()); }
+    if (cmd == "capture-abort") { count(0); return toJson(client.captureAbort()); }
+    if (cmd == "capture-status") { count(0); return toJson(client.captureStatus()); }
     if (cmd == "capture-wait")
     {
         if (args.size() > 2) { usage("capture-wait [TIMEOUT_MS]"); }
@@ -559,9 +600,9 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         Json event = nullptr;
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         auto next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-        while (status["state"] != "done")
+        while (status.state != CaptureState::Done)
         {
-            if (status["state"] == "idle") { usage("capture is idle"); }
+            if (status.state == CaptureState::Idle) { usage("capture is idle"); }
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
             if (remaining.count() <= 0) { throw Error(ErrorKind::Timeout, "capture did not complete"); }
             // Re-read STATUS on the event, or every 500 ms so a lost event never
@@ -570,7 +611,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             const auto until_poll = std::chrono::duration_cast<std::chrono::milliseconds>(next_poll - std::chrono::steady_clock::now());
             const auto slice = std::max(std::chrono::milliseconds(1), std::min(remaining, until_poll));
             const bool got = session.nextEvent(frame, slice);
-            if (got && frame.type == protocol::defs::msg::kCoreEvent) { event = client.event(frame); }
+            if (got && frame.type == protocol::defs::msg::kCoreEvent) { event = toJson(client.event(frame)); }
             else if (std::chrono::steady_clock::now() < next_poll) { continue; }
             status = client.captureStatus();
             next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
@@ -582,26 +623,26 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(grace - std::chrono::steady_clock::now());
             Frame frame;
             if (left.count() <= 0 || !session.nextEvent(frame, left)) { break; }
-            if (frame.type == protocol::defs::msg::kCoreEvent) { event = client.event(frame); }
+            if (frame.type == protocol::defs::msg::kCoreEvent) { event = toJson(client.event(frame)); }
         }
-        return {{"event", event}, {"status", status}};
+        return {{"event", event}, {"status", toJson(status)}};
     }
     if (cmd == "capture-read")
     {
         if (args.size() > 2 || (args.size() == 2 && args[1] != "--csv")) { usage("capture-read [--csv]"); }
         client.info(); // learn the payload limit for paging
         auto data = client.captureData();
-        Json descriptors = Json::array();
-        for (const auto &ref : data["refs"]) { descriptors.push_back(client.item({ref["type"], ref["instance"], ref["item"]})); }
-        const auto trigger_index = data["trigger_index"].get<int64_t>();
-        const auto period = data["sample_period_us"].get<int64_t>();
+        std::vector<ItemDescriptor> descriptors;
+        for (const auto &ref : data.status.refs) { descriptors.push_back(client.item(ref)); }
+        const auto trigger_index = static_cast<int64_t>(data.status.trigger_index.value_or(0));
+        const auto period = static_cast<int64_t>(data.status.sample_period_us);
         Json rows = Json::array();
-        for (size_t i = 0; i < data["data"].size(); ++i)
+        for (size_t i = 0; i < data.data.size(); ++i)
         {
             Json typed = Json::array();
             for (size_t k = 0; k < descriptors.size(); ++k)
             {
-                typed.push_back(valueJson(descriptors[k]["value_type"], data["data"][i][k]));
+                typed.push_back(valueJson(descriptors[k].value_type, data.data[i][k]));
             }
             rows.push_back({{"index", i}, {"time_us", (static_cast<int64_t>(i) - trigger_index) * period},
                             {"typed_values", typed}});
@@ -609,8 +650,8 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         if (args.size() == 2)
         {
             std::cout << "index,time_us";
-            for (const auto &ref : data["refs"]) {
-                std::cout << ',' << ref["type"].get<unsigned>() << ':' << ref["instance"].get<unsigned>() << ':' << ref["item"].get<unsigned>();
+            for (const auto &ref : data.status.refs) {
+                std::cout << ',' << unsigned(ref.type) << ':' << unsigned(ref.instance) << ':' << unsigned(ref.item);
             }
             std::cout << '\n';
             for (const auto &row : rows)
@@ -621,8 +662,8 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             }
             return nullptr;
         }
-        data["rows"] = rows;
-        return data;
+        auto output=toJson(data);output["rows"] = rows;
+        return output;
     }
     if (cmd == "status" || cmd == "events")
     {
@@ -644,7 +685,7 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             {
                 continue;
             }
-            emit(client.event(frame), json);
+            emit(toJson(client.event(frame)), json);
             ++i;
             deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
         }
@@ -663,58 +704,15 @@ Json upload(const std::vector<std::string> &args,const std::string &endpoint,Ses
         else { usage("unknown/repeated OTA option"); }
     }
     if ((upload_only && no_confirm) || !window) { usage("invalid OTA options"); }
-    const auto image=readOtaImage(args[1]);protocol::Sha256Digest identity;
-    if (!protocol::otaImageIdentity(image,identity)) { usage("invalid OTA image"); }
-    auto session=std::make_unique<Session>(endpoint,options);
-    auto client=std::make_unique<Client>(*session);client->info();
-    const auto before=client->otaStatus();
+    const auto image=loadOtaImage(args[1]);
     InterruptScope interrupt;unsigned last_percent=101;
-    auto state=client->otaUpload(image,window,[&](uint32_t offset,uint32_t size) {
-        const auto percent=100U*offset/size;
+    OtaUpdateOptions update;update.upload_only=upload_only;update.confirm=!no_confirm;update.window=window;
+    const auto result=otaUpdate(endpoint,options,image,update,[&](const OtaProgress &p) {
+        const auto percent=100U*p.offset/p.size;
         if (percent/5!=last_percent/5) { std::cerr<<"OTA "<<percent<<"%\n";last_percent=percent; }
         return !interrupted;
-    });
-    if (upload_only) { state["rebooted"]=false;state["confirmed"]=false;return state; }
-    if (interrupted) { client->otaAbort();throw Error(ErrorKind::Usage,"OTA cancelled before reboot; update aborted"); }
-    try { client->system(static_cast<uint8_t>(protocol::defs::SystemOp::Reboot)); }
-    catch (const Error &e) { if (e.kind!=ErrorKind::Timeout && e.kind!=ErrorKind::Connection) { throw; } }
-    client.reset();session->close();session.reset();
-    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
-    std::string failure="device did not reconnect";
-    while (std::chrono::steady_clock::now()<deadline) {
-        if (interrupted) { throw Error(ErrorKind::Usage,"OTA cancelled after reboot; candidate left unconfirmed; inspect ota-status"); }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        try {
-            auto reconnect_options=options;
-            reconnect_options.timeout=std::min(options.timeout,std::chrono::milliseconds(1500));
-            session=std::make_unique<Session>(endpoint,reconnect_options);client=std::make_unique<Client>(*session);
-            const auto info=client->info();state=client->otaStatus();
-            if (state["running_slot"]==before["running_slot"] && (state["state"]==2 || state["state"]==3)) {
-                throw Error(ErrorKind::Protocol,"OTA reboot was accepted but commit did not complete; inspect ota-status, abort if boot_slot equals running_slot, otherwise reset for rollback");
-            }
-            if (state["elf_sha256"]!=hex(identity) || state["running_slot"]==before["running_slot"] ||
-                state["running_slot"]!=state["boot_slot"] || info["build_id"]!=hex(identity).substr(0,16) ||
-                state["state"]!=0) {
-                throw Error(ErrorKind::Protocol,"running image/slot does not match uploaded candidate; not confirmed");
-            }
-            if (!no_confirm && state["pending_confirm"]==true) {
-                if (interrupted) { throw Error(ErrorKind::Usage,"candidate left unconfirmed"); }
-                try { client->otaConfirm(); }
-                catch (const Error &e) { if (e.kind!=ErrorKind::Timeout) { throw; } }
-                state=client->otaStatus();
-                if (state["pending_confirm"]==true) { throw Error(ErrorKind::Timeout,"confirmation uncertain; inspect ota-status and use ota-confirm"); }
-                if (state["elf_sha256"]!=hex(identity) || state["running_slot"]==before["running_slot"] ||
-                    state["running_slot"]!=state["boot_slot"] || state["state"]!=0) {
-                    throw Error(ErrorKind::Protocol,"running image changed during confirmation; inspect ota-status");
-                }
-            }
-            state["rebooted"]=true;state["confirmed"]=state["pending_confirm"]==false;return state;
-        } catch (const Error &e) {
-            if (e.kind!=ErrorKind::Connection && e.kind!=ErrorKind::Timeout) { throw; }
-            failure=e.what();client.reset();if (session) { session->close();session.reset(); }
-        }
-    }
-    throw Error(ErrorKind::Timeout,"OTA reconnect/confirmation failed: "+failure+"; inspect ota-status; confirmation remains uncertain");
+    },[] { return interrupted!=0; });
+    auto output=toJson(result.status);output["rebooted"]=result.rebooted;output["confirmed"]=result.confirmed;return output;
 }
 } // namespace
 int main(int argc, char **argv)
@@ -730,8 +728,37 @@ int main(int argc, char **argv)
     }
     try
     {
-        std::string endpoint;
+#ifdef _WIN32
+        // main's narrow argv follows the Windows ANSI code page. Device names
+        // are UTF-8 even on machines whose system code page is not UTF-8.
+        int wide_count = 0;
+        const auto wide = CommandLineToArgvW(GetCommandLineW(), &wide_count);
+        if (!wide) { throw std::runtime_error("cannot decode Windows command line"); }
+        const auto release = [](wchar_t **p) { LocalFree(p); };
+        const std::unique_ptr<wchar_t *, decltype(release)> owned(wide, release);
+        std::vector<std::string> utf8;
+        utf8.reserve(wide_count);
+        for (int i = 0; i < wide_count; ++i) {
+            const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1,
+                                                nullptr, 0, nullptr, nullptr);
+            if (!size) { usage("invalid Unicode command-line argument"); }
+            std::string value(static_cast<size_t>(size), '\0');
+            if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide[i], -1,
+                                     value.data(), size, nullptr, nullptr)) {
+                usage("invalid Unicode command-line argument");
+            }
+            value.pop_back(); utf8.push_back(std::move(value));
+        }
+        std::vector<char *> pointers;
+        for (auto &arg : utf8) { pointers.push_back(arg.data()); }
+        argc = wide_count; argv = pointers.data();
+#endif
+        std::string endpoint, token, device, client_name = "drivelink-cli";
+        bool have_token = false, lease = false;
         SessionOptions options;
+        // Short CLI commands own their explicit time measurement; background
+        // pings would alter recorded/replayed wire conversations.
+        options.periodic_time=false;
         std::vector<std::string> args;
         for (int i = 1; i < argc; ++i)
         {
@@ -756,6 +783,24 @@ int main(int argc, char **argv)
             {
                 options.baud = parseUnsigned(value(), 4000000);
             }
+            else if (args.empty() && arg == "--token")
+            {
+                token = value();
+                have_token = true;
+            }
+            else if (args.empty() && arg == "--device")
+            {
+                device = value();
+                if (device.empty()) { usage("--device needs an alias or device id"); }
+            }
+            else if (args.empty() && arg == "--lease")
+            {
+                lease = true;
+            }
+            else if (args.empty() && arg == "--client-name")
+            {
+                client_name = value();
+            }
             else if (args.empty() && arg == "--timeout-ms")
             {
                 options.timeout = std::chrono::milliseconds(parseUnsigned(value(), 60000));
@@ -777,14 +822,100 @@ int main(int argc, char **argv)
                 args.push_back(arg);
             }
         }
+        if (!args.empty() && args[0] == "agent-browse")
+        {
+            // --timeout-ms may also follow the command.
+            if (args.size() == 3 && args[1] == "--timeout-ms")
+            {
+                options.timeout = std::chrono::milliseconds(parseUnsigned(args[2], 60000));
+            }
+            else if (args.size() != 1)
+            {
+                usage("agent-browse [--timeout-ms N] takes no other arguments");
+            }
+            if (!endpoint.empty()) { usage("agent-browse finds agents; omit --endpoint"); }
+            if (!device.empty()) { usage("agent-browse finds agents; omit --device"); }
+            if (have_token) { usage("agent-browse finds agents; omit --token"); }
+            if (lease) { usage("--lease does not apply to agent-browse"); }
+            const auto found = discovery::browseAgents(options.timeout);
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &agent : found) { list.push_back(toJson(agent)); }
+                emit({{"agents", list}}, true);
+            }
+            else if (found.empty())
+            {
+                std::cout << "No agents found.\n";
+            }
+            else
+            {
+                for (const auto &agent : found) { std::cout << cli::browseLine(agent) << '\n'; }
+            }
+            return 0;
+        }
         if (args.empty() || endpoint.empty())
         {
             usage("--endpoint and COMMAND required; use --help");
         }
-        if (args[0]=="ota-upload") { emit(upload(args,endpoint,options),json);return 0; }
+        if (!have_token)
+        {
+            // The environment is only a fallback for an absent option.
+            if (const char *env = std::getenv("DRIVELINK_AGENT_TOKEN")) { token = env; }
+        }
+        const bool tcp = endpoint.rfind("tcp://", 0) == 0;
+        if (lease && device.empty()) { usage("--lease needs --device"); }
+        if (args[0] == "agent-clients" && device.empty()) { usage("agent-clients needs --device"); }
+        if (args[0] == "agent-devices")
+        {
+            if (args.size() != 1) { usage("agent-devices takes no arguments"); }
+            if (!device.empty()) { usage("agent-devices lists devices; omit --device"); }
+            if (!tcp) { usage("agent-devices needs a tcp:// agent endpoint"); }
+            if (token.empty()) { usage("agent-devices needs --token or DRIVELINK_AGENT_TOKEN"); }
+            const auto devices = listAgentDevices(endpoint, token, options.timeout, client_name, static_cast<uint8_t>(protocol::defs::AgentClientKind::Cli));
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &record : devices) { list.push_back(toJson(record)); }
+                emit({{"devices", list}}, true);
+            }
+            else
+            {
+                for (const auto &record : devices) { std::cout << cli::deviceLine(record) << '\n'; }
+            }
+            return 0;
+        }
+        if (!device.empty())
+        {
+            if (!tcp) { usage("--device needs a tcp:// agent endpoint"); }
+            if (token.empty()) { usage("--device needs --token or DRIVELINK_AGENT_TOKEN"); }
+            options.agent = AgentHello{token, device, client_name, static_cast<uint8_t>(protocol::defs::AgentClientKind::Cli)};
+        }
+        if (args[0]=="ota-upload")
+        {
+            if (lease) { usage("--lease does not apply to ota-upload"); }
+            emit(upload(args,endpoint,options),json);return 0;
+        }
         Session session(endpoint, options);
         Client client(session);
         client.info();
+        if (lease) { agentLeaseTake(session); }
+        if (args[0] == "agent-clients")
+        {
+            if (args.size() != 1) { usage("agent-clients takes no arguments"); }
+            const auto clients = agentClients(session);
+            if (json)
+            {
+                Json list = Json::array();
+                for (const auto &record : clients) { list.push_back(toJson(record)); }
+                emit({{"clients", list}}, true);
+            }
+            else
+            {
+                for (const auto &record : clients) { std::cout << cli::clientLine(record) << '\n'; }
+            }
+            return 0;
+        }
         auto result = run(client, session, args, json);
         if (!result.is_null())
         {

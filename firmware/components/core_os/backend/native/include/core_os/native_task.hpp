@@ -2,6 +2,9 @@
 #include <cstddef>
 #include <cstdint>
 namespace core_os::native {
+using PeriodicStartObserver = void (*)(const char *name, int8_t core);
+/// Setup-only test observation; change only while all periodic tasks are stopped.
+PeriodicStartObserver setPeriodicStartObserver(PeriodicStartObserver observer);
 /// One-shot setup/config failure injection; -1 disables it.
 void failPeriodicStartAfter(int32_t successes);
 void failNextPeriodChange();

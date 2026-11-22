@@ -10,17 +10,55 @@ prints `READY serial:///dev/pts/N` and serves a raw PTY instead. It keeps the
 slave open across CLI invocations. One client owns configuration at a time;
 extra TCP connections are closed. Reboot replies are written before the core
 is rebuilt, loops/boot clock/diagnostics reset, and TCP is disconnected.
-PTY remains open across reboot. Command reply drains have a two-second deadline
+The TCP disconnect is graceful: vdev sends FIN after the reply, discards any
+input (frames pipelined behind REBOOT are lost, as on a rebooting device) and
+closes when the client closes or after one second. A plain close with unread
+input would send RST, which on Windows discards the client's unread reply.
+A new client can connect during that second. PTY remains open across reboot. Command reply drains have a two-second deadline
 from enqueue. A failed TCP drain closes the connection and cancels the reboot.
 A failed PTY drain cancels/drops queued replies and effects, retaining the master
 so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
 and in-flight buffer remain bounded, and later status samples replace pending ones.
 
-The vdev implements core v8, time v1, status and diag v3. CPU load is unavailable (255).
+The vdev implements core v10, time v1, status and diag v3. CPU load is unavailable (255).
 It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
 streams use latest-wins queueing. Control loops never allocate diagnostics.
 There is no synthetic host-specific module table; the actual generated mock
 definitions are served by the core.
+
+Device id defaults to `02444c000001`, stable across reboot and reset.
+`--device-id HEX12` simulates distinct boards. Names use real core storage.
+
+## GUI scenario controls
+
+These are explicit native test controls, not device wire operations. Without
+the options below the normal vdev behavior is unchanged.
+
+`--safe-mode` seeds the native crash counter before boot, using the real core
+safe-mode path. `--scenario-file PATH` polls a local control file. Replace it
+with one line, `<sequence> <action>`, using an increasing unsigned sequence;
+an already consumed sequence is ignored. For example, write `1 fault`, then
+replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
+
+| Action | Effect |
+|---|---|
+| `fault`, `fault-clear` | Raise/clear the real `core.LoopStalled` condition for loop 0; acknowledgement still uses the real core service |
+| `stall`, `resume` | Stop/resume transport RX/TX while the core keeps running |
+| `slow N` | Delay ordinary core/diag request dispatch by 0..1000 ms; fast DISARM and time/status keep running; at most four delayed requests per peer |
+| `reboot` | Rebuild the core, closing TCP or retaining the PTY and emitting Boot |
+| `drop-config-reply N` | Suppress the Nth following CMD_CONFIG reply after the real mutation, once (0 disables, maximum 32) |
+| `drop-disarm N` | Ignore the next N fast DISARM requests, including their replies (maximum 32) |
+| `drop-arm-reply N` | Suppress the Nth following ARM reply after applying the real operation, once (maximum 32) |
+| `drop-reboot N` | Ignore the next N SYSTEM REBOOT requests: neither applied nor answered (maximum 32) |
+| `drop-action-reply N` | Suppress the Nth following ACTION RUN reply after the action ran, once (maximum 32) |
+| `loop-stall LOOP MS` | Stall one tick of a running loop for 1..10000 ms (the bench stall, without its wire gate), so its sources age |
+| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM, REBOOT and ACTION RUN request counts, configured command group IDs/loops/widths |
+
+Counters in the sidecar let GUI tests prove they sent no input value frames
+and did not adopt another owner's groups. The GUI scenario runner
+`host/gui/tests/scenarios.py` creates isolated temporary state/control files;
+see [GUI screenshots and backend checks](../gui/README.md). It never sends
+these injections to a supplied physical endpoint.
 
 ## Persistence and crashes
 
@@ -49,7 +87,8 @@ injection and remains the default unless a file directory is attached.
 
 Loop instances, the factory layout and safe mode use the same core as firmware.
 Native real-time guard violations are counted and reported on stderr; safe mode
-starts no loop threads. Old layout blobs fall back to the factory loops.
+starts no loop threads. LP format-2 layouts load intact with an empty name;
+older formats fall back to factory loops. SAVEs now write format 3.
 
 Group command frames use the real core RX mailbox and disarmed gate. The
 config timer drains subscription snapshots; stream coalescing compares the
@@ -62,6 +101,13 @@ with the safety interlock and reporter; reporting uses bounded storage. Native
 scheduling can jitter more than a board: use slower loop rates (for example
 100 Hz) for desktop arming tests. `--allow-crash` also enables BenchStall; a
 native stall exercises the monitor, while Task WDT panic-reset is device-only.
+
+On Windows, vdev requests 1 ms timer resolution for its process before starting
+the core and releases it after all core threads stop. Startup fails explicitly
+if Windows refuses the request. This prevents coarse default waits from
+dominating short loop periods, including on CI. It does not guarantee real-time
+scheduling; elapsed-period accounting, overruns and all control/safety rules are
+unchanged. The shared native backend and hardware firmware are unaffected.
 
 F5a-1 also registers the actual `controller.cascade_pid` implementation (0x20).
 It drives `actuator.mock` through the same interface as future PWM hardware and

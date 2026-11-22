@@ -83,7 +83,7 @@ def opt_str(where: str, d: dict, key: str) -> str:
 # MSG_TYPE classes, as in docs/protocol/framing.md.
 CLASS_RANGES = (("command", 0x01, 0x3F), ("response", 0x40, 0x7F), ("stream", 0x80, 0xBF), ("event", 0xC0, 0xFE))
 STREAM_MIN, STREAM_MAX = 0x80, 0xBF
-DIRECTIONS = ("host_to_esp", "esp_to_host", "both")
+DIRECTIONS = ("host_to_esp", "esp_to_host", "both", "host_to_agent", "agent_to_host")
 
 
 def msg_class(value: int) -> str | None:
@@ -311,9 +311,9 @@ SCALAR_TYPES = ("bool", "u8", "u16", "u32", "i32", "f32")
 VALUE_TYPES = SCALAR_TYPES + ("enum",)
 NUMERIC_TYPES = ("u8", "u16", "u32", "i32", "f32")
 INT_RANGES = {"u8": (0, 0xFF), "u16": (0, 0xFFFF), "u32": (0, 0xFFFFFFFF), "i32": (-(2**31), 2**31 - 1)}
-# Flag names in descriptor order. `persist` and `testgen` are set from their own keys.
+# Flag names in descriptor order. `persist`, `testgen` and `tune` are set from their own keys.
 # `gpio` and `ref_ticks_after` come from the `gpio` and `ref_order` keys.
-FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen", "gpio", "ref_ticks_after", "source")
+FLAG_ORDER = ("reboot_required", "persist", "read_only", "locked_while_armed", "testgen", "gpio", "ref_ticks_after", "source", "tune")
 LISTED_FLAGS = {"param": {"reboot_required", "read_only", "locked_while_armed"}, "signal": set(), "input": set(), "action": set()}
 PLACEMENTS = ("loop", "paused")
 BLOBS = ("none", "in", "out", "both")
@@ -324,7 +324,7 @@ GPIO_NONE = 0xFF  # the value of a gpio param that names no pin (its default)
 
 COMMON_KEYS = {"id", "kind", "name", "description", "retired"}
 KIND_KEYS = {
-    "param": {"type", "unit", "min", "max", "default", "flags", "values", "ref", "ref_order", "persist", "gpio"},
+    "param": {"type", "unit", "min", "max", "default", "flags", "values", "ref", "ref_order", "persist", "gpio", "tune"},
     "signal": {"type", "unit", "min", "max", "values"},
     "input": {"type", "unit", "min", "max", "values", "testgen"},
     "action": {"runs_in", "args", "results", "blob"},
@@ -527,6 +527,15 @@ def load_item(file: str, type_name: str, raw: Any) -> dict:
             fail(where, "'persist' must be true/false")
         if persist and "read_only" not in flags:
             flags.add("persist")  # a param persists unless it is read-only or says persist: false
+    if "tune" in raw:
+        if not isinstance(raw["tune"], bool):
+            fail(where, "'tune' must be true/false")
+        if raw["tune"]:
+            if "reboot_required" in flags or "read_only" in flags:
+                fail(where, "'tune' is only for a live param (not reboot_required or read_only)")
+            if vtype not in NUMERIC_TYPES and vtype != "enum":
+                fail(where, "'tune' is only for a numeric or enum param")
+            flags.add("tune")  # the Tune screen shows it (docs/adding-a-module.md)
     if kind == "input" and "testgen" in raw:
         if not isinstance(raw["testgen"], bool):
             fail(where, "'testgen' must be true/false")
@@ -735,7 +744,7 @@ def descriptor_min_payload(defs: dict) -> int:
         for item in t["items"]:
             if item.get("retired"):
                 continue
-            n = 30 + sum(text(item.get(k)) for k in ("name", "unit", "description", "ref"))
+            n = 31 + sum(text(item.get(k)) for k in ("name", "unit", "description", "ref"))
             for a in item.get("args", []) + item.get("results", []):
                 n += 5 + text(a["name"]) + text(a["unit"])
             largest = max(largest, 6 + 5 + n)

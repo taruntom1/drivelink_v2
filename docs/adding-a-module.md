@@ -11,8 +11,39 @@ where they differ.
       `type_id` (not 0x00 system, not 0x05 loop), `realtime: required`,
       `forbidden` or `any`, and its items: params, signals, inputs, actions
       and sources, with units, ranges, enums and flags (`reboot_required`,
-      `locked_while_armed`, `testgen`, GPIO pins, `ref` wiring and its order).
-      The format is in [protocol/definitions.md](protocol/definitions.md).
+      `locked_while_armed`, `testgen`, `tune`, GPIO pins, `ref` wiring and its
+      order). The format is in [protocol/definitions.md](protocol/definitions.md).
+- [ ] For a controller, mark its gains `tune: true` (live numeric params) so the
+      GUI's Tune page shows them, and an enum that selects which gains act
+      (such as a mode) `tune: true` as well. The Tune page needs no code for
+      the type; it groups the gains by naming:
+      - Name the gains with a dotted prefix per set (`vel.kp`, `vel.ki`,
+        `pos.kp`). Each prefix becomes a group (`vel.* gains`).
+      - Start the tune-flagged enum's value names with the prefix they select
+        (`velocity` selects `vel`, `position` selects `pos`). The group for the
+        selected value comes first and open; the others start collapsed but
+        stay editable.
+      - A group that no value name selects is always open.
+      Without a tune-flagged enum, every group is open. A controller appears
+      on the page only while it runs in a loop and has a `testgen` f32 input.
+- [ ] For plant identification on the Tune page (H2e-3; a step on an
+      open-loop input, a first-order-plus-dead-time fit and suggested starting
+      gains), follow these names. They are conventions, not wire data:
+      - A gain group is a PID when it has `<prefix>.kp` and `<prefix>.ki`
+        (optionally `<prefix>.kd`), in the parallel form
+        u = kp·e + ki·∫e dt + kd·de/dt. Suggestions go to `kp` and `ki`
+        (SIMC), and `kd` gets 0. Other members such as `d_cutoff` stay as they
+        are.
+      - A response is a signal of the instance with a unit whose name the
+        group's prefix starts (`velocity` for `vel.*`). Every such signal is
+        captured; the one that settles with the smallest fit error is shown
+        first.
+      - The step input is a `testgen` input whose range is finite and includes
+        0, so it returns to 0 afterwards. The first one without a unit is the
+        default (`duty_sp`).
+      - The tune-flagged enum value named `open_loop` is held during the step
+        and the previous value is written back afterwards. The operator can
+        pick another value or leave the mode unchanged.
 - [ ] Add the type's diag codes to `protocol/defs/diag_codes.yaml`. Code 1 is
       its `InitFailed`. Set `blocks_arm` / `disarms` on the faults that need
       them, and use `kind: latched` for recoverable conditions.

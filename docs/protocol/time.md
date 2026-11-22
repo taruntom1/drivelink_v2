@@ -2,7 +2,7 @@
 
 The host initiates pings on registry `time_request` (0x02); the device answers
 on `time_response` (0x42). This protocol has its own version, independent of
-core v8 and diag v3. All multi-byte fields are little-endian. The device never
+core v10 and diag v3. All multi-byte fields are little-endian. The device never
 sets a wall clock: every device timestamp is monotonic microseconds since boot.
 
 | Payload | Fields | Exact size |
@@ -83,9 +83,18 @@ residual. Callers should evaluate age/quality before using a mapping.
 `time-ping` prints one sample. `time-sync [DURATION_S]` samples for 180 s by
 default (range 1–3600): approximately every 100 ms for five seconds, then every
 second. Readable/JSON output includes raw samples, model snapshots, prior
-held-out predictions, timeouts and event-queue drops. It installs no background
-library thread or automatic application-data mapping. H1 integrates periodic
-ownership and timestamped-data mapping; H3 distributes the agent's model.
+held-out predictions, timeouts and event-queue drops. CLI sessions use this
+explicit cadence. JSON additionally reports the production Session mapping,
+generation, validity and uncertainty; readable output is unchanged.
+
+H1b owns periodic pings on the library I/O thread (100 ms initial delay, 200 ms
+cadence for three seconds, then 1 s). Boot resets its fit. Timestamped status,
+diagnostics, subscriptions and capture results retain device time and a mapped
+host time with generation/validity/uncertainty. Frame/reply metadata is stamped
+on receive; a queued request sent after Boot receives the new generation.
+Uncertainty includes RTT, fit residual/extrapolation and age, not an absolute
+bound on path asymmetry. Invalid or stale models must not be used as valid
+timestamps. No wire payload changes. H3 distributes the agent's clock model.
 
 `host/test/time_smoke.py` measures p95 held-out low-RTT midpoint residual and
 successive-model prediction changes at the same device time. Its CH343 defaults

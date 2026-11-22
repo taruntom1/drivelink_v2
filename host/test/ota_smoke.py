@@ -15,6 +15,9 @@ import subprocess
 import tempfile
 import time
 
+# vdev reports the root VERSION with the -vdev marker (host/vdev/CMakeLists.txt).
+VDEV_VERSION = (Path(__file__).resolve().parents[2] / 'VERSION').read_text(encoding='utf-8').strip() + '-vdev'
+
 
 class Cli:
     def __init__(self, path, endpoint):
@@ -52,7 +55,7 @@ def run(cli_path, endpoint, baseline, candidate, stack_wait=0):
     original = cli('instances')
     assert all(x['type'] == 5 for x in original), 'requires a loops-only bare-board layout'
     info = cli('info')
-    assert info['protocol_version'] == 8 and not (info['flags'] & 9), info
+    assert info['protocol_version'] == 10 and not (info['flags'] & 9), info
     refs = [f"5:{loop['id']}:1" for loop in info['loops']] + ['0:0:3', '0:0:4']
     settings = cli('get', *refs)['values']
     a, hash_a = identity(baseline)
@@ -124,7 +127,7 @@ def run(cli_path, endpoint, baseline, candidate, stack_wait=0):
 
 def simulated(cli_path, endpoint):
     """Same campaign with structurally valid non-executable native fixtures."""
-    assert Cli(cli_path, endpoint)('info')['firmware_version'] == '0.1.0-vdev', 'synthetic images require a fresh vdev baseline'
+    assert Cli(cli_path, endpoint)('info')['firmware_version'] == VDEV_VERSION, 'synthetic images require a fresh vdev baseline'
     def fixture(seed):
         data = bytearray(4176)
         data[0] = 0xe9; data[1] = 1; data[12] = 9; data[23] = 1
@@ -139,14 +142,17 @@ def simulated(cli_path, endpoint):
         data[4144:] = hashlib.sha256(data[:4144]).digest()
         return data
     with tempfile.TemporaryDirectory(prefix='ota-fixtures-') as folder:
-        baseline, candidate = Path(folder) / 'native-a.bin', Path(folder) / 'native-b.bin'
+        # Exercise the real CLI file-open boundary outside Windows ANSI paths.
+        unicode_dir = Path(folder) / '\u00e9-\U0001f697'
+        unicode_dir.mkdir()
+        baseline, candidate = Path(folder) / 'native-a.bin', unicode_dir / 'firmw\u00e9.bin'
         baseline.write_bytes(fixture(11)); candidate.write_bytes(fixture(77))
         Cli(cli_path, endpoint)('ota-upload', baseline)
         run(cli_path, endpoint, baseline, candidate)
         if endpoint.startswith('tcp://'):
             from ota_cli_failure import check, pipeline_reboot
             cli = Cli(cli_path, endpoint)
-            check(cli_path, endpoint, candidate)
+            check(cli_path, endpoint, candidate, boot_reconnect=True)
             cli('ota-upload', baseline)
             check(cli_path, endpoint, candidate, hold_commit=True)
             ready = cli('ota-status')

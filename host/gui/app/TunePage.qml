@@ -1,0 +1,1394 @@
+import QtQuick
+import QtQuick.Templates as T
+import QtQuick.Dialogs
+import DriveLink.Style
+
+// G5 Tune (H2e-1, H2e-2): Controller and gains and the Gain history on the
+// left, the toolbar (Run, Stop, Auto re-run, signal chips), the runs overlaid
+// and their metrics (or the A/B card) in the centre, Test signal, Capture,
+// Runs and Session on the right. Run (F5) needs this window's ARM: while
+// disarmed it is disabled with "Arm first". With Auto re-run on, the gains
+// stay editable during a run and a change cancels it. Session files and CSV
+// use non-modal native dialogs (user decision 2026-11-18): DISARM stays
+// clickable while one is open. H2e-3 Plant identification: the centre has two
+// tabs (Step runs, Plant identification); on the second the centre plots the
+// measured and fitted response and the right column shows IdentifyCards (the
+// check, the step, the model and the suggested gains) instead of Test signal,
+// Capture, Runs and Session. The left column is the same on both tabs.
+Item {
+    id: page
+    objectName: "tunePage"
+
+    property var backend
+    readonly property var tune: backend.tune
+    readonly property var run: tune.run || ({})
+    readonly property var testSignal: tune.testSignal || ({})
+    readonly property var capture: tune.capture || ({})
+    readonly property var plots: tune.plots || []
+    readonly property real spanUs: Math.max(1, tune.plotEndUs - tune.plotStartUs)
+    readonly property var compare: tune.compare || ({})
+    readonly property var autoRerun: tune.autoRerun || ({})
+    readonly property var session: tune.session || ({})
+    // H2e-3 Plant identification.
+    readonly property var identify: tune.identify
+    readonly property bool idShown: identify.shown === true
+    readonly property var idRun: identify.run || ({})
+    readonly property var idResult: identify.result || ({})
+    readonly property var idPlots: identify.plots || []
+    readonly property real idSpanUs: Math.max(1, identify.plotEndUs - identify.plotStartUs)
+    readonly property var recovery: tune.recovery || ({})
+    // Open asked over unsaved runs: the inline confirmation is showing.
+    property bool confirmOpen: false
+    // The run a CSV dialog exports.
+    property int exportNumber: 0
+    // Two gains per row where they fit (G5); one column at 1080p.
+    readonly property bool wide: page.width >= 2100
+    property bool blocked: false
+    // Collapsed gain groups the user opened (prefix -> true).
+    property var opened: ({})
+
+    function colorOf(index) { return Theme.seriesColors[Math.max(0, index) % Theme.seriesColors.length] }
+    function seriesColor(s) {
+        const c = colorOf(s.colour)
+        // The setpoint and the older runs are drawn fainter (G5).
+        const alpha = (s.faded ? 0.45 : 1.0) * (s.target ? 0.5 : 1.0)
+        return Qt.rgba(c.r, c.g, c.b, alpha)
+    }
+    function timeText(us, span) {
+        const s = us / 1e6
+        return Number(s).toLocaleString(Qt.locale("C"), "f", (span === undefined ? page.spanUs : span) < 2e6 ? 2 : 1) + " s"
+    }
+
+    Shortcut {
+        sequence: "F5"
+        enabled: page.visible && !page.blocked && !page.idShown
+        onActivated: page.tune.startRun()
+    }
+
+    function exportCsv(number) {
+        if (number <= 0) return
+        page.exportNumber = number
+        csvDialog.selectedFile = page.session.folder + "/" + page.tune.suggestedName("csv", number)
+        csvDialog.open()
+    }
+    function openSession() {
+        if (page.session.canOpen !== true) return
+        if (page.session.unsaved === true && !page.confirmOpen) { page.confirmOpen = true; return }
+        page.confirmOpen = false
+        openDialog.open()
+    }
+    function report(error) { page.tune.report(error) }
+
+    // Non-modal (user decision 2026-11-18): the status bar and DISARM stay
+    // clickable while a dialog is open; Esc closes the dialog first.
+    FileDialog {
+        id: saveDialog
+        title: qsTr("Save the tuning session")
+        fileMode: FileDialog.SaveFile
+        modality: Qt.NonModal
+        currentFolder: page.session.folder || ""
+        nameFilters: [qsTr("DriveLink tune session (*.tune.json)"), qsTr("All files (*)")]
+        onAccepted: page.report(page.tune.saveSession(selectedFile.toString()))
+    }
+    FileDialog {
+        id: openDialog
+        title: qsTr("Open a tuning session")
+        fileMode: FileDialog.OpenFile
+        modality: Qt.NonModal
+        currentFolder: page.session.folder || ""
+        nameFilters: [qsTr("DriveLink tune session (*.tune.json *.json)"), qsTr("All files (*)")]
+        onAccepted: page.report(page.tune.openSession(selectedFile.toString()))
+    }
+    FileDialog {
+        id: csvDialog
+        title: qsTr("Export run %1 as CSV").arg(page.exportNumber)
+        fileMode: FileDialog.SaveFile
+        modality: Qt.NonModal
+        currentFolder: page.session.folder || ""
+        nameFilters: [qsTr("CSV (*.csv)"), qsTr("All files (*)")]
+        onAccepted: page.report(page.tune.exportRun(page.exportNumber, selectedFile.toString()))
+    }
+
+    // ---- Controller and gains, gain history ---------------------------------
+    Flickable {
+        id: left
+        objectName: "tuneLeft"
+        x: Theme.space24; y: Theme.space24
+        width: page.wide ? 2 * 344 + Theme.space16 + 2 * Theme.space24 : 344 + 2 * Theme.space24
+        height: page.height - 2 * Theme.space24
+        contentHeight: leftColumn.height
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        Column {
+        id: leftColumn
+        width: left.width
+        spacing: Theme.space24
+
+        Card {
+            id: gainsCard
+            width: left.width
+            title: qsTr("Controller and gains")
+            contentSpacing: Theme.space12
+
+            Text { text: qsTr("Controller"); font: Theme.fontLabelCaps; color: Theme.textSecondary }
+            DLComboBox {
+                objectName: "tuneController"
+                width: parent.width
+                model: page.tune.controllers
+                textRole: "text"
+                currentIndex: page.tune.controllers.findIndex(c => c.key === page.tune.controller)
+                displayText: currentIndex >= 0 ? page.tune.controllers[currentIndex].text : qsTr("No instance has a test-signal input")
+                enabled: page.tune.controllers.length > 0 && !page.run.active
+                onActivated: function(index) { page.tune.selectController(page.tune.controllers[index].key) }
+            }
+            Text {
+                text: qsTr("Instances with test-signal inputs only.")
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+            Repeater {
+                model: page.tune.enums
+                delegate: Row {
+                    id: enumRow
+                    required property var modelData
+                    spacing: Theme.space8
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 80; text: enumRow.modelData.name; elide: Text.ElideRight
+                        font: Theme.fontBodyDefault; color: Theme.textSecondary
+                    }
+                    DLComboBox {
+                        objectName: "tuneEnum_" + enumRow.modelData.name
+                        width: 200
+                        model: enumRow.modelData.options
+                        currentIndex: enumRow.modelData.index
+                        enabled: !enumRow.modelData.sending && !page.run.active
+                        onActivated: function(index) { page.tune.setEnum(enumRow.modelData.key, index) }
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.max(0, gainsCard.width - 2 * Theme.space24 - 296)
+                        wrapMode: Text.Wrap
+                        text: enumRow.modelData.problem
+                        font: Theme.fontCaption; color: Theme.stateFault
+                    }
+                }
+            }
+            Flow {
+                objectName: "tuneGains"
+                width: parent.width
+                spacing: Theme.space16
+                Repeater {
+                    model: page.tune.gains
+                    // A header row starts each group on its own line; gains
+                    // follow two per row where they fit (G5).
+                    delegate: Item {
+                        id: gainCell
+                        required property string key
+                        required property bool header
+                        required property string name
+                        required property string description
+                        required property string unit
+                        required property string text
+                        required property real position
+                        required property var windowLo
+                        required property var windowHi
+                        required property var saved
+                        required property bool hasSaved
+                        required property var ticks
+                        required property bool zero
+                        required property bool sending
+                        required property string problem
+                        required property string group
+                        required property string groupTitle
+                        required property bool groupOpen
+                        required property string groupNote
+                        readonly property bool open: groupOpen || page.opened[group] === true
+                        visible: header || open
+                        width: header ? parent.width : 344
+                        height: !visible ? 0 : header ? Theme.sizeControlSm : control.implicitHeight
+                        Item {
+                            visible: gainCell.header
+                            anchors.fill: parent
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: gainCell.groupTitle; font: Theme.fontLabelCaps; color: Theme.textSecondary
+                            }
+                            DLButton {
+                                objectName: "tuneGroup_" + gainCell.group
+                                anchors.right: parent.right
+                                height: Theme.sizeControlSm
+                                visible: !gainCell.groupOpen
+                                kind: DLButton.Ghost
+                                text: gainCell.open ? qsTr("Hide") : qsTr("Show")
+                                toolTipText: gainCell.groupNote
+                                onClicked: { const o = Object.assign({}, page.opened); o[gainCell.group] = !gainCell.open; page.opened = o }
+                            }
+                        }
+                        DLGainControl {
+                            id: control
+                            objectName: "gain_" + gainCell.name
+                            visible: !gainCell.header
+                            width: 344
+                            // The run records the gains it started with; with
+                            // Auto re-run on a change cancels the run instead.
+                            enabled: !page.run.active || page.autoRerun.on === true
+                            name: gainCell.name
+                            description: gainCell.description
+                            unit: gainCell.unit
+                            valueText: gainCell.text
+                            position: gainCell.position
+                            lowText: gainCell.windowLo === undefined ? "" : page.tune.formatGain(gainCell.windowLo)
+                            midText: gainCell.zero ? "" : gainCell.text
+                            highText: gainCell.windowHi === undefined ? "" : page.tune.formatGain(gainCell.windowHi)
+                            ticks: (gainCell.ticks || []).map(t => ({position: t.position,
+                                color: t.colour < 0 ? Theme.textPrimary : Qt.rgba(page.colorOf(t.colour).r, page.colorOf(t.colour).g, page.colorOf(t.colour).b, t.faded ? 0.5 : 1)}))
+                            savedText: gainCell.hasSaved ? page.tune.formatGain(gainCell.saved) : ""
+                            zero: gainCell.zero
+                            sending: gainCell.sending
+                            problem: gainCell.problem
+                            onSliderPressed: page.tune.gainPress(gainCell.key)
+                            onSliderMoved: function(position) { page.tune.gainDrag(gainCell.key, position) }
+                            onSliderReleased: page.tune.gainRelease(gainCell.key)
+                            onValueTyped: function(text) { page.tune.gainText(gainCell.key, text) }
+                            onStepped: function(factor) { page.tune.gainStep(gainCell.key, factor) }
+                            onKeyStepped: function(up, shift, ctrl) { page.tune.gainKey(gainCell.key, up, shift, ctrl) }
+                            onWindowTyped: function(low, high) { page.tune.setWindow(gainCell.key, low, high) }
+                        }
+                    }
+                }
+            }
+            Text {
+                visible: page.tune.controller.length > 0 && page.tune.gainCount === 0
+                width: parent.width; wrapMode: Text.Wrap
+                text: qsTr("This instance marks no params for Tune (the definitions' tune flag).")
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+            DLReasonHover {
+                reason: (page.tune.revert || {}).reason || ""
+                DLButton {
+                    objectName: "tuneRevertGains"
+                    iconName: "undo-2"
+                    text: qsTr("Revert gains to saved")
+                    enabled: (page.tune.revert || {}).enabled === true
+                    onClicked: page.tune.revertGains()
+                }
+            }
+            Text {
+                width: parent.width; wrapMode: Text.Wrap
+                text: qsTr("Gains apply live: Enter, a step, a key or a slider drag. Save and Revert are in the status bar.")
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+        }
+
+        // G5 Gain history: every applied set, newest first, with Restore and A/B.
+        Card {
+            id: historyCard
+            objectName: "tuneHistory"
+            width: left.width
+            title: qsTr("Gain history")
+            contentSpacing: Theme.space4
+            Text {
+                visible: page.tune.historyCount === 0
+                text: qsTr("No gains yet")
+                font: Theme.fontBodyDefault; color: Theme.textTertiary
+            }
+            Repeater {
+                model: page.tune.history
+                delegate: Rectangle {
+                    id: entry
+                    required property int entryId
+                    required property string time
+                    required property string change
+                    required property string note
+                    required property int run
+                    required property int runColour
+                    required property bool current
+                    required property string mark
+                    required property bool canRestore
+                    required property string restoreReason
+                    required property bool canCompare
+                    required property string compareReason
+                    objectName: "tuneHistoryRow_" + entryId
+                    width: parent.width; height: Theme.sizeControl
+                    radius: Theme.radiusSm
+                    color: entry.mark.length > 0 ? Theme.bgSelected : "transparent"
+                    Row {
+                        x: Theme.space8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.space8
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 12; text: entry.mark
+                            font: Theme.fontBodyStrong; color: Theme.accentText
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 64; text: entry.time
+                            textFormat: Text.PlainText
+                            font: Theme.fontMonoSmall; color: Theme.textSecondary
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: entry.width - 12 - 64 - 56 - entryActions.width - 6 * Theme.space8
+                            elide: Text.ElideRight
+                            text: entry.change + (entry.note.length > 0 ? " · " + entry.note : "")
+                            textFormat: Text.PlainText
+                            font: Theme.fontBodyDefault; color: Theme.textPrimary
+                            DLToolTip { visible: changeHover.hovered && parent.truncated; text: parent.text }
+                            HoverHandler { id: changeHover }
+                        }
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 56; spacing: Theme.space4
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: entry.runColour >= 0
+                                width: 8; height: 8; radius: 2; color: page.colorOf(entry.runColour)
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: entry.run > 0 ? qsTr("run %1").arg(entry.run) : "—"
+                                font: Theme.fontCaption; color: Theme.textSecondary
+                            }
+                        }
+                    }
+                    Row {
+                        id: entryActions
+                        anchors.right: parent.right; anchors.rightMargin: Theme.space4
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.space4
+                        DLBadge {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: entry.current
+                            size: DLBadge.Sm; tone: DLBadge.Ok
+                            text: qsTr("current")
+                        }
+                        DLReasonHover {
+                            visible: !entry.current
+                            reason: entry.canRestore ? "" : entry.restoreReason
+                            DLButton {
+                                objectName: "tuneRestore_" + entry.entryId
+                                kind: DLButton.Ghost
+                                height: Theme.sizeControlSm
+                                text: qsTr("Restore")
+                                enabled: entry.canRestore
+                                onClicked: page.tune.restoreEntry(entry.entryId)
+                            }
+                        }
+                        DLReasonHover {
+                            reason: entry.canCompare ? "" : entry.compareReason
+                            DLButton {
+                                objectName: "tuneCompare_" + entry.entryId
+                                kind: DLButton.Ghost
+                                height: Theme.sizeControlSm
+                                text: qsTr("A/B")
+                                enabled: entry.canCompare
+                                toolTipText: entry.mark.length > 0 ? qsTr("Unmark") : page.compare.a && page.compare.a.id !== undefined ? qsTr("Compare as B") : qsTr("Compare as A")
+                                onClicked: page.tune.pickCompare(entry.entryId)
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                width: parent.width; wrapMode: Text.Wrap
+                text: page.compare.picking ? qsTr("A marked: pick B with A/B on another set.")
+                    : qsTr("Restore applies that set again (live). A/B overlays two runs and lists the gain differences.")
+                font: Theme.fontCaption; color: page.compare.picking ? Theme.accentText : Theme.textSecondary
+            }
+        }
+        }
+    }
+
+    // ---- Right column: test signal, capture, runs -----------------------------
+    Flickable {
+        id: right
+        objectName: "tuneRight"
+        anchors.right: parent.right; anchors.rightMargin: Theme.space24
+        y: Theme.space24
+        width: Math.min(460, Math.max(360, page.width * 0.2))
+        height: page.height - 2 * Theme.space24
+        contentHeight: rightColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+
+        Column {
+            id: rightColumn
+            width: right.width
+            spacing: Theme.space24
+
+            Card {
+                objectName: "tuneSignal"
+                visible: !page.idShown
+                width: parent.width
+                title: qsTr("Test signal")
+                contentSpacing: Theme.space12
+                Item {
+                    width: parent.width; height: Theme.sizeControl
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: qsTr("Target"); font: Theme.fontBodyDefault; color: Theme.textSecondary }
+                    DLComboBox {
+                        objectName: "tuneTarget"
+                        anchors.right: parent.right; width: parent.width * 0.62
+                        model: page.tune.targets
+                        textRole: "name"
+                        currentIndex: page.tune.targets.findIndex(t => t.key === page.testSignal.target)
+                        displayText: currentIndex >= 0 ? page.tune.targets[currentIndex].name + (page.tune.targets[currentIndex].unit.length > 0 ? " (" + page.tune.targets[currentIndex].unit + ")" : "") : ""
+                        enabled: !page.run.active
+                        onActivated: function(index) { page.tune.setTarget(page.tune.targets[index].key) }
+                    }
+                }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.space4
+                    Repeater {
+                        model: page.tune.waveforms
+                        delegate: DLTabButton {
+                            required property string modelData
+                            required property int index
+                            objectName: "tuneWaveform_" + index
+                            text: modelData
+                            checkable: true
+                            checked: page.testSignal.waveform === index
+                            enabled: !page.run.active
+                            onClicked: page.tune.setWaveform(index)
+                        }
+                    }
+                }
+                Repeater {
+                    model: [
+                        {field: "offset", label: qsTr("Offset"), unit: page.testSignal.unit, shown: true},
+                        {field: "amplitude", label: qsTr("Amplitude"), unit: page.testSignal.unit, shown: true},
+                        {field: "f0", label: page.testSignal.chirp ? qsTr("Start frequency") : qsTr("Frequency"), unit: "Hz", shown: page.testSignal.usesFrequency === true},
+                        {field: "f1", label: qsTr("End frequency"), unit: "Hz", shown: page.testSignal.chirp === true},
+                        {field: "duration", label: qsTr("Duration"), unit: "s", shown: true},
+                        {field: "repeat", label: qsTr("Repeat"), unit: "×", shown: true}]
+                    delegate: Item {
+                        id: fieldRow
+                        required property var modelData
+                        visible: modelData.shown
+                        width: parent.width; height: visible ? Theme.sizeControl : 0
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: fieldRow.modelData.label; font: Theme.fontBodyDefault; color: Theme.textSecondary }
+                        DLNumberField {
+                            id: signalField
+                            objectName: "tuneSignal_" + fieldRow.modelData.field
+                            anchors.right: parent.right; width: 160
+                            unit: fieldRow.modelData.unit
+                            readOnly: page.run.active
+                            readonly property string current: String(page.testSignal[fieldRow.modelData.field] === undefined ? "" : page.testSignal[fieldRow.modelData.field])
+                            onAccepted: page.tune.setSignalField(fieldRow.modelData.field, text)
+                            onEditingFinished: Qt.callLater(() => text = current)
+                        }
+                        Binding { target: signalField; property: "text"; value: signalField.current; when: !signalField.activeFocus }
+                    }
+                }
+                Text {
+                    objectName: "tuneSignalProblem"
+                    width: parent.width; wrapMode: Text.Wrap
+                    visible: text.length > 0
+                    text: page.testSignal.problem || ""
+                    font: Theme.fontCaption; color: Theme.stateFault
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: page.testSignal.holds || ""
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+            }
+
+            Card {
+                objectName: "tuneCapture"
+                visible: !page.idShown
+                width: parent.width
+                title: qsTr("Capture")
+                contentSpacing: Theme.space12
+                Flow {
+                    width: parent.width
+                    spacing: Theme.space8
+                    Repeater {
+                        model: page.capture.refs || []
+                        delegate: Rectangle {
+                            id: refChip
+                            required property var modelData
+                            height: Theme.sizeControlSm; width: refRow.implicitWidth + Theme.space8
+                            radius: Theme.radiusSm; color: Theme.bgSecondary
+                            Row {
+                                id: refRow
+                                x: Theme.space8; height: parent.height; spacing: Theme.space4
+                                Text { anchors.verticalCenter: parent.verticalCenter; text: refChip.modelData.name; font: Theme.fontMonoSmall; color: Theme.textPrimary }
+                                DLIconButton {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    size: DLIconButton.Sm; iconName: "x"; enabled: !page.run.active
+                                    toolTipText: qsTr("Do not capture")
+                                    onClicked: page.tune.removeCaptureRef(refChip.modelData.key)
+                                }
+                            }
+                        }
+                    }
+                    DLComboBox {
+                        objectName: "tuneCaptureAdd"
+                        width: 160; height: Theme.sizeControlSm
+                        readonly property var choices: (page.capture.candidates || []).filter(c => c.enabled)
+                        model: choices.map(c => c.owner + "." + c.name)
+                        displayText: qsTr("+ add")
+                        currentIndex: -1
+                        enabled: choices.length > 0 && !page.run.active
+                        onActivated: function(index) { page.tune.addCaptureRef(choices[index].key) }
+                    }
+                }
+                Item {
+                    width: parent.width; height: Theme.sizeControl
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: qsTr("Rate"); font: Theme.fontBodyDefault; color: Theme.textSecondary }
+                    DLComboBox {
+                        objectName: "tuneCaptureRate"
+                        anchors.right: parent.right; width: parent.width * 0.62
+                        model: page.capture.rates || []
+                        textRole: "text"
+                        currentIndex: page.capture.rateIndex === undefined ? -1 : page.capture.rateIndex
+                        enabled: !page.run.active
+                        onActivated: function(index) { page.tune.setDivider(page.capture.rates[index].divider) }
+                    }
+                }
+                Item {
+                    width: parent.width; height: Theme.sizeControl
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: qsTr("Length"); font: Theme.fontBodyDefault; color: Theme.textSecondary }
+                    Row {
+                        anchors.right: parent.right
+                        spacing: Theme.space8
+                        DLNumberField {
+                            id: samplesField
+                            objectName: "tuneCaptureSamples"
+                            width: 130; unit: qsTr("samples"); readOnly: page.run.active
+                            onAccepted: page.tune.setSamples(text, preField.text)
+                            onEditingFinished: Qt.callLater(() => text = String(page.capture.samples))
+                        }
+                        DLNumberField {
+                            id: preField
+                            objectName: "tuneCapturePre"
+                            width: 130; unit: qsTr("before"); readOnly: page.run.active
+                            onAccepted: page.tune.setSamples(samplesField.text, text)
+                            onEditingFinished: Qt.callLater(() => text = String(page.capture.pre))
+                        }
+                    }
+                    Binding { target: samplesField; property: "text"; value: String(page.capture.samples); when: !samplesField.activeFocus }
+                    Binding { target: preField; property: "text"; value: String(page.capture.pre); when: !preField.activeFocus }
+                }
+                Item {
+                    width: parent.width; height: Theme.sizeControlSm
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: qsTr("Trigger"); font: Theme.fontBodyDefault; color: Theme.textSecondary }
+                    Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: qsTr("test signal start"); font: Theme.fontBodyDefault; color: Theme.textPrimary }
+                }
+                Text {
+                    objectName: "tuneCaptureUsage"
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: [page.capture.usage || "", page.capture.note || ""].filter(t => t.length > 0).join(" · ")
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+                Text {
+                    objectName: "tuneCaptureProblem"
+                    width: parent.width; wrapMode: Text.Wrap
+                    visible: text.length > 0
+                    text: page.capture.problem || ""
+                    font: Theme.fontCaption; color: Theme.stateFault
+                }
+            }
+
+            Card {
+                objectName: "tuneRuns"
+                visible: !page.idShown
+                width: parent.width
+                title: qsTr("Runs")
+                contentSpacing: Theme.space8
+                Text {
+                    visible: page.tune.runCount === 0
+                    text: qsTr("No runs yet")
+                    font: Theme.fontBodyDefault; color: Theme.textTertiary
+                }
+                Repeater {
+                    model: page.tune.runs
+                    delegate: Item {
+                        id: runRow
+                        required property int number
+                        required property int colour
+                        required property string time
+                        required property string changed
+                        required property string end
+                        required property bool pinned
+                        required property bool shown
+                        required property bool faded
+                        required property bool irregular
+                        objectName: "tuneRunRow_" + number
+                        width: parent.width; height: Theme.sizeControl
+                        Row {
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.space8
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 10; height: 10; radius: 2
+                                color: page.colorOf(runRow.colour)
+                                opacity: runRow.shown ? (runRow.faded ? 0.5 : 1) : 0.2
+                            }
+                            Text { anchors.verticalCenter: parent.verticalCenter; width: 52; text: qsTr("run %1").arg(runRow.number); font: Theme.fontBodyDefault; color: Theme.textPrimary }
+                            Text { anchors.verticalCenter: parent.verticalCenter; width: 64; text: runRow.time; font: Theme.fontBodyNumeric; color: Theme.textSecondary }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: runRow.width - 52 - 64 - 10 - 4 * Theme.space8 - menuButton.width
+                                elide: Text.ElideRight
+                                // Irregular: some tick came late, so the samples' spacing may not hold.
+                                text: (runRow.pinned ? qsTr("pinned · ") : "") + runRow.changed
+                                      + (runRow.end.length > 0 ? " · " + runRow.end : "") + (runRow.irregular ? qsTr(" · irregular timing") : "")
+                                textFormat: Text.PlainText
+                                font: Theme.fontBodyDefault
+                                color: runRow.end.length > 0 || runRow.irregular ? Theme.stateArmed : Theme.textPrimary
+                            }
+                        }
+                        DLIconButton {
+                            id: menuButton
+                            objectName: "tuneRunMenu_" + runRow.number
+                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                            size: DLIconButton.Sm; iconName: "ellipsis"
+                            toolTipText: qsTr("Pin, export or remove")
+                            onClicked: runMenu.open()
+                            DLMenu {
+                                id: runMenu
+                                y: menuButton.height + Theme.space4
+                                DLMenuItem {
+                                    objectName: "tunePin_" + runRow.number
+                                    text: runRow.pinned ? qsTr("Unpin") : qsTr("Pin: keep it on the plot")
+                                    onTriggered: page.tune.pinRun(runRow.number, !runRow.pinned)
+                                }
+                                DLMenuItem {
+                                    objectName: "tuneExport_" + runRow.number
+                                    text: qsTr("Export CSV…")
+                                    onTriggered: page.exportCsv(runRow.number)
+                                }
+                                DLMenuItem {
+                                    objectName: "tuneRemove_" + runRow.number
+                                    text: qsTr("Remove")
+                                    onTriggered: page.tune.removeRun(runRow.number)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: qsTr("Overlay: the newest run in full, the two before it faded, plus pinned runs. Older runs stay in the list and the session file, hidden.")
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+            }
+
+            Card {
+                id: sessionCard
+                objectName: "tuneSession"
+                visible: !page.idShown
+                width: parent.width
+                contentSpacing: Theme.space12
+                Row {
+                    width: parent.width
+                    spacing: Theme.space8
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, parent.width - unsavedBadge.width - Theme.space8)
+                        elide: Text.ElideRight
+                        text: qsTr("Session: %1").arg(page.session.name || "")
+                        textFormat: Text.PlainText
+                        font: Theme.fontTitleSection; color: Theme.textPrimary
+                    }
+                    DLBadge {
+                        id: unsavedBadge
+                        objectName: "tuneSessionUnsaved"
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: page.session.unsaved === true
+                        size: DLBadge.Sm; tone: DLBadge.Unsaved
+                        text: qsTr("unsaved")
+                    }
+                }
+                Text {
+                    visible: (page.session.file || "").length > 0
+                    width: parent.width; elide: Text.ElideMiddle
+                    text: page.session.file || ""
+                    textFormat: Text.PlainText
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+                // An autosaved session of this device from an earlier window.
+                Rectangle {
+                    objectName: "tuneRecovery"
+                    visible: page.recovery.available === true
+                    width: parent.width; height: visible ? recoveryColumn.implicitHeight + 2 * Theme.space12 : 0
+                    radius: Theme.radiusMd; color: Theme.statePendingSubtle
+                    Column {
+                        id: recoveryColumn
+                        x: Theme.space12; y: Theme.space12
+                        width: parent.width - 2 * Theme.space12
+                        spacing: Theme.space8
+                        Text {
+                            width: parent.width; wrapMode: Text.Wrap
+                            text: qsTr("Unsaved tuning from %1 was kept for this device. It is replaced when you record a run here; until then other changes here are not autosaved.").arg(page.recovery.time || "")
+                            font: Theme.fontBodyDefault; color: Theme.textPrimary
+                        }
+                        Row {
+                            spacing: Theme.space8
+                            DLButton {
+                                objectName: "tuneRecoveryRestore"
+                                kind: DLButton.Primary
+                                iconName: "history"
+                                text: qsTr("Restore it")
+                                enabled: page.session.canOpen === true
+                                onClicked: page.tune.restoreRecovery()
+                            }
+                            DLButton {
+                                objectName: "tuneRecoveryDiscard"
+                                text: qsTr("Discard")
+                                onClicked: page.tune.discardRecovery()
+                            }
+                        }
+                    }
+                }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.space8
+                    DLReasonHover {
+                        reason: page.session.canSave ? "" : (page.session.saveReason || "")
+                        DLButton {
+                            objectName: "tuneSave"
+                            iconName: "save"
+                            text: qsTr("Save session…")
+                            enabled: page.session.canSave === true
+                            onClicked: {
+                                saveDialog.selectedFile = page.session.folder + "/" + page.tune.suggestedName("session")
+                                saveDialog.open()
+                            }
+                        }
+                    }
+                    DLReasonHover {
+                        reason: page.session.canOpen ? "" : (page.session.openReason || "")
+                        DLButton {
+                            objectName: "tuneOpen"
+                            iconName: "folder-open"
+                            text: qsTr("Open…")
+                            enabled: page.session.canOpen === true
+                            onClicked: page.openSession()
+                        }
+                    }
+                    DLReasonHover {
+                        reason: page.tune.runCount > 0 ? "" : qsTr("No runs yet")
+                        DLButton {
+                            objectName: "tuneExportCsv"
+                            iconName: "download"
+                            text: qsTr("Export CSV…")
+                            toolTipText: qsTr("The newest run; any run from its menu in Runs")
+                            enabled: page.tune.runCount > 0
+                            onClicked: page.exportCsv(page.tune.newestRun())
+                        }
+                    }
+                }
+                // Open over unsaved runs: confirm inline (no modal popup).
+                Rectangle {
+                    objectName: "tuneOpenConfirm"
+                    visible: page.confirmOpen
+                    width: parent.width; height: visible ? confirmColumn.implicitHeight + 2 * Theme.space12 : 0
+                    radius: Theme.radiusMd; color: Theme.stateArmedSubtle
+                    Column {
+                        id: confirmColumn
+                        x: Theme.space12; y: Theme.space12
+                        width: parent.width - 2 * Theme.space12
+                        spacing: Theme.space8
+                        Text {
+                            width: parent.width; wrapMode: Text.Wrap
+                            text: qsTr("Opening a session replaces the unsaved runs (%1) and gain history here.").arg(page.tune.runCount)
+                            font: Theme.fontBodyDefault; color: Theme.textPrimary
+                        }
+                        Row {
+                            spacing: Theme.space8
+                            DLButton {
+                                objectName: "tuneOpenAnyway"
+                                kind: DLButton.Danger
+                                text: qsTr("Open anyway…")
+                                onClicked: page.openSession()
+                            }
+                            DLButton {
+                                text: qsTr("Cancel")
+                                onClicked: page.confirmOpen = false
+                            }
+                        }
+                    }
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap
+                    text: qsTr("Runs, gain history, gain windows and the test setup, kept per device. Unsaved work is autosaved and offered again on the next connect.")
+                    font: Theme.fontCaption; color: Theme.textSecondary
+                }
+            }
+
+            IdentifyCards {
+                objectName: "tuneIdentifyCards"
+                visible: page.idShown
+                width: parent.width
+                identify: page.identify
+            }
+        }
+    }
+
+    // ---- Centre: toolbar, plots, metrics ------------------------------------
+    Item {
+        id: centre
+        objectName: "tuneCentre"
+        anchors.left: left.right; anchors.leftMargin: Theme.space24
+        anchors.right: right.left; anchors.rightMargin: Theme.space24
+        y: Theme.space24
+        height: page.height - 2 * Theme.space24
+
+        // H2e-3: Step runs / Plant identification.
+        Item {
+            id: centreTabs
+            objectName: "tuneTabs"
+            width: parent.width; height: Theme.sizeControl
+            Row {
+                spacing: Theme.space8
+                DLTabButton {
+                    objectName: "tuneTabRuns"
+                    text: qsTr("Step runs")
+                    checkable: false
+                    checked: !page.idShown
+                    // The step's Stop and progress stay in view while it runs.
+                    enabled: !page.identify.run.active
+                    onClicked: page.identify.shown = false
+                }
+                DLTabButton {
+                    objectName: "tuneTabIdentify"
+                    text: qsTr("Plant identification")
+                    checkable: false
+                    checked: page.idShown
+                    enabled: !page.run.active
+                    onClicked: page.identify.shown = true
+                }
+            }
+            Text {
+                objectName: "tuneIdentifySummary"
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                visible: page.idShown
+                text: (page.identify.step || ({})).summary || ""
+                textFormat: Text.PlainText
+                font: Theme.fontCaption; color: Theme.textSecondary
+            }
+        }
+
+        Flow {
+            id: toolbar
+            objectName: "tuneToolbar"
+            visible: !page.idShown
+            y: centreTabs.height + Theme.space8
+            width: parent.width
+            spacing: Theme.space8
+            DLReasonHover {
+                reason: page.run.blocked || ""
+                DLButton {
+                    objectName: "tuneRun"
+                    kind: DLButton.Primary
+                    iconName: "play"
+                    text: qsTr("Run  F5")
+                    enabled: page.run.canRun === true
+                    onClicked: page.tune.startRun()
+                }
+            }
+            DLButton {
+                objectName: "tuneStop"
+                iconName: "square"
+                text: page.run.stopping ? qsTr("Stopping") : qsTr("Stop")
+                enabled: page.run.active === true && !page.run.stopping
+                onClicked: page.tune.stopRun()
+            }
+            Text {
+                objectName: "tuneRunStatus"
+                height: Theme.sizeControl; verticalAlignment: Text.AlignVCenter
+                text: page.run.active ? page.run.text
+                    : page.compare.active ? qsTr("A/B · run %1 (A) and run %2 (B) overlaid · other runs hidden").arg(page.compare.a.run).arg(page.compare.b.run)
+                    : page.tune.runCount === 0 ? (page.run.canRun ? qsTr("Ready: set the test signal and press Run") : page.run.blocked)
+                    : qsTr("%1 runs").arg(page.tune.runCount)
+                font: Theme.fontBodyDefault
+                color: page.run.active ? Theme.stateArmed : Theme.textSecondary
+            }
+            DLProgressBar {
+                y: (Theme.sizeControl - height) / 2
+                width: 120
+                visible: page.run.active === true && page.run.progress >= 0
+                value: Math.max(0, page.run.progress || 0)
+            }
+            // G5: on by default; re-runs only after the user's Run under this ARM.
+            DLFilterChip {
+                id: autoChip
+                objectName: "tuneAutoRerun"
+                y: (Theme.sizeControl - height) / 2
+                text: (checked ? "✓ " : "") + qsTr("Auto re-run") + (checked && page.autoRerun.allowed !== true ? " · " + qsTr("after your first Run") : "")
+                checked: page.autoRerun.on === true
+                onClicked: page.tune.setAutoRerun(!(page.autoRerun.on === true))
+                DLToolTip { visible: autoChip.hovered; text: page.autoRerun.text || "" }
+            }
+            Repeater {
+                model: page.tune.chips
+                delegate: DLFilterChip {
+                    required property var modelData
+                    objectName: "tuneChip_" + modelData.name
+                    y: (Theme.sizeControl - height) / 2
+                    text: modelData.name
+                    checked: modelData.checked
+                    onClicked: page.tune.toggleChip(modelData.key)
+                }
+            }
+        }
+
+        Column {
+            id: plotStack
+            objectName: "tunePlots"
+            visible: !page.idShown
+            anchors.top: toolbar.bottom; anchors.topMargin: Theme.space12
+            anchors.bottom: page.compare.active ? abCard.top : metrics.top; anchors.bottomMargin: Theme.space24
+            width: parent.width
+            spacing: Theme.space8
+
+            Rectangle {
+                visible: page.plots.length === 0
+                width: parent.width; height: parent.height
+                color: Theme.bgSurface; radius: Theme.radiusMd
+                border.width: Theme.borderWidth; border.color: Theme.borderDefault
+                Text {
+                    anchors.centerIn: parent
+                    width: parent.width * 0.6
+                    horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                    text: page.tune.runCount === 0 ? qsTr("No runs yet. Arm, set the test signal and press Run (F5).")
+                                                   : qsTr("Check a captured signal above to plot it")
+                    font: Theme.fontBodyDefault; color: Theme.textTertiary
+                }
+            }
+            Repeater {
+                model: page.plots
+                delegate: Rectangle {
+                    id: plotFrame
+                    required property var modelData
+                    required property int index
+                    objectName: "tunePlot_" + index
+                    width: plotStack.width
+                    height: (plotStack.height - plotStack.spacing * (page.plots.length - 1) - timeAxis.height) / Math.max(1, page.plots.length)
+                    color: Theme.bgSurface; radius: Theme.radiusMd
+                    border.width: Theme.borderWidth; border.color: Theme.borderDefault
+
+                    Flow {
+                        id: legend
+                        x: Theme.space12; y: Theme.space8
+                        width: parent.width - 2 * Theme.space12
+                        spacing: Theme.space8
+                        Text {
+                            height: Theme.sizeControlSm; verticalAlignment: Text.AlignVCenter
+                            text: plotFrame.modelData.title + (plotFrame.modelData.unit.length > 0 ? " (" + plotFrame.modelData.unit + ")" : "")
+                            textFormat: Text.PlainText
+                            font: Theme.fontBodyStrong; color: Theme.textPrimary
+                        }
+                        Repeater {
+                            model: plotFrame.modelData.legend
+                            delegate: Rectangle {
+                                id: legendChip
+                                required property var modelData
+                                height: Theme.sizeControlSm; width: legendRow.implicitWidth + 2 * Theme.space8
+                                radius: Theme.radiusSm; color: Theme.bgSecondary
+                                Row {
+                                    id: legendRow
+                                    x: Theme.space8; height: parent.height; spacing: Theme.space8
+                                    Rectangle {
+                                        anchors.verticalCenter: parent.verticalCenter; width: 10; height: 10; radius: 2
+                                        color: page.colorOf(legendChip.modelData.colour); opacity: legendChip.modelData.faded ? 0.5 : 1
+                                    }
+                                    Text { anchors.verticalCenter: parent.verticalCenter; text: legendChip.modelData.text; textFormat: Text.PlainText; font: Theme.fontMonoSmall; color: Theme.textPrimary }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        id: area
+                        anchors.left: parent.left; anchors.leftMargin: 64
+                        anchors.right: parent.right; anchors.rightMargin: Theme.space12
+                        anchors.top: legend.bottom; anchors.topMargin: Theme.space8
+                        anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.space12
+                        color: Theme.plotBg
+                        border.width: Theme.borderWidth; border.color: Theme.plotAxis
+                        clip: true
+                        Repeater {
+                            model: plot.ticks
+                            delegate: Rectangle { required property var modelData; y: modelData.y; width: area.width; height: 1; color: Theme.plotGrid }
+                        }
+                        Repeater {
+                            model: 4
+                            delegate: Rectangle { required property int index; x: area.width * (index + 1) / 5; width: 1; height: area.height; color: Theme.plotGrid }
+                        }
+                        // The trigger (the signal's start).
+                        Rectangle {
+                            x: (0 - page.tune.plotStartUs) / page.spanUs * area.width
+                            width: 1; height: area.height
+                            color: Theme.plotAxis
+                        }
+                        PlotItem {
+                            id: plot
+                            objectName: "tunePlotItem_" + plotFrame.index
+                            anchors.fill: parent
+                            source: page.tune
+                            keys: plotFrame.modelData.series.map(s => s.key)
+                            colors: plotFrame.modelData.series.map(s => page.seriesColor(s))
+                        }
+                        // Where a Stop or a disarm cut a run.
+                        Repeater {
+                            model: plotFrame.modelData.markers
+                            delegate: Item {
+                                id: marker
+                                required property var modelData
+                                x: (modelData.us - page.tune.plotStartUs) / page.spanUs * area.width
+                                height: area.height
+                                Rectangle { width: 2; height: parent.height; color: Theme.stateArmed }
+                                Text {
+                                    x: Theme.space4; y: Theme.space4
+                                    text: marker.modelData.text
+                                    font: Theme.fontLabelCaps; color: Theme.stateArmed
+                                }
+                            }
+                        }
+                    }
+                    Repeater {
+                        model: plot.ticks
+                        delegate: Text {
+                            required property var modelData
+                            x: 0; width: area.x - Theme.space8
+                            y: area.y + modelData.y - height / 2
+                            visible: modelData.y >= 0 && modelData.y <= area.height
+                            horizontalAlignment: Text.AlignRight
+                            text: modelData.text
+                            font: Theme.fontMonoSmall; color: Theme.textSecondary
+                        }
+                    }
+                }
+            }
+            Item {
+                id: timeAxis
+                objectName: "tuneTimeAxis"
+                visible: page.plots.length > 0
+                x: 64; width: parent.width - 64 - Theme.space12
+                height: visible ? Theme.sizeControlSm : 0
+                Repeater {
+                    model: 6
+                    delegate: Text {
+                        required property int index
+                        x: timeAxis.width * index / 5 - (index === 5 ? width : index === 0 ? 0 : width / 2)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.timeText(page.tune.plotStartUs + page.spanUs * index / 5)
+                        font: Theme.fontMonoSmall; color: Theme.textSecondary
+                    }
+                }
+            }
+        }
+
+        // ---- Plant identification: measured vs fitted (H2e-3) ----------------
+        Rectangle {
+            id: idPlotFrame
+            objectName: "tuneIdentifyPlot"
+            visible: page.idShown
+            anchors.top: centreTabs.bottom; anchors.topMargin: Theme.space12
+            anchors.bottom: parent.bottom
+            width: parent.width
+            color: Theme.bgSurface; radius: Theme.radiusMd
+            border.width: Theme.borderWidth; border.color: Theme.borderDefault
+            readonly property var plotInfo: page.idPlots.length > 0 ? page.idPlots[0] : null
+
+            Text {
+                visible: idPlotFrame.plotInfo === null || page.idResult.fitting === true
+                anchors.centerIn: parent
+                z: 2
+                width: parent.width * 0.6
+                horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+                text: page.idResult.fitting === true ? qsTr("Fitting…")
+                    : page.idRun.active ? (page.idRun.text || "")
+                    : qsTr("Run the step to fit a model")
+                font: Theme.fontBodyDefault; color: Theme.textTertiary
+            }
+            Flow {
+                id: idLegend
+                visible: idPlotFrame.plotInfo !== null
+                x: Theme.space12; y: Theme.space8
+                width: parent.width - 2 * Theme.space12
+                spacing: Theme.space8
+                Text {
+                    height: Theme.sizeControlSm; verticalAlignment: Text.AlignVCenter
+                    text: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.title + (idPlotFrame.plotInfo.unit.length > 0 ? " (" + idPlotFrame.plotInfo.unit + ")" : "") : ""
+                    textFormat: Text.PlainText
+                    font: Theme.fontBodyStrong; color: Theme.textPrimary
+                }
+                Repeater {
+                    model: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.legend : []
+                    delegate: Rectangle {
+                        id: idChip
+                        required property var modelData
+                        height: Theme.sizeControlSm; width: idChipRow.implicitWidth + 2 * Theme.space8
+                        radius: Theme.radiusSm; color: Theme.bgSecondary
+                        Row {
+                            id: idChipRow
+                            x: Theme.space8; height: parent.height; spacing: Theme.space8
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter; width: 10; height: 10; radius: 2
+                                color: page.colorOf(idChip.modelData.colour)
+                            }
+                            Text { anchors.verticalCenter: parent.verticalCenter; text: idChip.modelData.text; textFormat: Text.PlainText; font: Theme.fontMonoSmall; color: Theme.textPrimary }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                id: idArea
+                visible: idPlotFrame.plotInfo !== null
+                anchors.left: parent.left; anchors.leftMargin: 64
+                anchors.right: parent.right; anchors.rightMargin: Theme.space12
+                anchors.top: idLegend.bottom; anchors.topMargin: Theme.space8
+                anchors.bottom: idAxis.top; anchors.bottomMargin: Theme.space4
+                color: Theme.plotBg
+                border.width: Theme.borderWidth; border.color: Theme.plotAxis
+                clip: true
+                Repeater {
+                    model: idPlot.ticks
+                    delegate: Rectangle { required property var modelData; y: modelData.y; width: idArea.width; height: 1; color: Theme.plotGrid }
+                }
+                Repeater {
+                    model: 4
+                    delegate: Rectangle { required property int index; x: idArea.width * (index + 1) / 5; width: 1; height: idArea.height; color: Theme.plotGrid }
+                }
+                // The step's start.
+                Rectangle {
+                    x: (0 - page.identify.plotStartUs) / page.idSpanUs * idArea.width
+                    width: 1; height: idArea.height
+                    color: Theme.plotAxis
+                }
+                PlotItem {
+                    id: idPlot
+                    objectName: "tuneIdentifyPlotItem"
+                    anchors.fill: parent
+                    source: page.identify
+                    keys: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.series.map(s => s.key) : []
+                    colors: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.series.map(s => page.seriesColor(s)) : []
+                }
+                // Where a Stop or a disarm cut the step.
+                Repeater {
+                    model: idPlotFrame.plotInfo ? idPlotFrame.plotInfo.markers : []
+                    delegate: Item {
+                        id: idMarker
+                        required property var modelData
+                        x: (modelData.us - page.identify.plotStartUs) / page.idSpanUs * idArea.width
+                        height: idArea.height
+                        Rectangle { width: 2; height: parent.height; color: Theme.stateArmed }
+                        Text {
+                            x: Theme.space4; y: Theme.space4
+                            text: idMarker.modelData.text
+                            font: Theme.fontLabelCaps; color: Theme.stateArmed
+                        }
+                    }
+                }
+            }
+            Repeater {
+                model: idPlotFrame.plotInfo ? idPlot.ticks : []
+                delegate: Text {
+                    required property var modelData
+                    x: 0; width: idArea.x - Theme.space8
+                    y: idArea.y + modelData.y - height / 2
+                    visible: modelData.y >= 0 && modelData.y <= idArea.height
+                    horizontalAlignment: Text.AlignRight
+                    text: modelData.text
+                    font: Theme.fontMonoSmall; color: Theme.textSecondary
+                }
+            }
+            Item {
+                id: idAxis
+                visible: idPlotFrame.plotInfo !== null
+                anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.space4
+                x: 64; width: parent.width - 64 - Theme.space12
+                height: Theme.sizeControlSm
+                Repeater {
+                    model: 6
+                    delegate: Text {
+                        required property int index
+                        x: idAxis.width * index / 5 - (index === 5 ? width : index === 0 ? 0 : width / 2)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: page.timeText(page.identify.plotStartUs + page.idSpanUs * index / 5, page.idSpanUs)
+                        font: Theme.fontMonoSmall; color: Theme.textSecondary
+                    }
+                }
+            }
+        }
+
+        // G5 A/B compare: the gain differences and the metrics side by side;
+        // at 1080p the differences stack above the table.
+        Card {
+            id: abCard
+            objectName: "tuneCompare"
+            visible: page.compare.active === true && !page.idShown
+            anchors.bottom: parent.bottom
+            width: parent.width
+            readonly property bool stacked: width < 900
+            title: page.compare.active ? qsTr("A/B · run %1 vs run %2").arg(page.compare.a.run).arg(page.compare.b.run) : ""
+            contentSpacing: Theme.space12
+            actions: [
+                DLReasonHover {
+                    reason: page.compare.restoreA || ""
+                    DLButton {
+                        objectName: "tuneRestoreA"
+                        iconName: "undo-2"; text: qsTr("Restore A")
+                        enabled: page.compare.active === true && (page.compare.restoreA || "") === ""
+                        onClicked: page.tune.restoreCompare(false)
+                    }
+                },
+                DLReasonHover {
+                    reason: page.compare.restoreB || ""
+                    DLButton {
+                        objectName: "tuneRestoreB"
+                        iconName: "undo-2"; text: qsTr("Restore B")
+                        enabled: page.compare.active === true && (page.compare.restoreB || "") === ""
+                        onClicked: page.tune.restoreCompare(true)
+                    }
+                },
+                DLButton {
+                    objectName: "tuneExitCompare"
+                    kind: DLButton.Primary
+                    text: qsTr("Exit A/B")
+                    onClicked: page.tune.exitCompare()
+                }
+            ]
+            Flow {
+                width: parent.width
+                spacing: Theme.space24
+                Column {
+                    width: abCard.stacked ? parent.width : Math.max(220, parent.width * 0.3)
+                    spacing: Theme.space4
+                    Text { text: qsTr("Gain differences"); font: Theme.fontLabelCaps; color: Theme.textSecondary }
+                    Text {
+                        objectName: "tuneCompareGains"
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: page.compare.gainChanges || ""
+                        textFormat: Text.PlainText
+                        font: Theme.fontBodyStrong; color: Theme.textPrimary
+                    }
+                    Text {
+                        visible: (page.compare.equal || "").length > 0
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: page.compare.equal || ""
+                        textFormat: Text.PlainText
+                        font: Theme.fontCaption; color: Theme.textSecondary
+                    }
+                }
+                Column {
+                    id: abTable
+                    width: abCard.stacked ? parent.width : parent.width - Math.max(220, parent.width * 0.3) - Theme.space24
+                    spacing: Theme.space4
+                    readonly property var header: [qsTr("Metric"), qsTr("A · run %1").arg((page.compare.a || {}).run), qsTr("B · run %1").arg((page.compare.b || {}).run), qsTr("Change")]
+                    Row {
+                        Repeater {
+                            model: abTable.header
+                            delegate: Text {
+                                required property string modelData
+                                required property int index
+                                width: abTable.width / 4
+                                horizontalAlignment: index === 0 ? Text.AlignLeft : Text.AlignRight
+                                text: modelData; font: Theme.fontLabelCaps; color: Theme.textSecondary
+                            }
+                        }
+                    }
+                    Repeater {
+                        model: page.compare.metrics || []
+                        delegate: Row {
+                            id: abRow
+                            required property var modelData
+                            Repeater {
+                                model: [abRow.modelData.name, abRow.modelData.a, abRow.modelData.b, abRow.modelData.change]
+                                delegate: Text {
+                                    required property string modelData
+                                    required property int index
+                                    width: abTable.width / 4; height: Theme.sizeControlSm
+                                    verticalAlignment: Text.AlignVCenter
+                                    horizontalAlignment: index === 0 ? Text.AlignLeft : Text.AlignRight
+                                    text: modelData
+                                    textFormat: Text.PlainText
+                                    font: index === 0 ? Theme.fontBodyDefault : Theme.fontBodyNumeric
+                                    color: index === 1 ? page.colorOf(page.compare.a.colour) : index === 2 ? page.colorOf(page.compare.b.colour) : Theme.textPrimary
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        visible: (page.compare.note || "").length > 0
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: page.compare.note || ""
+                        font: Theme.fontCaption; color: Theme.textTertiary
+                    }
+                }
+            }
+        }
+
+        Card {
+            id: metrics
+            objectName: "tuneMetrics"
+            visible: page.compare.active !== true && !page.idShown
+            anchors.bottom: parent.bottom
+            width: parent.width
+            title: qsTr("Run metrics")
+            contentSpacing: Theme.space8
+            readonly property var columns: [qsTr("Run"), qsTr("Rise"), qsTr("Overshoot"), qsTr("Settling 2 %"), qsTr("Steady error"), qsTr("Response")]
+            Row {
+                width: parent.width
+                Repeater {
+                    model: metrics.columns
+                    delegate: Text {
+                        required property string modelData
+                        required property int index
+                        width: metrics.width / 6 - Theme.space8
+                        horizontalAlignment: index === 0 ? Text.AlignLeft : Text.AlignRight
+                        text: modelData; font: Theme.fontLabelCaps; color: Theme.textSecondary
+                    }
+                }
+            }
+            Text {
+                visible: page.tune.runCount === 0
+                text: qsTr("Metrics appear for step runs: rise 10–90 %, overshoot, settling within 2 %, steady-state error.")
+                width: parent.width; wrapMode: Text.Wrap
+                font: Theme.fontCaption; color: Theme.textTertiary
+            }
+            Repeater {
+                model: page.tune.runs
+                delegate: Row {
+                    id: metricRow
+                    required property int number
+                    required property int colour
+                    required property bool shown
+                    required property bool faded
+                    required property string rise
+                    required property string overshoot
+                    required property string settling
+                    required property string steadyError
+                    required property string response
+                    required property string metricsNote
+                    visible: shown
+                    objectName: "tuneMetricRow_" + number
+                    width: parent.width; height: visible ? Theme.sizeControlSm : 0
+                    Repeater {
+                        model: [qsTr("run %1").arg(metricRow.number), metricRow.rise, metricRow.overshoot, metricRow.settling, metricRow.steadyError, metricRow.response]
+                        delegate: Text {
+                            required property string modelData
+                            required property int index
+                            width: metrics.width / 6 - Theme.space8
+                            horizontalAlignment: index === 0 ? Text.AlignLeft : Text.AlignRight
+                            text: modelData
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            font: index === 0 ? Theme.fontBodyDefault : Theme.fontBodyNumeric
+                            color: index === 0 ? page.colorOf(metricRow.colour) : Theme.textPrimary
+                            opacity: metricRow.faded ? 0.7 : 1
+                            DLToolTip { visible: index === 1 && metricRow.metricsNote.length > 0 && hover.hovered; text: metricRow.metricsNote }
+                            HoverHandler { id: hover }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -7,6 +7,8 @@
 #include "tick_util.hpp"
 #include "esp_task_wdt.h"
 #include "core_os/realtime.hpp"
+#include "core_os/bench_affinity.hpp"
+#include <array>
 
 #if !defined(CONFIG_ESP_TASK_WDT_EN) || !defined(CONFIG_ESP_TASK_WDT_INIT) || !defined(CONFIG_ESP_TASK_WDT_PANIC)
 #error "Core real-time loops require the initialized, panic-reset Task WDT"
@@ -22,7 +24,32 @@ namespace {
 /// (stop() also notifies the task, so this is only a backstop).
 constexpr uint32_t kWaitBackstopMs = 100;
 
+#if CONFIG_CORE_BENCH_CRASH
+// The owner alone registers, logs and removes these pointers. The task only
+// publishes its snapshot; stop() joins it before the owner frees the state.
+std::array<detail::PeriodicTaskState *, 8> s_bench_tasks{};
+int32_t affinityOfSelf()
+{
+    const auto affinity = xTaskGetCoreID(nullptr);
+    return affinity == tskNO_AFFINITY ? kNoAffinity : static_cast<int32_t>(affinity);
+}
+#endif
+
 } // namespace
+
+#if CONFIG_CORE_BENCH_CRASH
+void logBenchTaskAffinities()
+{
+    for (const auto *state : s_bench_tasks) {
+        if (!state) { continue; }
+        const auto after = state->bench_after.load(std::memory_order_acquire);
+        if (after == -2) { continue; }
+        ESP_LOGI(TAG, "Bench affinity: %s requested=%ld initial=%ld initial_cpu=%ld after=%ld after_cpu=%ld",
+            state->bench_name, static_cast<long>(state->bench_requested), static_cast<long>(state->bench_initial),
+            static_cast<long>(state->bench_initial_cpu), static_cast<long>(after), static_cast<long>(state->bench_after_cpu));
+    }
+}
+#endif
 
 PeriodicTask::PeriodicTask() = default;
 
@@ -44,6 +71,11 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
     m_state.ctx = ctx;
     m_state.period_us.store(period_us, std::memory_order_relaxed);
     m_state.watchdog_ready.store(0);
+#if CONFIG_CORE_BENCH_CRASH
+    m_state.bench_name = name;
+    m_state.bench_requested = core;
+    m_state.bench_after.store(-2);
+#endif
 
     esp_err_t err = m_state.timer.create(m_state.task, name);
     if (err != ESP_OK) {
@@ -55,6 +87,10 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
     err = m_state.task.start(
         name, stack_bytes, priority,
         [state, realtime]() {
+#if CONFIG_CORE_BENCH_CRASH
+            state->bench_initial = affinityOfSelf();
+            state->bench_initial_cpu = xPortGetCoreID();
+#endif
             const auto wd = realtime ? esp_task_wdt_add(nullptr) : ESP_OK;
             state->watchdog_ready.store(wd == ESP_OK ? 1 : wd, std::memory_order_release);
             if (wd != ESP_OK) { return; }
@@ -67,6 +103,17 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
                 }
                 if (elapsed > 0U) {
                     state->fn(state->ctx, elapsed);
+#if CONFIG_CORE_BENCH_CRASH
+                    if (state->bench_after.load(std::memory_order_relaxed) == -2) {
+                        const auto affinity = affinityOfSelf();
+                        // A gated callback has done no FP work. For Any core,
+                        // wait until a real tick has caused IDF's FPU pinning.
+                        if (affinity != kNoAffinity) {
+                            state->bench_after_cpu = xPortGetCoreID();
+                            state->bench_after.store(affinity, std::memory_order_release);
+                        }
+                    }
+#endif
                     if (realtime) {
                         const auto reset = esp_task_wdt_reset();
                         if (reset != ESP_OK) { ESP_LOGE(TAG, "WDT reset failed: %s", esp_err_to_name(reset)); }
@@ -98,6 +145,11 @@ Err PeriodicTask::start(const char *name, uint32_t stack_bytes, uint8_t priority
         m_state.task.stop();
         return err;
     }
+#if CONFIG_CORE_BENCH_CRASH
+    for (auto &entry : s_bench_tasks) {
+        if (!entry) { entry = &m_state; break; }
+    }
+#endif
     return ESP_OK;
 }
 
@@ -122,6 +174,11 @@ void PeriodicTask::stop()
     // the task once it is gone.
     m_state.timer.destroy();
     m_state.task.stop();
+#if CONFIG_CORE_BENCH_CRASH
+    for (auto &entry : s_bench_tasks) {
+        if (entry == &m_state) { entry = nullptr; }
+    }
+#endif
 }
 
 bool PeriodicTask::isRunning() const

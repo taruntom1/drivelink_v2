@@ -32,4 +32,4 @@ caps of a first motor run).
 - It returns `esp_err_t`/`bool` and never reports through `diag`; the module
   that calls it reports.
 - Not run on a real motor yet: see "Deferred hardware checks" in
-  `plans/overhaul-status.md`.
+  `plans/host-status.md`.

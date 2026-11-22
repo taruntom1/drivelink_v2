@@ -446,3 +446,57 @@ TEST_CASE("Persistence: the ops need a booted core")
     CHECK(c.revert().detail == Detail::NotAtBoot);
     CHECK(c.factoryReset().detail == Detail::NotAtBoot);
 }
+
+
+TEST_CASE("Device name is live while armed, SAVE persists, REVERT restores and reset clears")
+{
+    reset(); core_os::KvStore store;
+    {
+        core::Core c(testConfig()); REQUIRE(bootCore(c, store).ok());
+        CHECK(std::string(c.name()).empty());
+        REQUIRE(c.setName("saved").ok()); CHECK(c.nvsDirty());
+        REQUIRE(c.save().ok()); CHECK_FALSE(c.nvsDirty());
+        c.params().setArmed(true);
+        REQUIRE(c.setName("armed").ok()); CHECK(c.nvsDirty());
+        CHECK(std::string(c.name()) == "armed"); CHECK_FALSE(c.save().ok());
+        c.params().setArmed(false);
+        REQUIRE(c.revert().ok()); CHECK(std::string(c.name()) == "saved");
+        CHECK_FALSE(c.nvsDirty());
+        REQUIRE(c.setName("unsaved").ok());
+    }
+    reset();
+    {
+        core::Core c(testConfig()); REQUIRE(bootCore(c, store).ok());
+        CHECK(std::string(c.name()) == "saved");
+        REQUIRE(c.setName("").ok()); REQUIRE(c.save().ok());
+    }
+    reset();
+    core::Core c(testConfig()); REQUIRE(bootCore(c, store).ok());
+    CHECK(std::string(c.name()).empty());
+    REQUIRE(c.setName("erase").ok()); REQUIRE(c.save().ok()); REQUIRE(c.factoryReset().ok());
+    CHECK(std::string(c.name()).empty()); CHECK_FALSE(core::persist::loadConfig(store).complete);
+}
+
+TEST_CASE("Device name and params recover together after every failed or torn SAVE write")
+{
+    // Factory layout has two instance blobs, system, then layout commit.
+    for (uint32_t failure = 0; failure < 4; ++failure) {
+        for (bool torn : {false, true}) {
+            reset(); core_os::KvStore store;
+            {
+                core::Core c(testConfig()); REQUIRE(bootCore(c, store).ok());
+                REQUIRE(c.setName("original").ok()); REQUIRE(c.save().ok());
+                REQUIRE(c.setName("new").ok());
+                REQUIRE(setNow(c, {entry(kSys, 0, sys::kStatusRateHz, 25)}).ok());
+                if (torn) { core_os::native::tearWriteAfter(store, failure); }
+                else { core_os::native::failWritesAfter(store, failure); }
+                const auto status = c.save();
+                if (!torn) { CHECK_FALSE(status.ok()); CHECK(c.nvsDirty()); }
+            }
+            core_os::native::clearFaults(store);
+            reset(); core::Core rebooted(testConfig()); REQUIRE(bootCore(rebooted, store).ok());
+            CHECK(std::string(rebooted.name()) == "original");
+            CHECK(getParam(rebooted, kSys, 0, sys::kStatusRateHz) == 10);
+        }
+    }
+}

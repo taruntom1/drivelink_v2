@@ -1,0 +1,63 @@
+[
+  {"title": "Get DriveLink", "pages": [
+    {"title": "Home", "slug": "", "source": "home.md"},
+    {"title": "Downloads", "slug": "downloads", "source": "downloads.md"},
+    {"title": "Install from apt", "slug": "apt", "source": "apt.md"},
+    {"title": "Flash in the browser", "slug": "flash", "source": "flash.md"}
+  ]},
+  {"title": "Start", "pages": [
+    {"title": "Start here", "slug": "start", "source": "start.md"}
+  ]},
+  {"title": "Concepts", "pages": [
+    {"title": "Firmware and serial", "slug": "concepts/firmware", "source": "concepts/firmware.md"},
+    {"title": "Modules, instances, and loops", "slug": "concepts/modules", "source": "concepts/modules.md"},
+    {"title": "Actuators, encoders, and controllers", "slug": "concepts/control", "source": "concepts/control.md"},
+    {"title": "IMU", "slug": "concepts/imu", "source": "concepts/imu.md"},
+    {"title": "Arming and faults", "slug": "concepts/safety", "source": "concepts/safety.md"},
+    {"title": "Saving and reverting", "slug": "concepts/saving", "source": "concepts/saving.md"},
+    {"title": "Agent, leases, and tokens", "slug": "concepts/agent", "source": "concepts/agent.md"},
+    {"title": "ROS 2 in five minutes", "slug": "concepts/ros", "source": "concepts/ros.md"},
+    {"title": "Glossary", "slug": "concepts/glossary", "source": "concepts/glossary.md"}
+  ]},
+  {"title": "PC bench", "pages": [
+    {"title": "Install the app", "slug": "pc/install", "source": "pc/install.md"},
+    {"title": "Connect and tour", "slug": "pc/connect", "source": "pc/connect.md"},
+    {"title": "Wire the bench", "slug": "pc/wire", "source": "pc/wire.md"},
+    {"title": "Build the layout", "slug": "pc/layout", "source": "pc/layout.md"},
+    {"title": "First spin", "slug": "pc/first-spin", "source": "pc/first-spin.md"},
+    {"title": "Monitor", "slug": "pc/monitor", "source": "pc/monitor.md"},
+    {"title": "Tune and identify", "slug": "pc/tune", "source": "pc/tune.md"},
+    {"title": "Add and calibrate the IMU", "slug": "pc/imu", "source": "pc/imu.md"},
+    {"title": "Update firmware", "slug": "pc/update", "source": "pc/update.md"}
+  ]},
+  {"title": "Pi robot", "pages": [
+    {"title": "Prepare the Raspberry Pi", "slug": "pi/prepare", "source": "pi/prepare.md"},
+    {"title": "Wire the Pi to the ESP", "slug": "pi/wire", "source": "pi/wire.md"},
+    {"title": "Install the agent and add the device", "slug": "pi/agent", "source": "pi/agent.md"},
+    {"title": "Connect the desktop app over the LAN", "slug": "pi/connect", "source": "pi/connect.md"},
+    {"title": "Share the device safely", "slug": "pi/control", "source": "pi/control.md"},
+    {"title": "Upgrade or remove the agent", "slug": "pi/maintenance", "source": "pi/maintenance.md"}
+  ]},
+  {"title": "ROS 2 robot", "pages": [
+    {"title": "Install ROS 2 and DriveLink", "slug": "ros/install", "source": "ros/install.md"},
+    {"title": "Start the two-wheel example", "slug": "ros/example", "source": "ros/example.md"},
+    {"title": "Drive with the keyboard", "slug": "ros/drive", "source": "ros/drive.md"},
+    {"title": "Describe your own robot", "slug": "ros/robot", "source": "ros/robot.md"},
+    {"title": "Diagnose and recover the ROS drive", "slug": "ros/recover", "source": "ros/recover.md"}
+  ]},
+  {"title": "Reference", "pages": [
+    {"title": "Reference build", "slug": "reference/bench", "source": "reference/bench.md"},
+    {"title": "Module types and parameters", "slug": "reference/modules", "source": "reference/modules.md"},
+    {"title": "Status, fault, and diagnostic codes", "slug": "reference/codes", "source": "reference/codes.md"},
+    {"title": "Desktop app screens", "slug": "reference/gui", "source": "reference/gui.md"},
+    {"title": "Agent configuration, service, and network", "slug": "reference/agent", "source": "reference/agent.md"},
+    {"title": "ROS 2 hardware and launch reference", "slug": "reference/ros", "source": "reference/ros.md"},
+    {"title": "Packages, versions, and limits", "slug": "reference/packages", "source": "reference/packages.md"}
+  ]},
+  {"title": "Troubleshooting", "pages": [
+    {"title": "Troubleshooting and FAQ", "slug": "troubleshooting", "source": "troubleshooting.md"}
+  ]},
+  {"title": "About", "pages": [
+    {"title": "About DriveLink", "slug": "about", "source": "about.md"}
+  ]}
+]

@@ -6,7 +6,7 @@
 #include "drivelink/protocol/wire_codec.hpp"
 
 namespace drivelink::protocol::core_wire {
-inline constexpr uint8_t kVersion = 8;
+inline constexpr uint8_t kVersion = 10;
 inline constexpr uint16_t kEnd = 0xFFFF;
 inline constexpr size_t kRequestHeader = 4;
 inline constexpr size_t kResponseHeader = 6;
@@ -55,7 +55,7 @@ inline void string(wire::Writer &w, const char *s)
 inline void item(wire::Writer &w, const defs::ItemDesc &d)
 {
     w.appendU16Le(d.id); w.appendU8(static_cast<uint8_t>(d.kind));
-    w.appendU8(static_cast<uint8_t>(d.type)); w.appendU8(d.flags);
+    w.appendU8(static_cast<uint8_t>(d.type)); w.appendU16Le(d.flags);
     w.appendU8((d.has_min ? 1 : 0) | (d.has_max ? 2 : 0));
     w.appendU32Le(d.min_bits); w.appendU32Le(d.max_bits); w.appendU32Le(d.default_bits);
     string(w,d.name); string(w,d.unit); string(w,d.description); string(w,d.ref);
@@ -67,7 +67,7 @@ inline void item(wire::Writer &w, const defs::ItemDesc &d)
 }
 inline size_t itemSize(const defs::ItemDesc &d)
 {
-    size_t n = 30;
+    size_t n = 31;
     for (const char *s : {d.name,d.unit,d.description,d.ref}) { if (s) { n += std::strlen(s); } }
     for (auto args : {d.args,d.results}) { for (const auto &a : args) { n += 5 + std::strlen(a.name) + std::strlen(a.unit); } }
     return n;

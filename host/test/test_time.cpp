@@ -2,6 +2,15 @@
 #include "drivelink/session.hpp"
 #include <cmath>
 using namespace drivelink;
+TEST_CASE("mapped timestamps expose generation and growing uncertainty") {
+    ClockModel model;CHECK(std::isinf(model.uncertainty(10)));
+    auto missing=mapTime(model,10,7);CHECK_FALSE(missing.valid);CHECK(missing.generation==7);CHECK(std::isnan(missing.host_us));
+    model.offset_valid=true;model.device_reference_us=1000;model.host_reference_us=5000;
+    model.slope=1.001;model.min_rtt_us=100;model.residual_us=2;model.span_us=1000000;model.age_us=20000;
+    const auto mapped=mapTime(model,2000,9);CHECK(mapped.valid);CHECK(mapped.device_us==2000);CHECK(mapped.generation==9);
+    CHECK(mapped.host_us==doctest::Approx(6001));
+    CHECK(model.uncertainty(1000)==doctest::Approx(54));CHECK(model.uncertainty(1001000)>model.uncertainty(1000));
+}
 namespace {
 TimeSample sample(uint64_t t,double slope=1,double offset=3000000,double delay=100) {
     const auto host=static_cast<uint64_t>(static_cast<double>(t)*slope+offset);

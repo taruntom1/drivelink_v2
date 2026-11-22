@@ -8,7 +8,7 @@ own: the configuration lives in the device's NVS.
 
 > **Not yet run on motors or a real IMU.** The bench board has neither. The
 > motor, IMU and Pi checks are scripted and listed under "Deferred hardware
-> checks" in [plans/overhaul-status.md](../plans/overhaul-status.md). Until
+> checks" in [plans/host-status.md](../plans/host-status.md). Until
 > they pass, treat real-motor and real-IMU behaviour as unverified. The last
 > commit of the previous firmware is tagged `legacy-final`.
 
@@ -78,6 +78,23 @@ Flash a board on the dual-slot partition table with
 `python tools/bench_fw.py normal`, which checks the configuration and never
 erases NVS. Later updates go over the link with the CLI's OTA workflow
 (`docs/protocol/ota.md`).
+
+The app version (`esp_app_desc_t.version`, GET_INFO's `firmware_version`) is
+the root `VERSION`, with `+g<sha7>[.dirty]` away from its tag
+([development guide](../docs/development.md), "Version").
+
+Published builds: CI's `firmware-package` job uploads
+`drivelink-firmware-<version>/` (artifact `drivelink-firmware`), and a
+`v<VERSION>` tag attaches it to the GitHub Release. Its `README.txt` has the
+esptool commands: the merged image at 0x0 for a new board (it also blanks
+NVS), the separate parts to keep NVS, or `drivelink-app.bin` over OTA. The
+firmware's third-party notices (ESP-IDF, FreeRTOS, Mbed TLS, newlib, TLSF, the
+SD/MMC driver, Xtensa, the GCC runtime) are `notices/notices.json`, rendered
+into `notices/THIRD_PARTY_NOTICES.txt` from the repository root with
+`python host/gui/notices/gen_notices.py --write --manifest
+firmware/notices/notices.json --output firmware/notices/THIRD_PARTY_NOTICES.txt`;
+`gen` checks it is current. A newly linked third-party library or IDF
+component with its own licence needs an entry there.
 
 ## Configuration
 

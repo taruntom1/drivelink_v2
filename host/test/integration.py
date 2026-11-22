@@ -12,6 +12,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'firmware/test/uart_comm'))
+from protocol import CORE_PROTOCOL_VERSION
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -51,6 +54,21 @@ def main():
                 break
             assert completed.returncode == code, (command, completed.returncode, completed.stdout, completed.stderr)
             assert result['ok'] == (code == 0), result
+            if command == ('reboot',) and code == 0:
+                # REBOOT acknowledges acceptance before Boot is delivered. A
+                # PTY stays open, so Boot can invalidate the next CLI's initial
+                # GET_INFO. Poll only this read; never repeat the mutation or
+                # swallow other protocol errors/failed scenario assertions.
+                for ready_attempt in range(10):
+                    ready = subprocess.run([args.cli, '--endpoint', endpoint or url, '--json', 'info'],
+                                           capture_output=True, text=True, timeout=20)
+                    data = json.loads(ready.stdout)
+                    if ready.returncode == 0 and data['ok']:
+                        break
+                    transient = ready.returncode in (3, 4) or (
+                        ready.returncode == 6 and data.get('error') == 'device reboot during request')
+                    assert transient and ready_attempt < 9, (ready.returncode, data, ready.stderr)
+                    time.sleep(.02)
             return result.get('data', result)
 
         try:
@@ -58,6 +76,9 @@ def main():
             assert cli('info')['max_payload'] == 1024
             ping=cli('time-ping')['samples'][0]
             assert ping['accepted'] and ping['esp_tx_us'] >= ping['esp_rx_us']
+            human_time = subprocess.run([args.cli, '--endpoint', url, 'time-ping'],
+                                        capture_output=True, text=True, timeout=10, check=True)
+            assert 'samples' in human_time.stdout and 'mapped_' not in human_time.stdout and 'mapping_' not in human_time.stdout
             assert len(cli('time-sync','1')['samples']) >= 3
             sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'firmware/test/uart_comm'))
             from protocol import encode_frame, UartCommProto
@@ -169,7 +190,7 @@ def main():
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 8' in human.stdout
+            assert human.returncode == 0 and 'protocol_version: 10' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
@@ -204,7 +225,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 8
+                assert cli('info')['protocol_version'] == 10
                 assert cli('time-ping')['samples'][0]['accepted']
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
@@ -214,7 +235,7 @@ def main():
                 # Submit REBOOT without draining the filled slave. Its reply
                 # deadline must cancel the effect and recover the same PTY,
                 # rather than close the published path or run a stale handler.
-                payload = bytes((5, 201, 1, 8))
+                payload = bytes((CORE_PROTOCOL_VERSION, 201, 1, 8))
                 header = bytes((1, len(payload), 0))
                 crc = 0
                 for byte in header:
@@ -229,7 +250,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 8
+                assert cli('info')['protocol_version'] == 10
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire
@@ -282,6 +303,8 @@ def main():
             cli('remove', '113', str(feedback)); cli('remove', '114', str(imu))
             cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             from motor_smoke import run as motor_smoke
+            from loop_affinity_smoke import run as loop_affinity_smoke
+            loop_affinity_smoke(args.cli, url)
             from imu_smoke import run as imu_smoke
             imu_smoke(args.cli, url)
             from capture_smoke import run as capture_smoke

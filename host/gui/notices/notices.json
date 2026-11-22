@@ -1,0 +1,580 @@
+{
+  "components": [
+    {
+      "name": "Qt",
+      "version": "6.12.0",
+      "license": "LGPL-3.0-only",
+      "copyright": "Copyright (C) The Qt Company Ltd. and other contributors.",
+      "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz",
+      "license_files": [
+        "licenses/LGPL-3.0-only.txt",
+        "licenses/GPL-3.0-only.txt"
+      ],
+      "note": "DriveLink uses these Qt modules: Core, Gui, Network, OpenGL, Qml, QmlCore, QmlMeta, QmlModels, QmlWorkerScript, Quick, Quick Controls 2 (Basic style), Quick Dialogs 2, Quick Effects, Quick Layouts, Quick Shapes, Quick Templates 2, Svg and Labs FolderListModel, with the Qt plugins and QML modules they need (the windows and offscreen platforms, the gif, ico, jpeg and svg image formats, SVG icons, TLS and network information).\nQt is licensed under the GNU Lesser General Public License version 3 (LGPLv3), which incorporates the GNU General Public License version 3; both texts are in the appendix. Qt is dynamically linked: its DLLs sit in the installation folder next to the DriveLink programs and may be replaced by a modified, compatible build of Qt 6.12, which DriveLink then loads. The complete corresponding Qt source code is available from https://download.qt.io/official_releases/qt/6.12/6.12.0/single/ , and a copy is available on request from the publisher. DriveLink's own code is not licensed under the LGPL; it is proprietary, see LICENSE.txt.\nThe components listed next are third-party code bundled inside the Qt libraries, as recorded in the SBOM files that Qt 6.12.0 ships (qtbase, qtdeclarative, qtsvg). Qt's SBOM does not say which parts of qtbase ship in a given Windows build, so every part that can be in the deployed Qt6Core, Qt6Gui, Qt6Network, Qt6Qml, Qt6QuickLayouts or the qwindows plugin is listed (a superset). Linux-only, test-only and not-deployed parts (D-Bus, X11 helpers, KDE, Catch2, SQLite, the Material style) are omitted.",
+      "dll_patterns": [
+        "Qt6*.dll",
+        "qwindows.dll",
+        "qoffscreen.dll",
+        "qsvgicon.dll",
+        "qgif.dll",
+        "qico.dll",
+        "qjpeg.dll",
+        "qsvg.dll",
+        "qnetworklistmanager.dll",
+        "qcertonlybackend.dll",
+        "qschannelbackend.dll",
+        "qmlfolderlistmodelplugin.dll",
+        "qtqmlcoreplugin.dll",
+        "modelsplugin.dll",
+        "workerscriptplugin.dll",
+        "qmlplugin.dll",
+        "qtquickcontrols2plugin.dll",
+        "qtquickcontrols2implplugin.dll",
+        "qtquickcontrols2basicstyleplugin.dll",
+        "qtquickcontrols2basicstyleimplplugin.dll",
+        "qtquickdialogsplugin.dll",
+        "qtquickdialogs2quickimplplugin.dll",
+        "effectsplugin.dll",
+        "qquicklayoutsplugin.dll",
+        "qmlshapesplugin.dll",
+        "qtquicktemplates2plugin.dll",
+        "quickwindowplugin.dll",
+        "qtquick2plugin.dll"
+      ]
+    },
+    {
+      "name": "PCRE2 (in Qt6Core)",
+      "version": "10.48",
+      "license": "BSD-3-Clause with PCRE2 exception",
+      "copyright": "Copyright (c) 1997-2007 University of Cambridge\nCopyright (c) 2007-2024 Philip Hazel\nCopyright (c) 2010-2024 Zoltan Herczeg",
+      "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.48/pcre2-10.48.tar.bz2",
+      "license_files": [
+        "licenses/PCRE2-BSD-3-Clause-exception.txt",
+        "licenses/BSD-2-Clause.txt"
+      ],
+      "note": "PCRE2 includes the sljit code (BSD-2-Clause, Copyright Zoltan Herczeg).",
+      "dll_patterns": []
+    },
+    {
+      "name": "zlib (in Qt6Core, Qt6Gui, Qt6Network)",
+      "version": "1.3.2",
+      "license": "Zlib",
+      "copyright": "(C) 1995-2026 Jean-loup Gailly and Mark Adler",
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+      "license_files": [
+        "licenses/Zlib.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "double-conversion (in Qt6Core)",
+      "version": "3.4.0",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright 2006-2012, the V8 project authors",
+      "url": "https://github.com/google/double-conversion/releases/tag/v3.4.0",
+      "license_files": [
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Unicode Character Database (in Qt6Core)",
+      "version": "36",
+      "license": "Unicode-3.0",
+      "copyright": "Copyright (C) 1991-2025 Unicode, Inc.",
+      "url": "https://www.unicode.org/ucd/",
+      "license_files": [
+        "licenses/Unicode-3.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Unicode CLDR (in Qt6Core)",
+      "version": "v48.2",
+      "license": "Unicode-3.0",
+      "copyright": "Copyright (C) 2004-2025 Unicode, Inc.",
+      "url": "https://cldr.unicode.org/",
+      "license_files": [
+        "licenses/Unicode-3.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "tl::expected (in Qt6Core)",
+      "version": "41d3e1f",
+      "license": "CC0-1.0",
+      "copyright": "To the extent possible under law, Sy Brand has waived all copyright and related or neighboring rights to the expected library. This work is published from: United Kingdom.",
+      "url": "https://github.com/TartanLlama/expected/blob/41d3e1f48d682992a2230b2a715bca38b848b269/include/tl/expected.hpp",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "SipHash (in Qt6Core)",
+      "version": "unversioned",
+      "license": "CC0-1.0",
+      "copyright": "Copyright (C) 2012-2014 Jean-Philippe Aumasson\nCopyright (C) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>\nCopyright (C) 2016 Intel Corporation",
+      "url": "https://raw.githubusercontent.com/veorq/SipHash/adcbf09b1684a718f594faa650ffc56bacdb0777/siphash24.c",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "BLAKE2 (in Qt6Core)",
+      "version": "ed1974e",
+      "license": "CC0-1.0",
+      "copyright": "Copyright 2012, Samuel Neves <sneves@dei.uc.pt>",
+      "url": "https://github.com/BLAKE2/BLAKE2/tree/ed1974ea83433eba7b2d95c5dcd9ac33cb847913",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "note": "Dual-licensed CC0-1.0 or Apache-2.0; used under CC0-1.0.",
+      "dll_patterns": []
+    },
+    {
+      "name": "MD4 (in Qt6Core)",
+      "version": "unversioned",
+      "license": "CC0-1.0",
+      "copyright": "Written by Alexander Peslyak - better known as Solar Designer <solar@openwall.com> - in 2001, and placed in the public domain. There's absolutely no warranty.",
+      "url": "NOASSERTION",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "note": "Public domain; Qt's SBOM records CC0-1.0.",
+      "dll_patterns": []
+    },
+    {
+      "name": "MD5 (in Qt6Core)",
+      "version": "unversioned",
+      "license": "CC0-1.0",
+      "copyright": "Written by Colin Plumb in 1993, no copyright is claimed. Ian Jackson <ian@chiark.greenend.org.uk>.",
+      "url": "NOASSERTION",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "note": "Public domain; Qt's SBOM records CC0-1.0.",
+      "dll_patterns": []
+    },
+    {
+      "name": "SHA-1 (in Qt6Core)",
+      "version": "unversioned",
+      "license": "Public domain",
+      "copyright": "Copyright (C) Dominik Reichl <dominik.reichl@t-online.de>\nCopyright (C) 2016 The Qt Company Ltd",
+      "url": "http://www.dominik-reichl.de/projects/csha1/",
+      "license_files": [
+        "licenses/SHA1-public-domain.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "SHA-3 endian helpers (in Qt6Core)",
+      "version": "1.0.0",
+      "license": "BSD-2-Clause",
+      "copyright": "Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.",
+      "url": "NOASSERTION",
+      "license_files": [
+        "licenses/BSD-2-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "SHA-3 Keccak (in Qt6Core)",
+      "version": "3.2",
+      "license": "CC0-1.0",
+      "copyright": "Guido Bertoni, Joan Daemen, Michaël Peeters and Gilles Van Assche.\nTo the extent possible under law, the implementers have waived all copyright\nand related or neighboring rights to the source code in this file.",
+      "url": "NOASSERTION",
+      "license_files": [
+        "licenses/CC0-1.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "RFC 6234 SHA (in Qt6Core)",
+      "version": "unversioned",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (c) 2011 IETF Trust and the persons identified as authors of the code.",
+      "url": "NOASSERTION",
+      "license_files": [
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "TinyCBOR (in Qt6Core)",
+      "version": "7.0",
+      "license": "MIT",
+      "copyright": "Copyright (C) 2015-2025 Intel Corporation",
+      "url": "https://github.com/intel/tinycbor/archive/v7.0/tinycbor-7.0.tar.gz",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Easing Equations (in Qt6Core)",
+      "version": "unversioned",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (c) 2001 Robert Penner",
+      "url": "http://robertpenner.com/easing/",
+      "license_files": [
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Apache Tika MIME types (in Qt6Core)",
+      "version": "c297247",
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2026 The Apache Software Foundation",
+      "url": "https://github.com/apache/tika/blob/c29724782854bb5a319f4a1940d0828a58ace3f9/tika-core/src/main/resources/org/apache/tika/mime/tika-mimetypes.xml",
+      "license_files": [
+        "licenses/Apache-2.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "libpng (in Qt6Gui)",
+      "version": "1.6.58",
+      "license": "Libpng AND libpng-2.0",
+      "copyright": "Copyright (c) 1995-2026 The PNG Reference Library Authors\nCopyright (c) 2000-2026 Cosmin Truta\nCopyright (c) 1998-2018 Glenn Randers-Pehrson\nCopyright (c) 1996-1997 Andreas Dilger\nCopyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.\nCopyright (c) 2000-2017 Simon-Pierre Cadieux\nCopyright (c) 2000-2017 Eric S. Raymond\nCopyright (c) 2000-2017 Mans Rullgard\nCopyright (c) 2000-2017 Gilles Vollant\nCopyright (c) 2000-2017 James Yu\nCopyright (c) 2000-2017 Mandar Sahastrabuddhe\nCopyright (c) 1998-2000 Tom Lane\nCopyright (c) 1998-2000 Willem van Schaik\nCopyright (c) 1996-1997 John Bowler\nCopyright (c) 1996-1997 Kevin Bracey\nCopyright (c) 1996-1997 Sam Bushell\nCopyright (c) 1996-1997 Magnus Holmgren\nCopyright (c) 1996-1997 Greg Roelofs\nCopyright (c) 1996-1997 Tom Tanner\nCopyright (c) 1995-1996 Dave Martindale\nCopyright (c) 1995-1996 Paul Schmidt\nCopyright (c) 1995-1996 Tim Wegner",
+      "url": "https://download.sourceforge.net/libpng/libpng-1.6.58.tar.xz",
+      "license_files": [
+        "licenses/Libpng.txt",
+        "licenses/libpng-2.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "libjpeg-turbo (in qjpeg.dll)",
+      "version": "3.2.0",
+      "license": "IJG AND BSD-3-Clause",
+      "copyright": "Copyright (C) 2009-2026 D. R. Commander\nCopyright (C) 1991-1998 Thomas G. Lane\nCopyright (C) 2009 Pierre Ossman for Cendio AB\nCopyright (C) 1999-2006 MIYASAKA Masaru\nCopyright (C) 1999 Ken Murchison\nCopyright (C) 2015-2016, 2018, 2022 Matthieu Darbois\nCopyright (C) 2018 Matthias Räncker\nCopyright (C) 2019-2020 Arm Limited\nCopyright (C) 2022 Felix Hanau\nCopyright (C) 1997-1998 Thomas G. Lane, Todd Newman\nCopyright (C) 2021 Alex Richardson\nCopyright (C) 2015, 2020 Google, Inc.\nCopyright (C) 2013 Linaro Limited\nCopyright (C) 2014 Olle Liljenzin\nCopyright (C) 1991-2020 Thomas G. Lane, Guido Vollbeding",
+      "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+      "license_files": [
+        "licenses/IJG.txt",
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "FreeType (in Qt6Gui)",
+      "version": "2.14.3",
+      "license": "FTL",
+      "copyright": "Copyright (c) 2007-2014 Adobe Systems Incorporated\nCopyright (c) 2004-2026 Albert Chin-A-Young\nCopyright (c) 2018-2026 Armin Hasitzka, David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2000 Computing Research Labs, New Mexico State University\nCopyright (c) 1996-2026 David Turner, Robert Wilhelm, Dominik Röttsches, and Werner Lemberg\nCopyright (c) 2004-2026 David Turner, Robert Wilhelm, Werner Lemberg and George Williams\nCopyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, and Moazin Khatti\nCopyright (c) 2008-2026 David Turner, Robert Wilhelm, Werner Lemberg, and suzuki toshiya\nCopyright (c) 2003-2026 David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2005-2026 David Turner\nCopyright (c) 2007-2026 Derek Clegg and Michael Toftdal\nCopyright (c) 2007 Dmitry Timoshkov for Codeweavers\nCopyright (c) 2001-2015 Francesco Zappa Nardelli\nCopyright (c) 2005, 2007, 2008, 2013 George Williams\nCopyright (c) 2013-2026 Google, Inc. Google Author(s) Behdad Esfahbod and Stuart Gill\nCopyright (c) 2013-2022 Google, Inc.\nCopyright (c) 2003 Huw D M Davies for Codeweavers\nCopyright (c) 2010-2026 Joel Klinghed\nCopyright (c) 1996-2026 Just van Rossum, David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2003-2026 Masatake YAMATO and Redhat K.K.\nCopyright (c) 2004-2026 Masatake YAMATO, Redhat K.K, David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2019-2026 Nikhil Ramakrishnan, David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2009-2026 Oran Agra and Mickey Gabel\nCopyright (c) 2007-2026 Rahul Bhalerao <rahul.bhalerao@redhat.com>\nCopyright (c) 2002-2026 Roberto Alameda\nCopyright (c) 2015-2026 Werner Lemberg\nCopyright (c) 2004-2026 suzuki toshiya, Masatake YAMATO, Red Hat K.K., David Turner, Robert Wilhelm, and Werner Lemberg\nCopyright (c) 2019 nyorain\nCopyright (c) 2022-2026 David Turner, Robert Wilhelm, Werner Lemberg, George Williams, and Dominik Röttsches\nCopyright (C) 2009, 2023  Red Hat, Inc.",
+      "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.gz",
+      "license_files": [
+        "licenses/FTL.txt",
+        "licenses/Zlib.txt",
+        "licenses/MIT.txt",
+        "licenses/MIT-open-group.txt"
+      ],
+      "note": "Dual-licensed FTL or GPL-2.0-only; used under the FreeType License (FTL). It includes parts under zlib (Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler), MIT (the BDF and PCF drivers) and MIT-open-group (Copyright (c) 1990, 1994, 1998 The Open Group). Qt's anti-aliasing rasterizer (grayraster, Copyright 2000-2016 David Turner, Robert Wilhelm and Werner Lemberg) is also FTL.",
+      "dll_patterns": []
+    },
+    {
+      "name": "HarfBuzz (in Qt6Gui)",
+      "version": "14.5.0",
+      "license": "MIT",
+      "copyright": "Copyright © 2010-2022  Google, Inc.\nCopyright © 2015-2020  Ebrahim Byagowi\nCopyright © 2019,2020  Facebook, Inc.\nCopyright © 2012,2015  Mozilla Foundation\nCopyright © 2011  Codethink Limited\nCopyright © 2008,2010  Nokia Corporation and/or its subsidiary(-ies)\nCopyright © 2009  Keith Stribley\nCopyright © 2011  Martin Hosken and SIL International\nCopyright © 2007  Chris Wilson\nCopyright © 2005,2006,2020,2021,2022,2023  Behdad Esfahbod\nCopyright © 2004,2007,2008,2009,2010,2013,2021,2022,2023  Red Hat, Inc.\nCopyright © 1998-2005  David Turner and Werner Lemberg\nCopyright © 2016  Igalia S.L.\nCopyright © 2022  Matthias Clasen\nCopyright © 2018,2021  Khaled Hosny\nCopyright © 2018,2019,2020  Adobe, Inc\nCopyright © 2013-2015  Alexei Podtelezhnikov",
+      "url": "https://github.com/harfbuzz/harfbuzz/releases/tag/14.5.0",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "MD4C (in Qt6Gui)",
+      "version": "0.5.3",
+      "license": "MIT",
+      "copyright": "Copyright © 2016-2024 Martin Mitáš",
+      "url": "https://github.com/mity/md4c/releases/tag/release-0.5.3",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "emoji-segmenter (in Qt6Gui)",
+      "version": "0.4.0",
+      "license": "Apache-2.0",
+      "copyright": "Copyright 2019 Google LLC",
+      "url": "https://github.com/google/emoji-segmenter/releases/tag/0.4.0",
+      "license_files": [
+        "licenses/Apache-2.0.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Adobe Glyph List For New Fonts (in Qt6Gui)",
+      "version": "1.7",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems",
+      "url": "https://github.com/adobe-type-tools/agl-aglfn",
+      "license_files": [
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Smooth scaling algorithm (in Qt6Gui)",
+      "version": "unversioned",
+      "license": "BSD-2-Clause AND Imlib2",
+      "copyright": "Copyright (C) 2004, 2005 Daniel M. Duley.\n(C) Carsten Haitzler and various contributors.\n(C) Willem Monsuwe <willem@stack.nl>",
+      "url": "https://www.qt.io/",
+      "license_files": [
+        "licenses/BSD-2-Clause.txt",
+        "licenses/Imlib2.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "XSVG (in Qt6Gui)",
+      "version": "unversioned",
+      "license": "HPND-sell-variant",
+      "copyright": "Copyright 2002 USC/Information Sciences Institute",
+      "url": "https://www.qt.io/",
+      "license_files": [
+        "licenses/HPND-sell-variant.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "WebGradients (in Qt6Gui)",
+      "version": "unversioned",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2017 itmeo",
+      "url": "https://webgradients.com/",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "sRGB ICC profile (in Qt6Gui)",
+      "version": "unversioned",
+      "license": "ICC license",
+      "copyright": "Copyright International Color Consortium, 2015",
+      "url": "http://www.color.org/",
+      "license_files": [
+        "licenses/ICC-sRGB-profile.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "D3D12 mipmap shader (in Qt6Gui)",
+      "version": "0aa79ba",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2015 Microsoft",
+      "url": "https://github.com/microsoft/DirectX-Graphics-Samples",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "D3D12 Memory Allocator (in Qt6Gui)",
+      "version": "v3.1.0",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2019-2026 Advanced Micro Devices, Inc. All rights reserved.",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Vulkan Memory Allocator (in Qt6Gui)",
+      "version": "3.3.0",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2017-2025 Advanced Micro Devices, Inc. All rights reserved.",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Khronos OpenGL headers (in Qt6Gui)",
+      "version": "r27684",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2013-2014 The Khronos Group Inc.",
+      "url": "https://www.khronos.org/",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Khronos Vulkan headers (in Qt6Gui)",
+      "version": "1.4.308",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2015-2025 The Khronos Group Inc.",
+      "url": "https://www.khronos.org/",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "note": "Dual-licensed Apache-2.0 or MIT; used under MIT.",
+      "dll_patterns": []
+    },
+    {
+      "name": "libpsl code (in Qt6Network)",
+      "version": "664f3dc",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright 2014-2016 The Chromium Authors. All rights reserved.",
+      "url": "https://github.com/rockdaboot/libpsl",
+      "license_files": [
+        "licenses/BSD-3-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Public Suffix List (in Qt6Network)",
+      "version": "2026-05-14",
+      "license": "MPL-2.0",
+      "copyright": "The list was originally provided by Jo Hermans <jo.hermans@gmail.com>.\nIt is now maintained on github (https://github.com/publicsuffix/list).",
+      "url": "https://publicsuffix.org/list/public_suffix_list.dat",
+      "license_files": [
+        "licenses/MPL-2.0.txt"
+      ],
+      "note": "The source form of the list is the file public_suffix_list.dat at the URL above.",
+      "dll_patterns": []
+    },
+    {
+      "name": "Wintab header (in qwindows.dll)",
+      "version": "unversioned",
+      "license": "LCS/Telegraphics notice",
+      "copyright": "Copyright 1991-1998 by LCS/Telegraphics.",
+      "url": "https://www.qt.io/",
+      "license_files": [
+        "licenses/LCS-Telegraphics.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "masm assembler (in Qt6Qml)",
+      "version": "unversioned",
+      "license": "BSD-2-Clause",
+      "copyright": "Copyright (C) 2003-2018 Apple Inc. All rights reserved. Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com) Copyright (C) 2007-2009 Torch Mobile, Inc. All rights reserved. (http://www.torchmobile.com/) Copyright (C) 2009, 2010 University of Szeged Copyright (C) 2009-2011 STMicroelectronics. All rights reserved. Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved. Copyright (C) 2010 Peter Varga (pvarga@inf.u-szeged.hu), University of Szeged Copyright (C) 2010 MIPS Technologies, Inc. All rights reserved. Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved. Copyright (C) 2011 Google Inc. All rights reserved. Copyright (C) 2013 Samsung Electronics. All rights reserved. Copyright (C) 2015 Cisco Systems, Inc. All rights reserved. Copyright (c) 2002-2009 Vivek Thampi",
+      "url": "https://trac.webkit.org/wiki/JavaScriptCore",
+      "license_files": [
+        "licenses/BSD-2-Clause.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "Yoga (in Qt6QuickLayouts)",
+      "version": "2.0.1",
+      "license": "MIT",
+      "copyright": "Copyright (c) Facebook, Inc. and its affiliates. Copyright (c) Meta Platforms, Inc. and affiliates.",
+      "url": "https://github.com/facebook/yoga/tree/v2.0.1",
+      "license_files": [
+        "licenses/MIT.txt"
+      ],
+      "dll_patterns": []
+    },
+    {
+      "name": "GCC runtime (libgcc, libstdc++)",
+      "version": "13.1.0",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "copyright": "Copyright (C) Free Software Foundation, Inc.",
+      "url": "https://gcc.gnu.org/",
+      "license_files": [
+        "licenses/GPL-3.0-only.txt",
+        "licenses/GCC-exception-3.1.txt"
+      ],
+      "note": "Compiler runtime DLLs of the MinGW-w64 GCC 13.1 toolchain that built DriveLink and Qt, shipped next to the programs (libgcc_s_seh-1.dll, libstdc++-6.dll). They are covered by the GPL with the GCC Runtime Library Exception, which permits distribution with software under other licenses.",
+      "dll_patterns": [
+        "libgcc_s_seh-1.dll",
+        "libstdc++-6.dll"
+      ]
+    },
+    {
+      "name": "MinGW-w64 winpthreads",
+      "version": "GCC 13.1 kit",
+      "license": "MIT AND BSD-3-Clause",
+      "copyright": "Copyright (c) 2011 mingw-w64 project; (C) 2010 Lockless Inc.",
+      "url": "https://www.mingw-w64.org/",
+      "license_files": [
+        "licenses/winpthreads.txt"
+      ],
+      "note": "libwinpthread-1.dll, shipped next to the programs.",
+      "dll_patterns": [
+        "libwinpthread-1.dll"
+      ]
+    },
+    {
+      "name": "Inter",
+      "version": "4.1",
+      "license": "OFL-1.1",
+      "copyright": "Copyright (c) 2016 The Inter Project Authors",
+      "url": "https://github.com/rsms/inter/releases/tag/v4.1",
+      "license_files": [
+        "../resources/fonts/Inter-OFL.txt"
+      ],
+      "note": "Compiled into drivelink-gui as a font resource.",
+      "dll_patterns": []
+    },
+    {
+      "name": "JetBrains Mono",
+      "version": "2.304",
+      "license": "OFL-1.1",
+      "copyright": "Copyright 2020 The JetBrains Mono Project Authors",
+      "url": "https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304",
+      "license_files": [
+        "../resources/fonts/JetBrainsMono-OFL.txt"
+      ],
+      "note": "Compiled into drivelink-gui as a font resource.",
+      "dll_patterns": []
+    },
+    {
+      "name": "Lucide icons",
+      "version": "0.460.0",
+      "license": "ISC",
+      "copyright": "Portions Copyright (c) Cole Bemis 2013-2022 as part of Feather (MIT); all other copyright (c) Lucide Contributors 2022.",
+      "url": "https://registry.npmjs.org/lucide-static/-/lucide-static-0.460.0.tgz",
+      "license_files": [
+        "licenses/Lucide-ISC.txt"
+      ],
+      "note": "Compiled into drivelink-gui as SVG resources. The license text is a copy of host/gui/resources/icons/LICENSE.",
+      "dll_patterns": []
+    },
+    {
+      "name": "Asio",
+      "version": "1.30.2",
+      "license": "BSL-1.0",
+      "copyright": "Copyright (c) 2003-2024 Christopher M. Kohlhoff",
+      "url": "https://github.com/chriskohlhoff/asio/releases/tag/asio-1-30-2",
+      "license_files": [
+        "licenses/BSL-1.0.txt"
+      ],
+      "note": "Header-only; compiled into libdrivelink and so into drivelink-gui, drivelink-cli and drivelink-vdev.",
+      "dll_patterns": []
+    },
+    {
+      "name": "nlohmann JSON",
+      "version": "3.11.3",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2013-2022 Niels Lohmann",
+      "url": "https://github.com/nlohmann/json/releases/tag/v3.11.3",
+      "license_files": [
+        "licenses/nlohmann-json-MIT.txt"
+      ],
+      "note": "Header-only; compiled into drivelink-cli.",
+      "dll_patterns": []
+    },
+    {
+      "name": "mjansson/mdns",
+      "version": "1.4.3",
+      "license": "Unlicense",
+      "copyright": "Mattias Jansson (public domain)",
+      "url": "https://codeload.github.com/mjansson/mdns/tar.gz/refs/tags/1.4.3",
+      "license_files": [
+        "licenses/Unlicense-mdns.txt"
+      ],
+      "note": "Header-only; DriveLink uses it to find agents on the local network (compiled into libdrivelink, so into drivelink-gui and drivelink-cli, and into drivelink-agent).",
+      "dll_patterns": []
+    }
+  ]
+}

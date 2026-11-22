@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title | DriveLink user guide</title>
+  <link rel="stylesheet" href="${base}assets/theme.css">
+  <link rel="stylesheet" href="${base}pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="${base}assets/site.css">
+  <script type="module" src="${base}pagefind/pagefind-component-ui.js"></script>
+  <script defer src="${base}assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="$base">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="$base" bundle-path="${base}pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  $preview
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      $navigation
+    </nav>
+    <main id="content" class="$page_class" tabindex="-1" data-pagefind-body>
+      $content
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="$base">DriveLink user guide</a>
+    <a href="${base}assets/third-party/">Third-party notices</a>
+    <a href="$project">Project on GitHub</a>
+  </footer>
+</body>
+</html>

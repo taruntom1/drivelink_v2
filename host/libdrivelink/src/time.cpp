@@ -16,6 +16,15 @@ double ClockModel::map(uint64_t device_us) const {
         : -static_cast<double>(device_reference_us-device_us);
     return static_cast<double>(host_reference_us)+slope*delta;
 }
+double ClockModel::uncertainty(uint64_t device_us) const {
+    if(!offset_valid) {return std::numeric_limits<double>::infinity();}
+    const double distance=std::abs(static_cast<double>(device_us)-static_cast<double>(device_reference_us));
+    const double extrapolation=span_us?distance/static_cast<double>(span_us):0;
+    return min_rtt_us*0.5+residual_us*(1+extrapolation)+static_cast<double>(age_us)*0.0001;
+}
+MappedTime mapTime(const ClockModel &model,uint64_t device_us,uint64_t generation) {
+    return {device_us,generation,model.map(device_us),model.uncertainty(device_us),model.offset_valid};
+}
 ClockEstimator::ClockEstimator(ClockOptions options):m_options(options) {
     if (!options.bin_us || options.window_us<options.bin_us || options.window_us/options.bin_us>4096 ||
         options.min_samples<2 || options.capacity<options.min_samples || options.capacity>65536 ||

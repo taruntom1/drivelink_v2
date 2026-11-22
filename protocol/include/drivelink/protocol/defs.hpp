@@ -32,7 +32,7 @@ enum class ValueType : uint8_t {
 };
 
 /// Bits of `ItemDesc::flags`.
-enum class ItemFlag : uint8_t {
+enum class ItemFlag : uint16_t {
     RebootRequired = 0x01,
     Persist = 0x02,
     ReadOnly = 0x04,
@@ -41,6 +41,7 @@ enum class ItemFlag : uint8_t {
     Gpio = 0x20,    ///< a pin: a u8 `reboot_required` param; `kNoGpio` names no pin
     RefTicksAfter = 0x40, ///< a wiring param whose target ticks after this instance (YAML `ref_order: after`)
     Source = 0x80, ///< a packed signal/input reference with generated value and age signals
+    Tune = 0x0100, ///< a live param the Tune screen shows (gains, and the enum that selects them)
 };
 
 /// Bits of `TypeDesc::loops`: the real-time requirements a type allows.
@@ -88,7 +89,7 @@ struct ItemDesc {
     uint16_t id;
     ItemKind kind;
     ValueType type;
-    uint8_t flags; ///< `ItemFlag` bits
+    uint16_t flags; ///< `ItemFlag` bits
     const char *name;
     const char *unit;        ///< "" when none
     const char *description; ///< "" when none
@@ -116,9 +117,9 @@ struct TypeDesc {
 // -- helpers -------------------------------------------------------------------
 
 /// OR together `ItemFlag` bits.
-template <typename... F> constexpr uint8_t flagBits(F... flags)
+template <typename... F> constexpr uint16_t flagBits(F... flags)
 {
-    return static_cast<uint8_t>((uint8_t{0} | ... | static_cast<uint8_t>(flags)));
+    return static_cast<uint16_t>((uint16_t{0} | ... | static_cast<uint16_t>(flags)));
 }
 
 /// OR together `LoopClass` bits.
@@ -129,7 +130,7 @@ template <typename... L> constexpr uint8_t loopMask(L... loops)
 
 constexpr bool hasFlag(const ItemDesc &item, ItemFlag flag)
 {
-    return (item.flags & static_cast<uint8_t>(flag)) != 0U;
+    return (item.flags & static_cast<uint16_t>(flag)) != 0U;
 }
 
 constexpr bool runsIn(const TypeDesc &type, LoopClass loop)

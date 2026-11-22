@@ -2,19 +2,73 @@
 
 `libdrivelink` provides serial/TCP sessions and the current core families.
 `drivelink-cli` drives the ESP32 or `drivelink-vdev` with identical commands.
-The library has no Qt or ROS dependency. F8 supplies time pings and a reusable
-clock estimator; automatic timestamp mapping, the cached device model and
-the rest of H1 remain planned.
+The library has no Qt or ROS dependency. All service results and events are
+typed C++; JSON formatting belongs to the CLI, whose output stays unchanged.
+The library includes asynchronous services, a live discovered device model,
+pulled group buffers, managed command keepalives and timestamp mapping. CI builds
+and tests it on Windows and Linux.
+See [the library API](libdrivelink/README.md).
+
+`drivelink-gui` is the Qt desktop app. It connects directly over serial or
+TCP, or remotely through the agent. Device shows identity, loop budgets,
+faults, and firmware updates. Layout manages loops, instances, parameter
+edits, and signal sources. Monitor plots signals and provides manual
+commands. Tune supports test runs, sessions, and plant identification. The
+BNO055 panel supports IMU calibration.
+See [GUI usage, backend contracts and scenario screenshots](gui/README.md).
+
+`drivelink-agent` on Linux owns device ports and shares each device with
+several authenticated TCP clients. One client holds the command lease at a
+time. The CLI selects a device with `--device NAME --token TOKEN`. See
+[the agent](agent/README.md) and [its protocol](../docs/protocol/agent.md).
+
+`drivelink_hardware` is the ros2_control plugin for ROS 2 Lyrical and Jazzy.
+It connects through the agent, maps joints and IMU signals by instance label,
+and reads state and writes commands in the real-time loop.
+`drivelink_bringup` adds the diff-drive example, diagnostics and recovery.
+Both install from the signed DriveLink apt repository or build with colcon
+from `host/ros/`. See the
+[hardware plugin](ros/drivelink_hardware/README.md) and the
+[bringup guide](ros/drivelink_bringup/README.md).
+
+## Released host packages
+
+Follow [Install the app](https://taruntom1.github.io/drivelink_v2/pc/install/) on Windows or Ubuntu, or
+[Install the agent](https://taruntom1.github.io/drivelink_v2/pi/agent/) on a Raspberry Pi. See
+[Packages, versions, and limits](https://taruntom1.github.io/drivelink_v2/reference/packages/) for the release matrix.
+
+For development builds and package artifacts, see
+[Windows installer and notices](gui/README.md#windows-installer-and-notices-h2g)
+and [Linux package](gui/README.md#linux-package-deb).
+
+The desktop app stores its settings in `%LOCALAPPDATA%\DriveLink\drivelink-gui.ini`
+on Windows and `~/.config/DriveLink/drivelink-gui.ini` on Linux.
+
+## Device identity (H1c)
+
+Core v9 adds the immutable factory MAC and a user-set UTF-8 name. `info`
+reports both; `name "base"` renames and `name ""` clears. Names allow up to
+16 UTF-8 bytes without C0/C1 controls. Rename is live, also armed; SAVE persists
+and REVERT restores it. Existing LP saved settings load with an empty name.
+
+Both host checks run `host-identity` against vdev. Bare-board verification:
+`python host/test/identity_smoke.py --cli <cli> --endpoint serial://COM3 --probe <async_probe>`.
+It requires saved settings, idle groups and a disarmed normal device, uses a
+temporary mock actuator, checks armed rename through the async consumer, and
+restores name/layout/settings.
 
 ## Build
 
-Requires CMake 3.24+, Ninja, a C++20 compiler and Python 3. The first configure
+Requires CMake 3.24+, Ninja, a C++23 compiler (GCC 13.1 minimum) and Python 3. The first configure
 downloads SHA256-pinned standalone Asio 1.30.2 and nlohmann JSON 3.11.3.
-The presets do not build a GUI yet.
+The `linux` and `windows-mingw` presets also build the GUI application and style
+([gui/README.md](gui/README.md)), which needs Qt 6.10 or newer (Quick,
+QuickTemplates2, Svg, QuickTest); `linux-no-gui` leaves it out. On Ubuntu
+26.04 (WSL or CI) `sudo sh tools/setup_linux.sh host` installs every package.
 
 ```sh
 cd host/superbuild
-cmake --preset linux-no-gui
+cmake --preset linux
 cmake --build --preset linux --parallel
 ctest --preset linux
 python3 ../test/install_smoke.py --build build/linux
@@ -32,12 +86,39 @@ ctest --preset windows-mingw
 python ../test/install_smoke.py --build build/windows-mingw
 ```
 
-The binaries are under `build/<preset>/cli/` and `build/<preset>/vdev/`.
+The binaries are under `build/<preset>/cli/`, `build/<preset>/vdev/` and
+`build/<preset>/gui/`. The Windows preset finds Qt in `C:/Qt/6.12.0/mingw_64`;
+the GUI tests prepend Qt's `bin` to their own PATH.
 Keep the same MinGW runtime DLLs on PATH when running them.
 
 From the repository root, `python tools/validate.py --only host-win host-linux`
 runs both sequences above with the right toolchain for each, the Linux one
-inside WSL (see firmware/test/CLAUDE.md, "Validation").
+inside WSL (see [docs/development.md](../docs/development.md#validation-toolsvalidatepy)).
+Windows host binaries use Qt's MinGW 13.1 exclusively; MSYS2 UCRT64 GCC 16.2
+is reserved for firmware native tests. Never mix their runtime DLLs or build directories.
+The Windows preset and validator enforce GCC 13.1.0; Linux GNU builds require
+at least GCC 13.1. The Windows CI job provisions and caches Qt 6.12.0 plus that
+MinGW kit; details are in [development.md](../docs/development.md#ci-githubworkflowsciyml).
+
+Both host checks run the `host-model` CTest case against vdev, covering initial
+load/reload, safe mode and configured/pending layouts. `test/model_probe` (with
+`.exe` on Windows) is a read-only public model consumer used by that test and by
+bench verification: pass it one endpoint such as `serial://COM3`. It loads and
+reloads the complete snapshot and prints test TSV; it does not alter the CLI's
+output formats or change the device.
+
+Both host checks also run `host-concurrency` (dispatcher/order/cancel/close,
+peer-EOF races, saturated DISARM, buffers, managed queues and time) and
+`host-async` against vdev. `test/async_probe[.exe] ENDPOINT` exercises typed async
+model construction, 1 kHz pulled data, mappings, keepalives/watchdog and DISARM;
+a serial endpoint also exercises Boot and automatic complete model reload.
+Use only a clean loops-only bare bench device with idle groups/capture and a
+1 kHz loop. It restores groups and native test rates. On vdev, 1 kHz data is
+tested disarmed; arming uses 10 Hz for every native loop and a 1 s command
+watchdog to allow desktop scheduling jitter. All original rates/watchdog values
+are restored and read back. The physical board retains its timing for both phases.
+Linux ThreadSanitizer instructions
+are in [development.md](../docs/development.md#host-concurrency-and-time-checks).
 
 Both host validation logs (`build/validate/host-win.log` and `host-linux.log`)
 include the integration test's stdout and PASS lines. Validation runs the
@@ -215,7 +296,7 @@ drivelink-cli --endpoint serial://COM3 ota-status
 
 Normal upload preflights/hashes the unsigned ESP32-S3 app, streams bounded
 chunks, prepares it with FINISH, requests the explicit REBOOT commit, reconnects,
-checks GET_INFO/core v8 and full ELF identity, and confirms that image. Progress
+checks GET_INFO/core v10 and full ELF identity, and confirms that image. Progress
 uses stderr; `--json` stdout retains JSON envelopes. `--window 1..4` is bounded
 by the device's advertised limit and chunk size fits its payload cap.
 
@@ -224,7 +305,10 @@ cancels it. `--no-confirm` boots the candidate but leaves it pending; a reset
 without `ota-confirm` rolls back. ABORT refuses an already selected/pending
 image. An accepted-but-uncommitted reboot is reported for STATUS-based recovery,
 never automatically repeated. SDK `Client::otaUpload` only uploads/prepares;
-its caller owns reboot/reconnect/verification/confirmation. Low-level
+`drivelink/ota.hpp` holds the rest of the workflow (`requestOtaReboot`,
+`classifyOtaBoot`, `confirmOtaCandidate`) and `otaUpdate`, the synchronous
+whole workflow that `ota-upload` runs. The GUI uses the same pieces on its own
+connection ([GUI firmware update](gui/README.md#firmware-update-h2b-2)). Low-level
 `ota-begin SIZE SHA256_HEX`, `ota-write OFFSET CHUNK_HEX` and `ota-finish` expose
 the same contract for diagnostics. See [OTA wire/recovery](../docs/protocol/ota.md).
 

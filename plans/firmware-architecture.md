@@ -1,13 +1,17 @@
 # Plan: firmware architecture v3 (self-describing core)
 
-Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [overhaul-status.md](overhaul-status.md)). The per-phase implementation plans are in [archive/](archive/).
+Status: **implemented** (phases F1–F10, 2026-11-10 to 2026-11-14). This file is now the design record: it keeps the reasons behind the design and the decisions each phase made. It describes the code as planned, not as built; where it differs from `docs/protocol/` (the wire spec), the component READMEs or the `CLAUDE.md` files, those win. The firmware has not yet run on motors or a real IMU; the HW step runs those checks (see [host-status.md](host-status.md)). The per-phase implementation plans are in [archive/](archive).
 
 **Baseline.** This plan assumes:
 - `main` at `b72655b`
 - the whole `diag` plan, phases 1–3 (error codes over UART, the `Boot` event, `GetInfo`, `diag_codes.yaml` with its generator, the `detail` byte, motor and IMU configure protocols at v4)
 - the repo restructure (step S1, detailed in [host-architecture.md](host-architecture.md)): the firmware lives in `firmware/`
 
-The work ran on the `firmware_overhaul` branch, one session and one PR per step, and was merged into `main` after F10; the HW and host steps continue on `host_overhaul`. [overhaul-status.md](overhaul-status.md) holds the step list, the current state and the decision log.
+The work ran on `firmware_overhaul` and merged into `main` after F10. The
+step list, decision log and hardware results are in
+[firmware status](archive/firmware-status.md). The
+[open hardware checks](host-status.md#deferred-hardware-checks) carry
+forward into HW.
 
 All paths below are relative to the repo root.
 
@@ -393,6 +397,14 @@ automatic application-data mapping and H3 model distribution. The host:
 
 ## Layout, persistence and boot
 
+**H1c identity (2026-11-15).** Core v9 GET_INFO appends the six-byte factory
+MAC and a u8-length UTF-8 name. SET_NAME (system op 10) is live, RAM-only and
+allowed armed; it marks dirty. Names are 0..16 bytes without C0/C1 controls.
+SAVE includes the name in the CRC-protected layout commit record (format 3);
+REVERT restores it after successful param batches and reset clears it. LP
+format 2 loads existing settings with an empty name. The factory MAC is read
+and checked at the IDF boundary; pure CommandService gets an injected id.
+
 **NVS layout:**
 - One namespace per instance, `t<type>i<inst>`.
 - Each instance's params are stored as one blob of `n × (id u16, value u32)`, with a header: format version, generation u32, count and CRC32.
@@ -455,12 +467,20 @@ Decided by the user on 2026-11-13, after F3c. F3d builds the loops and the flag;
   |---|---|---|
   | `rate_hz` | u16, 1–2000, default 100 | Live and `locked_while_armed`. Applied on the config task by restarting the loop's timer, as the system rate params were. |
   | `realtime` | bool, default false | `reboot_required`. See the next section. |
-  | `core` | u8, 0–1, default 0 | `reboot_required`. |
+  | `core` | enum: `core_0` 0, `core_1` 1, `any` 2; default `any` | `reboot_required`. Configured initial-placement policy. |
   | `priority` | u8, 1–20, default 10 | `reboot_required`. The ceiling keeps every loop below the esp_timer task (22), where the safety monitor runs. |
   | `stack_bytes` | u16, 3072–16384, default 4096 | `reboot_required`. |
   | `ticks`, `overruns`, `last_run_us`, `max_run_us` | u32 signals | The loop statistics, so a group bound to the loop can stream them. |
 
 - **Managing loops.** A loop is added and removed with `ADD_INSTANCE` and `REMOVE_INSTANCE` of type `loop`, through the pending layout, `SAVE` and a reboot, like any instance. `REMOVE_INSTANCE` is refused while a layout entry still runs in the loop (`Referenced`). A loop's params are in the system domain of a param batch.
+- **Automatic initial placement (2026-11-14).** New loops default to Any core;
+  factory loops retain their explicit 1/0 placements. The core maps `any` to
+  `core_os::kNoAffinity` (-1), not OS core 2. FreeRTOS chooses initial placement;
+  hardware floating-point use pins an ESP32-S3 task early (`runTick` computes
+  float `dt_s`). This does not provide balancing or continued migration.
+  Saved 0/1 pairs remain valid; missing pairs follow the descriptor default.
+  The descriptor/hash changes use existing enum/scalar encodings, with no core
+  version bump. DISCARD removes pending placement edits; REVERT is live-only.
 - **Limits.** `CORE_MAX_LOOPS` (Kconfig, default 4, range 1–8). A loop costs about 7 KB of RAM: its stack, one staging slot and one action slot. The Kconfig options for the control and sensor task stack, priority and core go away.
 - **The factory layout.** With no saved layout (first boot, factory reset) the device has `control` (id 0: 1000 Hz, real-time, core 1, priority 20) and `sensor` (id 1: 100 Hz, not real-time, core 0, priority 10), and no module instance. With CORE_MAX_LOOPS=1 the factory layout contains only control (user decision for F3d). A saved layout may hold any set of loops, including none. Loop capacity is separate from the module capacity CORE_MAX_INSTANCES.
 - **Boot.** Loops are created before the module instances. If a loop's task can't be created, the loop is `Failed` and its instances are `DependencyMissing`. Loop tasks start with their callbacks gated until module creation and tick lists are complete; Core::start releases the gates. In safe mode no loop task is started.
@@ -613,7 +633,7 @@ CI adds three jobs: the native core and module tests, a vdev integration job, an
 
 ## Phases
 
-Each phase is one PR, or a short series of PRs. The steps are listed in [overhaul-status.md](overhaul-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
+Each phase is one PR, or a short series of PRs. The steps are listed in [archive/firmware-status.md](archive/firmware-status.md). Each PR targets `firmware_overhaul`, builds with zero warnings, keeps CI green, and updates its docs (`docs/protocol/`, `CLAUDE.md`, `firmware/CLAUDE.md`, `firmware/components/CLAUDE.md`, the READMEs of new components, the status file) in the same PR. The repo restructure (S1) comes before F1.
 
 | Phase | Content | Done when |
 |---|---|---|
@@ -629,7 +649,7 @@ Each phase is one PR, or a short series of PRs. The steps are listed in [overhau
 | F8 Time | The ping on `0x02`, with TX-time stamping in the TX task. Delete `time_sync`. | The host's offset and drift estimate is stable over the bench's USB-UART adapter (USB-UART adapters add up to 1 ms of USB frame jitter; their target is a stable estimate, not a jitter bound). Deferred to HW: jitter below 100 µs over the Pi's GPIO UART |
 | F9 OTA | The partition table (NVS unchanged), the OTA family with sequential and idempotent writes, and rollback. | Updating with the CLI, a retried chunk is acknowledged, and rollback when `CONFIRM` isn't sent |
 | F10 Cleanup | Remove the leftover Kconfig and legacy registry entries. Rewrite `firmware/CLAUDE.md` for the new architecture and remove the temporary overhaul section from the root `CLAUDE.md`. A full docs consistency pass. Tag `main`'s last legacy commit `legacy-final`, then merge `firmware_overhaul` into `main`, marked as not yet run on motors or an IMU. | Every rule in the docs matches the code, and `main` holds the new firmware |
-| HW Hardware campaign | Run every deferred hardware check its phase wrote (see "Deferred hardware checks" in the status file). Fixes go to `host_overhaul` as PRs. | Every deferred check has passed on real motors, a real BNO055, the Pi and the robot |
+| HW Hardware campaign | Run the [deferred hardware checks](host-status.md#deferred-hardware-checks). After H6 promotion, fixes go to `main` as PRs. | Every deferred check has passed on real motors, a real BNO055, the Pi and the robot |
 
 Arming lands (F4) before any real motor is driven through the core, so the board is never driven by the new code without the watchdog and the monitor. From F3 to F5 the old `motor_manager` keeps working alongside the core. Each manager is deleted in the phase that ports it, so no module ever exists in both forms.
 

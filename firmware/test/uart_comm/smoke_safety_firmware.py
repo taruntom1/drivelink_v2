@@ -51,6 +51,7 @@ def main():
     ap.add_argument('--port', required=True)
     ap.add_argument('--bench', action='store_true')
     ap.add_argument('--wdt', action='store_true')
+    ap.add_argument('--any-core', action='store_true', help='run the real-time control loop with automatic initial placement')
     ap.add_argument('--stack-wait', type=float, default=0, help='disarmed seconds before cleanup for console stack marks')
     args = ap.parse_args()
     assert not args.wdt or args.bench, '--wdt requires --bench'
@@ -73,13 +74,19 @@ def main():
             break
     control = next(l for l in original['loops'] if l['realtime'])
     refs = [(0, 0, 3), (0, 0, 4)]
+    core_ref = (5, control['id'], 3)
+    original_core = get(c, [core_ref])[0]
     try:
         settings = get(c, refs)
         limits = get(c, [(0,0,i) for i in range(16,21)])
         assert all(limits), limits
         c.request(4,2,b'\x01'+struct.pack('<BBHI',0,0,16,1),accepted=(1,))
         motor = c.add(112, 'safety_mock', control['id'])
+        if args.any_core:
+            c.request(4, 2, b'\x01' + struct.pack('<BBHI', *core_ref, 2), accepted=(8,))
         c.request(1,5); c.reboot()
+        if args.any_core:
+            assert get(c, [core_ref]) == [2]
         set_one(c, refs[0], 100)
         set_one(c, refs[1], 200)
         group = c.request(5,4,bytes((0,control['id'],1))+struct.pack('<BBH',112,motor,512))
@@ -159,9 +166,12 @@ def main():
             for ref, value in zip(refs, settings):
                 set_one(c,ref,value)
             c.request(2,3,bytes((112,motor)))
+            if args.any_core:
+                c.request(4, 2, b'\x01' + struct.pack('<BBHI', *core_ref, original_core), accepted=(8,))
             c.request(1,5)
             restored=c.reboot()
             assert restored['count']==original['count'],restored
+            assert get(c, [core_ref]) == [original_core]
             print('PASS saved layout/settings restored; temporary groups removed by reboot',flush=True)
         c.serial.close()
 

@@ -1,6 +1,10 @@
 #pragma once
 
 #include "time.hpp"
+#include "error.hpp"
+#include "async.hpp"
+#include "agent.hpp"
+#include <optional>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -11,34 +15,32 @@
 
 namespace drivelink
 {
+class GroupBuffer;
+class CommandGroup;
+struct ItemDescriptor;
 using Bytes = std::vector<uint8_t>;
-enum class ErrorKind
-{
-    Connection,
-    Timeout,
-    Protocol,
-    Rejected,
-    Usage
-};
-class Error : public std::runtime_error
-{
-  public:
-    Error(ErrorKind kind, const std::string &message, uint8_t result = 0, uint8_t detail = 0)
-        : std::runtime_error(message), kind(kind), result(result), detail(detail)
-    {
-    }
-    ErrorKind kind;
-    uint8_t result, detail;
-};
 struct Frame
 {
     uint8_t type;
     Bytes payload;
+    ClockModel clock{};
+    uint64_t generation = 0;
 };
 struct Reply
 {
     uint8_t result, detail;
     Bytes body;
+    ClockModel clock{};
+    uint64_t generation=0;
+};
+// Connect to a device through drivelink-agent (docs/protocol/agent.md).
+// The device is an alias or a 12-hex device id; empty opens a lobby.
+// kind is the client's AgentClientKind (Other 0, Gui 1, Cli 2, Ros 3), shown
+// to other clients with its name.
+struct AgentHello
+{
+    std::string token, device, client_name = "drivelink";
+    uint8_t kind = 0;
 };
 struct SessionOptions
 {
@@ -46,10 +48,25 @@ struct SessionOptions
     std::chrono::milliseconds timeout{1500};
     unsigned read_retries = 2;
     size_t event_capacity = 128;
+    size_t request_capacity = 64;
+    Dispatcher dispatcher{};
+    bool periodic_time = true;
+    // tcp:// only: send the agent Hello before any other traffic. A refusal
+    // throws DeviceError (agent result/detail; AgentVersion sets peer_version).
+    // On a device connection time pings (periodic and timePing()) go to the
+    // agent (TimePing), and clockModel() composes that fit with the agent's
+    // ClockModel event. A lobby never pings.
+    std::optional<AgentHello> agent{};
+    // A timed-out request ID is reusable after this delay instead of only
+    // after reconnect (0 = never). For long-lived links such as the agent's.
+    std::chrono::milliseconds retire_quarantine{0};
+    // Also deliver subscription-group frames to observe() handlers (bounded,
+    // drops counted in droppedNotifications()). Group buffers still work.
+    bool observe_streams = false;
 };
-// Thread-safe synchronous facade over one Asio I/O thread. Calls serialize;
-// timed-out sequence IDs are retired until reconnect to reject stale replies.
-// Endpoint: tcp://numeric-ip:port or serial://device. No callbacks on callers.
+// One Asio I/O thread; sync waiters serialize except emergency DISARM.
+// Timed-out IDs retire until reconnect. Callbacks only use the dispatcher.
+// Endpoint: tcp://numeric-ip:port or serial://device.
 class Session
 {
   public:
@@ -58,9 +75,60 @@ class Session
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     Reply request(uint8_t family, uint8_t op, std::span<const uint8_t> body = {});
+    RequestHandle asyncRequest(uint8_t family, uint8_t op, Bytes body, Completion<Reply> completion);
+    RequestHandle asyncDiagRequest(uint8_t op, Bytes body, Completion<Bytes> completion);
+    RequestHandle asyncTimePing(Completion<TimeSample> completion);
+    // Bounded serial service executor. Own arguments in the callable; do not
+    // retain spans/references to caller storage. User code never runs on I/O.
+    template<class T> RequestHandle async(std::move_only_function<T()> operation, Completion<T> completion)
+    {
+        auto state = std::make_shared<detail::Cancellation>();
+        auto callback = std::make_shared<Completion<T>>(std::move(completion));
+        auto finish = [this, state, callback](std::expected<T, Error> result) mutable {
+            std::shared_ptr<void> reservation;
+            { std::lock_guard lock(state->mutex); if (state->done) { return; } state->done = true; state->terminate={};state->interrupt={};reservation=std::move(state->reservation); }
+            dispatchCompletion(state,[callback, reservation=std::move(reservation), result = std::move(result)]() mutable { (*callback)(std::move(result)); });
+        };
+        state->terminate = [finish](Error error) mutable { finish(std::unexpected(std::move(error))); };
+        try {enqueueService(state, [state, operation = std::move(operation), finish = std::move(finish)]() mutable {
+            if (state->cancelled) { return; }
+            try {
+                if constexpr (std::is_void_v<T>) { operation(); finish({}); }
+                else { finish(operation()); }
+            } catch (const Error &error) { finish(std::unexpected(error)); }
+              catch (const std::exception &error) { finish(std::unexpected(Error(ErrorKind::Protocol, error.what()))); }
+              catch (...) { finish(std::unexpected(Error(ErrorKind::Protocol,"unknown service exception"))); }
+        });} catch(...) {std::lock_guard lock(state->mutex);state->terminate={};state->interrupt={};state->reservation.reset();throw;}
+        return RequestHandle(state);
+    }
+    // The agent's accepted Hello (set only when options.agent was given).
+    std::optional<agent::HelloAccepted> agentHello() const;
+    // An agent command on an agent connection (docs/protocol/agent.md); the
+    // response whatever its result. Throws Usage off an agent connection, for
+    // Hello or TimePing (the Session sends those) and on the I/O thread;
+    // Timeout (outcome_unknown: the agent may still act on it) after `timeout`
+    // (0: the session timeout), or Connection.
+    agent::Response agentRequest(uint8_t op, std::span<const uint8_t> body = {},
+                                 std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
+    ClockModel clockModel() const;
+    uint64_t generation() const;
+    uint16_t maxPayload() const;
+    using EventHandler = std::function<void(const Frame &)>;
+    // Independent bounded observer queue; does not consume nextEvent().
+    uint64_t observe(EventHandler handler);
+    void unobserve(uint64_t id);
+    uint64_t droppedNotifications() const;
+    std::shared_ptr<GroupBuffer> subscribeBuffer(uint8_t group,uint8_t epoch,size_t width,size_t capacity=2048,uint64_t generation=0);
+    void removeBuffer(uint8_t group);
+    std::shared_ptr<CommandGroup> manageCommand(uint8_t group,uint8_t epoch,std::vector<ItemDescriptor> descriptors,
+                                               std::span<const uint32_t> hold,uint16_t watchdog_ms,uint64_t generation=0,
+                                               bool keepalive=true);
+    void stopCommand(uint8_t group);
     // OTA WRITE only, 1..4 owned request bodies. Holds ordinary call ownership
     // until every reply arrives; timeouts retire missing IDs before throwing.
     std::vector<Reply> otaWriteBatch(std::span<const Bytes> bodies);
+    // Same-family/op read chunks, or OTA WRITE; 1..4 pages, replies in input order.
+    std::vector<Reply> requestBatch(uint8_t family,uint8_t op,std::span<const Bytes> bodies);
     TimeSample timePing(); // no automatic retries; timestamps taken by the I/O thread
     Bytes diagRequest(uint8_t op, std::span<const uint8_t> body = {});
     // Queue a command-group payload without waiting for a peer. False means
@@ -68,10 +136,40 @@ class Session
     bool sendCommandGroup(uint8_t group, std::span<const uint8_t> payload);
     bool nextEvent(Frame &frame, std::chrono::milliseconds timeout);
     uint64_t droppedEvents() const;
+    // Agent events (Frame{0xF0}) also wait in their own bounded queue
+    // (kAgentEventCapacity, oldest dropped), apart from the device's frames,
+    // so a client that reads only these never loses one to stream traffic.
+    // Non-blocking; false when none is waiting.
+    static constexpr size_t kAgentEventCapacity = 4096;
+    bool nextAgentEvent(Frame &frame);
+    uint64_t droppedAgentEvents() const;
     void setMaxPayload(uint16_t cap);
     void close(); // cancels pending requests; idempotent; never waits on a peer
   private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
+    void enqueueService(const std::shared_ptr<detail::Cancellation> &state, Task task);
+    std::shared_ptr<void> callbackSlot(bool disarm=false);
+    void dispatchCompletion(const std::shared_ptr<detail::Cancellation> &state,Task task);
 };
+// tcp://host:port with a host name (or a numeric address) as the numeric
+// tcp://ip:port a Session takes: the first IPv4 address, else the first
+// IPv6 one. Blocks for at most the resolver's own time; throws
+// Error{Usage} for a malformed endpoint and Error{Connection} when the name
+// does not resolve. For endpoints people type (the GUI's agent address).
+std::string resolveTcpEndpoint(const std::string &endpoint);
+// Open a lobby connection to an agent and list its devices (ListDevices).
+std::vector<agent::DeviceRecord> listAgentDevices(const std::string &endpoint, const std::string &token,
+                                                  std::chrono::milliseconds timeout = std::chrono::milliseconds(3000),
+                                                  const std::string &client_name = "drivelink", uint8_t kind = 0);
+// The lease and the client list on an agent device connection (agent.md).
+// A refusal throws DeviceError with the agent's result and detail and the op.
+// agentLeaseTake returns once the lease is held, after a revoked holder's
+// DISARM and cleanup (it waits up to kAgentLeaseTakeTimeout). On Timeout
+// (outcome_unknown) the Take may still be granted later: the Lease events
+// tell, and closing the connection ends it.
+inline constexpr std::chrono::milliseconds kAgentLeaseTakeTimeout{15000};
+void agentLeaseTake(Session &session);
+void agentLeaseRelease(Session &session);
+std::vector<agent::ClientRecord> agentClients(Session &session);
 } // namespace drivelink

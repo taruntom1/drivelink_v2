@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.20)
 
 # Native unit tests: everything that builds without ESP-IDF, run on the host.
 #   - the protocol/ library (CRC, framing, frame scanner, wire codec, the
@@ -16,9 +16,9 @@ cmake_minimum_required(VERSION 3.16)
 
 project(drivelink_native_tests LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS ON) # gnu++20, close to IDF's gnu++2b
+set(CMAKE_CXX_EXTENSIONS ON) # gnu++23, matching IDF's gnu++2b
 
 set(COMPONENTS_DIR ${CMAKE_CURRENT_LIST_DIR}/../../components)
 set(PROTOCOL_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../protocol)

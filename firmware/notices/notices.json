@@ -1,0 +1,80 @@
+{
+  "components": [
+    {
+      "name": "ESP-IDF",
+      "version": "v5.5.2",
+      "license": "Apache-2.0",
+      "copyright": "Copyright (C) 2015-2025 Espressif Systems (Shanghai) CO LTD",
+      "url": "https://github.com/espressif/esp-idf/tree/v5.5.2",
+      "license_files": ["../../host/gui/notices/licenses/Apache-2.0.txt"],
+      "note": "The firmware and its second-stage bootloader are built with ESP-IDF; the IDF components they link (drivers, HAL, system, partition, OTA, NVS, log and others) are Apache-2.0. The third-party code inside them that is linked into this firmware is listed below. ESP-IDF's docs/en/COPYRIGHT.rst at v5.5.2 lists every third-party part of ESP-IDF.",
+      "dll_patterns": []
+    },
+    {
+      "name": "FreeRTOS kernel (ESP-IDF FreeRTOS)",
+      "version": "V10.5.1",
+      "license": "MIT",
+      "copyright": "Copyright (C) 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.\nModifications Copyright (C) 2015-2025 Espressif Systems (Shanghai) CO LTD",
+      "url": "https://github.com/espressif/esp-idf/tree/v5.5.2/components/freertos",
+      "license_files": ["../../host/gui/notices/licenses/MIT.txt"],
+      "dll_patterns": []
+    },
+    {
+      "name": "Mbed TLS",
+      "version": "3.6.5",
+      "license": "Apache-2.0",
+      "copyright": "Copyright The Mbed TLS Contributors",
+      "url": "https://github.com/espressif/mbedtls",
+      "license_files": ["../../host/gui/notices/licenses/Apache-2.0.txt"],
+      "note": "Dual-licensed Apache-2.0 or GPL-2.0-or-later; used under Apache-2.0.",
+      "dll_patterns": []
+    },
+    {
+      "name": "Newlib C library (libc, libm)",
+      "version": "esp-14.2.0_20251107 toolchain",
+      "license": "BSD and similar permissive licenses (see the newlib text)",
+      "copyright": "Copyright of various parties, as described in COPYING.NEWLIB",
+      "url": "https://github.com/espressif/newlib-esp32",
+      "license_files": ["licenses/newlib.txt"],
+      "dll_patterns": []
+    },
+    {
+      "name": "TLSF allocator (ESP-IDF heap)",
+      "version": "ESP-IDF v5.5.2",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (c) 2006-2016 Matthew Conte",
+      "url": "https://github.com/espressif/tlsf",
+      "license_files": ["../../host/gui/notices/licenses/BSD-3-Clause.txt"],
+      "dll_patterns": []
+    },
+    {
+      "name": "SD/MMC driver (ESP-IDF sdmmc, from OpenBSD)",
+      "version": "ESP-IDF v5.5.2",
+      "license": "ISC",
+      "copyright": "Copyright (c) 2006 Uwe Stuehler <uwe@openbsd.org>\nAdaptations to ESP-IDF Copyright (c) 2016-2024 Espressif Systems (Shanghai) PTE LTD",
+      "url": "https://github.com/espressif/esp-idf/tree/v5.5.2/components/sdmmc",
+      "license_files": ["licenses/ISC-sdmmc.txt"],
+      "dll_patterns": []
+    },
+    {
+      "name": "Xtensa HAL and headers",
+      "version": "ESP-IDF v5.5.2",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2001-2013 Tensilica Inc.",
+      "url": "https://github.com/espressif/esp-idf/tree/v5.5.2/components/xtensa",
+      "license_files": ["../../host/gui/notices/licenses/MIT.txt"],
+      "dll_patterns": []
+    },
+    {
+      "name": "GCC runtime (libgcc, libstdc++)",
+      "version": "14.2.0 (esp-14.2.0_20251107)",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "copyright": "Copyright (C) Free Software Foundation, Inc.",
+      "url": "https://github.com/espressif/crosstool-NG",
+      "license_files": ["../../host/gui/notices/licenses/GPL-3.0-only.txt",
+                        "../../host/gui/notices/licenses/GCC-exception-3.1.txt"],
+      "note": "Compiler runtime of the Xtensa toolchain, linked into the firmware. The GCC Runtime Library Exception permits distribution with software under other licenses.",
+      "dll_patterns": []
+    }
+  ]
+}

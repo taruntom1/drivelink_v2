@@ -14,7 +14,8 @@ Event prefix: `version u8 | sequence u16 | kind u8 | flags u8`.
 | Cleared 3 | timestamp u64, source u8, instance u8, code u16 |
 | Boot 4 | timestamp u64, reset_reason u8, instances_ok u8, instances_failed u8, safe_mode u8 |
 
-Instance 0xFF means no instance. Source/code definitions are in diag-codes.md;
+`reset_reason` is ESP-IDF's `esp_reset_reason_t` (vdev reports 0, or 1 after a
+simulated crash reset). Instance 0xFF means no instance. Source/code definitions are in diag-codes.md;
 module source IDs match module type IDs. The two args retain their documented
 per-code meanings. Module InitFailed uses arg0 stage, arg1 unused, with the
 instance in its own field. A removed manager's source id stays reserved and its

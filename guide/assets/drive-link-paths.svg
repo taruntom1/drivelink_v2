@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 283" role="img">
+  <title>DriveLink on the PC bench and on a Pi robot</title>
+  <rect width="600" height="283" rx="8" fill="#f4f6f8"/>
+  <g stroke="#59626e" stroke-width="2" fill="none">
+    <path d="M160 67H440 M160 171H220 M380 171H440 M300 199V224"/>
+  </g>
+  <g stroke="#a2aab4" fill="#fff">
+    <rect x="20" y="39" width="140" height="56" rx="8"/>
+    <rect x="440" y="39" width="140" height="56" rx="8"/>
+    <rect x="20" y="143" width="140" height="56" rx="8"/>
+    <rect x="220" y="143" width="160" height="56" rx="8"/>
+    <rect x="440" y="143" width="140" height="56" rx="8"/>
+    <rect x="220" y="224" width="160" height="42" rx="8"/>
+  </g>
+  <g fill="#111418" font-family="system-ui,sans-serif" font-size="19" font-weight="600" text-anchor="middle">
+    <text x="90" y="74">PC app</text>
+    <text x="510" y="74">ESP32-S3</text>
+    <text x="90" y="178">PC app</text>
+    <text x="300" y="178">Agent on Pi</text>
+    <text x="510" y="178">ESP32-S3</text>
+    <text x="300" y="252">ROS 2 on Pi</text>
+  </g>
+  <g fill="#2e353d" font-family="system-ui,sans-serif" font-size="17">
+    <text x="20" y="27">PC bench</text>
+    <text x="20" y="131">Pi robot</text>
+    <text x="300" y="59" text-anchor="middle">USB</text>
+    <text x="190" y="161" text-anchor="middle">LAN</text>
+    <text x="410" y="161" text-anchor="middle">UART</text>
+  </g>
+</svg>

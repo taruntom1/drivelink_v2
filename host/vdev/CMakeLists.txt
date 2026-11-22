@@ -27,7 +27,7 @@ target_include_directories(drivelink_native_core PUBLIC
   ${COMPONENTS}/core_os/include ${COMPONENTS}/core_os/backend/native/include
   ${COMPONENTS}/diag/include ${COMPONENTS}/diag/priv_include)
 target_link_libraries(drivelink_native_core PUBLIC drivelink::protocol Threads::Threads)
-target_compile_features(drivelink_native_core PUBLIC cxx_std_20)
+target_compile_features(drivelink_native_core PUBLIC cxx_std_23)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   # Match firmware/test/native's warning policy for the shared firmware code.
   target_compile_options(drivelink_native_core PUBLIC -Wno-unused-parameter -Wno-sign-compare)
@@ -35,6 +35,9 @@ endif()
 add_executable(drivelink-vdev src/main.cpp)
 target_link_options(drivelink_native_core INTERFACE -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc)
 target_link_libraries(drivelink-vdev PRIVATE drivelink_native_core drivelink_asio drivelink)
+if(WIN32)
+  target_link_libraries(drivelink-vdev PRIVATE winmm)
+endif()
 set(DRIVELINK_VDEV_BUILD_ID "" CACHE STRING "Override vdev's 16-hex source build id")
 set(BUILD_ID ${DRIVELINK_VDEV_BUILD_ID})
 if(NOT BUILD_ID)
@@ -46,4 +49,5 @@ if(NOT BUILD_ID MATCHES "^[0-9a-fA-F]+$" OR NOT BUILD_ID_LENGTH EQUAL 16)
   # usable Git metadata. Keep the wire identity defined in either case.
   set(BUILD_ID "0000000000000000")
 endif()
-target_compile_definitions(drivelink-vdev PRIVATE DRIVELINK_BUILD_ID="${BUILD_ID}")
+# vdev reports <VERSION>-vdev: deterministic, and the -vdev marker makes physical preflights refuse it.
+target_compile_definitions(drivelink-vdev PRIVATE DRIVELINK_BUILD_ID="${BUILD_ID}" DRIVELINK_VDEV_VERSION="${DRIVELINK_VERSION}-vdev")

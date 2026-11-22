@@ -14,13 +14,18 @@ if(NOT TARGET drivelink_asio)
     target_link_libraries(drivelink_asio INTERFACE ws2_32 mswsock)
   endif()
 endif()
-if(NOT TARGET nlohmann_json::nlohmann_json)
-  set(JSON_Install ON CACHE BOOL "Install JSON dependency" FORCE)
-  FetchContent_Declare(json
-    URL https://codeload.github.com/nlohmann/json/tar.gz/refs/tags/v3.11.3
-    URL_HASH SHA256=0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_MakeAvailable(json)
-elseif(DEFINED nlohmann_json_VERSION AND NOT nlohmann_json_VERSION VERSION_EQUAL "3.11.3")
-  message(FATAL_ERROR "libdrivelink's public JSON ABI requires nlohmann JSON 3.11.3")
+# mjansson/mdns (public domain, header-only): agent discovery (H3b-2). Its
+# header is included as a system header so its warnings never fail our builds.
+if(NOT TARGET drivelink_mdns)
+  FetchContent_Declare(mdns
+    URL https://codeload.github.com/mjansson/mdns/tar.gz/refs/tags/1.4.3
+    URL_HASH SHA256=be1fd8e35599cb7de179decbd0633c121d11a2dcb9cc193ff5c590bd0d480483
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake) # populate only: never build its example program
+  FetchContent_MakeAvailable(mdns)
+  add_library(drivelink_mdns INTERFACE)
+  target_include_directories(drivelink_mdns SYSTEM INTERFACE ${mdns_SOURCE_DIR})
+  if(WIN32)
+    target_link_libraries(drivelink_mdns INTERFACE ws2_32 iphlpapi)
+  endif()
 endif()

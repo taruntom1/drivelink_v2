@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run DriveLink's validation checks: one list, used locally and by CI.
 
-    python tools/validate.py quick          # generator, native tests, this OS's host tests
+    python tools/validate.py quick          # generator, native tests, this OS's host tests (+ agent on Linux)
     python tools/validate.py full           # every check below: the gate before a PR
     python tools/validate.py --only fw-nolog
     python tools/validate.py --list
@@ -14,10 +14,11 @@ the code it covers is unchanged (--force runs it anyway).
 No check flashes a board or opens a serial port. Hardware tests stay separate
 (firmware/CLAUDE.md, "Hardware-in-the-loop and smoke tests").
 
-Standard library only. The guide is in firmware/test/CLAUDE.md ("Validation").
+Standard library only. The guide is in docs/development.md ("Validation").
 """
 import argparse
 import dataclasses
+import datetime
 import functools
 import hashlib
 import json
@@ -26,6 +27,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,10 +36,11 @@ WINDOWS = os.name == 'nt'
 CI = bool(os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS'))
 GROUPS = bool(os.environ.get('GITHUB_ACTIONS'))
 
-# This machine's toolchains, as firmware/CLAUDE.md and host/README.md give them.
+# This machine's toolchains, documented in docs/development.md and host/README.md.
 # The windows-mingw preset and install_smoke.py name the same Qt compiler.
 QT_TOOLS = Path('C:/Qt/Tools')
 QT_DIRS = [QT_TOOLS / 'mingw1310_64/bin', QT_TOOLS / 'CMake_64/bin', QT_TOOLS / 'Ninja']
+UCRT_BIN = Path('C:/msys64/ucrt64/bin')  # MSYS2 UCRT64 GCC 16.2; native tests only
 IDF_DEFAULT = Path.home() / 'esp/v5.5.2/esp-idf'
 IDF_PYTHON_311 = Path('C:/Espressif/tools/idf-python/3.11.2')
 
@@ -147,25 +150,63 @@ def idf_build(cwd, *options):
     return plan
 
 
+def plan_fw_package(jobs):
+    """Reconfigure (the version is read at configure time), build, package."""
+    build = idf_build('firmware', 'reconfigure')(jobs)
+    return [*build, Step('package', ['python', 'tools/package_fw.py'], env=build[0].env)]
+
+
 def plan_gen(jobs):
     need_yaml()
     return [
         Step('generated files are current', [python(), 'tools/gen/gen.py', '--check']),
+        Step('versions match VERSION', [python(), 'tools/version.py', '--check']),
         Step('generator tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/gen/tests']),
         Step('validate.py tests', [python(), '-m', 'unittest', 'discover', '-s', 'tools/tests']),
         Step('Python frame reference', [python(), 'firmware/test/uart_comm/protocol.py']),
+        Step('GUI Theme is current', [python(), 'host/gui/theme/gen_theme.py', '--check']),
+        Step('GUI Theme generator tests', [python(), '-m', 'unittest', 'discover',
+                                           '-s', 'host/gui/theme', '-p', 'test_*.py']),
+        Step('third-party notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check']),
+        Step('firmware notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check',
+                                              '--manifest', 'firmware/notices/notices.json',
+                                              '--output', 'firmware/notices/THIRD_PARTY_NOTICES.txt']),
+        Step('CLI and agent package notices are current', [python(), 'host/gui/notices/gen_notices.py', '--check',
+                                                           '--manifest', 'host/notices/notices.json',
+                                                           '--output', 'host/notices/THIRD_PARTY_NOTICES.txt']),
+        Step('notices generator tests', [python(), '-m', 'unittest', 'discover',
+                                         '-s', 'host/gui/notices', '-p', 'test_*.py']),
     ]
 
 
 def plan_native(jobs):
     need_yaml()
-    need('cmake', 'ninja', 'g++')
     build = 'firmware/test/native/build'
+    env = None
+    cmake, ctest = 'cmake', 'ctest'
+    options = []
+    if WINDOWS:
+        # Name every tool so Strawberry (or Qt's MinGW) cannot win via PATH.
+        cmake = (QT_DIRS[1] / 'cmake.exe').as_posix()
+        ctest = (QT_DIRS[1] / 'ctest.exe').as_posix()
+        ninja = (QT_DIRS[2] / 'ninja.exe').as_posix()
+        cc, cxx = [(UCRT_BIN / name).as_posix() for name in ('gcc.exe', 'g++.exe')]
+        missing = [tool for tool in (cmake, ctest, ninja, cc, cxx) if not Path(tool).is_file()]
+        if missing:
+            raise Unavailable('native tests need MSYS2 UCRT64 GCC 16.2 and Qt CMake/Ninja; '
+                              'missing: ' + ', '.join(missing))
+        env = dict(os.environ)
+        env['PATH'] = ';'.join([str(UCRT_BIN), *map(str, QT_DIRS[1:]), env['PATH']])
+        build += '/ucrt64'  # never reuse a Strawberry CMake cache or object
+        options = [f'-DCMAKE_C_COMPILER={cc}', f'-DCMAKE_CXX_COMPILER={cxx}',
+                   f'-DCMAKE_MAKE_PROGRAM={ninja}']
+    else:
+        need('cmake', 'ctest', 'ninja', 'gcc', 'g++')
     return [
-        Step('configure', ['cmake', '-S', 'firmware/test/native', '-B', build, '-G', 'Ninja',
-                           f'-DPython3_EXECUTABLE={python()}']),
-        Step('build', ['cmake', '--build', build, '--parallel', jobs]),
-        Step('test', ['ctest', '--test-dir', build, '--output-on-failure']),
+        Step('configure', [cmake, '-S', 'firmware/test/native', '-B', build, '-G', 'Ninja',
+                           f'-DPython3_EXECUTABLE={python()}', *options], env=env),
+        Step('build', [cmake, '--build', build, '--parallel', jobs], env=env),
+        Step('test', [ctest, '--test-dir', build, '--output-on-failure'], env=env),
     ]
 
 
@@ -188,44 +229,282 @@ def plan_host_win(jobs):
         raise Unavailable('Qt tools not found: ' + ', '.join(missing))
     env = dict(os.environ)
     env['PATH'] = ';'.join([*map(str, QT_DIRS), env['PATH']])
+    # Fail explicitly if the selected directory contains another compiler;
+    # neither runner PATH defaults nor another MinGW kit enforce our floor.
+    compiler = QT_DIRS[0] / 'g++.exe'
+    try:
+        version = subprocess.run([str(compiler), '-dumpfullversion'], env=env,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise Unavailable(f'cannot query Qt MinGW compiler {compiler}: {error}') from error
+    if version != '13.1.0':
+        raise Unavailable(f'host-win requires Qt MinGW GCC 13.1.0, found {version!r}')
     return plan_host('windows-mingw', 'windows-mingw', jobs, env)
+
+
+ISCC_DIRS = [Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6',
+             Path('C:/Program Files (x86)/Inno Setup 6')]
+
+
+def plan_installer(jobs):
+    """The Release staging directory, its self-contained smoke and the installer."""
+    plan_host_win(jobs)  # the same Qt MinGW 13.1 prerequisites
+    iscc = shutil.which('ISCC') or next((str(d / 'ISCC.exe') for d in ISCC_DIRS if (d / 'ISCC.exe').is_file()), None)
+    if not iscc:
+        raise Unavailable('Inno Setup 6 not found; run: winget install --id JRSoftware.InnoSetup -e')
+    env = dict(os.environ)
+    env['PATH'] = ';'.join([*map(str, QT_DIRS), env['PATH']])
+    return [Step('package and installer', [python(), 'tools/package_win.py', '--jobs', jobs, '--iscc', iscc],
+                 env=env)]
 
 
 def worktree_key():
     return f'{ROOT.name}-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]}'
 
 
-def plan_host_linux(jobs):
+def linux_packages_hint(profile):
+    what = {'agent': 'compilers, CMake, Ninja, Python 3', 'base': 'compilers, CMake, Ninja, Python 3',
+            'ros': 'ROS 2 Lyrical or Jazzy with ros2_control, colcon'}.get(profile, 'compilers, CMake, Ninja, Qt 6.10')
+    return f'Linux {profile} packages missing ({what}); run: sudo sh tools/setup_linux.sh {profile}'
+
+
+def linux_probe(profile='host'):
+    """Native Linux: None. Windows: (wsl command, env, $HOME) for the WSL distro.
+
+    `profile` is the tools/setup_linux.sh profile the check needs.
+    """
+    hint = linux_packages_hint(profile)
     if not WINDOWS:
         need('cmake', 'ninja', 'g++')
-        return plan_host('linux', 'linux-no-gui', jobs)
-    # From Windows the Linux build runs in WSL. Its build directory is on the
-    # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
-    # RAM and loses whenever the idle VM stops.
+        probe = subprocess.run(['sh', str(ROOT / 'tools/setup_linux.sh'), '--check', profile],
+                               capture_output=True, text=True, errors='replace')
+        if probe.returncode != 0:
+            raise Unavailable(hint)
+        return None
     distro = os.environ.get('DRIVELINK_WSL_DISTRO')
     wsl = ['wsl.exe', *(['-d', distro] if distro else [])]
     env = dict(os.environ, WSL_UTF8='1')
     need('wsl.exe')
-    probe = subprocess.run([*wsl, '--exec', 'sh', '-c',
-                            'command -v cmake ninja g++ python3 >/dev/null && printf %s $HOME'],
+    probe = subprocess.run([*wsl, '--cd', str(ROOT), '--exec', 'sh', '-c',
+                            f'sh tools/setup_linux.sh --check {profile} >/dev/null && printf %s $HOME'],
                            env=env, capture_output=True, text=True, errors='replace')
     home = probe.stdout.strip()
     if probe.returncode != 0 or not home.startswith('/'):
-        raise Unavailable('WSL needs cmake, ninja, g++ and python3 '
-                          '(apt install build-essential cmake ninja-build python3)')
+        raise Unavailable(f'WSL: {hint}')
+    return wsl, env, home
+
+
+def plan_host_linux(jobs):
+    probe = linux_probe()
+    if probe is None:
+        return plan_host('linux', 'linux', jobs)
+    # From Windows the Linux build runs in WSL. Its build directory is on the
+    # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
+    # RAM and loses whenever the idle VM stops.
+    wsl, env, home = probe
     build = f'{home}/.cache/drivelink/{worktree_key()}/host-linux'
 
     def inside(title, cwd, *command):
         return Step(title, [*wsl, '--cd', str(cwd), '--exec', *command], env=env)
     superbuild = ROOT / 'host/superbuild'
     return [
-        inside('configure', superbuild, 'cmake', '--preset', 'linux-no-gui', '-B', build),
+        inside('configure', superbuild, 'cmake', '--preset', 'linux', '-B', build),
         inside('build', superbuild, 'cmake', '--build', build, '--parallel', jobs),
         inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure',
-               '-E', '^host-integration$'),
+               '-E', '^host-integration$', '-LE', 'agent'),
         inside('integration (verbose)', superbuild, 'ctest', '--test-dir', build, '-V',
                '-R', '^host-integration$', '--no-tests=error'),
         inside('installed packages', ROOT, 'python3', 'host/test/install_smoke.py', '--build', build),
+    ]
+
+
+def plan_agent(jobs):
+    """drivelink-agent: the GUI-less superbuild, then the tests labelled `agent`."""
+    probe = linux_probe('agent')
+    superbuild = ROOT / 'host/superbuild'
+    test = ['ctest', '--output-on-failure', '-L', 'agent', '--no-tests=error']
+    if probe is None:
+        build = superbuild / 'build/linux-no-gui'
+        return [
+            Step('configure', ['cmake', '--preset', 'linux-no-gui'], superbuild),
+            Step('build', ['cmake', '--build', str(build), '--parallel', jobs], superbuild),
+            Step('test', [*test[:1], '--test-dir', str(build), *test[1:]], superbuild),
+        ]
+    # As host-linux: the WSL build directory is on the Linux filesystem.
+    wsl, env, home = probe
+    build = f'{home}/.cache/drivelink/{worktree_key()}/agent'
+
+    def inside(title, *command):
+        return Step(title, [*wsl, '--cd', str(superbuild), '--exec', *command], env=env)
+    return [
+        inside('configure', 'cmake', '--preset', 'linux-no-gui', '-B', build),
+        inside('build', 'cmake', '--build', build, '--parallel', jobs),
+        inside('test', *test[:1], '--test-dir', build, *test[1:]),
+    ]
+
+
+def plan_deb(jobs):
+    """The Linux release build, its staged smoke and the .deb packages (build/deb/):
+    drivelink-cli and drivelink-agent, and the GUI's drivelink where Ubuntu's Qt
+    meets its floor (26.04, the WSL distro; not 24.04)."""
+    profile = 'host'
+    if not WINDOWS:
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import package_linux
+        profile = 'host' if package_linux.gui_supported(*package_linux.os_release()) else 'agent'
+    probe = linux_probe(profile)
+    title = 'package and .deb'
+    if probe is None:
+        return [Step(title, ['python3', 'tools/package_linux.py', '--jobs', jobs])]
+    # WSL's git cannot read a Windows worktree: pass this checkout's version.
+    # The stage needs a Linux filesystem (dpkg-deb checks file modes).
+    wsl, env, home = probe
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import version
+    env = dict(env, DRIVELINK_VERSION_FULL=version.full(),
+               WSLENV=':'.join(filter(None, [env.get('WSLENV'), 'DRIVELINK_VERSION_FULL'])))
+    build = f'{home}/.cache/drivelink/{worktree_key()}/linux-release'
+    return [Step(title, [*wsl, '--cd', str(ROOT), '--exec', 'python3', 'tools/package_linux.py',
+                         '--jobs', jobs, '--build-dir', build], env=env)]
+
+
+def plan_apt_repo(jobs):
+    """The H3d apt repository built from the `deb` check's packages (build/deb, or
+    DRIVELINK_APT_DEBS: CI passes every release's) with a throwaway key, then
+    checked by apt itself: signature, indices, resolution, and that another key,
+    no signature or a changed index is refused."""
+    probe = linux_probe('base')
+    debs = os.environ.get('DRIVELINK_APT_DEBS') or 'build/deb'
+    if probe is None:
+        need('gpg', 'dpkg-deb', 'apt-get')
+        out = (ROOT / 'build/apt').as_posix()
+        wrap, env = [], None
+    else:
+        # The repository is written on the Linux filesystem (pool copies, file modes).
+        wsl, env, home = probe
+        out = f'{home}/.cache/drivelink/{worktree_key()}/apt-repo'
+        wrap = [*wsl, '--cd', str(ROOT), '--exec']
+    key = f'{out}-key.asc'
+    tool = [*wrap, 'python3', 'tools/apt_repo.py']
+    return [
+        Step('build (throwaway key)', [*tool, 'build', '--debs', debs, '--out', out, '--clean',
+                                       '--throwaway-key', '--public-key-out', key,
+                                       *(['--complete'] if CI else [])], env=env),
+        Step('verify with apt', [*tool, 'verify', '--repo', out, '--key', key], env=env),
+    ]
+
+
+ROS_PHASES = [('superbuild (agent, vdev, cli)', 'superbuild'), ('colcon build', 'build'), ('colcon test', 'test')]
+
+
+def version_env(env):
+    """env plus DRIVELINK_VERSION_FULL (passed through WSLENV): a Linux build of a
+    Windows worktree cannot ask git for the version."""
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import version
+    env = dict(env or os.environ, DRIVELINK_VERSION_FULL=version.full())
+    env['WSLENV'] = ':'.join(filter(None, [env.get('WSLENV'), 'DRIVELINK_VERSION_FULL', 'DRIVELINK_JOBS']))
+    return env
+
+
+def plan_ros(jobs):
+    """drivelink_hardware (H4a): the agent, vdev and CLI from the superbuild, then
+    colcon build and test of protocol/, host/libdrivelink and host/ros against
+    the installed ROS 2 (Lyrical in WSL; the ROS image's distribution in CI)."""
+    probe = linux_probe('ros')
+    if probe is None:
+        build, wrap, env = (ROOT / 'build/ros').as_posix(), [], None
+    else:
+        wsl, env, home = probe
+        build = f'{home}/.cache/drivelink/{worktree_key()}/ros'
+        wrap = [*wsl, '--cd', str(ROOT), '--exec']
+    env = dict(version_env(env), DRIVELINK_JOBS=jobs)
+    return [Step(title, [*wrap, 'sh', 'tools/ros_check.sh', phase, build], env=env, warning_free=True)
+            for title, phase in ROS_PHASES]
+
+
+def need_docker():
+    need('docker')
+    alive = subprocess.run(['docker', 'info', '--format', '{{.ServerVersion}}'],
+                           capture_output=True, text=True, errors='replace')
+    if alive.returncode != 0:
+        raise Unavailable('Docker is not running: start Docker Desktop or the Docker daemon')
+
+
+def plan_ros_jazzy(jobs):
+    """Run the source checks in Docker with a read-only checkout and a build volume."""
+    need_docker()
+    image = 'drivelink-ros:jazzy'
+    env = dict(version_env(None), DRIVELINK_JOBS=jobs)
+    run = ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src',
+           '-v', 'drivelink-ros-jazzy:/cache', '-e', 'DRIVELINK_VERSION_FULL', '-e', 'DRIVELINK_JOBS', image]
+    build = f'/cache/{worktree_key()}'
+    return [Step('image (ros:jazzy + setup_linux.sh ros)',
+                 ['docker', 'build', '-q', '-t', image, '--build-arg', 'DISTRO=jazzy',
+                  '-f', str(ROOT / 'tools/ros.Dockerfile'), str(ROOT / 'tools')], env=env),
+            *(Step(title, [*run, 'sh', 'tools/ros_check.sh', phase, build], env=env, warning_free=True)
+              for title, phase in ROS_PHASES)]
+
+
+def ros_deb_docker():
+    need_docker()
+    out = ROOT / 'build/ros-debs'
+    out.mkdir(parents=True, exist_ok=True)
+    return ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src', '-v', f'{out}:/out']
+
+
+def plan_ros_deb(jobs):
+    package = ['python3', 'tools/package_ros.py', '--jobs', jobs]
+    if CI:
+        return [Step('Bloom build', package, warning_free=True)]
+    run = ros_deb_docker()
+    env = version_env(None)
+    steps = []
+    for distro in ('jazzy', 'lyrical'):
+        image = f'drivelink-ros-deb:{distro}'
+        steps.extend((
+            Step(f'{distro} package build image',
+                 ['docker', 'build', '-q', '-t', image, '--build-arg', f'DISTRO={distro}',
+                  '--build-arg', 'PROFILE=ros-deb', '-f', str(ROOT / 'tools/ros.Dockerfile'),
+                  str(ROOT / 'tools')]),
+            Step(f'{distro} Bloom build', [*run, '-e', 'DRIVELINK_VERSION_FULL', image,
+                                          *package, '--out', f'/out/{distro}'],
+                 env=env, warning_free=True),
+        ))
+    return steps
+
+
+def plan_ros_deb_install(jobs):
+    smoke = ['python3', 'host/test/apt_repo_smoke.py', '--ros']
+    if CI:
+        return [Step('signed apt install and launch', [*smoke, '--repo', 'apt-repo/apt',
+                                                      '--key', 'apt-repo/apt-key.asc'])]
+    run = ros_deb_docker()
+    smoke += ['--repo', '/out/apt', '--key', '/out/apt-key.asc']
+    image = 'drivelink-ros-deb:jazzy'
+    return [
+        Step('Ubuntu 24.04 agent and CLI packages',
+             [*run, '-e', 'DRIVELINK_VERSION_FULL', '-v', 'drivelink-ros-jazzy:/cache', image,
+              'python3', 'tools/package_linux.py', '--jobs', jobs, '--out', '/out/linux-jazzy',
+              '--build-dir', f'/cache/{worktree_key()}/linux-release'], env=version_env(None)),
+        Step('sign the two suites (throwaway key)',
+             [*run, image, 'python3', 'tools/apt_repo.py', 'build', '--debs', 'build/deb',
+              '--debs', '/out/linux-jazzy', '--debs', '/out/jazzy', '--debs', '/out/lyrical',
+              '--out', '/out/apt', '--clean', '--throwaway-key', '--public-key-out', '/out/apt-key.asc']),
+        *(Step(f'{distro} signed apt install and launch', [*run, f'ros:{distro}', *smoke])
+          for distro in ('jazzy', 'lyrical')),
+    ]
+
+
+def plan_guide(jobs):
+    executable = ROOT / ('build/guide-venv/Scripts/python.exe' if WINDOWS
+                         else 'build/guide-venv/bin/python')
+    interpreter = str(executable) if executable.is_file() else python()
+    return [
+        Step('guide build tests', [interpreter, '-m', 'unittest', 'discover',
+                                   '-s', 'guide/tests']),
+        Step('build pages and search', [interpreter, 'tools/guide.py', 'build'], warning_free=True),
+        Step('check the built guide', [interpreter, 'tools/guide.py', 'check']),
     ]
 
 
@@ -233,10 +512,23 @@ NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
 CHECKS = [
-    Check('gen', 'generated files, generator tests, Python frame reference', plan_gen, reads_docs=True),
+    Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
+    Check('guide', 'user guide build, search, links and unit tests', plan_guide, reads_docs=True),
     Check('native', 'native unit tests (firmware/test/native)', plan_native),
     Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
+    Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,
+          windows_only=True),
     Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
+    Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent),
+    Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb),
+    Check('apt-repo', 'apt repository from the .deb packages, checked by apt (through WSL on Windows)',
+          plan_apt_repo),
+    Check('ros', 'drivelink_hardware: colcon build and tests on ROS 2 (Lyrical through WSL on Windows)',
+          plan_ros),
+    Check('ros-jazzy', 'drivelink_hardware: the ros check on ROS 2 Jazzy in Docker (ros:jazzy)', plan_ros_jazzy),
+    Check('ros-deb', 'Bloom Debian packages for Jazzy and Lyrical in Docker', plan_ros_deb),
+    Check('ros-deb-install', 'install the signed ROS packages and run the packaged launch in Docker',
+          plan_ros_deb_install),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),
@@ -245,6 +537,8 @@ CHECKS = [
           idf_build('firmware', *NOLOG), build_dir=ROOT / 'firmware/build_variant'),
     Check('fw-hil-app', 'HIL test app build, zero warnings', idf_build('firmware/test/uart_comm'),
           build_dir=ROOT / 'firmware/test/uart_comm/build'),
+    Check('fw-package', 'firmware release package (merged image, parts, OTA app, notices)',
+          plan_fw_package),
 ]
 
 
@@ -254,7 +548,7 @@ def select(mode, only, skip, windows=WINDOWS):
     unknown = [name for name in [*(only or []), *(skip or [])] if name not in here]
     if unknown:
         raise SystemExit(f"unknown check on this OS: {', '.join(unknown)} (have: {', '.join(here)})")
-    quick = ['gen', 'native', 'host-win' if windows else 'host-linux']
+    quick = ['gen', 'native', *(['host-win'] if windows else ['host-linux', 'agent'])]
     wanted = only or (quick if mode == 'quick' else here)
     chosen = [name for name in here if name in wanted and name not in (skip or [])]
     return chosen, [name for name in here if name not in chosen]
@@ -295,6 +589,34 @@ def revision():
         return 'unknown revision'
 
 
+def source_snapshot():
+    """Identify the invocation separately from a cached check's execution."""
+    try:
+        return {'revision': git('rev-parse', 'HEAD').decode().strip(),
+                'dirty': bool(git('status', '--porcelain'))}
+    except (OSError, subprocess.CalledProcessError):
+        return {'revision': None, 'dirty': None}
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def write_report(report):
+    """Publish only complete reports, preserving the last one if writing fails."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=OUT,
+                                         prefix='summary-', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(report, stream, indent=2)
+            stream.write('\n')
+        os.replace(temporary, OUT / 'summary.json')
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 # --- Running ---------------------------------------------------------------
 
 def warning_lines(output):
@@ -303,15 +625,35 @@ def warning_lines(output):
 
 def execute(program, step, env, log, verbose):
     lines = []
-    with subprocess.Popen([program, *step.argv[1:]], cwd=step.cwd, env=env,
-                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT) as process:
-        for raw in process.stdout:
-            line = raw.decode('utf-8', 'replace').rstrip('\r\n')
-            lines.append(line)
-            log.write(line + '\n')
-            if verbose:
-                print(line, flush=True)
+    # A timed-out/crashed test can leave a descendant holding stdout. A pipe's
+    # EOF then never arrives, even after CTest exits. Tail a regular file until
+    # the command exits instead. Independent handles keep the writer's offset
+    # untouched; O_TEMPORARY lets Windows delete it after the last child closes.
+    with tempfile.NamedTemporaryFile() as output:
+        reader_fd = os.open(output.name, os.O_RDONLY | getattr(os, 'O_TEMPORARY', 0)
+                            | getattr(os, 'O_BINARY', 0))
+        with os.fdopen(reader_fd, 'rb') as reader, \
+                subprocess.Popen([program, *step.argv[1:]], cwd=step.cwd, env=env,
+                                 stdin=subprocess.DEVNULL, stdout=output,
+                                 stderr=subprocess.STDOUT) as process:
+            pending = b''
+            while True:
+                exited = process.poll() is not None
+                pending += reader.read()
+                chunks = pending.split(b'\n')
+                pending = chunks.pop()
+                if exited and pending:
+                    chunks.append(pending)
+                for raw in chunks:
+                    line = raw.decode('utf-8', 'replace').rstrip('\r')
+                    lines.append(line)
+                    log.write(line + '\n')
+                    if verbose:
+                        print(line, flush=True)
+                log.flush()
+                if exited:
+                    break
+                time.sleep(0.05)
     log.flush()
     return process.returncode, lines
 
@@ -379,6 +721,30 @@ def main(argv=None):
             print(f"{check.name:<11} {check.about}{' (Windows only)' if check.windows_only else ''}")
         return 0
     chosen, left_out = select(args.mode, args.only, args.skip)
+    report = {
+        'schema_version': 1,
+        'started_at': utc_now(),
+        'finished_at': None,
+        'source': source_snapshot(),
+        'request': {'mode': args.mode, 'only': args.only, 'skip': args.skip,
+                    'force': args.force, 'fail_fast': args.fail_fast},
+        'status': None,
+        'full_gate_passed': False,
+        'hardware_status': 'not_run',
+        'omitted_checks': left_out,
+        'checks': [],
+    }
+    records = {}
+    for check in CHECKS:
+        if check.windows_only and not WINDOWS:
+            continue
+        record = {'name': check.name, 'status': 'not_selected',
+                  'input_fingerprint': None, 'duration_seconds': None,
+                  'log_path': None, 'failure_reason': None,
+                  'diagnostic_excerpt': None, 'execution': None,
+                  'compiler_crash_retried': None}
+        records[check.name] = record
+        report['checks'].append(record)
     verbose = args.verbose or GROUPS
     OUT.mkdir(parents=True, exist_ok=True)
     state_file = OUT / 'state.json'
@@ -393,7 +759,8 @@ def main(argv=None):
     for check in (c for c in CHECKS if c.name in chosen):
         covered = fingerprint(check)
         previous = state.get(check.name, {})
-        if not args.force and covered and previous == {'result': 'pass', 'fingerprint': covered}:
+        if (not args.force and covered and previous.get('result') == 'pass'
+                and previous.get('fingerprint') == covered):
             work.append((check, None, covered, 'pass (unchanged)'))
             continue
         try:
@@ -409,25 +776,54 @@ def main(argv=None):
             print(f"  {check.name} cannot run here ({result.partition(': ')[2]})", flush=True)
     bad = 0
     for check, steps, covered, result in work:
+        record = records[check.name]
+        record['input_fingerprint'] = covered
         detail, seconds = '', ''
         if result is None and bad and args.fail_fast:
             result = 'not run (--fail-fast)'
+            record['status'] = 'skipped_after_failure'
         elif result is None:
             print(f'  {check.name:<11} running...', flush=True)
             started = time.monotonic()
+            execution = {'source': report['source'], 'started_at': utc_now(),
+                         'finished_at': None}
             entry = {'result': 'fail'}
             try:
                 retried = run_check(check, steps, state.get(check.name, {}), verbose)
                 result = 'pass (after one retry of a compiler crash)' if retried else 'pass'
                 entry = {'result': 'pass', 'fingerprint': covered}
+                record['status'] = 'passed'
+                record['compiler_crash_retried'] = retried
             except Failed as failure:
                 result, detail = f'FAIL: {failure}', failure.detail
                 entry['warned'] = failure.warned
+                record['status'] = 'failed'
+                record['failure_reason'] = str(failure)
+                record['diagnostic_excerpt'] = failure.detail or None
                 if GROUPS:
                     print(f'::error::{check.name}: {failure}', flush=True)
-            seconds = f'{time.monotonic() - started:.0f} s'
+            elapsed = time.monotonic() - started
+            seconds = f'{elapsed:.0f} s'
+            execution['finished_at'] = utc_now()
+            record['duration_seconds'] = round(elapsed, 3)
+            record['execution'] = execution
+            if (OUT / f'{check.name}.log').is_file():
+                record['log_path'] = str((OUT / f'{check.name}.log').resolve())
+            if record['status'] == 'passed':
+                entry['execution'] = execution
+                entry['compiler_crash_retried'] = retried
             state[check.name] = entry
             state_file.write_text(json.dumps(state, indent=1))
+        elif result == 'pass (unchanged)':
+            previous = state.get(check.name, {})
+            record['status'] = 'reused'
+            record['execution'] = previous.get('execution')
+            record['compiler_crash_retried'] = previous.get('compiler_crash_retried')
+            if (OUT / f'{check.name}.log').is_file():
+                record['log_path'] = str((OUT / f'{check.name}.log').resolve())
+        elif result.startswith('UNAVAILABLE'):
+            record['status'] = 'unavailable'
+            record['failure_reason'] = result.partition(': ')[2]
         bad += not result.startswith('pass')
         line = f'  {check.name:<11} {result}' + (f'   [{seconds}]' if seconds else '')
         if result.startswith('FAIL'):
@@ -446,6 +842,10 @@ def main(argv=None):
     summary.append(f'Result: {verdict}')
     print('\n'.join(summary[-3:] if left_out else summary[-2:]), flush=True)
     (OUT / 'summary.txt').write_text('\n'.join(summary) + '\n', encoding='utf-8')
+    report['finished_at'] = utc_now()
+    report['status'] = 'failed' if bad else 'passed'
+    report['full_gate_passed'] = args.mode == 'full' and not left_out and not bad
+    write_report(report)
     return 1 if bad else 0
 
 

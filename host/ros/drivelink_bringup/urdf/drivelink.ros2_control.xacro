@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="drivelink_wheel_interfaces" params="joint label">
+    <joint name="${joint}">
+      <param name="instance">${label}</param>
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="drivelink_diff_drive" params="name agent device token_file token left_joint left_label right_joint right_label imu_label">
+    <ros2_control name="${name}" type="system">
+      <hardware>
+        <plugin>drivelink_hardware/DriveLinkSystem</plugin>
+        <param name="agent">${agent}</param>
+        <param name="device">${device}</param>
+        <param name="take_lease">refuse</param>
+        <xacro:if value="${token != ''}">
+          <param name="token">${token}</param>
+        </xacro:if>
+        <xacro:unless value="${token != ''}">
+          <param name="token_file">${token_file}</param>
+        </xacro:unless>
+      </hardware>
+      <xacro:drivelink_wheel_interfaces joint="${left_joint}" label="${left_label}"/>
+      <xacro:drivelink_wheel_interfaces joint="${right_joint}" label="${right_label}"/>
+      <sensor name="imu">
+        <param name="instance">${imu_label}</param>
+        <state_interface name="orientation.x"/>
+        <state_interface name="orientation.y"/>
+        <state_interface name="orientation.z"/>
+        <state_interface name="orientation.w"/>
+        <state_interface name="angular_velocity.x"/>
+        <state_interface name="angular_velocity.y"/>
+        <state_interface name="angular_velocity.z"/>
+        <state_interface name="linear_acceleration.x"/>
+        <state_interface name="linear_acceleration.y"/>
+        <state_interface name="linear_acceleration.z"/>
+      </sensor>
+    </ros2_control>
+  </xacro:macro>
+</robot>

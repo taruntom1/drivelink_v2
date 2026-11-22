@@ -1,0 +1,16 @@
+[
+  "connect",
+  "device",
+  "layout-add-instance",
+  "layout-review",
+  "monitor-command-disarmed",
+  "monitor",
+  "tune",
+  "tune-identify",
+  "layout-calibration-applied",
+  "update-confirmed",
+  "remote-agent-found",
+  "remote-agent",
+  "remote-monitor-observer",
+  "remote-take-ros"
+]

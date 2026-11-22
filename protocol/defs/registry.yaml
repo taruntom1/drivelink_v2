@@ -11,7 +11,8 @@
 #   - Values are unique, between 0x01 and 0xFE, and fall in the MSG_TYPE
 #     classes of docs/protocol/framing.md: command 0x01-0x3F, response
 #     0x40-0x7F, stream 0x80-0xBF, event 0xC0-0xFE.
-#   - direction: host_to_esp | esp_to_host | both
+#   - direction: host_to_esp | esp_to_host | both | host_to_agent | agent_to_host
+#     (the agent pair never reaches a device; docs/protocol/agent.md)
 #   - channel_ranges: stream channels the core hands out in groups. A range
 #     holds no msg_type entries; the generated header exports its first
 #     channel and channel count.
@@ -40,6 +41,12 @@ msg_types:
   # -- time protocol v1 --
   - {name: time_request, value: 0x02, direction: host_to_esp, description: "Host time ping, answered directly in RX."}
   - {name: time_response, value: 0x42, direction: esp_to_host, description: "Time reply with monotonic RX and TX-submission timestamps."}
+
+  # -- agent protocol v3 (H3a, H3b-1): between a host client and drivelink-agent only,
+  #    never forwarded to a device. docs/protocol/agent.md.
+  - {name: agent_command,  value: 0x30, direction: host_to_agent, description: "Agent command (op): hello, device list, lease, client list, time ping. Answered by the agent, never forwarded."}
+  - {name: agent_response, value: 0x70, direction: agent_to_host, description: "Answer to an agent command."}
+  - {name: agent_event,    value: 0xF0, direction: agent_to_host, description: "Agent events: closing, lease change, clock model, history."}
 
 channel_ranges:
   - {name: sub_groups, symbol: SubGroup, first: 0x81, last: 0x9F, direction: esp_to_host, description: "Subscription groups 0-30."}
@@ -113,6 +120,12 @@ wire_enums:
     OtaImage: 51
     OtaBackend: 52
     OtaCommitted: 53
+    # Agent-only details (H3a): drivelink-agent sends them; a device never does.
+    AgentVersion: 54
+    BadToken: 55
+    UnknownDevice: 56
+    DeviceOffline: 57
+    LeaseRequired: 58
   Family:
     System: 1
     Layout: 2
@@ -133,6 +146,7 @@ wire_enums:
     FactoryReset: 7
     Reboot: 8
     ExitSafeMode: 9
+    SetName: 10
     BenchStall: 253
     BenchCrash: 254
   LayoutOp:
@@ -224,3 +238,37 @@ wire_enums:
     Select: 6
     Abort: 7
     Confirm: 8
+  AgentOp:
+    Hello: 1
+    ListDevices: 2
+    LeaseTake: 3
+    LeaseRelease: 4
+    ClientList: 5
+    TimePing: 6
+  AgentEvent:
+    Closing: 1
+    Lease: 2
+    ClockModel: 3
+    History: 4
+  AgentCloseReason:
+    DeviceOffline: 1
+    Shutdown: 2
+  # Why the lease holder changed (agent Lease event, history).
+  LeaseChange:
+    Taken: 1
+    Released: 2
+    Disconnected: 3
+  # What kind of client a connection is (agent Hello, client list, lease
+  # holder): the GUI shows ROS and other GUIs differently (agent v3, H3b-1).
+  AgentClientKind:
+    Other: 0
+    Gui: 1
+    Cli: 2
+    Ros: 3
+  # Agent history entry kinds.
+  HistoryKind:
+    DiagEvent: 1
+    Arm: 2
+    Lease: 3
+    Online: 4
+    Offline: 5

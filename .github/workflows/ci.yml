@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, host_overhaul]
+    branches: [main]
+    # A v<VERSION> tag also publishes a GitHub Release (job release).
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -15,16 +17,321 @@ concurrency:
 # The commands of every check are in tools/validate.py, which is also what
 # runs locally. A job here only provides the toolchain and names its checks.
 jobs:
-  host-linux:
-    name: Host Linux (Ubuntu 26.04)
+  # Tests and packages are separate jobs: a test failure does not hide the
+  # package's result, and each finishes sooner.
+  host-windows-tests:
+    name: Host Windows tests (Qt MinGW 13.1)
+    runs-on: windows-2025
+    env:
+      CMAKE_PREFIX_PATH: C:/Qt/6.12.0/mingw_64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-qt
+      - name: Build (warnings are errors), test (GUI offscreen), check the installed packages
+        timeout-minutes: 45
+        run: python tools/validate.py --only host-win
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-windows-tests-validation
+          path: build/validate/
+
+  host-windows-package:
+    name: Host Windows package (installer)
+    runs-on: windows-2025
+    env:
+      CMAKE_PREFIX_PATH: C:/Qt/6.12.0/mingw_64
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-qt
+      - name: Install Inno Setup 6 when the runner lacks it
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'C:/Program Files (x86)/Inno Setup 6/ISCC.exe')) {
+            choco install innosetup --version 6.7.1 --no-progress -y
+          }
+      - name: Release build, staged smoke with Qt off PATH, Inno Setup installer
+        timeout-minutes: 30
+        run: python tools/validate.py --only installer
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-windows-installer
+          path: build/installer/DriveLink-*-setup.exe
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-windows-package-validation
+          path: build/validate/
+
+  host-linux-tests:
+    name: Host Linux tests (Ubuntu 26.04)
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
-      - name: Install host toolchain
-        run: apt-get update && apt-get install -y build-essential cmake ninja-build python3 python3-yaml git ca-certificates
+      # actions/checkout needs git to keep a repository; every other package
+      # comes from tools/setup_linux.sh.
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
-      - name: Build (warnings are errors), test against TCP and PTY vdev, check the installed packages
+      - name: Install the host packages (compilers, CMake, Ninja, Qt 6.10)
+        run: sh tools/setup_linux.sh host
+      - name: Build (warnings are errors), test against TCP and PTY vdev and the GUI offscreen, check the installed packages
         run: python3 tools/validate.py --only host-linux
+      - name: Render guide screenshots
+        run: |
+          set -eu
+          export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
+          build=host/superbuild/build/linux
+          python3 host/gui/tests/scenarios.py \
+            --gui "$build/gui/app/drivelink-gui" --vdev "$build/vdev/drivelink-vdev" \
+            --out build/guide-screenshots \
+            --only $(python3 -c 'import json; print(*(name for name in json.load(open("guide/screenshots.json")) if not name.startswith("remote-")))')
+          python3 host/gui/tests/remote_scenarios.py \
+            --gui "$build/gui/app/drivelink-gui" --vdev "$build/vdev/drivelink-vdev" \
+            --agent "$build/agent/drivelink-agent" --out build/guide-screenshots \
+            --only $(python3 -c 'import json; print(*(name for name in json.load(open("guide/screenshots.json")) if name.startswith("remote-")))')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide-screenshots
+          path: build/guide-screenshots/
+          if-no-files-found: error
+
+  agent:
+    name: drivelink-agent build and tests (Ubuntu 26.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the agent packages (compilers, CMake, Ninja, Python 3)
+        run: sh tools/setup_linux.sh agent
+      - name: Build without the GUI (warnings are errors), unit and integration tests
+        run: python3 tools/validate.py --only agent
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-validation
+          path: build/validate/
+
+  # H4a: drivelink_hardware with colcon on both ROS distributions. The images
+  # carry ROS and its apt source; setup_linux.sh ros adds ros2_control,
+  # ros2_controllers and colcon. Locally `ros` runs Lyrical in WSL and
+  # `ros-jazzy` the jazzy image through Docker; here both run `ros`.
+  ros:
+    name: ROS 2 ${{ matrix.distro }} (drivelink_hardware)
+    runs-on: ubuntu-latest
+    container: ros:${{ matrix.distro }}
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [lyrical, jazzy]
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the ROS packages (ros2_control, ros2_controllers, colcon)
+        run: sh tools/setup_linux.sh ros
+      - name: Superbuild programs, colcon build (warnings are errors) and tests
+        run: python3 tools/validate.py --only ros
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-${{ matrix.distro }}-validation
+          path: build/validate/
+
+  # H3c: drivelink-cli and drivelink-agent for Ubuntu 26.04 and 24.04, the
+  # GUI's drivelink for 26.04 only (24.04's Qt 6.4 is below the 6.10 floor),
+  # each on its own architecture's runner. 24.04 also holds the GCC 13 floor.
+  linux-package:
+    name: Linux packages (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', arch: amd64, runner: ubuntu-latest, profile: host}
+          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm, profile: host}
+          - {release: '24.04', arch: amd64, runner: ubuntu-latest, profile: agent}
+          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm, profile: agent}
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the build packages (Qt 6.10 only where the GUI is built)
+        run: sh tools/setup_linux.sh ${{ matrix.profile }}
+      - name: Release build, staged smoke, .deb packages
+        run: |
+          # The checkout belongs to another user than the container's; the
+          # version (VERSION+g<sha>) needs git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only deb
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-debs-${{ matrix.release }}-${{ matrix.arch }}
+          path: build/deb/*.deb
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-validation-${{ matrix.release }}-${{ matrix.arch }}
+          path: build/validate/
+
+  linux-install:
+    name: Linux packages installed in a clean container (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    needs: linux-package
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '26.04', arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '24.04', arch: amd64, runner: ubuntu-latest}
+          - {release: '24.04', arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      # Only git and Python: the packages' Depends must bring everything else.
+      - name: Bootstrap git and Python
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-debs-${{ matrix.release }}-${{ matrix.arch }}
+          path: deb
+      - name: Install, upgrade (the agent is not restarted), remove, reinstall and purge
+        run: python3 host/test/installed_packages_smoke.py --debs deb
+      - name: apt install the GUI, every screen against the installed vdev, apt remove
+        if: matrix.release == '26.04'
+        run: python3 host/test/installed_gui_smoke.py --deb deb/drivelink_*.deb deb/drivelink-cli_*.deb --vdev --out build/installed-gui
+      - name: Upload the screenshots
+        if: always() && matrix.release == '26.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-installed-screens-${{ matrix.arch }}
+          path: build/installed-gui/
+          if-no-files-found: ignore
+
+  ros-deb:
+    name: ROS packages (${{ matrix.distro }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ros:${{ matrix.distro }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {distro: lyrical, arch: amd64, runner: ubuntu-latest}
+          - {distro: lyrical, arch: arm64, runner: ubuntu-24.04-arm}
+          - {distro: jazzy, arch: amd64, runner: ubuntu-latest}
+          - {distro: jazzy, arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Install the Bloom toolchain
+        run: sh tools/setup_linux.sh ros-deb
+      - name: Build the ROS packages
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only ros-deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-debs-ros-${{ matrix.distro }}-${{ matrix.arch }}
+          path: build/ros-debs/*.deb
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-deb-${{ matrix.distro }}-${{ matrix.arch }}-validation
+          path: build/validate/
+
+  # The apt repository from every release's packages, signed with a
+  # throwaway key and checked by apt; apt-install installs from it in clean
+  # containers. Only apt-publish, on a tag, signs with the real key.
+  apt-repo:
+    name: apt repository (throwaway key)
+    needs: [linux-package, ros-deb]
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drivelink-debs-*
+          merge-multiple: true
+          path: debs
+      - name: Install Python and gpg
+        run: sh tools/setup_linux.sh base
+      - name: Build the repository and check it with apt
+        env:
+          DRIVELINK_APT_DEBS: debs
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          python3 tools/validate.py --only apt-repo
+      - name: Upload the repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo-test
+          path: |
+            build/apt/
+            build/apt-key.asc
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apt-repo-validation
+          path: build/validate/
+
+  apt-install:
+    name: apt install from the repository (Ubuntu ${{ matrix.release }}, ${{ matrix.arch }})
+    needs: apt-repo
+    runs-on: ${{ matrix.runner }}
+    container: ros:${{ matrix.distro }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {release: '26.04', distro: lyrical, arch: amd64, runner: ubuntu-latest}
+          - {release: '26.04', distro: lyrical, arch: arm64, runner: ubuntu-24.04-arm}
+          - {release: '24.04', distro: jazzy, arch: amd64, runner: ubuntu-latest}
+          - {release: '24.04', distro: jazzy, arch: arm64, runner: ubuntu-24.04-arm}
+    steps:
+      # gpg signs the refused copy; the packages' Depends bring the rest.
+      - name: Bootstrap git, Python and gpg
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 gnupg
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apt-repo-test
+          path: apt-repo
+      - name: Install from the signed repository and test the ROS launch
+        run: python3 tools/validate.py --only ros-deb-install
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros-deb-install-${{ matrix.distro }}-${{ matrix.arch }}-validation
+          path: build/validate/
 
   firmware:
     name: idf.py build (${{ matrix.name }})
@@ -53,14 +360,218 @@ jobs:
           . "$IDF_PATH/export.sh"
           python3 tools/validate.py --only ${{ matrix.check }}
 
+  firmware-package:
+    name: Firmware package (ESP32-S3)
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconfigure, build (zero warnings), package
+        shell: bash
+        run: |
+          set -eo pipefail
+          # The checkout is owned by another user than the container's; the
+          # version (VERSION+g<sha>) needs git.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          python3 tools/validate.py --only fw-package
+      - name: Upload the firmware package
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: build/firmware/drivelink-firmware-*/
+          if-no-files-found: error
+
+  guide-preview:
+    name: User guide preview and apt repository
+    needs: [host-linux-tests, firmware-package, apt-repo]
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: guide-screenshots
+          path: screenshots
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: firmware-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: apt-repo-test
+          path: apt-artifact
+      - name: Install and validate the guide tooling
+        run: |
+          sh tools/setup_linux.sh base
+          sh tools/setup_linux.sh guide
+          python3 tools/validate.py --only guide
+      - name: Build the preview with packaged firmware and the test signing key
+        run: |
+          set -eu
+          args=$(find firmware-artifact -name flash_args.json)
+          test -f "$args"
+          fingerprint=$(gpg --show-keys --with-colons apt-artifact/apt-key.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+          test -n "$fingerprint"
+          guide=build/guide-venv/bin/python
+          "$guide" tools/guide.py build --screenshots screenshots --firmware "$(dirname "$args")" \
+            --apt-url http://localhost:8000/drivelink_v2 --fingerprint "$fingerprint"
+          "$guide" tools/guide.py combine --apt apt-artifact/apt --out build/guide-preview
+          python3 tools/apt_repo.py verify --repo build/guide-preview --key apt-artifact/apt-key.asc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide-preview
+          path: build/guide-preview/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  # On a v<VERSION> tag, after every check and package passed: one GitHub
+  # Release with the firmware, the Windows installer and the Linux .deb.
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host-windows-tests, host-windows-package, host-linux-tests, agent, linux-package,
+            linux-install, apt-install, firmware, firmware-package, native-tests, guide-preview]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drivelink-*
+          path: dist
+      - name: Check the tag against VERSION and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match VERSION $version" >&2; exit 1
+          fi
+          # A tag build carries the plain version; a +g suffix means it was not.
+          # Every asset goes flat into dist/release, which SHA256SUMS describes.
+          mkdir dist/release
+          firmware="drivelink-firmware-$version"
+          cp "dist/drivelink-windows-installer/DriveLink-$version-setup.exe" dist/release/
+          args=$(find dist/drivelink-firmware -name flash_args.json)
+          test "$(jq -r .version "$args")" = "$version"
+          (cd "$(dirname "$args")" && zip -r "$GITHUB_WORKSPACE/dist/release/$firmware.zip" .)
+          # Ten Linux packages plus the four ROS packages in each matrix cell.
+          find dist -path 'dist/drivelink-debs-*' -name '*.deb' -exec cp {} dist/release/ \;
+          count=$(find dist/release -name '*.deb' | wc -l)
+          if [ "$count" -ne 26 ]; then echo "expected 26 .deb packages, found $count" >&2; exit 1; fi
+          for deb in dist/release/*.deb; do
+            case "$(basename "$deb")" in
+              *_"$version"~ubuntu*_amd64.deb|*_"$version"~ubuntu*_arm64.deb) ;;
+              *) echo "not a tag build: $deb" >&2; exit 1 ;;
+            esac
+          done
+          (cd dist/release && sha256sum -- * > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes dist/release/*
+
+  # Assemble one checked tree for the Pages deploy and gh-pages mirror.
+  # The apt-repo environment admits tags, and only the signing step reads its key.
+  apt-publish:
+    name: Assemble the release guide and signed apt repository
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    environment: apt-repo
+    outputs:
+      artifact_name: ${{ steps.pages-artifact.outputs.name }}
+    permissions:
+      contents: write
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: drivelink-debs-*
+          merge-multiple: true
+          path: debs
+      - uses: actions/download-artifact@v4
+        with:
+          name: guide-screenshots
+          path: screenshots
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: firmware-artifact
+      - name: Install Python and gpg for signing
+        run: sh tools/setup_linux.sh base
+      - name: Sign with the repository key (its fingerprint must be the committed one)
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 tools/apt_repo.py build --debs debs \
+            --out build/apt-publish --clean --complete --key-env APT_SIGNING_KEY \
+            --expect-fingerprint packaging/apt/FINGERPRINT
+      - name: Build and verify the combined Pages tree
+        run: |
+          set -eu
+          sh tools/setup_linux.sh guide
+          args=$(find firmware-artifact -name flash_args.json)
+          test -f "$args"
+          guide=build/guide-venv/bin/python
+          "$guide" tools/guide.py build --release --screenshots screenshots --firmware "$(dirname "$args")"
+          "$guide" tools/guide.py combine --apt build/apt-publish --out build/guide-publish
+          python3 tools/apt_repo.py verify --repo build/guide-publish --key packaging/apt/drivelink-archive-keyring.asc
+      - name: Replace gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cd build/guide-publish
+          git init -q -b gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -q -m "DriveLink guide and apt repository for $GITHUB_REF_NAME"
+          git push --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages
+      - name: Name this attempt's Pages artifact
+        id: pages-artifact
+        run: echo "name=github-pages-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          name: ${{ steps.pages-artifact.outputs.name }}
+          path: build/guide-publish
+          include-hidden-files: true
+
+  guide-deploy:
+    name: Deploy the release guide and apt repository
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: apt-publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the checked Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.apt-publish.outputs.artifact_name }}
+
   native-tests:
     name: Native unit tests
     runs-on: ubuntu-latest
+    container: ubuntu:26.04
     steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@v4
-
-      - name: Install Ninja and PyYAML
-        run: sudo apt-get update && sudo apt-get install -y ninja-build python3-yaml
+      - name: Install the native toolchain and PyYAML
+        run: sh tools/setup_linux.sh base
 
       - name: Generated files, generator tests, Python frame reference, native tests
         run: python3 tools/validate.py --only gen native

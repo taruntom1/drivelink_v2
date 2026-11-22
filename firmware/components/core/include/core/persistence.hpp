@@ -59,6 +59,7 @@ struct LoadedConfig {
     uint32_t newest_gen = 0; ///< the newest layout generation that passed its checks
     uint32_t cause = 0;      ///< when !complete && found_any: kLoadNoLayout or kLoadIncomplete
     std::vector<StoredInstance> instances; ///< in layout order
+    std::array<char, drivelink::protocol::kDeviceNameBytes + 1> name{};
     std::vector<ParamPair> system;         ///< the system params (t00i00)
 };
 
@@ -75,7 +76,7 @@ LoadedConfig loadConfig(core_os::KvStore &store);
 /// / `StorageFailed`, and the previous generation stays intact. A failed
 /// erase after the commit is reported, and the answer stays Ok.
 Status saveConfig(core_os::KvStore &store, uint32_t gen, std::span<const StoredInstance> instances,
-                  std::span<const ParamPair> system);
+                  std::span<const ParamPair> system, std::string_view name = {});
 
 /// Erase the layout namespace and every instance namespace. A failure is
 /// reported (`core.NvsWriteFailed`) and answers `Fault` / `StorageFailed`.

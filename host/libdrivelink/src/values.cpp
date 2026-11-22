@@ -40,9 +40,9 @@ Ref parseRef(const std::string &text)
             static_cast<uint8_t>(parseUnsigned(text.substr(a + 1, b - a - 1), 254)),
             static_cast<uint16_t>(parseUnsigned(text.substr(b + 1), 65535))};
 }
-uint32_t parseValue(const Json &d, const std::string &text, const Json &enums)
+uint32_t parseValue(ValueType value_type, const std::string &text, std::span<const EnumEntry> enums)
 {
-    const auto type = d.at("value_type").get<uint8_t>();
+    const auto type = static_cast<uint8_t>(value_type);
     if (type == 0)
     {
         if (text == "true" || text == "1")
@@ -79,15 +79,15 @@ uint32_t parseValue(const Json &d, const std::string &text, const Json &enums)
     {
         for (const auto &e : enums)
         {
-            if (e.at("name") == text)
+            if (e.name == text)
             {
-                return e.at("value").get<uint32_t>();
+                return e.value;
             }
         }
         const auto value = parseUnsigned(text, 255);
         for (const auto &e : enums)
         {
-            if (e.at("value") == value)
+            if (e.value == value)
             {
                 return value;
             }
@@ -100,34 +100,31 @@ uint32_t parseValue(const Json &d, const std::string &text, const Json &enums)
     }
     return parseUnsigned(text, type == 1 ? 255 : type == 2 ? 65535 : UINT32_MAX);
 }
-Json valueJson(uint8_t type, uint32_t bits)
-{
-    if (type == 0)
-    {
-        if (bits > 1)
-        {
-            throw Error(ErrorKind::Protocol, "invalid boolean slot");
-        }
-        return bits != 0;
+Value decodeValue(ValueType type, uint32_t bits) {
+    switch(type) {
+    case ValueType::Bool: if(bits>1) { throw Error(ErrorKind::Protocol,"invalid boolean slot"); }return bits!=0;
+    case ValueType::F32: {
+        const auto value=std::bit_cast<float>(bits);
+        if(!std::isfinite(value)) { throw Error(ErrorKind::Protocol,"non-finite scalar"); }return value;
     }
-    if (type == 5)
-    {
-        const auto f = std::bit_cast<float>(bits);
-        if (!std::isfinite(f))
-        {
-            throw Error(ErrorKind::Protocol, "non-finite scalar");
-        }
-        return f;
+    case ValueType::I32: return std::bit_cast<int32_t>(bits);
+    case ValueType::U8: if(bits<=255) { return static_cast<uint8_t>(bits); }break;
+    case ValueType::U16: if(bits<=65535) { return static_cast<uint16_t>(bits); }break;
+    case ValueType::U32: return bits;
+    case ValueType::Enum: if(bits<=255) { return EnumValue{static_cast<uint8_t>(bits)}; }break;
+    default: break;
     }
-    if (type == 4)
-    {
-        return std::bit_cast<int32_t>(bits);
-    }
-    if (type > 6 || (type == 1 && bits > 255) || (type == 2 && bits > 65535) || (type == 6 && bits > 255))
-    {
-        throw Error(ErrorKind::Protocol, "invalid scalar slot");
-    }
-    return bits;
+    throw Error(ErrorKind::Protocol,"invalid scalar slot");
+}
+uint32_t valueBits(const Value &value) {
+    return std::visit([](const auto &v)->uint32_t {
+        using T=std::decay_t<decltype(v)>;
+        if constexpr(std::is_same_v<T,EnumValue>) { return v.value; }
+        else if constexpr(std::is_same_v<T,float> || std::is_same_v<T,int32_t>) {
+            if constexpr(std::is_same_v<T,float>) { if(!std::isfinite(v)) { throw Error(ErrorKind::Usage,"non-finite scalar"); } }
+            return std::bit_cast<uint32_t>(v);
+        } else { return static_cast<uint32_t>(v); }
+    },value);
 }
 Bytes parseHex(const std::string &text)
 {
