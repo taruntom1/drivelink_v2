@@ -7,11 +7,12 @@ Install DriveLink on a new ESP32-S3 with 16 MB of flash, or reset an existing bo
 ## Flash with Edge or Chrome
 
 1. Close any app using the board’s port and plug the board into your computer. The browser should list the board or its USB serial adapter when you open the port picker.
-2. Select **Connect**, choose the board’s port, and confirm the install in the installer dialog. Keep the board connected until the installer reports success.
+2. Select **Connect** below. Choose the board’s port in the browser’s picker and select **Connect** again.
 
 {{flasher}}
 
-3. Close the installer dialog and open the [DriveLink desktop app]({{base}}downloads/#desktop-app). On **Connect**, select the same serial port and connect. The app should show the device details.
+3. Select **Install DriveLink**, then select **Install** to confirm. Keep the board connected until the installer shows **Installation complete!**
+4. Close the installer dialog and open the [DriveLink desktop app]({{base}}downloads/#desktop-app). On **Connect**, select the same serial port and connect. The app should show the device details.
 
 ## Flash with esptool
 
