@@ -46,7 +46,7 @@ Settled with the user on 2026-11-22. A step needs the user's agreement to change
   - Every script, font and image is self-hosted: no CDN and no analytics.
   - The site works at phone width, by keyboard and in print.
 - **Interactive pieces.** Three: the home page's "what do you have?" path picker, clickable SVG wiring diagrams of the reference build, and the web flasher. A control-loop playground and a troubleshooting wizard are not planned.
-- **URL.** The guide is the root of this repository's GitHub Pages site. The apt repository keeps its paths (`dists/`, `pool/` and the key), so apt users see no change. One tag job builds both into the single `gh-pages` commit. The apt `index.html` becomes the guide's "Install from apt" page.
+- **URL.** The guide is the root of this repository's GitHub Pages site. The apt repository keeps its paths (`dists/`, `pool/` and the key). A tag job builds the verified tree and mirrors it to a single `gh-pages` commit. A GitHub Actions Pages deployment serves the same artifact. The apt landing page moves to the guide's "Install from apt" page.
 - **First flash.** A "Flash in the browser" page uses a pinned, vendored copy of ESP Web Tools (Chrome or Edge over Web Serial) to write the release's merged image. The esptool command is the fallback. Later updates go through the GUI's firmware update.
 - **Publishing.** Only `vX.Y.Z` tags publish, so the guide always matches the latest release that apt installs. Download links point at that tag's release assets. CI for PRs and branches builds and checks the site and uploads it as an artifact, marked as an unreleased preview.
 - **Screenshots.** The GUI's scenario tooling renders them against vdev in the Linux CI job, in light and dark, from a list the guide owns. The site job takes them as an artifact, so nothing large is committed. A local build without them shows placeholders. A tag build fails without them.
@@ -69,7 +69,7 @@ Scope:
 - The theme: `gen_theme.py` writes the CSS variables, and the `gen` check fails when they are stale.
 - The web flasher: the vendored ESP Web Tools, with its licence in the notices, and a manifest generated at publish time from the release's `flash_args.json` and merged image (`tools/package_fw.py`). The page warns that a first flash erases the device.
 - Screenshots: the guide's scenario list, rendered in the Linux GUI job and passed on as an artifact (`host/gui/README.md`, "Shell screenshots").
-- Publishing: the tag job builds the apt repository and the guide into one tree and force-pushes `gh-pages` as before.
+- Publishing: the tag job builds the apt repository and the guide into one tree, force-pushes the `gh-pages` mirror and passes the verified artifact to the Pages deployment job. The Pages source switches to GitHub Actions before the first guide release.
   - Guide paths never clash with `dists/`, `pool/` or the key file, and the tree has a `.nojekyll`.
   - `apt_repo.py verify` passes on the combined tree, and a check confirms the apt paths are unchanged.
   - PR CI uploads the combined preview, signed with the throwaway key.

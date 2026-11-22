@@ -1,14 +1,15 @@
 # DriveLink apt repository
 
 DriveLink's signed apt repository, served by GitHub Pages from the `gh-pages`
-branch at <https://taruntom1.github.io/drivelink_v2/>. Installing from it is
-in [docs/pi-setup.md](../../docs/pi-setup.md), "Install the packages".
+site at <https://taruntom1.github.io/drivelink_v2/>. Start with the guide’s
+“Install from apt” page when it is published. Instructions for v0.1.0
+are in [docs/pi-setup.md](../../docs/pi-setup.md), "Install the packages".
 
 | File | What |
 |---|---|
 | `drivelink-archive-keyring.asc` | The repository's public key, served next to the repository |
 | `FINGERPRINT` | Its fingerprint; the publish refuses any other signing key |
-| `index.html` | The repository's page (`@URL@` and `@FINGERPRINT@` filled in by `tools/apt_repo.py`) |
+| `index.html` | Landing page for a standalone apt build. The combined build uses the guide’s home page and links to `apt/` |
 | `create_signing_key.sh` | Makes the key, the `apt-repo` environment and its secret (owner only) |
 
 ## Layout
@@ -23,7 +24,7 @@ dists/<suite>/main/binary-{amd64,arm64}/Packages{,.gz}
 pool/main/d/<package>/<package>_<version>_<arch>.deb
 ```
 
-`gh-pages` holds one commit: the latest release, force-pushed by each tag.
+`gh-pages` mirrors the verified release tree in one commit per tag.
 Older packages stay on their GitHub release pages.
 
 ## ROS 2 packages
@@ -55,9 +56,16 @@ See the [bringup install and launch guide](../../host/ros/drivelink_bringup/READ
   every run. CI requires all 26 release packages. The `apt-install` job then
   installs from it in clean Lyrical and Jazzy containers on both architectures
   and runs the packaged bringup against the packaged agent and vdev.
-- Only a `vX.Y.Z` tag publishes: CI's `apt-publish` job, after `release`,
-  signs with the real key, checks it against `FINGERPRINT` and the committed
-  public key, and replaces `gh-pages`. It is the only job that reads the key.
+- Only a `vX.Y.Z` tag publishes. After `release`, the `apt-publish` job
+  signs with the real key, checks the fingerprint, and combines the apt
+  repository with the guide. It verifies the combined tree using apt and
+  the committed public key, uploads it for Pages, and mirrors the same tree
+  to `gh-pages`. Only the signing step receives the private key.
+- `guide-deploy` publishes that artifact with `pages: write` and
+  `id-token: write`. Both the guide and apt use the same project URL.
+  `dists/`, `pool/`, the public key URL and their contents are checked before
+  deployment. Branch and PR previews use a throwaway key and are downloadable
+  from Actions.
 
 ## The signing key
 
@@ -81,5 +89,7 @@ Before the key expires, extend it from the backup
 (`gpg --quick-set-expire <fingerprint> 5y`), export the public key again and
 replace the secret.
 
-Pages must be enabled once, after the first publish creates `gh-pages`:
-Settings → Pages → Deploy from a branch, `gh-pages`, `/ (root)`.
+Before publishing the first tag with the guide, open **Settings → Pages**
+and set **Source** to **GitHub Actions**. In **Settings → Environments →
+github-pages**, allow release tags matching `v*` under deployment tags. This
+lets the tag job deploy to the existing Pages URL.

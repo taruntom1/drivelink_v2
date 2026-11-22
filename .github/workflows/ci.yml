@@ -87,6 +87,20 @@ jobs:
         run: sh tools/setup_linux.sh host
       - name: Build (warnings are errors), test against TCP and PTY vdev and the GUI offscreen, check the installed packages
         run: python3 tools/validate.py --only host-linux
+      - name: Render guide screenshots
+        run: |
+          set -eu
+          export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
+          build=host/superbuild/build/linux
+          python3 host/gui/tests/scenarios.py \
+            --gui "$build/gui/app/drivelink-gui" --vdev "$build/vdev/drivelink-vdev" \
+            --out build/guide-screenshots \
+            --only $(python3 -c 'import json; print(*json.load(open("guide/screenshots.json")))')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide-screenshots
+          path: build/guide-screenshots/
+          if-no-files-found: error
 
   agent:
     name: drivelink-agent build and tests (Ubuntu 26.04)
@@ -364,13 +378,58 @@ jobs:
           path: build/firmware/drivelink-firmware-*/
           if-no-files-found: error
 
+  guide-preview:
+    name: User guide preview and apt repository
+    needs: [host-linux-tests, firmware-package, apt-repo]
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Bootstrap git for the checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: guide-screenshots
+          path: screenshots
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: firmware-artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: apt-repo-test
+          path: apt-artifact
+      - name: Install and validate the guide tooling
+        run: |
+          sh tools/setup_linux.sh base
+          sh tools/setup_linux.sh guide
+          python3 tools/validate.py --only guide
+      - name: Build the preview with packaged firmware and the test signing key
+        run: |
+          set -eu
+          args=$(find firmware-artifact -name flash_args.json)
+          test -f "$args"
+          fingerprint=$(gpg --show-keys --with-colons apt-artifact/apt-key.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+          test -n "$fingerprint"
+          guide=build/guide-venv/bin/python
+          "$guide" tools/guide.py build --screenshots screenshots --firmware "$(dirname "$args")" \
+            --apt-url http://localhost:8000/drivelink_v2 --fingerprint "$fingerprint"
+          "$guide" tools/guide.py combine --apt apt-artifact/apt --out build/guide-preview
+          python3 tools/apt_repo.py verify --repo build/guide-preview --key apt-artifact/apt-key.asc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide-preview
+          path: build/guide-preview/
+          include-hidden-files: true
+          if-no-files-found: error
+
   # On a v<VERSION> tag, after every check and package passed: one GitHub
   # Release with the firmware, the Windows installer and the Linux .deb.
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [host-windows-tests, host-windows-package, host-linux-tests, agent, linux-package,
-            linux-install, apt-install, firmware, firmware-package, native-tests]
+            linux-install, apt-install, firmware, firmware-package, native-tests, guide-preview]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -378,6 +437,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: drivelink-*
           path: dist
       - name: Check the tag against VERSION and publish
         env:
@@ -409,12 +469,10 @@ jobs:
           (cd dist/release && sha256sum -- * > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "DriveLink $version" --generate-notes dist/release/*
 
-  # H3d: the release's packages signed with the repository key into gh-pages,
-  # which GitHub Pages serves. The key is the secret APT_SIGNING_KEY of the
-  # environment apt-repo, which only v* tags may deploy to, so no branch or
-  # pull-request job can read it. gh-pages holds one commit: this release.
+  # Assemble one checked tree for the Pages deploy and gh-pages mirror.
+  # The apt-repo environment admits tags, and only the signing step reads its key.
   apt-publish:
-    name: Publish the apt repository
+    name: Assemble the release guide and signed apt repository
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
@@ -431,8 +489,18 @@ jobs:
           pattern: drivelink-debs-*
           merge-multiple: true
           path: debs
-      - name: Install Python and gpg
-        run: sh tools/setup_linux.sh base
+      - uses: actions/download-artifact@v4
+        with:
+          name: guide-screenshots
+          path: screenshots
+      - uses: actions/download-artifact@v4
+        with:
+          name: drivelink-firmware
+          path: firmware-artifact
+      - name: Install the guide tools and gpg
+        run: |
+          sh tools/setup_linux.sh base
+          sh tools/setup_linux.sh guide
       - name: Sign with the repository key (its fingerprint must be the committed one)
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
@@ -441,20 +509,46 @@ jobs:
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 tools/apt_repo.py build --debs debs \
             --out build/apt-publish --clean --complete --key-env APT_SIGNING_KEY \
             --expect-fingerprint packaging/apt/FINGERPRINT
-      - name: Check it with apt and the committed public key
-        run: python3 tools/apt_repo.py verify --repo build/apt-publish --key packaging/apt/drivelink-archive-keyring.asc
+      - name: Build and verify the combined Pages tree
+        run: |
+          set -eu
+          args=$(find firmware-artifact -name flash_args.json)
+          test -f "$args"
+          guide=build/guide-venv/bin/python
+          "$guide" tools/guide.py build --release --screenshots screenshots --firmware "$(dirname "$args")"
+          "$guide" tools/guide.py combine --apt build/apt-publish --out build/guide-publish
+          python3 tools/apt_repo.py verify --repo build/guide-publish --key packaging/apt/drivelink-archive-keyring.asc
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/guide-publish
       - name: Replace gh-pages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          cd build/apt-publish
+          cd build/guide-publish
           git init -q -b gh-pages
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -q -m "apt repository for $GITHUB_REF_NAME"
+          git commit -q -m "DriveLink guide and apt repository for $GITHUB_REF_NAME"
           git push --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" gh-pages
+
+  guide-deploy:
+    name: Deploy the release guide and apt repository
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: apt-publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the checked Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   native-tests:
     name: Native unit tests

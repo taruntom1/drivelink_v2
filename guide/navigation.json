@@ -1,0 +1,16 @@
+[
+  {"title": "Get DriveLink", "pages": [
+    {"title": "Home", "slug": "", "source": "home.md"},
+    {"title": "Downloads", "slug": "downloads", "source": "downloads.md"},
+    {"title": "Install from apt", "slug": "apt", "source": "apt.md"},
+    {"title": "Flash in the browser", "slug": "flash", "source": "flash.md"}
+  ]},
+  {"title": "Start here", "pages": []},
+  {"title": "Concepts", "pages": []},
+  {"title": "PC bench", "pages": []},
+  {"title": "Pi robot", "pages": []},
+  {"title": "ROS 2 robot", "pages": []},
+  {"title": "Reference", "pages": []},
+  {"title": "Troubleshooting and FAQ", "pages": []},
+  {"title": "About", "pages": []}
+]

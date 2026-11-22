@@ -3,8 +3,8 @@
 # (Ubuntu 26.04: the WSL distro, the ubuntu:26.04 CI containers; the `agent`
 # profile also on Ubuntu 24.04, where CI builds the packages without the GUI).
 #
-#   sudo sh tools/setup_linux.sh [base|agent|host|ros|ros-deb]   (default: host)
-#   sh tools/setup_linux.sh --check [base|agent|host|ros|ros-deb] report missing packages, install nothing
+#   sudo sh tools/setup_linux.sh [base|agent|host|ros|ros-deb|guide] (default: host)
+#   sh tools/setup_linux.sh --check [base|agent|host|ros|ros-deb|guide] report missing packages
 #
 #   base  compilers, CMake, Ninja, Python 3 and PyYAML: the generator and
 #         firmware native tests (CI job native-tests)
@@ -20,6 +20,7 @@
 #         key is checked against the published fingerprint); the ros:lyrical
 #         and ros:jazzy images already have it.
 #   ros-deb  base plus Bloom and Debian tools, in a disposable ROS build container.
+#   guide Python and a virtual environment with the pinned static guide tools.
 #
 # Packages already installed are skipped; nothing is removed or upgraded.
 # ci.yml holds no package list.
@@ -61,7 +62,8 @@ case "$profile" in
 ros-$distro-ament-cmake-gtest ros-$distro-xacro ros-$distro-robot-state-publisher ros-dev-tools"
         ;;
     ros-deb) wanted="$base python3-bloom python3-rosdep debhelper fakeroot" ;;
-    *) echo "usage: $0 [base|agent|host|ros|ros-deb]" >&2; exit 2 ;;
+    guide) wanted="python3 python3-venv ca-certificates" ;;
+    *) echo "usage: $0 [base|agent|host|ros|ros-deb|guide]" >&2; exit 2 ;;
 esac
 
 missing=""
@@ -73,10 +75,10 @@ done
 
 if [ -z "$missing" ]; then
     echo "setup_linux.sh: every '$profile' package is installed"
-    exit 0
-fi
-
-if [ "$check" -eq 1 ] || [ "$(id -u)" -ne 0 ]; then
+    if [ "$profile" != guide ] || [ "$check" -eq 1 ]; then
+        exit 0
+    fi
+elif [ "$check" -eq 1 ] || [ "$(id -u)" -ne 0 ]; then
     echo "setup_linux.sh: missing:$missing" >&2
     echo "setup_linux.sh: run as root: sudo sh tools/setup_linux.sh $profile" >&2
     exit 1
@@ -113,7 +115,21 @@ EOF
     echo "setup_linux.sh: added the ROS 2 apt repository for $codename"
 fi
 
-apt-get update
-# shellcheck disable=SC2086 # word splitting of the package list is intended
-apt-get install -y --no-install-recommends $missing
-echo "setup_linux.sh: installed:$missing"
+if [ -n "$missing" ]; then
+    apt-get update
+    # shellcheck disable=SC2086 # word splitting of the package list is intended
+    apt-get install -y --no-install-recommends $missing
+    echo "setup_linux.sh: installed:$missing"
+fi
+
+if [ "$profile" = guide ] && [ "$check" -eq 0 ]; then
+    root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+    # Install into the invoking developer's worktree, with their ownership.
+    if [ -n "${SUDO_USER:-}" ]; then
+        runuser -u "$SUDO_USER" -- python3 -m venv "$root/build/guide-venv"
+        runuser -u "$SUDO_USER" -- "$root/build/guide-venv/bin/python" -m pip install -r "$root/guide/requirements.txt"
+    else
+        python3 -m venv "$root/build/guide-venv"
+        "$root/build/guide-venv/bin/python" -m pip install -r "$root/guide/requirements.txt"
+    fi
+fi
