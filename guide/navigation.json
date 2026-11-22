@@ -5,12 +5,36 @@
     {"title": "Install from apt", "slug": "apt", "source": "apt.md"},
     {"title": "Flash in the browser", "slug": "flash", "source": "flash.md"}
   ]},
-  {"title": "Start here", "pages": []},
-  {"title": "Concepts", "pages": []},
-  {"title": "PC bench", "pages": []},
+  {"title": "Start", "pages": [
+    {"title": "Start here", "slug": "start", "source": "start.md"}
+  ]},
+  {"title": "Concepts", "pages": [
+    {"title": "Firmware and serial", "slug": "concepts/firmware", "source": "concepts/firmware.md"},
+    {"title": "Modules, instances, and loops", "slug": "concepts/modules", "source": "concepts/modules.md"},
+    {"title": "Actuators, encoders, and controllers", "slug": "concepts/control", "source": "concepts/control.md"},
+    {"title": "IMU", "slug": "concepts/imu", "source": "concepts/imu.md"},
+    {"title": "Arming and faults", "slug": "concepts/safety", "source": "concepts/safety.md"},
+    {"title": "Saving and reverting", "slug": "concepts/saving", "source": "concepts/saving.md"},
+    {"title": "Agent, leases, and tokens", "slug": "concepts/agent", "source": "concepts/agent.md"},
+    {"title": "ROS 2 in five minutes", "slug": "concepts/ros", "source": "concepts/ros.md"},
+    {"title": "Glossary", "slug": "concepts/glossary", "source": "concepts/glossary.md"}
+  ]},
+  {"title": "PC bench", "pages": [
+    {"title": "Install the app", "slug": "pc/install", "source": "pc/install.md"},
+    {"title": "Connect and tour", "slug": "pc/connect", "source": "pc/connect.md"},
+    {"title": "Wire the bench", "slug": "pc/wire", "source": "pc/wire.md"},
+    {"title": "Build the layout", "slug": "pc/layout", "source": "pc/layout.md"},
+    {"title": "First spin", "slug": "pc/first-spin", "source": "pc/first-spin.md"},
+    {"title": "Monitor", "slug": "pc/monitor", "source": "pc/monitor.md"},
+    {"title": "Tune and identify", "slug": "pc/tune", "source": "pc/tune.md"},
+    {"title": "Add and calibrate the IMU", "slug": "pc/imu", "source": "pc/imu.md"},
+    {"title": "Update firmware", "slug": "pc/update", "source": "pc/update.md"}
+  ]},
   {"title": "Pi robot", "pages": []},
   {"title": "ROS 2 robot", "pages": []},
-  {"title": "Reference", "pages": []},
+  {"title": "Reference", "pages": [
+    {"title": "Reference build", "slug": "reference/bench", "source": "reference/bench.md"}
+  ]},
   {"title": "Troubleshooting and FAQ", "pages": []},
   {"title": "About", "pages": []}
 ]

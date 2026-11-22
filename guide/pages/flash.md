@@ -57,3 +57,5 @@ Replace PORT with your board’s serial port, such as /dev/ttyUSB0. The terminal
 </div>
 
 Open DriveLink and connect to the same port. You should see the device details.
+
+Continue to [connect and tour the app]({{base}}pc/connect/) to check your first connection.

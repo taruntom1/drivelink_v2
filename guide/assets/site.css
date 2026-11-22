@@ -172,6 +172,26 @@ figure img {
   text-align: center;
 }
 figcaption { color: var(--text-secondary); font-size: .875rem; margin-top: .65rem; }
+.wiring { max-width: 34rem; }
+.wiring svg {
+  display: block;
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: .55rem;
+}
+.wiring path { fill: none; stroke: var(--text-secondary); stroke-width: 2; }
+.wiring rect { fill: var(--bg-secondary); stroke: var(--border-strong); }
+.wiring text {
+  fill: var(--text-primary);
+  font-size: 19px;
+  font-weight: 600;
+  text-anchor: middle;
+  pointer-events: none;
+}
+.wiring a rect { fill: var(--bg-selected); stroke: var(--accent-text); }
+.wiring a text { fill: var(--accent-text); text-decoration: underline; }
+.wiring a:is(:hover, :focus-visible) rect { stroke-width: 3; }
 .choice-buttons { margin: 1rem 0 .65rem; }
 .choice-buttons [aria-pressed="true"] {
   background: var(--bg-selected);
@@ -228,6 +248,7 @@ pre code { overflow-wrap: normal; }
 @media (max-width: 52rem) {
   .header-inner, .layout, .footer, .preview { width: calc(100% - 2rem); }
   .layout { display: flex; flex-direction: column; gap: 1.5rem; padding-block: 1.35rem 2.5rem; }
+  .nav-toggle { align-self: flex-start; }
   .navigation { border: 0; border-bottom: 1px solid var(--border-default); padding: 0; width: 100%; }
   .navigation ul { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .65rem; }
   .navigation .future-section { display: none; }
@@ -243,7 +264,7 @@ pre code { overflow-wrap: normal; }
 @media print {
   :root { color-scheme: light; }
   body { color: #111; background: #fff; font-size: 10pt; }
-  .masthead, .navigation, .footer, pagefind-modal, .choice-buttons, .code-controls,
+  .masthead, .navigation, .nav-toggle, .footer, pagefind-modal, .choice-buttons, .code-controls,
   .skip, esp-web-install-button { display: none !important; }
   .layout { display: block; width: auto; padding: 0; }
   .preview { width: auto; }
@@ -258,4 +279,7 @@ pre code { overflow-wrap: normal; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   pre code { overflow-wrap: anywhere; }
   figure { break-inside: avoid; }
+  .wiring svg, .wiring rect, .wiring a rect { background: #fff; fill: #fff; stroke: #777; }
+  .wiring text, .wiring a text { fill: #111; }
+  .wiring path { stroke: #555; }
 }
