@@ -496,11 +496,24 @@ def plan_ros_deb_install(jobs):
     ]
 
 
+def plan_guide(jobs):
+    executable = ROOT / ('build/guide-venv/Scripts/python.exe' if WINDOWS
+                         else 'build/guide-venv/bin/python')
+    interpreter = str(executable) if executable.is_file() else python()
+    return [
+        Step('guide build tests', [interpreter, '-m', 'unittest', 'discover',
+                                   '-s', 'guide/tests']),
+        Step('build pages and search', [interpreter, 'tools/guide.py', 'build'], warning_free=True),
+        Step('check the built guide', [interpreter, 'tools/guide.py', 'check']),
+    ]
+
+
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
 CHECKS = [
     Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
+    Check('guide', 'user guide build, search, links and unit tests', plan_guide, reads_docs=True),
     Check('native', 'native unit tests (firmware/test/native)', plan_native),
     Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
     Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,

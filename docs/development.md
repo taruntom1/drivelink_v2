@@ -94,12 +94,56 @@ python smoke_protocol_firmware.py --port COM3                      # needs the m
 - **A compiler crash in an IDF file.** Cold builds on this machine used to stop with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. The firmware no longer compiles that file. If another IDF file crashes the compiler, run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
 - **A new pure source file** must also be added to `firmware/test/native/CMakeLists.txt` (see [test rules](../firmware/test/CLAUDE.md)).
 
+## Build and preview the user guide
+
+From the repository root on Ubuntu:
+
+~~~sh
+sudo sh tools/setup_linux.sh guide
+build/guide-venv/bin/python tools/guide.py build
+build/guide-venv/bin/python tools/guide.py serve
+~~~
+
+On Windows:
+
+~~~powershell
+python -m venv build/guide-venv
+build/guide-venv/Scripts/python.exe -m pip install -r guide/requirements.txt
+build/guide-venv/Scripts/python.exe tools/guide.py build
+build/guide-venv/Scripts/python.exe tools/guide.py serve
+~~~
+
+Open `http://localhost:8000/drivelink_v2/`. This mount matches the GitHub Pages
+project path and gives Chromium a secure context for Web Serial. The server
+binds only to localhost. Use `check` on existing output or run
+`python tools/validate.py --only guide` to run the tests, build and check.
+The guide’s writing rules are in [guide/CLAUDE.md](../guide/CLAUDE.md).
+
+- `build` writes `build/guide/`. It uses the page list in
+  `guide/navigation.json`, the generated GUI color tokens and self-hosted
+  assets. Run `python host/gui/theme/gen_theme.py` after updating tokens.
+- `build --screenshots DIR --firmware DIR` takes the scenario output (see
+  [Shell screenshots](../host/gui/README.md#shell-screenshots)) and an
+  extracted firmware package containing `flash_args.json` and the merged
+  image. Use the scenarios listed in `guide/screenshots.json`. A local build
+  without those inputs shows screenshot placeholders and the esptool fallback.
+- `build --release` requires both inputs, the exact release firmware version,
+  and the committed apt fingerprint. CI supplies the images and firmware
+  packaged for the same tag.
+- `combine --apt DIR --out NEW_DIR` copies the signed apt tree and overlays
+  the guide. It checks every path and byte under `dists/` and `pool/` and the
+  public key against the original tree. The CI build runs apt verification on
+  the result. Use `serve --site NEW_DIR` for a downloaded combined preview.
+  CI previews use a temporary signing key. Try their apt instructions in a
+  disposable Ubuntu environment.
+
 ## Validation (`tools/validate.py`)
 
 One script holds the list of checks and their commands. CI calls it with `--only`, so a check runs the same way locally and in CI. It needs only Python 3 (with PyYAML for `gen` and `native`), and runs from the repository root in any shell.
 
 | Check | What it runs | Toolchain it sets up |
 |---|---|---|
+| `guide` | Guide builder tests, warning-free build, Pagefind index, navigation, links, anchors and local assets | The guide virtual environment in `build/guide-venv`, or the calling Python with `guide/requirements.txt` installed |
 | `gen` | `gen.py --check`, `version.py --check` (every consumer names the root `VERSION`), the generator's tests, the script's own tests (`tools/tests`), `protocol.py`, the GUI `Theme` (`gen_theme.py --check` and its tests), the third-party notices (`gen_notices.py --check` for the GUI, the firmware and the CLI and agent packages' `host/notices/`, and its tests) | The Python that runs the script |
 | `native` | Configure, build and ctest of `firmware/test/native` (C++23) | Windows: explicitly named MSYS2 UCRT64 GCC 16.2 and Qt CMake/CTest/Ninja, isolated `build/ucrt64/` and runtime PATH. Linux: GCC, CMake/CTest and Ninja from `PATH` |
 | `host-win` | The `windows-mingw` preset: build, ctest (including the offscreen GUI tests), `install_smoke.py`. Windows only | Qt's MinGW GCC 13.1.0 (version checked), CMake and Ninja, first on `PATH`; Qt 6.12.0 from `C:/Qt/6.12.0/mingw_64` |
@@ -118,7 +162,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 - **Modes.** `quick` is `gen`, `native` and the host check of this OS (on Linux also `agent`). `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
 - **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
 - **Unchanged checks are skipped.** A check that passed shows as `pass (unchanged)` until a file it covers changes. `--force` runs it anyway.
-  - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns only `gen`. Any other change reruns every check.
+  - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns `gen` and `guide`. Any other change reruns every check.
   - The state is `build/validate/state.json`. Toolchain changes are not seen: use `--force` after one.
 - **Build directories** are the ones the commands in this guide and `host/README.md` use, so they stay warm between runs. The WSL build is in `~/.cache/drivelink/<worktree>/host-linux` inside the distro. That is on the Linux filesystem (no rename locks) and not in `/tmp`, which WSL keeps in RAM and loses when the idle VM stops. Delete it there when the worktree is gone.
 - **ccache.** On Windows the IDF export turns on ccache, so the first IDF build of a new worktree mostly reuses another worktree's objects. A cached object replays its warnings, so the warning scan still sees them.
@@ -224,6 +268,11 @@ Runs on every pull request and on pushes to `main` and `host_overhaul`. Each job
 - Host tests and host packages are separate jobs, so a test failure never hides
   the package's result and each job finishes sooner.
 - `host-linux-tests` runs `host-linux` in an `ubuntu:26.04` container with `tools/setup_linux.sh host` (Ubuntu's Qt 6.10, the GUI's API floor). It also covers the installed CMake packages and the Linux PTY serial path. Both host checks run CLI golden/replay and device-model CTest cases; Linux additionally checks SIGINT during testgen START. The installed consumer uses typed model headers with JSON package discovery disabled.
+- `host-linux-tests` renders the guide’s scenario list against vdev and
+  uploads `guide-screenshots`. `guide-preview` validates the guide, combines
+  its CI-built firmware and screenshots with the test-signed apt tree, and
+  uploads `guide-preview`. Tag builds also sign and deploy the combined
+  release via `apt-publish` and `guide-deploy`.
 - `agent` runs `agent` in an `ubuntu:26.04` container with `tools/setup_linux.sh agent` (no Qt), and uploads `agent-validation` on failure. `host-linux-tests` skips the `agent` ctest label, so each test runs once.
 - `ros` runs `ros` in the `ros:lyrical` and `ros:jazzy` images (a matrix) with `tools/setup_linux.sh ros`, and uploads `ros-<distro>-validation`.
 - `linux-package` runs `deb` in a matrix of `ubuntu:26.04` and `ubuntu:24.04`

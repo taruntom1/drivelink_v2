@@ -5,27 +5,19 @@ The working state of the user guide: the steps in [guide-steps.md](guide-steps.m
 ## Current
 
 - **Planned with the user on 2026-11-22.** The guide comes before the host overhaul's close-out (H6).
-- **Next step:** UG1.
+- **Next step:** UG2 after UG1 merges.
 - **Branches.** Guide steps branch from `origin/host_overhaul` and target `host_overhaul` until H6 merges it into `main`; H6 updates this line.
 
 ## Keeping this file short
 
 The rules of [host-status.md](host-status.md) apply ("Keeping this file short"). A fact goes where its subject lives: what a step does is in `guide-steps.md`, how to write a page is in `guide/CLAUDE.md` (from UG1 on), and how to build and check the site is in `docs/development.md`. The handoff is replaced, not appended. A note is deleted by the step that uses it.
 
-## Handoff for UG1
+## Handoff for UG2
 
-- Read the [decisions](guide-steps.md#decisions) and the [UG1 brief](guide-steps.md#ug1-site-build-and-publishing), then [apt packaging](../packaging/apt/README.md) and the `apt-repo`, `apt-publish` and `release` jobs in `.github/workflows/ci.yml`.
-- The guide takes over the Pages root from `packaging/apt/index.html`. The apt paths must not change, because v0.1.0 users and the H3d and H4d deferred rows use them.
-- **Inputs to reuse:**
-  - `host/gui/theme/tokens.json` and `gen_theme.py` for the theme;
-  - `host/gui/resources/` for the fonts, icons and their `SOURCES.md`;
-  - the GUI screenshot scenarios (`host/gui/README.md`, "Shell screenshots"; `remote_scenarios.py` for the Pi pages in UG3);
-  - the firmware package's `flash_args.json` and merged image (`tools/package_fw.py`);
-  - `protocol/defs/*.yaml` for UG3's generated reference.
-- **Traps:**
-  - Material for MkDocs reached end of life on 2026-11-05. That is one reason the guide has its own build.
-  - Web Serial works only in Chromium browsers on a secure origin. Pages serves HTTPS, but a local `serve` must use `localhost`.
-  - The host traps in [host-status.md](host-status.md) (WSL, Docker, the ROS containers) apply whenever a guide command is tried.
+- Read the [UG2 brief](guide-steps.md#ug2-start-here-concepts-and-the-pc-bench-journey), [writing rules](../guide/CLAUDE.md) and [site build commands](../docs/development.md#build-and-preview-the-user-guide). Add pages to `guide/navigation.json` and wire the PC choice on the home page to the full bench journey.
+- Use `guide/screenshots.json` and the [GUI scenarios](../host/gui/README.md#shell-screenshots). Try the desktop steps against vdev using the packaged app. UG1 installed the Windows v0.1.0 installer in Windows Sandbox and exercised the signed preview in both Ubuntu containers.
+- Confirm the reference parts list during UG2 planning. The first flash already has browser and esptool instructions. The [bench record](hardware-log.md) has the v0.1.0 flash results.
+- Before the first guide release tag, follow the [Pages setup](../packaging/apt/README.md#the-signing-key) to switch the source to GitHub Actions and allow deployment tags matching `v*`.
 
 ## Steps
 
@@ -33,7 +25,7 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 
 | Step | Content | Checks | Review | State | PR |
 |---|---|---|---|---|---|
-| UG1 | Site, build and `guide` check, theme, Pagefind, web flasher, screenshots in CI, publishing with the apt repository on tags; home, downloads, flasher pages, `guide/CLAUDE.md`. Depends on H4d | browser; bare board: web flash (ask first) | high; independent for CI and publish | planned | |
+| UG1 | Site, build and `guide` check, theme, Pagefind, web flasher, screenshots in CI, publishing with the apt repository on tags. Home, downloads, apt and flasher pages, plus `guide/CLAUDE.md`. Depends on H4d | Edge desktop and phone, keyboard, print and search. Bare board web flash, esptool and packaged GUI passed. | high, independent CI/publish review passed | in review | [#104](https://github.com/taruntom1/drivelink_v2/pull/104) |
 | UG2 | Start here, concepts and glossary, PC bench journey, reference build and wiring diagrams. Depends on UG1 | browser; GUI steps against vdev | high, self | planned | |
 | UG3 | Pi and ROS 2 journeys, generated reference, troubleshooting, About; user text moves out of the repository docs. Depends on UG2 | browser; commands in ROS containers and WSL | high, self | planned | |
 
@@ -57,4 +49,4 @@ Choices the plans don't cover or that change them, and that a later step must re
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-22 | all | The user planned the guide: a hand-built site (Markdown, our own Python build, Pagefind) at the Pages root beside unchanged apt paths, published only by tags. Its theme comes from the GUI tokens. It has a web flasher and screenshots rendered in CI. It covers the PC, Pi and ROS journeys and leaves out the CLI. Unverified hardware pages are written as finished, and the guide owns the user text. The work is split into UG1 to UG3 before H6. | Users have only the released artifacts and no ROS or embedded background, and each fact has one source. | yes (`guide-steps.md`) |
+| 2026-11-22 | UG1 | The user approved an Actions deployment from the verified release artifact, with the same tree mirrored to `gh-pages`. Each publish attempt names its own artifact and passes the name to the deploy job. | Preserve apt URLs and make release retries work with the artifact from the successful publish attempt. | yes (`guide-steps.md`) |
