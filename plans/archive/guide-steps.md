@@ -1,21 +1,20 @@
 # User guide steps
 
-The steps that build DriveLink's user guide, a website on this repository's
-GitHub Pages for people who use only the released artifacts. Planned with the
-user on 2026-11-22. Each step runs in one session with the `guide-step` skill
-and ends in one PR. The state and PR of every step are in
-[guide-status.md](guide-status.md); this file holds what each step must do. A
-brief is a scope, not a design: the step's plan settles the details and logs
-its internal choices.
+The archived implementation briefs for DriveLink's user guide, planned with
+the user on 2026-11-22. Each step ran in one session with the `guide-step`
+skill and ended in one PR. The results and PRs are in
+[guide-status.md](../guide-status.md). Each step's own plan settled
+implementation details and recorded its choices.
 
 ## Rules for every guide step
 
 - **Order.** UG1, UG2, UG3, each after the previous one merges. All three come before the host overhaul's close-out (H6 in [host-steps.md](host-steps.md)).
-- **Branches.** Branch from and target the integration branch named in [guide-status.md](guide-status.md) ("Branches"): `host_overhaul` until H6 merges it into `main`.
+- **Branches.** Guide steps targeted `host_overhaul`. See
+  [guide status](../guide-status.md) for the current branch policy.
 - **The reader.** Someone with only the released artifacts (the firmware zip, the Windows installer, the `.deb` files and the apt repository) and no ROS or embedded experience. The guide never asks them to clone, build or read the source, and it never names a repository path as something they need.
 - **Product, not guide.** A guide step changes the site, its build and publishing, the GUI screenshot scenarios and the docs. It does not change the firmware, the wire, the host programs or a safety rule. A product bug or gap found while writing goes into "Product issues found" in the status file and to the user. It is fixed by a host or HW PR. The guide describes the product as it is.
 - **Validation.** `python tools/validate.py full` passes before the PR, including the `guide` check from UG1 on. Read the result from `build/validate/summary.json` (`docs/development.md`, "JSON report").
-- **Commands are tried.** Every command the guide gives runs once from the released or CI-built packages before the PR: against vdev (behind the agent where the page uses one), in the ROS containers (`ros-deb-install`), or in WSL. Commands that need motors, a real IMU, the Pi or the robot are dry-run against mocks. Their real runs are already rows in "Deferred hardware checks" in [host-status.md](host-status.md), and HW corrects the guide if those runs differ.
+- **Commands are tried.** Every command the guide gives runs once from the released or CI-built packages before the PR: against vdev (behind the agent where the page uses one), in the ROS containers (`ros-deb-install`), or in WSL. Commands that need motors, a real IMU, the Pi or the robot are dry-run against mocks. Their real runs are already rows in "Deferred hardware checks" in [host-status.md](../host-status.md), and HW corrects the guide if those runs differ.
 - **Browser checks.** Every step checks the built site at desktop and phone width, in light and dark, by keyboard and in print, and searches for the new pages.
 - **Docs in the same PR.** `guide/CLAUDE.md` when a writing rule changes, `docs/development.md` for the build, check and commands, `packaging/apt/README.md` for any publishing change, and the repository docs whose user text moved into the guide.
 - **Review.** As the table says. An independent reviewer is a separate session or agent that did not write the diff, at the effort in the status file's "Models and effort".
@@ -85,7 +84,7 @@ Writing rules for `guide/CLAUDE.md`, refined in UG1's plan:
 - **Screenshots.** Taken from scenarios only, with alt text that says what matters in the picture.
 - **Safety.** A callout before anything that can move a motor.
 
-Checks: browser checks. Bare board: a first flash of the release image from the built site's flasher on Windows with Chrome or Edge, then a GUI connect. It erases the board, so ask the user first and restore "Board state" in [host-status.md](host-status.md) afterwards.
+Checks: browser checks. Bare board: a first flash of the release image from the built site's flasher on Windows with Chrome or Edge, then a GUI connect. It erases the board, so ask the user first and restore "Board state" in [host-status.md](../host-status.md) afterwards.
 
 Review: independent for the workflow and publish changes. The PR states the publish job's permissions and that the signing secret is read only by the apt signing step. Self for the site.
 
@@ -141,7 +140,7 @@ Scope:
   - an agent not found on the LAN, a token refused, or a lease held by another client;
   - the ROS component in `ERROR`, or DDS delivering nothing.
 - About: licences and notices, release notes, the source, and how to report issues.
-- The moves: `docs/pi-setup.md` and the user parts of the GUI, agent and bringup READMEs become links to the guide. Deferred rows in [host-status.md](host-status.md) that cite those docs point at the guide pages instead.
+- The moves: `docs/pi-setup.md` and the user parts of the GUI, agent and bringup READMEs become links to the guide. Deferred rows in [host-status.md](../host-status.md) that cite those docs point at the guide pages instead.
 
 Checks: browser checks. The Pi and ROS commands run from the installed packages in the ROS containers (`ros-deb-install`) or in WSL against vdev behind the agent.
 

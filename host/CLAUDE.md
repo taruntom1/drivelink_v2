@@ -1,7 +1,7 @@
 # Host rules
 
-Read the root rules, [host architecture](../plans/host-architecture.md) for the
-target, and [README.md](README.md) for builds/usage. Public service results,
+Read the root rules, [host architecture](../plans/host-architecture.md) for
+design decisions, and [README.md](README.md) for builds and usage. Public service results,
 descriptors, values and events are typed C++. JSON formatting/dependencies live
 in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
 

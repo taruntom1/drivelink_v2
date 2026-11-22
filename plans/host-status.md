@@ -1,15 +1,17 @@
 # Host status
 
-The working state of the host overhaul: the steps in [host-steps.md](host-steps.md), building [host-architecture.md](host-architecture.md) on the `host_overhaul` branch. **Every PR into `host_overhaul` updates this file.** A new session reads it first, and `/overhaul-step` does that for you.
+Track the bench board, open hardware checks, and H6 close-out here.
+The implementation briefs are in [the host step archive](archive/host-steps.md).
 
 The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decision log and hardware results are archived in [archive/firmware-status.md](archive/firmware-status.md). Its design record is [firmware-architecture.md](firmware-architecture.md).
 
 ## Current
 
-- **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step:** the user guide (UG1 to UG3, with the `guide-step` skill; state in [guide-status.md](guide-status.md)), then H6 closes out the host overhaul. HW runs as hardware arrives.
-- **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
-- **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
+- **Next step.** H6 promotion into `main`, then HW as hardware arrives.
+- **Branches.** H6 closes out on `host_overhaul`. After promotion, branch
+  from and target `main` for HW and guide fixes.
+- **Current release.** [DriveLink v0.1.1](https://github.com/taruntom1/drivelink_v2/releases/tag/v0.1.1)
+  supplies the release packages, user guide, and signed apt repository.
 
 ## Keeping this file short
 
@@ -19,9 +21,9 @@ Every session reads all of this file, so it holds only what has no other home.
 
   | Subject | Home |
   |---|---|
-  | What each step does, items left to step plans | `plans/host-steps.md` |
-  | The user guide: its steps, decisions and state | `plans/guide-steps.md`, `plans/guide-status.md` |
-  | Finished steps (T0 to H4b): rows, briefs, exceptions, settled decisions | `plans/archive/host-overhaul-done.md` |
+  | Host step briefs, dependencies and scope decisions | `plans/archive/host-steps.md` |
+  | The user guide: its steps, decisions and state | `plans/archive/guide-steps.md`, `plans/guide-status.md` |
+  | Finished steps (T0 to H4d): rows, briefs, exceptions, settled decisions | `plans/archive/host-overhaul-done.md` |
   | Design and its reasons | `plans/host-architecture.md`, `plans/firmware-architecture.md`, `plans/gui-design.md` |
   | Wire format, result and detail codes, diag codes | `docs/protocol/` |
   | Firmware and host rules, build and test commands | the scoped `CLAUDE.md` files, `docs/development.md`, `host/README.md` |
@@ -29,16 +31,16 @@ Every session reads all of this file, so it holds only what has no other home.
   | Hardware results | `plans/hardware-log.md` |
   | Firmware overhaul history | `plans/archive/firmware-status.md` |
 
-- **The handoff is replaced, not appended.** Write what the next step must know. Move anything a later step needs to "Notes for later steps", under that step.
-- **A note is deleted by the step that uses it.**
+- Keep the HW handoff current as checks pass or the bench changes.
 - **A decision log row stays while a later step needs it.** Once the plan, a doc or a README states it, the next session that edits this file removes the row.
 - **Board state** is one paragraph, replaced by the step that changes the board.
 
-## Handoff for H6 / HW
+## Handoff for HW
 
-- Read the [H6 brief](host-steps.md#h6-close-out) and [apt packaging](../packaging/apt/README.md). H6 waits for the user guide steps ([guide-status.md](guide-status.md)).
-- The next release will publish the ROS packages alongside the CLI, agent and GUI. Keep the four ROS manifests in sync with the root `VERSION` when bumping it.
-- The Pi setup and robot tests remain in the deferred rows. The [Pi guide](https://taruntom1.github.io/drivelink_v2/pi/prepare/) and [ROS 2 guide](https://taruntom1.github.io/drivelink_v2/ros/install/) cover packaged setup.
+- Run the deferred rows as their hardware becomes available. The
+  [Pi guide](https://taruntom1.github.io/drivelink_v2/pi/prepare/) and
+  [ROS 2 guide](https://taruntom1.github.io/drivelink_v2/ros/install/) cover
+  packaged setup. Correct any walkthrough that differs from the observed behavior.
 - **Traps:**
   - **WSL runs in mirrored networking** (the user's `.wslconfig`, 2026-11-20): WSL holds the PC's LAN address on eth1, localhost forwarding still works (the `benchRemote` setup), but the GUI on the same PC cannot find or reach a WSL agent's LAN address. See [docs/bench.md](../docs/bench.md), "Finding the agent (mDNS)".
   - **vdev serves one TCP client** and closes its TCP link on REBOOT: through the agent a TCP vdev reboot is device loss. A vdev on a PTY (`--pty`) keeps its port.
@@ -67,21 +69,13 @@ Every session reads all of this file, so it holds only what has no other home.
 
 ## Steps
 
-States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. A step session may split its step further and add rows here (for example H3a-1 and H3a-2). S0, S1, F1–F10 and LP are merged; see the archive. T0 to H4b are merged; their rows, model exceptions and settled decision rows are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
+Finished work is recorded in the [firmware](archive/firmware-status.md)
+and [host](archive/host-overhaul-done.md) archives.
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | merged | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
-| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | merged | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
-| H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step and UG3 (the user guide) | bare board: full smoke and GUI | high, self | planned | |
-| HW | Hardware campaign on `host_overhaul`: run every open row of "Deferred hardware checks"; firmware fixes go to `host_overhaul` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
-
-## Notes for later steps
-
-Each note is deleted by the step that uses it.
-
-- **H6.** The `vX.Y.Z` tag's `release` job publishes the firmware zip, the installer and 26 `.deb` files, then `apt-publish` replaces `gh-pages`. v0.1.0 is already taken, so H6 bumps `VERSION` first. Release installers come from CI (open-source Qt); the local Qt carries an educational licence file.
-- **H6.** `drivelink-cli` has an unversioned `Replaces: drivelink` (H3c) so H2g's single package upgrades in place: H2g's and H3c's builds share `0.1.0+g<sha>`, so no version bound separates them. Once a released version is out, it may become `Replaces`/`Breaks: drivelink (<< that version)`.
+| H6 | Cleanup, docs and promotion into `main` | reused prior bare-board and installed-GUI results | self | in review | [#108](https://github.com/taruntom1/drivelink_v2/pull/108) |
+| HW | Run every open deferred check and fix issues found | motors, IMU, Pi, robot | per fix | planned | |
 
 ## Deferred hardware checks
 
@@ -115,26 +109,14 @@ A check that needs motors, a real IMU, the Pi or the robot doesn't block its ste
 
 UG1 (2026-11-22) left the bare board on released normal firmware `0.1.0` (ELF build id `cfb947195b71f8d1`), running and booting from `ota_0`. Device id `1cdbd446ff38`, empty saved name, factory control and sensor loops at 1000/100 Hz, no added instances, disarmed and no active faults. The user approved leaving the board on the release after the flash checks. The CH343 (busid 1-1) is bound for usbipd and the WSL user is in `dialout`, so `tools/wsl_serial.py run` can lend it to the agent. See [bench ports and traps](../docs/bench.md).
 
-## Models and effort
-
-- **Plan and build** every step in one session on **Opus 5.5 at high effort**. The session that wrote the plan writes the code; there is no implementation subagent and no model switch after the plan is approved.
-- **Review.** The session reviews its own diff. An independent review agent on **Opus** at the step's review effort is required where the "Review" column of [host-steps.md](host-steps.md) says so (concurrency, wire or persistence, arm/disarm, command paths, lease and access), and also when another step's diff touches those paths or is large. The PR says which was done and why.
-- **Hardware checks** on the bare bench board are run by the session after the review. Checks needing motors, a real IMU, the Pi or the robot are deferred (above). A check that needs only the PC or a Pi and can't be run by the session is run by the user from a script, and the step waits in `waiting on hardware`.
-- **Haiku** is used only for search and read-only helper agents (finding code, reading CI logs). It never writes firmware or host code.
-- **Max effort** isn't used by default. Use it only if a review on a step keeps missing problems that show up later, and log that in the decision log.
-- **Changing a step's review effort.** If a step turns out harder (or easier) than its row says, change it in the same PR and log the reason.
-- **Per-step exceptions** are approved by the user in the step plan and recorded here until the step merges. The usual pattern (H2e-3 to H3b-2): Opus 5.5 (high) plans, writes the contracts, integrates, fixes and reviews; Sonnet 5.5 subagents (high) build parts from written contracts, reviewed by the session. Past exceptions are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
-- **H4c exception (user-approved 2026-11-21).** This Codex session planned, built and tested H4c. GPT-6.2 Sol reviewed the recovery and launch paths independently at high effort.
-- **H4d exception (user-approved 2026-11-21).** One Codex session planned, built, tested and self-reviewed H4d.
-
 ## Decision log
 
-Choices that the plans don't cover or that change them, and that a later step must respect. Anything that touches the wire protocol, a safety rule or a later phase is decided by the user first, and the plan is updated in the same PR. Firmware-era rows are in the archive, and finished host rows in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
+Close-out decisions that affect the HW handoff. Earlier decisions are in the
+[host overhaul archive](archive/host-overhaul-done.md).
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
-| 2026-11-21 | H4c | The user approved the launch-configured recovery controller list and an independent Sol review. The example starts with drive inactive. The controller YAML supplies wheel separation. Recovery checks for outstanding claims before activating and stops only its attempted controllers on failure. It requests INACTIVE even when a controller or hardware reply is uncertain. | Keep the startup and fault paths disarmed until explicit operator action and verify rollback when the manager partially applies a request. | yes (H4c brief and bringup guide) |
-| 2026-11-21 | H4d | Stage the shared CMake files and prefetch the pinned sources for Bloom. Use debhelper compatibility 13 in the generated metadata and publish only the four primary ROS packages per distro and architecture. | Build offline after dependency preparation and keep the signed inventory consistent with the package matrix. | yes (H4d brief and apt packaging guide) |
+| 2026-11-23 | H6 | The user approved Codex self-review, promotion with HW still open, and retaining v0.1.1. H6 uses the [prior hardware results](hardware-log.md) for bare-board and installed-GUI coverage. | H6 changes documentation and the CI branch trigger. The HW scripts and pass criteria carry forward. | yes ([H6 brief](archive/host-steps.md#h6-close-out)) |
 
 ## Hardware results
 

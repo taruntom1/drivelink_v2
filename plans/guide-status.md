@@ -1,22 +1,27 @@
 # User guide status
 
-The working state of the user guide: the steps in [guide-steps.md](guide-steps.md). **Every guide PR updates this file.** A new session reads it first, and the `guide-step` skill does that for you. Hardware state, the bench board and deferred hardware checks stay in [host-status.md](host-status.md), and hardware results go to [hardware-log.md](hardware-log.md).
+The guide shipped in v0.1.1. Its implementation briefs are in
+[the guide step archive](archive/guide-steps.md). See
+[guide writing rules](../guide/CLAUDE.md) for maintenance and
+[host status](host-status.md) for the open hardware checks.
 
 ## Current
 
-- **Planned with the user on 2026-11-22.** The guide comes before the host overhaul's close-out (H6).
-- **Next step:** H6 closes out the host overhaul.
-- **Branches.** Guide steps branch from `origin/host_overhaul` and target `host_overhaul` until H6 merges it into `main`; H6 updates this line.
+- **Branches.** After H6 promotion, branch from and target `main` for guide fixes.
+- **Publishing.** Release tags publish the guide and signed apt repository
+  through [GitHub Actions](../packaging/apt/README.md#how-it-is-built-and-published).
 
 ## Keeping this file short
 
-The rules of [host-status.md](host-status.md) apply ("Keeping this file short"). A fact goes where its subject lives: what a step does is in `guide-steps.md`, how to write a page is in `guide/CLAUDE.md` (from UG1 on), and how to build and check the site is in `docs/development.md`. The handoff is replaced, not appended. A note is deleted by the step that uses it.
+Keep product issues and decisions affecting future guide work here. Build
+and check instructions live in [development](../docs/development.md).
 
-## Handoff for H6
+## Hardware follow-up
 
-- Read the [host handoff](host-status.md#handoff-for-h6--hw) and the [H6 brief](host-steps.md#h6-close-out). Update the guide's branch policy when the overhaul merges into `main`.
-- The [deferred hardware checks](host-status.md#deferred-hardware-checks) cover the Pi GPIO UART, discovery from a second computer, the physical IMU and motors, and floor driving. Update the guide if the real runs differ from the package walkthroughs.
-- Release tags publish the guide and signed apt repository through [GitHub Actions](../packaging/apt/README.md#how-it-is-built-and-published).
+The [deferred hardware checks](host-status.md#deferred-hardware-checks)
+cover the Pi GPIO UART, discovery from a second computer, the physical IMU
+and motors, and floor driving. Update the guide if those runs differ from
+the package walkthroughs.
 
 ## Steps
 
@@ -35,16 +40,9 @@ Bugs or gaps in the product found while writing the guide. Each one is told to t
 | Date | Step | Issue | Where the guide works around it |
 |---|---|---|---|
 
-## Models and effort
-
-- **One session per step.** It plans and builds the step, and the user approves the plan before any file changes. The session that wrote the plan writes the code.
-- **Effort.** High. The status table's "Review" column says when an independent reviewer is required. That reviewer is a separate session or agent that did not write the diff, also at high effort.
-- **Current arrangement (user, 2026-11-22).** The steps run in Codex. GPT-6.2 Sol reviews UG1's workflow and publish changes independently. The skill itself names no model, so changing this line is enough.
-- **Helpers.** Read-only helpers may search and read. Writing helpers build only parts with a written contract, and the session reviews what they write.
-
 ## Decision log
 
-Choices the plans don't cover or that change them, and that a later step must respect. Anything that touches a decision in [guide-steps.md](guide-steps.md), the wire, a safety rule or the release process is decided by the user first, and the plan is updated in the same PR.
+Decisions that affect later guide maintenance.
 
 | Date | Step | Decision | Why | Plan updated |
 |---|---|---|---|---|
