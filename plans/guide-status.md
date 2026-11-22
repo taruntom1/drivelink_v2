@@ -7,7 +7,7 @@ The guide shipped in v0.1.1. Its implementation briefs are in
 
 ## Current
 
-- **Branches.** After H6 promotion, branch from and target `main` for guide fixes.
+- **Branches.** Branch from and target `main` for guide fixes.
 - **Publishing.** Release tags publish the guide and signed apt repository
   through [GitHub Actions](../packaging/apt/README.md#how-it-is-built-and-published).
 

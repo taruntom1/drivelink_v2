@@ -7,9 +7,8 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 
 ## Current
 
-- **Next step.** H6 promotion into `main`, then HW as hardware arrives.
-- **Branches.** H6 closes out on `host_overhaul`. After promotion, branch
-  from and target `main` for HW and guide fixes.
+- **Next step.** HW as hardware arrives.
+- **Branches.** Branch from and target `main` for HW and guide fixes.
 - **Current release.** [DriveLink v0.1.1](https://github.com/taruntom1/drivelink_v2/releases/tag/v0.1.1)
   supplies the release packages, user guide, and signed apt repository.
 
@@ -74,7 +73,7 @@ and [host](archive/host-overhaul-done.md) archives.
 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
-| H6 | Cleanup, docs and promotion into `main` | reused prior bare-board and installed-GUI results | self | in review | [#108](https://github.com/taruntom1/drivelink_v2/pull/108) |
+| H6 | Cleanup, docs and promotion into `main` | reused prior bare-board and installed-GUI results | self | merged | [#108](https://github.com/taruntom1/drivelink_v2/pull/108) |
 | HW | Run every open deferred check and fix issues found | motors, IMU, Pi, robot | per fix | planned | |
 
 ## Deferred hardware checks
