@@ -7,7 +7,7 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 ## Current
 
 - **Host re-planned (2026-11-14).** [host-architecture.md](host-architecture.md) is the design record and [host-steps.md](host-steps.md) holds a brief per step and the items left to step plans. Order: library, GUI in local mode, agent and remote mode, ROS. This file replaced `overhaul-status.md` the same day. [PR #67](https://github.com/taruntom1/drivelink_v2/pull/67).
-- **Next step** H6 closes out the host overhaul after H4d merges. HW runs as hardware arrives.
+- **Next step:** the user guide (UG1 to UG3, with the `guide-step` skill; state in [guide-status.md](guide-status.md)), then H6 closes out the host overhaul. HW runs as hardware arrives.
 - **Branches.** `main` is frozen until `host_overhaul` merges (H6). `legacy-final` is on `7a4d693`. Every H step and HW fix branches from `origin/host_overhaul` and targets it.
 - **No motors, IMU or Pi on the bench.** Checks that need them are deferred: each step writes its script now and adds a row to "Deferred hardware checks". No step waits for them.
 
@@ -20,6 +20,7 @@ Every session reads all of this file, so it holds only what has no other home.
   | Subject | Home |
   |---|---|
   | What each step does, items left to step plans | `plans/host-steps.md` |
+  | The user guide: its steps, decisions and state | `plans/guide-steps.md`, `plans/guide-status.md` |
   | Finished steps (T0 to H4b): rows, briefs, exceptions, settled decisions | `plans/archive/host-overhaul-done.md` |
   | Design and its reasons | `plans/host-architecture.md`, `plans/firmware-architecture.md`, `plans/gui-design.md` |
   | Wire format, result and detail codes, diag codes | `docs/protocol/` |
@@ -35,7 +36,7 @@ Every session reads all of this file, so it holds only what has no other home.
 
 ## Handoff for H6 / HW
 
-- Read the [H6 brief](host-steps.md#h6-close-out) and [apt packaging](../packaging/apt/README.md).
+- Read the [H6 brief](host-steps.md#h6-close-out) and [apt packaging](../packaging/apt/README.md). H6 waits for the user guide steps ([guide-status.md](guide-status.md)).
 - The next release will publish the ROS packages alongside the CLI, agent and GUI. Keep the four ROS manifests in sync with the root `VERSION` when bumping it.
 - The Pi setup and robot tests remain in the deferred rows. The [Pi guide](../docs/pi-setup.md#7-ros-2-bringup-on-the-pi) covers both the apt and source install.
 - **Traps:**
@@ -71,8 +72,8 @@ States: `planned`, `in progress`, `waiting on hardware`, `in review`, `merged`. 
 | Step | Content | Hardware check | Review effort | State | PR |
 |---|---|---|---|---|---|
 | H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test. Depends on H4b | vdev; deferred: robot driving | high, independent | merged | [#98](https://github.com/taruntom1/drivelink_v2/pull/98) |
-| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | in review | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
-| H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step | bare board: full smoke and GUI | high, self | planned | |
+| H4d | ROS `.deb` packages (Bloom), Lyrical and Jazzy, amd64 and arm64, in the apt repository. Depends on H4c | containers passed on amd64; deferred: Pi | high, self | merged | [#99](https://github.com/taruntom1/drivelink_v2/pull/99) |
+| H6 | Cleanup, docs, merge `host_overhaul` into `main`. Depends on every H step and UG3 (the user guide) | bare board: full smoke and GUI | high, self | planned | |
 | HW | Hardware campaign on `host_overhaul`: run every open row of "Deferred hardware checks"; firmware fixes go to `host_overhaul` as PRs | yes: motors, IMU, Pi, robot | high | planned | |
 
 ## Notes for later steps

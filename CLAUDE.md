@@ -2,7 +2,8 @@
 
 DriveLink is an ESP32-S3 motion stack with a self-describing device and generic
 host. Read [plans/host-status.md](plans/host-status.md) first for current
-work, handoff and hardware state.
+work, handoff and hardware state. User guide work (the Pages website) reads
+[plans/guide-status.md](plans/guide-status.md) instead.
 
 ## Read for the task
 
@@ -37,6 +38,9 @@ merges into `main`. Architecture targets and decisions live in `plans/`.
 - Start each step with `/overhaul-step`; one session and one PR per step.
   Branch from `origin/host_overhaul`, target `host_overhaul`, never frozen `main`.
   HW firmware fixes use the same base. Every PR updates status, decisions and handoff.
+- User guide steps (UG1 to UG3, before H6) start with the `guide-step` skill
+  instead and follow [plans/guide-steps.md](plans/guide-steps.md); their
+  state is in [plans/guide-status.md](plans/guide-status.md).
 - Log small internal choices in the status decision log. Ask the user before
   changing the wire protocol, a safety rule or a later step; update the plan too.
 - The session plans, builds and reviews its step. Model/effort and independent

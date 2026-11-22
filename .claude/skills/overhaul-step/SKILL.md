@@ -1,6 +1,6 @@
 ---
 name: overhaul-step
-description: Runs one step of the DriveLink host overhaul from a fresh branch to a pull request into host_overhaul - orient, plan for the user's approval, build, validate, review, hardware check, status update and PR. Use whenever the user asks to start, continue, resume or do the next overhaul step, names a step id from plans/host-status.md (T0, H1a to H6, HW, or a split row such as H3a-1), or asks to implement the next part of the host plan, even without the word "overhaul". Takes an optional step id; without one it picks the next ready step.
+description: Runs one step of the DriveLink host overhaul from a fresh branch to a pull request into host_overhaul - orient, plan for the user's approval, build, validate, review, hardware check, status update and PR. Use whenever the user asks to start, continue, resume or do the next overhaul step, names a step id from plans/host-status.md (T0, H1a to H6, HW, or a split row such as H3a-1), or asks to implement the next part of the host plan, even without the word "overhaul". Takes an optional step id; without one it picks the next ready step. User guide steps (UG1 to UG3) use the guide-step skill instead.
 ---
 
 # Run one overhaul step

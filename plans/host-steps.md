@@ -28,7 +28,7 @@ logs its internal choices.
 | H4b | Command path: command interfaces, mode switch, ARM/DISARM, `write()`, `ERROR` on a disarm | H4a | vdev; deferred: robot (wheels off the ground) | independent |
 | H4c | `drivelink_bringup`: example diff-drive + IMU, diagnostics node with `ack_fault` and `recover`, full-loop launch test | H4b | vdev; deferred: robot driving | independent |
 | H4d | ROS `.deb` packages (bloom) for Lyrical and Jazzy, amd64 and arm64, in the apt repository | H4c | container; deferred: Pi | self |
-| H6 | Cleanup, docs, merge `host_overhaul` into `main` | all H steps | bare board: full smoke and GUI | self |
+| H6 | Cleanup, docs, merge `host_overhaul` into `main` | all H steps, the user guide (UG3 in [guide-steps.md](guide-steps.md)) | bare board: full smoke and GUI | self |
 | HW | Hardware campaign: every open deferred row, whenever hardware arrives | — | motors, IMU, Pi, robot | per fix |
 
 T0 to H3c are merged. Their briefs, overview rows and the items their plans settled are in [archive/host-overhaul-done.md](archive/host-overhaul-done.md).
@@ -131,9 +131,9 @@ Review: self.
 
 ## H6 Close-out
 
-**Depends on** every H step. Like F10:
+**Depends on** every H step and the last user guide step ([guide-steps.md](guide-steps.md)). Like F10:
 
-- Remove stale text, archive finished step plans, bring `host/CLAUDE.md`, the READMEs and `docs/` in line with the code.
+- Remove stale text, archive finished step plans, bring `host/CLAUDE.md`, the READMEs, `docs/` and the user guide in line with the code.
 - Remove the temporary "Host overhaul in progress" section of the root `CLAUDE.md` and the overhaul workflow that only served it, as agreed with the user then.
 - Bare board: the full smoke set and the installed GUI.
 - After merge: merge `host_overhaul` into `main`, bump `VERSION` (and the `package.xml` files) past 0.1.0 and tag `vX.Y.Z` from it. v0.1.0 was tagged early on `host_overhaul` after H3d (user decision 2026-11-21) and is the first release and apt publish. Whether open HW rows must pass first is decided with the user at that point.
@@ -142,4 +142,4 @@ Review: self.
 
 ## HW Hardware campaign
 
-Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H3d, H4d) and the robot (H4a, H4b, H4c).
+Unchanged: it runs every open row of "Deferred hardware checks" in [host-status.md](host-status.md) whenever hardware arrives, pausing the step in progress at a clean point. A row that finds the user guide wrong (wiring, polarity, a step, a value) corrects the guide in the same PR. Host steps add rows for the GUI with a real motor (H2e) and a real IMU (H2f), the Pi (H3c, H3d, H4d) and the robot (H4a, H4b, H4c).
