@@ -5,6 +5,7 @@
 // confirmation, history, client list, refusals and device loss; and the
 // Agent tab's "Found on the network" (H3b-2) against a fake backend.
 #include "app_settings.hpp"
+#include "safety_keys.hpp"
 #include "test_support.hpp"
 #include "remote_model.hpp"
 #include "style.hpp"
@@ -706,6 +707,47 @@ Window { width: 800; height: 1200; visible: true
         QVERIFY(waitFor([&]{return !c.lease()["mine"].toBool() && c.armState()==0;},15000));
         QVERIFY(c.commandGroups().empty());QVERIFY(!c.armEnabled());
         QCOMPARE(c.lease()["chip"].toInt(),int(LeaseChip::Available));QVERIFY(!c.lease()["revoked"].toBool());
+    }
+    void disconnectFromAgent() {
+        initShellResources();
+        AgentFixture f;Window driver("gui-driver"),viewer("gui-viewer");
+        QVERIFY(driver.open(f));QVERIFY(viewer.open(f));
+        AppSettings settings(viewer.dir.filePath("app.ini"));
+        SafetyKeys keys;
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&viewer.c);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.rootContext()->setContextProperty("appSettings",&settings);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        const auto click=[&](QQuickItem *item) {
+            QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,item->mapToScene({item->width()/2,item->height()/2}).toPoint());
+        };
+        auto *action=visualChild(window->contentItem(),"navDisconnect");QVERIFY(action);
+        auto *status=visualChild(window->contentItem(),"statusBar");QVERIFY(status);
+        QCOMPARE(status->property("connection").toString(),QString("%1 · base").arg(f.address));
+        auto *dialog=window->findChild<QObject *>("disconnectDialog");QVERIFY(dialog);
+
+        driver.c.takeLease();QVERIFY(waitFor([&]{return driver.c.armEnabled();},15000));
+        driver.c.arm();QVERIFY(waitFor([&]{return viewer.c.armState()==1 && viewer.c.lease()["holderName"]=="gui-driver";}));
+        QVERIFY(!viewer.c.unsaved() && !viewer.c.controllingMotion());
+        QVERIFY(action->isEnabled() && action->isVisible());click(action);
+        QVERIFY(waitFor([&]{return !viewer.c.linked() && !viewer.c.closing();}));
+        QVERIFY(!dialog->property("opened").toBool());
+        QCOMPARE(driver.c.armState(),1);QVERIFY(driver.c.lease()["mine"].toBool());
+
+        QVERIFY(viewer.open(f));
+        viewer.c.takeLease();QVERIFY(waitFor([&]{return viewer.c.armEnabled();},15000));
+        viewer.c.arm();QVERIFY(waitFor([&]{return viewer.c.armState()==1 && driver.c.armState()==1;}));
+        QVERIFY(viewer.c.controllingMotion());
+        click(action);QVERIFY(waitFor([&]{return dialog->property("opened").toBool();}));
+        QVERIFY(dialog->property("text").toString().contains("agent disarms the device"));
+        const auto popup=dialog->property("contentItem").value<QQuickItem *>();
+        auto *confirm=visualChild(popup,"acceptButton");QVERIFY(confirm);
+        click(confirm);
+        QVERIFY(waitFor([&]{return !viewer.c.linked() && !viewer.c.closing();}));
+        QVERIFY(waitFor([&]{return driver.c.armState()==0 && driver.c.lease()["holderId"].toInt()==0;}));
     }
     void revocationAndObserverDisarm() {
         AgentFixture f;Window a("gui-a"),b("gui-b");

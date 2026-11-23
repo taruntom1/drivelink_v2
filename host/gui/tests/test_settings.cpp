@@ -59,8 +59,8 @@ struct ShellHarness {
     QQuickItem *item(const char *name) {return visualChild(window->contentItem(),name);}
     int page() {return window->property("page").toInt();}
     bool shown(const char *name) {auto *i=item(name);return i && i->isVisible();}
-    bool click(const char *name) {
-        auto *i=item(name);
+    bool click(const char *name) {return click(item(name));}
+    bool click(QQuickItem *i) {
         if(!i || !i->isVisible() || !i->isEnabled()) {return false;}
         QTest::qWait(50); // positioners lay out on polish
         QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,i->mapToScene({i->width()/2,i->height()/2}).toPoint());
@@ -244,6 +244,73 @@ private slots:
         QVERIFY(h.item("navSettings")->isEnabled());QVERIFY(!h.item("navDevice")->isEnabled());
         QVERIFY(h.click("settingsClose"));
         QCOMPARE(h.page(),0);QVERIFY(h.shown("connectPage"));
+    }
+    void disconnectFromSettings() {
+        Fixture fixture;
+        ShellHarness h;QVERIFY(h.open());
+        QVERIFY(!h.shown("navDisconnect"));
+        h.connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return h.connection.armEnabled();}));
+        QVERIFY(!h.connection.unsaved());
+        QVERIFY(h.click("navSettings"));QCOMPARE(h.page(),4);
+        auto *action=h.item("navDisconnect");QVERIFY(action && action->isVisible());
+        QVERIFY(action->mapToScene({0,0}).y()<h.item("navSettings")->mapToScene({0,0}).y());
+        QVERIFY(!action->property("checked").toBool());
+        fixture.command("slow 150");
+        QVERIFY(h.click(action));QVERIFY(h.connection.closing());
+        QCOMPARE(h.item("statusBar")->property("reason").toString(),QString("Disconnecting…"));
+        QVERIFY(!action->isEnabled());
+        QVERIFY(waitFor([&]{return h.shown("connectPage") && !h.connection.linked() && !h.connection.closing();}));
+        QVERIFY(!h.shown("navDisconnect"));QCOMPARE(h.page(),0);
+    }
+    void disconnectAndQuitWarnings() {
+        Fixture fixture;
+        ShellHarness h;QVERIFY(h.open());
+        auto *dialog=h.window->findChild<QObject *>("disconnectDialog");QVERIFY(dialog);
+        const auto button=[&](const char *name) {
+            return visualChild(dialog->property("contentItem").value<QQuickItem *>(),name);
+        };
+        const auto opened=[&]{return dialog->property("opened").toBool();};
+        const auto message=[&]{return dialog->property("text").toString();};
+        QSignalSpy disconnected(&h.connection,&Connection::disconnected);
+        QSignalSpy quit(&h.engine,&QQmlEngine::quit);
+        h.connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return h.connection.armEnabled();}));
+        h.connection.arm();QVERIFY(h.connection.controllingMotion());
+        QVERIFY(waitFor([&]{return h.connection.armState()==1;}));
+        QVERIFY(h.click("navDisconnect"));QVERIFY(waitFor(opened));
+        QVERIFY(dialog->property("destructive").toBool());
+        QVERIFY(message().contains("sends DISARM"));QVERIFY(!message().contains("Unsaved changes"));
+        QVERIFY(h.click(button("rejectButton")));QVERIFY(!opened());
+        QCOMPARE(disconnected.count(),0);QCOMPARE(h.connection.armState(),1);
+
+        h.connection.rename("disconnect-test");
+        QVERIFY(waitFor([&]{return h.connection.unsaved() && h.connection.deviceName()=="disconnect-test";}));
+        QVERIFY(!h.window->close());QVERIFY(waitFor(opened));
+        QCOMPARE(dialog->property("title").toString(),QString("Quit DriveLink?"));
+        QCOMPARE(dialog->property("acceptText").toString(),QString("Quit"));
+        QVERIFY(message().contains("sends DISARM"));QVERIFY(message().contains("Unsaved changes"));
+        QVERIFY(h.click(button("rejectButton")));QVERIFY(!opened());
+        QCOMPARE(disconnected.count(),0);QCOMPARE(quit.count(),0);
+
+        QVERIFY(h.click("navDisconnect"));QVERIFY(waitFor(opened));
+        QVERIFY(h.shown("pageScrim"));
+        QVERIFY(h.click("disarmButton"));
+        QVERIFY(waitFor([&]{return h.connection.armState()==0;}));
+        QVERIFY(opened());QVERIFY(!dialog->property("destructive").toBool());
+        QVERIFY(message().contains("Unsaved changes"));
+        QVERIFY(h.click(button("acceptButton")));
+        QVERIFY(waitFor([&]{return disconnected.count()==1 && h.shown("connectPage");}));
+        QCOMPARE(quit.count(),0);
+
+        // The staged name remains unsaved on the device after reconnecting.
+        h.connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return h.connection.ready() && h.connection.unsaved();}));
+        QCOMPARE(h.connection.deviceName(),QString("disconnect-test"));
+        QVERIFY(!h.window->close());QVERIFY(waitFor(opened));
+        QVERIFY(h.click(button("acceptButton")));
+        QVERIFY(waitFor([&]{return disconnected.count()==2 && quit.count()==1;}));
+        QVERIFY(!h.connection.linked());
     }
 };
 

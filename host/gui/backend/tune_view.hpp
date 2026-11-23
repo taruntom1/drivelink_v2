@@ -115,6 +115,7 @@ class TuneView final : public QObject, public PlotSource {
     Q_PROPERTY(QVariantMap recovery READ recovery NOTIFY changed)
     // H2e-3. Plant identification (IdentifyView).
     Q_PROPERTY(QObject* identify READ identify CONSTANT)
+    Q_PROPERTY(bool identifying READ identifying NOTIFY changed)
 public:
     // Writes live params (one batch, one loop); `done` gets "" or the refusal.
     using Writer=std::function<void(std::vector<Ref>, std::vector<uint32_t>, std::function<void(QString)>)>;

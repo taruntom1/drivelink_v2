@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Templates as T
 
-// Figma Tooltip: Caption text on a raised surface, 500 ms delay, centred above
-// its parent and wrapped at 320 px.
+// Figma Tooltip: Caption text on a raised surface, 500 ms delay, above or to
+// the right of its parent and wrapped at 320 px.
 T.ToolTip {
     id: control
 
-    x: parent ? (parent.width - implicitWidth) / 2 : 0
-    y: -implicitHeight - Theme.space4
+    property bool beside: false
+    x: !parent ? 0 : beside ? parent.width + Theme.space8 : (parent.width - implicitWidth) / 2
+    y: beside && parent ? (parent.height - implicitHeight) / 2 : -implicitHeight - Theme.space4
     implicitWidth: Math.min(320, implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: implicitContentHeight + topPadding + bottomPadding
     topPadding: Theme.space4

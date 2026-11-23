@@ -52,6 +52,15 @@ result. Forced close without confirmation preserves an uncertain outcome.
 ARM requires current complete metadata, status and command-group readiness;
 generation/fence checks and compensating DISARM guard late ARM completions.
 
+**Disconnect.** The connected rail shows Disconnect above Settings. It
+returns to Connect after teardown. Closing the window uses the same warnings
+and quits after teardown. A single Cancel/Disconnect or Cancel/Quit dialog
+lists every applicable warning. `controllingMotion` covers this GUI's ARM in
+flight or active control. A remote observer can leave while the lease holder
+keeps driving. Unsaved configuration stays on the device until it reboots.
+The status bar shows Disconnecting… during teardown and keeps DISARM available
+while there is a link.
+
 Direct connections allocate only free command slots and running, discovered
 inputs, split by loop and the device's entry/payload limits. With no inputs,
 an empty group on a running loop supplies keepalives. Safe mode, occupied
@@ -529,13 +538,15 @@ gains:
      controller stays held. This happens before the capture finishes.
   5. The previous mode is written back. A local block (a configuration action
      running) delays that write; it is never given up. Then the hold ends.
-     Boot and close write nothing back; a lost link or a Disconnect says the
-     mode may still be set.
+     An unexpected boot or link loss can interrupt the write-back. A lost
+     link reports that the mode may still be set.
 
   Until the write-back ends:
   - the gains, mode, Restore, Revert, Run, Auto re-run and Open wait, as do
     Save, Revert, reboots, Rename, the firmware update and the Firmware
     card's Confirm and Roll back (a Save would keep the open-loop mode);
+  - Disconnect is disabled with an explanation, and a window-close attempt
+    shows a notice. Try again after cleanup. Stop and DISARM stay available.
   - the tabs stay where they are.
 
   Identification never counts as the Run that Auto re-run needs.
