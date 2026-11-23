@@ -12,10 +12,11 @@ New modules follow [the checklist](../../docs/adding-a-module.md).
   and IDF dependencies in CMake; public dependencies use `REQUIRES`.
 - `core_os` backends use `backend/idf/` and `backend/native/`, selected by
   sources/include dirs, never `#ifdef`. Native-only filesystem helpers stay
-  in the native backend; default test storage remains in-memory.
-- Core and pure module logic use only `core_os`, protocol and std: no IDF/RTOS
-  headers, `sdkconfig.h`, `CONFIG_*` or `esp_err_t`. Supply Kconfig via
-  `CoreConfig` at the IDF seam; cross-platform errors use `core_os::Err`.
+  in the native backend.
+- Core and pure module logic must build natively and may reuse platform-independent
+  components. Keep hardware access, IDF/RTOS headers, `sdkconfig.h`, `CONFIG_*`
+  and `esp_err_t` in the platform layer. Pass Kconfig settings to core through
+  `CoreConfig` and use `core_os::Err` for cross-platform errors.
 - Pure core reports through the `core_os` diagnostic sink. HALs, `rtos_util`
   and `pid` return errors without depending on `diag`; their caller reports.
 - Deployment tunables belong in Kconfig with valid ranges; wire/math constants
@@ -27,8 +28,8 @@ New modules follow [the checklist](../../docs/adding-a-module.md).
 - Hardware owners are noncopyable; allow moves only when safe. Expose readiness
   and the initialization error when construction can fail. Stop/reset are
   explicit and idempotent. Caller synchronizes writes unless documented otherwise.
-- Allocate scarce peripherals through mutex-protected central pools with hard
-  limits; release in reverse acquisition order, including partial failures.
+- Enforce hardware limits and prevent conflicting claims on scarce peripherals.
+  Release acquired resources in reverse order, including after partial failures.
 - Instance actions go through `Core::runAction`; paused actions require an
   acknowledged pause. Their fixed buffers must not escape the call.
 - Diagnostic instance identity is the explicit instance argument, never a

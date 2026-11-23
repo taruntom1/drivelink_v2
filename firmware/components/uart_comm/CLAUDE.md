@@ -5,15 +5,15 @@ The [API README](README.md), [firmware rules](../../CLAUDE.md) and
 
 - Share encoding/CRCs/scanning with `protocol/`; driver events only wake RX.
   Keep stale-frame timing and logging in Parser, not the clock-free Scanner.
-- Never flush RX on a rejected frame: valid following frames may be buffered.
-  Reject bad HCRC/length before awaiting payload, then rescan one byte later.
+- Preserve buffered RX bytes after a frame rejection so the scanner can recover
+  valid frames already received.
 - Keep TX allocation-free after setup: preallocated command buffers and
-  latest-wins stream slots. `sendData` uses a single try-lock; busy is
-  `ESP_ERR_TIMEOUT`/`stream_skipped`, never a wait. Pool exhaustion is `ESP_ERR_NO_MEM`.
-- Time stamping accepts only exact time-v1 replies. Pool entries own stamp
-  metadata before publication and clear it before reuse; TX patches timestamp/CRC
-  immediately before driver submission. No deferred callbacks/caller pointers,
-  ping-specific UART drain or patching ordinary frames. Driver/FIFO backlog
-  remains uncertainty; see [time.md](../../../docs/protocol/time.md).
+  latest-wins stream slots. `sendData` makes one bounded attempt without waiting
+  or retrying. A busy slot increments `stream_skipped` and returns `ESP_ERR_TIMEOUT`.
+  Command pool exhaustion returns `ESP_ERR_NO_MEM`.
+- Each command pool entry owns its timestamp metadata before publication to TX.
+  Clear the metadata before reuse. Do not retain caller pointers or defer callbacks
+  for timestamping. Follow the [time protocol](../../../docs/protocol/time.md)
+  for reply eligibility and timestamp handling.
 - HIL tests are in `firmware/test/uart_comm/`; see
   [test rules](../../test/CLAUDE.md).

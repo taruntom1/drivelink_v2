@@ -1,7 +1,6 @@
 # Firmware rules
 
-Read the root rules and the scoped files in `components/`, `main/` and `test/`
-before editing those areas. Paths in backticks are repo-relative; ESP-IDF is 5.5.2.
+Paths in backticks are repo-relative. The firmware uses ESP-IDF 5.5.2.
 
 ## Commands
 
@@ -10,8 +9,7 @@ Build/test commands, ESP-IDF setup, build traps and hardware commands are in
 
 ## Real-time and lifecycle constraints
 
-- Allocate only at setup/configure time, never on steady-state paths. Exceptions
-  and RTTI are disabled; setup OOM is fatal (`new`/`make_unique` are acceptable).
+- Allocate only during setup or configuration. Keep steady-state paths allocation-free.
 - Real-time paths include realtime loop ticks, staging swaps/OnChange hooks,
   timer/driver callbacks, ISRs, critical sections and UART RX callbacks. No heap,
   blocking or host-dependent loop bounds; only zero-timeout try-locks/queues.
@@ -38,6 +36,8 @@ Build/test commands, ESP-IDF setup, build traps and hardware commands are in
   uses it, at CONFIG via `core_os::captureAlloc`. Keep atomics/shared state in
   internal RAM; use `core_os::lockFreeAtomic<T>()`, not `is_always_lock_free`.
   XiP remains off in normal firmware.
+- Exceptions and RTTI are disabled. Setup allocation failure is fatal, so
+  `new` and `make_unique` are acceptable during setup.
 - Check IDF results and report failures with `esp_err_to_name`. No
   `ESP_ERROR_CHECK`; host/hardware runtime failures return errors, never
   assert/abort. Assertions are only for programmer invariants.
@@ -55,8 +55,8 @@ Build/test commands, ESP-IDF setup, build traps and hardware commands are in
 ## Wire and verification
 
 - Use shared Reader/Writer field by field, never struct copies/local endian
-  helpers. Reject invalid host input without changes; valid out-of-range values
-  are clamped and reported as applied. Exact contracts live in `docs/protocol/`.
+  helpers. Reject invalid host input without changes. Follow each operation's
+  contract in `docs/protocol/` for validation, clamping and reporting.
 - Give each rejection its own result/detail; detail IDs never renumber. Commands
   get responses even on queue-full refusal. Time pings are the malformed-drop/count
   exception; see [time.md](../docs/protocol/time.md). Message/channel IDs come

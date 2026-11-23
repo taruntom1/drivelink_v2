@@ -12,13 +12,11 @@ These add to the root rules. Definitions/schema details are in
   must meet `kDescriptorMinPayload`.
 - Namespace is `drivelink::protocol`; follow existing naming conventions.
   Generated headers stay pure/constexpr/allocation-free.
-- Wire changes also update the Python HIL reference
-  (`firmware/test/uart_comm/protocol.py`) in the same PR.
+- When a wire change affects behavior or a version constant implemented by the [Python HIL reference](../firmware/test/uart_comm/protocol.py), update the reference in the same PR.
 - Time pings explicitly drop/count malformed input instead of ordinary error
   replies; see [time.md](../docs/protocol/time.md).
 - Keep full-file SHA, appended ESP image digest and ELF identity distinct.
   OTA's `OtaOffset` WRITE rejection alone has a four-byte error body; other
   rejected-command bodies remain empty. See [ota.md](../docs/protocol/ota.md).
-- Cover codecs with round-trip, exact-length/malformed-input and scanner resync
-  tests in `protocol/test/`; add new test sources to the firmware native build.
-  Generator changes need tests in `tools/gen/tests/`.
+- Cover changed codecs with round-trip, exact-length and malformed-input cases as applicable. Cover changes to scanner recovery with resynchronization cases. Keep these tests in `protocol/test/` and register new test sources in the firmware native build.
+- Generator changes need tests in `tools/gen/tests/`.

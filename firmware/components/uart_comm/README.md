@@ -14,7 +14,7 @@ in [CLAUDE.md](CLAUDE.md).
 | `registerCallback(type, cb, registration)` | Routes a MSG_TYPE to a callback on the RX task. The `CallbackRegistration` unregisters on destruction and waits for a running callback. |
 | `receive(frame, timeout)` | Frames with no callback, from a bounded queue. |
 | `sendCommand(type, payload, len, stamp_time)` | Queues a frame from the command pool. `ESP_ERR_NO_MEM` means the pool is empty. `stamp_time` lets TX patch the time-ping timestamp. |
-| `openStream(channel, max_len)`, `sendData(channel, payload, len)` | A latest-wins slot per stream channel, opened at setup. `sendData` never blocks or allocates. |
+| `openStream(channel, max_len)`, `sendData(channel, payload, len)` | A latest-wins slot per stream channel, opened at setup. `sendData` never blocks or allocates. If the slot is busy, it increments `stream_skipped` and returns `ESP_ERR_TIMEOUT`. |
 | `waitTxIdle(timeout_ms)` | Waits until queued TX drains (used before a reboot). |
 | `getErrorCounters()`, `stackHighWater()` | Counters and the RX/TX tasks' free stack. |
 

@@ -398,8 +398,9 @@ responses. Pure rules in `backend/tune_model.*`, the QML-facing page in
   capture keeps recording and is read once when Done. A run given up while its
   signal may run (timeout, cleared or unreadable capture) sends STOP once and
   keeps the controller at 0 until STATUS shows the signal stopped; Run is
-  blocked meanwhile. Boot, a lost link and close end the run; nothing is
-  retried. The mode, Revert and Restore are locked while a run is active; the
+  blocked meanwhile. If STOP is pending, keep the hold until STOP has landed
+  and the device reports the signal stopped. Boot, link loss and close end the
+  run without further device calls. The mode, Revert and Restore are locked while a run is active; the
   gains too while Auto re-run is off (with it on a change cancels the run, see
   H2e-2).
 - **Runs.** Kept in memory per device (at most 50; the oldest unpinned goes),
@@ -446,7 +447,8 @@ file and the run CSV); the state in `backend/tune_view.*`; the cancel path in
   starts a run 0.5 s after the gains are still, when they differ from the
   controller's last run, only after the user's Run under this window's
   current ARM (a DISARM, fault, Boot, link loss or another controller needs a
-  new Run) and only while Tune is shown; it waits for a run or a release in
+  new Run) and only while Tune is shown. It uses the same start path as Run.
+  It waits for a run or a release in
   progress and drops with the reason when the setup is invalid. Run within
   0.5 s of a change carries it (no second run). With Auto re-run on, the gains
   stay editable during a run and a change cancels it: STOP and ABORT once,
@@ -529,8 +531,8 @@ gains:
      controller stays held. This happens before the capture finishes.
   5. The previous mode is written back. A local block (a configuration action
      running) delays that write; it is never given up. Then the hold ends.
-     Boot and close write nothing back; a lost link or a Disconnect says the
-     mode may still be set.
+     Boot and close skip write-back. On close or link loss, tell the operator
+     the mode may still be set.
 
   Until the write-back ends:
   - the gains, mode, Restore, Revert, Run, Auto re-run and Open wait, as do

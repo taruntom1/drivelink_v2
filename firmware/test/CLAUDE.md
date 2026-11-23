@@ -6,12 +6,13 @@ Commands/toolchains, check selection, logs and CI behavior are in
 
 ## Native tests
 
-- Add new core sources to `CORE_SOURCES` and other pure component sources to
-  `FIRMWARE_SOURCES` in `firmware/test/native/CMakeLists.txt`; protocol tests live
-  in `protocol/test/`. Core must not depend on shim headers. For non-core
+- Register new native-build sources alongside the related implementation in
+  `firmware/test/native/CMakeLists.txt`. Protocol tests live in
+  `protocol/test/`. Core must not depend on shim headers. For non-core
   sources needing a new `CONFIG_*`, update the native shim defaults.
-- Keep native KV storage in-memory by default; only vdev attaches file storage.
-  Model reboot with a new Core on the same store. Reuse generator fixture types
+- Keep native KV storage in-memory by default. Model reboot with a new Core
+  on the same store. Use an isolated file store when testing file persistence.
+  Reuse generator fixture types
   and the existing layout/boot helpers.
 - Threaded timing bounds must tolerate desktop scheduler delays (about 15 ms).
   Preallocate real-time fixture observations. The native guard fails unexpected
@@ -38,8 +39,9 @@ Commands/toolchains, check selection, logs and CI behavior are in
 
 ## Validation
 
-- Add new suites to `tools/validate.py`'s `CHECKS` and the CI job with the needed
-  toolchain, keeping one command source for local/CI. Run checks sequentially.
+- Verify that a check run by CI discovers and executes each new suite. When a
+  suite needs a separate check, register it in `tools/validate.py`'s `CHECKS`
+  and invoke it from the CI job with the required toolchain. Run checks sequentially.
 - Report skipped/unavailable checks. Use `--force` after a toolchain change:
   fingerprints track sources, not tools.
   [The validation guide](../../docs/development.md#validation-toolsvalidatepy)

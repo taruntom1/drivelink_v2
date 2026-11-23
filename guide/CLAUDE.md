@@ -1,8 +1,6 @@
 # DriveLink guide writing rules
 
-Write for someone with the released packages and no prior embedded or ROS
-experience. Use plain English, second person and short sentences. Keep one task
-per page. State what the reader needs and what they will have at the end.
+Write for someone with the released packages and no prior embedded or ROS experience. Use plain English, second person and short sentences. Give each walkthrough one task, its prerequisites and an observable outcome. Organize reference pages by subject and troubleshooting pages by symptom.
 
 - Give each step an observable result. Copy labels and messages from the
   running product. Explain each term on first use or link to the glossary.
@@ -19,7 +17,4 @@ per page. State what the reader needs and what they will have at the end.
   scripts, styles, fonts and images local. Release assets and official
   documentation can be links.
 
-From the repository root, install guide/requirements.txt in a Python virtual
-environment, then run `python tools/guide.py build`, `python tools/guide.py serve`
-and `python tools/guide.py check`. See [Development](../docs/development.md)
-for the full setup and release inputs.
+From the repository root, run `python tools/validate.py --only guide` for routine validation. To preview the built guide for visual or interactive review, run `python tools/guide.py serve`. See [Development](../docs/development.md) for setup and release inputs.
