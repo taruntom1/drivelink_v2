@@ -1359,6 +1359,39 @@ private slots:
         QCOMPARE(tv.runCount(),1);QCOMPARE(int(tv.runList().back().end),int(RunEnd::Disarmed));
         QVERIFY(waitFor([&]{return shown("tunePlotItem_0") && shown("tunePlotItem_0")->property("vertices").toInt()>2;}));
         QVERIFY(shown("tuneMetricRow_1"));
+
+        // A close attempt during plant identification leaves the window and
+        // the step alone. Stop can still finish and restore the previous mode.
+        auto *tab=shown("tuneTabIdentify");QVERIFY(tab);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,center(tab));
+        auto &identify=tv.identifyView();QVERIFY(identify.shown());
+        QVERIFY(waitFor([&]{return connection.armEnabled();}));
+        connection.arm();QVERIFY(waitFor([&]{return connection.commandView().enabled();}));
+        identify.setConfirmed(true);
+        QVERIFY(identify.setField("to","0.15").isEmpty());
+        QVERIFY(identify.setField("seconds","2").isEmpty());
+        QVERIFY(identify.run()["canRun"].toBool());identify.startStep();
+        QVERIFY(waitFor([&]{return identify.phase()==IdentifyView::Phase::Running;}));
+        auto *departure=shown("navDisconnect");QVERIFY(departure && !departure->isEnabled());
+        QVERIFY(shown("disarmButton")->isEnabled());
+        QTest::mouseMove(window,center(departure));
+        QVERIFY(waitFor([&]{return departure->parentItem()->property("showing").toBool();}));
+        connection.disconnectDevice();QVERIFY(!connection.closing());
+        QVERIFY(!window->close());
+        QVERIFY(window->isVisible() && connection.linked() && !connection.closing());
+        QVERIFY(!window->property("quitWhenDisconnected").toBool());
+        QVERIFY(window->property("toastCount").toInt()>0);
+        auto *stop=shown("identifyStop");QVERIFY(stop && stop->isEnabled());
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,center(stop));
+        QVERIFY(waitFor([&]{return !tv.identifying();},15000));
+        QVERIFY(departure->isEnabled());
+        QVERIFY(waitFor([&]{
+            return valueBits(connection.snapshot()->configured.at({32,drive}).params.at(pid::kMode))==1;
+        }));
+        QVERIFY(!window->close());
+        auto *prompt=window->findChild<QObject *>("disconnectDialog");QVERIFY(prompt);
+        QVERIFY(waitFor([&]{return prompt->property("opened").toBool();}));
+        QMetaObject::invokeMethod(prompt,"reject");
         connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
     }
 

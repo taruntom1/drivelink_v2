@@ -109,6 +109,12 @@ bool LocalConnection::ready() const {
         m_context->getSession()->generation()==m_snapshot->generation;
 }
 int LocalConnection::armState() const {return m_snapshot && m_snapshot->status?m_snapshot->status->arm_state:0;}
+bool LocalConnection::controllingMotion() const {
+    if(!linked() || (m_agent && !m_lease.mine())) {return false;}
+    // An in-flight ARM can still take effect. A direct observer can see an
+    // armed device without owning its ARM. An agent lease ends with DISARM.
+    return m_arming || m_armPending || (armState()==1 && (m_agent || m_ownArm));
+}
 bool LocalConnection::safeMode() const {return m_snapshot && m_snapshot->safeMode();}
 bool LocalConnection::unsaved() const {return m_snapshot && m_snapshot->status && (m_snapshot->status->flags&8);}
 // STATUS carries the live flag; GET_INFO's copy is from the last metadata load.
@@ -786,6 +792,8 @@ void LocalConnection::acknowledge() {
     } catch(const Error &e) {m_ackPending=false;report(e);}
 }
 void LocalConnection::disconnectDevice() {
+    // Give plant identification time to stop the step and write back its mode.
+    if(m_tune.identifying() || m_closing) {return;}
     // Disconnect also ends a lost link's overlay and any reboot follow-up.
     m_reconnecting=false;m_afterLoss=false;clearRebootExpectation();
     if(!m_context) {
@@ -800,7 +808,6 @@ void LocalConnection::disconnectDevice() {
         m_agent.reset();m_lease.clear();m_clients.clear();m_agentHistory.clear();m_historyEntries.clear();
         emit changed();emit disconnected();return;
     }
-    if(m_closing) {return;}
     m_closing=true;m_closeElapsed.start();emit changed();
     // An observer may have explicitly requested DISARM while opening. Await
     // that admitted request; closing must not turn it into a silent cancel.

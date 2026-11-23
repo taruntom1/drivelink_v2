@@ -16,11 +16,13 @@ Basic.ApplicationWindow {
     property string armRefusal
     property int layoutLoop: -1
     property bool quitWhenDisconnected: false
+    property bool returnToConnect: false
     readonly property var backend: connection
+    readonly property bool showConnectedPage: connection.ready || (connection.closing && connection.linked && !connection.loading)
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
     readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
-    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || leaseDialogs.anyOpen || overlayOpen
+    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || disconnectDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || leaseDialogs.anyOpen || overlayOpen
     // Remote mode (H3b-1): the lease as the status bar and banners show it.
     readonly property var lease: connection.lease || ({})
     readonly property bool remote: connection.remote
@@ -57,7 +59,7 @@ Basic.ApplicationWindow {
 
     function cancelOverlay() {
         drawerOpen = false; armPopoverOpen = false; reviewOpen = false
-        dialog.reject(); renameDialog.reject(); resetDialog.reject(); layoutDialogs.cancel(); leaseDialogs.closeAll()
+        dialog.reject(); renameDialog.reject(); resetDialog.reject(); disconnectDialog.reject(); layoutDialogs.cancel(); leaseDialogs.closeAll()
         // Esc closes the image choice; a running update is never aborted by Esc.
         if (otaDialog.choosing) otaDialog.cancel()
     }
@@ -65,17 +67,43 @@ Basic.ApplicationWindow {
         if (toasts.count >= 4) toasts.remove(0)
         toasts.append({"message": message, "modelTone": tone})
     }
+    function requestDisconnect(quitting, confirmed) {
+        if (connection.tune.identifying) {
+            if (quitting) shell.notify(qsTr("Wait for Tune to restore the previous mode, then close DriveLink again."), DLToast.Info)
+            return
+        }
+        if (connection.closing) {
+            if (quitting) shell.quitWhenDisconnected = true
+            return
+        }
+        if (!confirmed && connection.linked && (connection.controllingMotion || connection.unsaved)) {
+            disconnectDialog.quitting = quitting
+            disconnectDialog.open()
+            return
+        }
+        shell.quitWhenDisconnected = quitting
+        shell.returnToConnect = !quitting
+        connection.disconnectDevice()
+    }
     onClosing: function(event) {
         if (connection.linked || connection.loading || connection.closing) {
             event.accepted = false
-            quitWhenDisconnected = true
-            connection.disconnectDevice()
+            shell.requestDisconnect(true, false)
         }
     }
     Connections {
         target: connection
         function onNotification(text, tone) { shell.notify(text, tone) }
-        function onDisconnected() { if (shell.quitWhenDisconnected) Qt.quit() }
+        function onDisconnected() {
+            if (disconnectDialog.visible) disconnectDialog.reject()
+            if (shell.quitWhenDisconnected) Qt.quit()
+            else if (shell.returnToConnect) {
+                shell.returnToConnect = false
+                shell.cancelOverlay()
+                shell.previousPage = 0
+                shell.page = 0
+            }
+        }
         function onArmRefused(reason) { shell.armRefusal = reason; shell.armPopoverOpen = true }
     }
     Connections {
@@ -98,7 +126,7 @@ Basic.ApplicationWindow {
         deviceName: shell.backend.deviceName
         deviceId: shell.backend.deviceId
         link: shell.remote ? DLDeviceChip.Agent : DLDeviceChip.Serial
-        connection: shell.remote ? qsTr("%1 · %2").arg((connection.agent || {}).address || "").arg((connection.agent || {}).device || "")
+        connection: shell.remote ? qsTr("%1 · %2").arg((shell.backend.agent || {}).address || "").arg((shell.backend.agent || {}).device || "")
                                  : shell.backend.endpoint
         // G6: the lease chip beside the device identity; it leads to Device > Clients and lease.
         leaseVisible: shell.remote
@@ -108,7 +136,8 @@ Basic.ApplicationWindow {
         onLeaseClicked: shell.showClients()
         // While an update runs the centre names its step (G3 frames); remote
         // observers see who drives, or that ARM needs the lease (G6).
-        reason: shell.backend.ota.active === true ? qsTr("Firmware update · %1").arg(shell.backend.ota.phase)
+        reason: shell.backend.closing ? qsTr("Disconnecting…")
+              : shell.backend.ota.active === true ? qsTr("Firmware update · %1").arg(shell.backend.ota.phase)
               : shell.remote && !shell.lease.mine && shell.lease.holderId && shell.backend.armState === 1
                 ? qsTr("driven by %1").arg(shell.lease.holderName)
               : shell.remote && !shell.lease.mine && shell.backend.armState === 0 && shell.backend.ready
@@ -150,12 +179,27 @@ Basic.ApplicationWindow {
             model: [{text: qsTr("Device"), icon: "cpu", objectName: "navDevice"}, {text: qsTr("Layout"), icon: "workflow", objectName: "navLayout"},
                     {text: qsTr("Tune"), icon: "sliders-horizontal", objectName: "navTune"}, {text: qsTr("Monitor"), icon: "chart-line", objectName: "navMonitor"}]
             footerModel: [{text: qsTr("Settings"), icon: "settings", objectName: "navSettings"}]
+            footerActions: DLReasonHover {
+                id: disconnectHover
+                visible: connection.linked && !connection.loading
+                tooltipOnRight: true
+                reason: connection.tune.identifying ? qsTr("Wait for Tune to restore the previous mode.") : ""
+                DLNavItem {
+                    objectName: "navDisconnect"
+                    text: qsTr("Disconnect")
+                    iconName: "unplug"
+                    enabled: !connection.tune.identifying
+                    Accessible.role: Accessible.Button
+                    Accessible.description: disconnectHover.reason
+                    onClicked: shell.requestDisconnect(false, false)
+                }
+            }
             onActivated: function(index) { if (index === shell.settingsPage) shell.toggleSettings(); else shell.page = index }
         }
         Item {
             id: content
             anchors.left: nav.right; anchors.right: parent.right; height: parent.height
-            enabled: !shell.modalOpen
+            enabled: !shell.modalOpen && !connection.closing
             // Both banners stack above the page.
             readonly property real bannersHeight: (banner.visible ? banner.height : 0) + (remoteBanner.visible ? remoteBanner.height : 0)
             DLBanner {
@@ -232,7 +276,7 @@ Basic.ApplicationWindow {
             Item {
                 anchors.fill: parent
                 anchors.topMargin: content.bannersHeight
-                visible: connection.ready && shell.page !== shell.settingsPage
+                visible: shell.showConnectedPage && shell.page !== shell.settingsPage
                 DevicePage {
                     id: devicePage
                     anchors.fill: parent
@@ -538,6 +582,28 @@ Basic.ApplicationWindow {
             acceptEnabled: confirmed
             onAboutToShow: confirmed = false
             onAccepted: connection.factoryReset()
+        }
+        DLDialog {
+            id: disconnectDialog
+            objectName: "disconnectDialog"
+            parent: body
+            property bool quitting: false
+            readonly property string targetName: connection.deviceName || connection.deviceId || qsTr("the device")
+            readonly property string unsavedWarning: qsTr("Unsaved changes stay on the device until it reboots. You can save them after reconnecting.")
+            readonly property string controlWarning: shell.remote
+                ? (quitting ? qsTr("Quitting disconnects %1 and releases this GUI’s control lease. The agent disarms the device when the lease ends.").arg(targetName)
+                            : qsTr("Disconnecting releases this GUI’s control lease. The agent disarms the device when the lease ends."))
+                : (quitting ? qsTr("Quitting disconnects %1, stops this GUI’s control and sends DISARM to the device.").arg(targetName)
+                            : qsTr("Disconnecting stops this GUI’s control and sends DISARM to the device."))
+            title: quitting ? qsTr("Quit DriveLink?") : qsTr("Disconnect from %1?").arg(targetName)
+            acceptText: quitting ? qsTr("Quit") : qsTr("Disconnect")
+            destructive: connection.controllingMotion
+            text: {
+                const warning = destructive ? controlWarning : quitting ? qsTr("Quitting disconnects %1.").arg(targetName) : ""
+                if (!connection.unsaved) return warning
+                return warning ? warning + "\n\n" + unsavedWarning : unsavedWarning
+            }
+            onAccepted: shell.requestDisconnect(quitting, true)
         }
     }
     ListModel {id: toasts}

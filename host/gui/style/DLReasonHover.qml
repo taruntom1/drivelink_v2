@@ -12,6 +12,7 @@ Item {
     id: root
 
     property string reason
+    property bool tooltipOnRight: false
     readonly property Item control: children.length > 0 ? children[0] : null
     readonly property bool showing: control !== null && !control.enabled && reason.length > 0 && hover.hovered
 
@@ -25,5 +26,6 @@ Item {
     DLToolTip {
         visible: root.showing
         text: root.reason
+        beside: root.tooltipOnRight
     }
 }

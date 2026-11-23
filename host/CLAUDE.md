@@ -192,11 +192,12 @@ in CLI; preserve its readable, JSON/NDJSON and CSV output and exit codes.
   refused, nothing runs. Whatever ends the step, once the signal has stopped
   a fresh frame returns the input to 0. The previous value is then written
   back with the controller still held; a local block delays that write but
-  never cancels it. The hold ends only after the write-back. Boot and close
-  write nothing back (close says so). A step never starts under another ARM
+  never cancels it. The hold ends only after the write-back. Boot and lost
+  links can interrupt the write-back. A step never starts under another ARM
   than the one it was confirmed under. Until the write-back ends:
   - the gains, mode, Restore, Revert, Run and Auto re-run wait, as do SAVE,
     REVERT, reboots, rename and OTA;
+  - Disconnect and window close wait. Stop and DISARM remain available.
   - it never grants Auto re-run's permission.
 
   Suggested gains need an open-loop step, and only the operator's Apply
