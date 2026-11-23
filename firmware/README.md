@@ -1,115 +1,39 @@
 # DriveLink firmware (ESP32-S3)
 
-The embedded side of DriveLink: an ESP-IDF 5.5.2 firmware in C++ for robot
-motion on the ESP32-S3. It is a self-describing core. The host discovers the
-module types, instances, params, signals, inputs, actions and diag codes from
-the device, configures everything over the UART link, and keeps nothing of its
-own: the configuration lives in the device's NVS.
-
-> **Not yet run on motors or a real IMU.** The bench board has neither. The
-> motor, IMU and Pi checks are scripted and listed under "Deferred hardware
-> checks" in [plans/host-status.md](../plans/host-status.md). Until
-> they pass, treat real-motor and real-IMU behaviour as unverified. The last
-> commit of the previous firmware is tagged `legacy-final`.
-
-## What it does
-
-- **Modules in configurable loops.** Loops are instances of the built-in
-  `loop` type (rate, priority, real-time flag). Module instances run in them:
-  `actuator.pwm_dir` (MCPWM + DIR), `feedback.quadrature` (PCNT),
-  `controller.cascade_pid` (open loop, velocity, position), `imu.bno055` with
-  persistent calibration, and mocks for testing.
-- **Layout and persistence.** Add, remove and label instances in a pending
-  layout, save it to NVS (A/B), revert, factory-reset; a boot that keeps
-  crashing falls back to safe mode.
-- **Streams.** Subscription groups stream signals from a loop; command groups
-  set inputs. Sources let one loop read another loop's signal.
-- **Safety.** Arming, a watchdog on command frames, a safety monitor for loop
-  stalls, a fast `DISARM` path, and diag codes that block arming or disarm.
-- **Tuning.** Capture of signals into PSRAM at the loop rate, and per-loop
-  test signals (step, chirp and others).
-- **Time and updates.** Host-initiated time pings with monotonic RX/TX stamps,
-  and disarmed OTA into a dual-slot table with host confirmation and rollback.
-
-The wire protocol is specified in [docs/protocol/](../docs/protocol/). The
-host library, CLI and virtual device that speak it are in [host/](../host/README.md).
-
-## Startup
-
-`firmware/main/main.cpp` brings up diag, `uart_comm::UartComm`, NVS, the core
-(boot from NVS, then start) and its `CoreLink`, and finally the diag reporter.
-A core that fails to start is reported through diag and left out; the link
-keeps running so the host can ask what went wrong. Details are in
-[main/CLAUDE.md](main/CLAUDE.md).
+[main/main.cpp](main/main.cpp) assembles the firmware. See the [startup rules](main/CLAUDE.md) for initialization order and partial-failure handling.
 
 ## Components
 
-Each component under `components/` has a README with its API, Kconfig options
-and rules.
-
-| Component | What |
+| Component | Owns |
 |---|---|
-| `uart_comm` | UART framing and transport: RX/TX tasks, callbacks, command pool, stream slots |
-| `diag` | Error codes to the host (events and queries) |
-| `rtos_util` | `StoppableTask`, `TaskTimer`, `msToTicksCeil` |
-| `core_os` | OS adapters with an ESP-IDF and a native backend |
-| `core` | The pure core: registry, loops, params, layout, NVS, groups, arming, sources, capture, testgen, OTA |
-| `mod_motor` | Motor actuator, quadrature feedback and cascade controller module types |
-| `mod_imu_bno055` | The BNO055 IMU module type |
-| `mod_mock` | Mock module types (also run by the virtual device) |
-| `motor_hal`, `rotary_encoder_hal` | MCPWM and PCNT wrappers with resource pools |
-| `pid` | The header-only PID kernel |
-
-The shared wire library and the generated definitions are in
-[protocol/](../protocol/CLAUDE.md), at the repository root.
-
-## Build and flash
-
-Run every command from the repository root. `python tools/validate.py full`
-runs every build and test; the guide is in [CLAUDE.md](CLAUDE.md).
-
-```bash
-idf.py -C firmware build
-idf.py -C firmware build flash monitor
-idf.py -C firmware menuconfig
-```
-
-Flash a board on the dual-slot partition table with
-`python tools/bench_fw.py normal`, which checks the configuration and never
-erases NVS. Later updates go over the link with the CLI's OTA workflow
-(`docs/protocol/ota.md`).
-
-The app version (`esp_app_desc_t.version`, GET_INFO's `firmware_version`) is
-the root `VERSION`, with `+g<sha7>[.dirty]` away from its tag
-([development guide](../docs/development.md), "Version").
-
-Published builds: CI's `firmware-package` job uploads
-`drivelink-firmware-<version>/` (artifact `drivelink-firmware`), and a
-`v<VERSION>` tag attaches it to the GitHub Release. Its `README.txt` has the
-esptool commands: the merged image at 0x0 for a new board (it also blanks
-NVS), the separate parts to keep NVS, or `drivelink-app.bin` over OTA. The
-firmware's third-party notices (ESP-IDF, FreeRTOS, Mbed TLS, newlib, TLSF, the
-SD/MMC driver, Xtensa, the GCC runtime) are `notices/notices.json`, rendered
-into `notices/THIRD_PARTY_NOTICES.txt` from the repository root with
-`python host/gui/notices/gen_notices.py --write --manifest
-firmware/notices/notices.json --output firmware/notices/THIRD_PARTY_NOTICES.txt`;
-`gen` checks it is current. A newly linked third-party library or IDF
-component with its own licence needs an entry there.
+| [core](components/core/README.md) | Module lifecycle, loop execution, device configuration, safety and device services. |
+| [core_os](components/core_os/README.md) | Platform interfaces with ESP-IDF and native backends. |
+| [uart_comm](components/uart_comm/README.md) | UART driver, RX dispatch, command buffers and TX stream slots. Shared codecs and frame scanning live in [protocol](../protocol/README.md). |
+| [diag](components/diag/README.md) | Diagnostic records, counters and reporting to the host. |
+| [rtos_util](components/rtos_util/README.md) | FreeRTOS task, timer and delay helpers. |
+| [mod_motor](components/mod_motor/README.md) | Motor actuator, encoder feedback and cascade controller module types. |
+| [motor_hal](components/motor_hal/README.md) | MCPWM peripheral allocation and motor output. |
+| [rotary_encoder_hal](components/rotary_encoder_hal/README.md) | PCNT peripheral allocation and quadrature counting. |
+| [pid](components/pid/README.md) | Header-only PID kernel used by the controller. |
+| [mod_imu_bno055](components/mod_imu_bno055/README.md) | BNO055 sensor integration and calibration. |
+| [mod_mock](components/mod_mock/README.md) | Mock module types shared with the virtual device. |
 
 ## Configuration
 
-Component tunables (UART pins and baud, queue depths, task stacks, pool sizes,
-capture limits) are Kconfig options under each component's menu. Message types
-and stream channels are not configurable: they come from
-`protocol/defs/registry.yaml`. Loop rates, module params and the layout are not
-Kconfig either: the host sets them over the link and the device saves them.
+| Change | Source of truth |
+|---|---|
+| Build-time pins, queue depths, task stacks or capacity limits | The owning component's Kconfig, for example [uart_comm/Kconfig](components/uart_comm/Kconfig). |
+| Wire message or stream channel ID | [Protocol registry](../protocol/defs/registry.yaml). |
+| Device loop rates, persistent module parameters or layout | Device configuration, edited over UART and saved to NVS. See the [core configuration contract](../docs/protocol/core.md). |
 
-## Tests
+## Build, test and release
 
-- Native unit tests for the core, the module logic and the protocol
-  (`firmware/test/native/`, `protocol/test/`).
-- A hardware-in-the-loop test app for `uart_comm` (`firmware/test/uart_comm/`).
-- Smoke scripts against the main firmware on a bare board
-  (`firmware/test/uart_comm/smoke_*.py`, `host/test/*_smoke.py`).
+Use the [development commands](../docs/development.md#commands) for source builds, the [validation matrix](../docs/development.md#validation-toolsvalidatepy) for automated checks, and the [firmware test rules](test/CLAUDE.md) and [bench procedure](../docs/bench.md) for physical checks.
 
-See [test/CLAUDE.md](test/CLAUDE.md).
+For a release image, use the flashing instructions in the package’s `README.txt`. The [firmware packager](../tools/package_fw.py) generates the commands for the image layout and identifies which flashing methods preserve NVS. See the [version convention](../docs/development.md#version-version) for the embedded app version.
+
+Regenerate firmware notices from the repository root:
+
+```bash
+python host/gui/notices/gen_notices.py --write --manifest firmware/notices/notices.json --output firmware/notices/THIRD_PARTY_NOTICES.txt
+```

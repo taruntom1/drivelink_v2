@@ -1,94 +1,49 @@
 # DriveLink apt repository
 
-GitHub Pages serves the signed apt repository and the DriveLink user guide.
-See [Install from apt](https://taruntom1.github.io/drivelink_v2/apt/) for the guide commands. For v0.1.0, see the
-[tagged installation instructions](https://github.com/taruntom1/drivelink_v2/blob/v0.1.0/docs/pi-setup.md#4-install-the-packages).
-
-| File | What |
-|---|---|
-| `drivelink-archive-keyring.asc` | The repository's public key, served next to the repository |
-| `FINGERPRINT` | Its fingerprint; the publish refuses any other signing key |
-| `index.html` | Landing page for a standalone apt build. The combined build uses the guide’s home page and links to `apt/` |
-| `create_signing_key.sh` | Makes the key, the `apt-repo` environment and its secret (owner only) |
+GitHub Pages serves the signed apt repository alongside the user guide. [Client installation](https://taruntom1.github.io/drivelink_v2/apt/)
 
 ## Layout
 
-One suite per Ubuntu release, named by codename: `noble` (24.04) and
-`resolute` (26.04), component `main`, amd64 and arm64. A package's version
-carries its release (`<VERSION>~ubuntu26.04`), so one pool holds both builds:
+The `noble` and `resolute` suites each publish `main` for amd64 and arm64. Ubuntu-specific version suffixes let both suites share the package pool.
 
-```
+```text
 dists/<suite>/{Release,InRelease,Release.gpg}
 dists/<suite>/main/binary-{amd64,arm64}/Packages{,.gz}
 pool/main/d/<package>/<package>_<version>_<arch>.deb
 ```
 
-`gh-pages` mirrors the verified release tree in one commit per tag.
-Older packages stay on their GitHub release pages.
+| Input | Use |
+|---|---|
+| [Public key](drivelink-archive-keyring.asc) | Published alongside the repository for client signature verification. |
+| [Expected fingerprint](FINGERPRINT) | Pins the release signing key. |
+| [Standalone index](index.html) | Landing page for an apt-only build. The combined site uses the guide home page. |
+| [Key setup script](create_signing_key.sh) | Owner-only creation or rotation of the release key and its Actions secret. |
+
+The latest verified release tree is mirrored to `gh-pages`. Older packages remain attached to their GitHub releases.
 
 ## ROS 2 packages
 
-The `resolute` suite carries ROS 2 Lyrical and the `noble` suite carries Jazzy.
-Both have amd64 and arm64 builds of these packages.
-
-- `ros-<distro>-drivelink-protocol`
-- `ros-<distro>-drivelink` (the C++ host library)
-- `ros-<distro>-drivelink-hardware` (the ros2_control plugin)
-- `ros-<distro>-drivelink-bringup` (launch files, config and diagnostics)
-
-Install the bringup package to pull in the other three at the same DriveLink
-version. Apt obtains upstream ROS dependencies from the
-[ROS 2 apt repository](https://github.com/ros-infrastructure/ros-apt-source).
-See the [ROS 2 installation guide](https://taruntom1.github.io/drivelink_v2/ros/install/).
+`noble` carries Jazzy and `resolute` carries Lyrical. Each distribution ships four DriveLink packages with names beginning `ros-<distro>-drivelink`. The bringup package pins the matching DriveLink version of the hardware plugin, host library and protocol library. [ROS installation](https://taruntom1.github.io/drivelink_v2/ros/install/)
 
 ## How it is built and published
 
-- `tools/package_ros.py` runs Bloom and dpkg in the matching ROS build container.
-  It stages each package with the shared version and CMake files and fetches the
-  existing SHA256-pinned Asio and mDNS sources before the Debian build.
-- `tools/apt_repo.py build` writes the tree from the `.deb` files and signs
-  `Release` (InRelease and Release.gpg); `verify` checks it with apt itself,
-  rootless: the signature, the indices and their hashes, resolution, and that
-  a copy signed by another key, an unsigned copy and a changed index are
-  refused.
-- The `apt-repo` validate check and CI job do that with a throwaway key on
-  every run. CI requires all 26 release packages. The `apt-install` job then
-  installs from it in clean Lyrical and Jazzy containers on both architectures
-  and runs the packaged bringup against the packaged agent and vdev.
-- Only a `vX.Y.Z` tag publishes. After `release`, the `apt-publish` job
-  signs with the real key, checks the fingerprint, and combines the apt
-  repository with the guide. It verifies the combined tree using apt and
-  the committed public key, uploads it for Pages, and mirrors the same tree
-  to `gh-pages`. Only the signing step receives the private key.
-- `guide-deploy` publishes that artifact with `pages: write` and
-  `id-token: write`. Both the guide and apt use the same project URL.
-  `dists/`, `pool/`, the public key URL and their contents are checked before
-  deployment. Branch and PR previews use a throwaway key and are downloadable
-  from Actions.
+| Stage | Source |
+|---|---|
+| Build packages | [Host Debian builder](../../tools/package_linux.py) · [ROS Bloom builder](../../tools/package_ros.py) |
+| Build and verify indexes | `apt_repo.py build` creates and signs the tree. `verify` uses apt to check trust, index integrity and resolution, including rejection of altered or incorrectly signed inputs. [Repository tool](../../tools/apt_repo.py) |
+| Test signing and installation | The `apt-repo` job checks the release matrix with a test key. `apt-install` installs in clean ROS containers and runs packaged bringup against the agent and vdev. [CI jobs](../../.github/workflows/ci.yml) · [Validation matrix](../../docs/development.md#validation-toolsvalidatepy) |
+| Publish a release tag | `apt-publish` signs with the release key, verifies the combined guide and apt tree, and mirrors it to `gh-pages`. `guide-deploy` deploys the same artifact to Pages. [Release workflow](../../.github/workflows/ci.yml) |
 
 ## The signing key
 
-A sign-only ed25519 key, valid for 5 years, made offline by the repository
-owner. Its secret half lives only in the Actions secret `APT_SIGNING_KEY` of
-the environment `apt-repo`, whose deployment rule admits only `v*` tags (so no
-branch or pull-request job can read it), and in the owner's encrypted offline
-backup. No session or script prints it.
+Routine checks use disposable keys. The repository owner manages the sign-only Ed25519 release key and keeps an encrypted offline backup. The `apt-repo` Actions environment holds `APT_SIGNING_KEY` and admits only `v*` tags. Only the signing step receives that secret.
 
-Create it (or rotate it) from the repository root, with `gh` logged in as the
-owner:
+To create or rotate the release key, run the following from the repository root with `gh` authenticated as the owner. Choose a backup path outside the repository.
 
 ```sh
-sh packaging/apt/create_signing_key.sh <backup file outside the repository>
+sh packaging/apt/create_signing_key.sh /path/to/encrypted-backup
 ```
 
-Then commit the new `drivelink-archive-keyring.asc` and `FINGERPRINT`.
-After a rotation, existing users must [fetch the new key](https://taruntom1.github.io/drivelink_v2/apt/#add-the-repository)
-before apt accepts the repository.
-Before the key expires, extend it from the backup
-(`gpg --quick-set-expire <fingerprint> 5y`), export the public key again and
-replace the secret.
+Commit the public key and fingerprint together. After rotation, existing clients must fetch the updated public key. Before the five-year expiration, extend the key from the offline backup with `gpg --quick-set-expire <fingerprint> 5y`, export the updated public key, and replace the signing secret. [Client key setup](https://taruntom1.github.io/drivelink_v2/apt/#add-the-repository)
 
-Before publishing the first tag with the guide, open **Settings → Pages**
-and set **Source** to **GitHub Actions**. In **Settings → Environments →
-github-pages**, allow release tags matching `v*` under deployment tags. This
-lets the tag job deploy to the existing Pages URL.
+For initial deployment, set the Pages source to GitHub Actions and allow `v*` tags in the `github-pages` environment's deployment rules.

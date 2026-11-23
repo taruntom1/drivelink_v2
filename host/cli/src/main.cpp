@@ -70,7 +70,8 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
     testgen-run arms, feeds keepalives, runs the test, and disarms on exit.
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
 Values use device descriptors: true/false, integers, floats, enum names.
-Writes are never retried. A write timeout has an unknown outcome.
+Writes are never retried, except ota-upload resending identical chunks after STATUS.
+A write timeout has an unknown outcome.
 JSON is one envelope per command or one per watched event (NDJSON).
 Through an agent: --endpoint tcp://HOST:47620 --device NAME_OR_12HEX --token TOKEN.
 The token may come from DRIVELINK_AGENT_TOKEN; --client-name defaults to drivelink-cli.

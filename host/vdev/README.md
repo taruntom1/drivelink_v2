@@ -1,44 +1,46 @@
 # drivelink-vdev
 
-A virtual ESP using the actual firmware `core`, native `core_os` and `mod_mock`.
-One config caller runs the existing `CommandService`; real loop threads execute
-mock motor/feedback and IMU logic. It has no physical HALs.
+A virtual device that runs the firmware [core](../../firmware/components/core/README.md) on the native [core_os](../../firmware/components/core_os/README.md) backend with [mod_mock](../../firmware/components/mod_mock/README.md). It has no hardware drivers. Host integration, GUI, agent and ROS checks use it in place of a board.
 
-`drivelink-vdev --port 8765 --state DIR` listens on loopback TCP and prints
-`READY tcp://127.0.0.1:8765`. Port 0 chooses an ephemeral port. Linux `--pty`
-prints `READY serial:///dev/pts/N` and serves a raw PTY instead. It keeps the
-slave open across CLI invocations. One client owns configuration at a time;
-extra TCP connections are closed. Reboot replies are written before the core
-is rebuilt, loops/boot clock/diagnostics reset, and TCP is disconnected.
-The TCP disconnect is graceful: vdev sends FIN after the reply, discards any
-input (frames pipelined behind REBOOT are lost, as on a rebooting device) and
-closes when the client closes or after one second. A plain close with unread
-input would send RST, which on Windows discards the client's unread reply.
-A new client can connect during that second. PTY remains open across reboot. Command reply drains have a two-second deadline
-from enqueue. A failed TCP drain closes the connection and cancels the reboot.
-A failed PTY drain cancels/drops queued replies and effects, retaining the master
-so a new CLI can reconnect. Idle PTY streams may wait for a reader; their queue
-and in-flight buffer remain bounded, and later status samples replace pending ones.
+## Run
 
-The vdev implements core v10, time v1, status and diag v3. CPU load is unavailable (255).
-It uses fixed 254-slot diagnostic identities and a bounded record queue; slow
-streams use latest-wins queueing. Control loops never allocate diagnostics.
-There is no synthetic host-specific module table; the actual generated mock
-definitions are served by the core.
+```sh
+drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode]
+```
 
-Device id defaults to `02444c000001`, stable across reboot and reset.
-`--device-id HEX12` simulates distinct boards. Names use real core storage.
+| Option | Effect |
+|---|---|
+| `--state DIR` | State directory (default `vdev-state`); see [Persistence and crashes](#persistence-and-crashes) |
+| `--port PORT` | Loopback TCP port (default 8765; 0 picks an ephemeral port). Prints `READY tcp://127.0.0.1:PORT` |
+| `--pty` | Linux only: serve a raw PTY instead of TCP. Prints `READY serial:///dev/pts/N` |
+| `--device-id HEX12` | Device id (default `02444c000001`), stable across reboot and reset; use distinct ids to simulate several boards |
+| `--allow-crash` | Enables the core's bench-only crash and BenchStall operations (default off) |
+| `--fail-writes-after N` | Fails persistent KV writes after N successful operations, for save and recovery tests |
+| `--scenario-file PATH`, `--safe-mode` | GUI test controls; see [Scenario controls](#scenario-controls) |
 
-## GUI scenario controls
+None of these options affect hardware firmware.
 
-These are explicit native test controls, not device wire operations. Without
-the options below the normal vdev behavior is unchanged.
+## What runs
 
-`--safe-mode` seeds the native crash counter before boot, using the real core
-safe-mode path. `--scenario-file PATH` polls a local control file. Replace it
-with one line, `<sequence> <action>`, using an increasing unsigned sequence;
-an already consumed sequence is ignored. For example, write `1 fault`, then
-replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
+- The real core services, generated mock definitions and loop threads, including the factory layout, safe mode, arming, heartbeat and command monitor, mock emergency force, capture, the per-loop test generator and core events. There is no host-specific module table.
+- `mod_mock` modules: `actuator.mock` and `feedback.mock` with plant parameters (deadband, saturation, optional one-tick delay, seeded encoder noise), `imu.mock` on the shared IMU state and calibration codec, `fusion.mock`, and the real `controller.cascade_pid`. vdev does not register `imu.bno055` or any pin-based module.
+- Core v10, time v1, status and diag v3. CPU load reports 255 (unavailable). Diagnostics use fixed 254-slot identities and a bounded record queue; control loops never allocate them.
+- Time requests use the shared codecs, take RX time at dispatch, and patch TX time and CRC when their queued write begins. Malformed time requests are dropped and counted. See the [time contract](../../docs/protocol/time.md).
+- Native real-time guard violations in loop, controller and mock ticks are counted and reported on stderr. Safe mode starts no loop threads.
+
+## Transport
+
+One client owns the device at a time; extra TCP connections are closed. A PTY keeps its slave open across CLI invocations and reboots.
+
+Command, diag and time replies have a two-second drain deadline from enqueue. A failed TCP drain closes the connection and cancels a pending reboot. A failed PTY drain drops queued replies and effects but keeps the master, so a new client can reconnect. Idle PTY streams may wait for a reader; their queues stay bounded and newer status samples replace pending ones. Slow streams use latest-wins queueing; stream coalescing compares the channel, so one group never replaces another group or the status stream.
+
+REBOOT writes its reply before the core is rebuilt; loops, boot clock and diagnostics then reset. Over TCP, vdev then disconnects gracefully: it sends FIN, discards further input (frames pipelined behind REBOOT are lost, as on a device) and closes when the client closes or after one second. A new client can connect during that second. A plain close with unread input would send RST, which on Windows discards the client's unread reply.
+
+## Scenario controls
+
+These are native test controls, not wire operations; without the options below vdev behaves normally.
+
+`--safe-mode` seeds the crash counter before boot so the real core enters safe mode. `--scenario-file PATH` polls a local control file. Replace its content with one line, `<sequence> <action>`, using an increasing unsigned sequence; an already consumed sequence is ignored. For example, write `1 fault`, then replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
 
 | Action | Effect |
 |---|---|
@@ -54,103 +56,28 @@ replace it with `2 fault-clear`. Each accepted line prints `SCENARIO`.
 | `loop-stall LOOP MS` | Stall one tick of a running loop for 1..10000 ms (the bench stall, without its wire gate), so its sources age |
 | `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM, REBOOT and ACTION RUN request counts, configured command group IDs/loops/widths |
 
-Counters in the sidecar let GUI tests prove they sent no input value frames
-and did not adopt another owner's groups. The GUI scenario runner
-`host/gui/tests/scenarios.py` creates isolated temporary state/control files;
-see [GUI screenshots and backend checks](../gui/README.md). It never sends
-these injections to a supplied physical endpoint.
+The `stats` counters let GUI tests prove they sent no input value frames and did not adopt another owner's groups. The GUI scenario runner `host/gui/tests/scenarios.py` creates isolated temporary state and control files and never sends these injections to a supplied physical endpoint; see [GUI screenshots and backend checks](../gui/README.md).
 
 ## Persistence and crashes
 
-Only one process can own a state directory (OS-level lock released on exit).
-`kv/<namespace>.<key>.blob` holds each KV blob separately. Each write uses a
-flushed temporary file and atomic replace; POSIX also fsyncs the parent directory,
-Windows uses MoveFileExW with WRITE_THROUGH. The core's existing A/B generation
-algorithm commits the layout last, preserving a previous complete generation
-if a process dies mid-save. Temporary files left by a kill are ignored.
-This simulates process termination and host filesystem durability; it cannot
-prove the behavior of a particular physical storage device on power loss.
+Only one process can own a state directory; an OS-level lock is released on exit. `kv/<namespace>.<key>.blob` holds each KV blob, written through the native [file store](../../firmware/components/core_os/README.md) by flushed temporary file and atomic replace. Temporary files left by a kill are ignored. The core's A/B generation commit preserves the previous complete configuration if the process dies mid-save. This models process termination and host filesystem durability, not a physical storage device on power loss.
 
-`boot.state` stores the crash counter and a running marker with version/checksum.
-Kill/abort without orderly shutdown counts as a crash on the next start; three
-consecutive crash resets enter the real core safe mode. Its 30-second clear
-timer updates the file too. SIGINT/SIGTERM perform a clean shutdown on Linux.
-REBOOT and EXIT_SAFE_MODE are non-crash resets. Windows TerminateProcess counts
-as a crash, including test cleanup. Do not delete/edit boot.state while running.
-Malformed boot metadata fails startup explicitly.
+`boot.state` stores the crash counter and a running marker with version and checksum. A kill or abort without orderly shutdown, including Windows `TerminateProcess` in test cleanup, counts as a crash on the next start; three consecutive crash resets enter safe mode, and the 30-second clear timer updates the file too. SIGINT and SIGTERM shut down cleanly on Linux. REBOOT and EXIT_SAFE_MODE are not crashes. Do not delete or edit `boot.state` while vdev runs; malformed boot metadata fails startup.
 
-`--allow-crash` enables the core's bench-only crash operation; default is off.
-`--fail-writes-after N` fails persistent KV writes after N successful operations,
-for save/recovery integration tests. Neither option affects hardware firmware.
-The native in-memory unit-test store retains its deterministic failed/torn-write
-injection and remains the default unless a file directory is attached.
+Without a state directory attached, native unit tests keep the in-memory store with its deterministic failed and torn-write injection.
 
-Loop instances, the factory layout and safe mode use the same core as firmware.
-Native real-time guard violations are counted and reported on stderr; safe mode
-starts no loop threads. LP format-2 layouts load intact with an empty name;
-older formats fall back to factory loops. SAVEs now write format 3.
+## OTA simulation
 
-Group command frames use the real core RX mailbox and disarmed gate. The
-config timer drains subscription snapshots; stream coalescing compares the
-channel so one group cannot replace another group or the status stream.
+The real core OTA service runs on a native two-slot backend. `ota.bin` in the state directory stores checked slot and build identities and boot state. A fresh baseline uses the compiled source build ID, zero-extended to the simulated full hash. A candidate's descriptor supplies its simulated identity and version, while GET_INFO keeps the `-vdev` suffix so hardware-only preflights still refuse.
 
+FINISH only prepares; an explicit SYSTEM REBOOT commits after its reply is written. While that after-reply action is queued, later core commands get `Busy/StagingBusy`; fast DISARM and time stay available. A failed drain or cancelled queue cannot commit, and a failed select keeps the service gated for STATUS-based recovery. Pending boot, confirmation and next-reset rollback survive soft and process restarts; uploaded bytes and handles do not. Corrupt metadata fails closed. See the [OTA simulator notes](../../docs/protocol/ota.md#partition-table-and-simulator) and the [host OTA campaign](../README.md).
 
-F4b runs the same arming state, heartbeat/command monitor and mock emergency
-force as the board. Native latched diagnostics share their fixed atomic table
-with the safety interlock and reporter; reporting uses bounded storage. Native
-scheduling can jitter more than a board: use slower loop rates (for example
-100 Hz) for desktop arming tests. `--allow-crash` also enables BenchStall; a
-native stall exercises the monitor, while Task WDT panic-reset is device-only.
+## Desktop timing
 
-On Windows, vdev requests 1 ms timer resolution for its process before starting
-the core and releases it after all core threads stop. Startup fails explicitly
-if Windows refuses the request. This prevents coarse default waits from
-dominating short loop periods, including on CI. It does not guarantee real-time
-scheduling; elapsed-period accounting, overruns and all control/safety rules are
-unchanged. The shared native backend and hardware firmware are unaffected.
+On Windows, vdev requests 1 ms timer resolution before starting the core and releases it after all core threads stop; startup fails if Windows refuses. This keeps coarse default waits from dominating short loop periods but does not make scheduling real-time. Period accounting, overruns and all control and safety rules are unchanged.
 
-F5a-1 also registers the actual `controller.cascade_pid` implementation (0x20).
-It drives `actuator.mock` through the same interface as future PWM hardware and
-reads quantized counts/position/filtered velocity from `feedback.mock`. Plant
-params include deadband, saturation, selectable one-tick delay and optional
-seeded encoder noise. The real-time guard covers controller and mock ticks.
-`host/test/motor_smoke.py` runs the same CLI control scenario on TCP and UART.
+Native scheduling jitters more than a board. Use slower loop rates for desktop arming tests (for example 100 Hz); host integration runs testgen at 50 Hz, and deterministic native tests cover exact timing.
 
-F6's `imu.mock` uses the shared pure IMU state/calibration codec. Persistent
-calibration, paused actions and modes run through the actual core; vdev has no
-I2C backend and does not register `imu.bno055`. The generic CLI/host discovers
-all module metadata; no module table is compiled into libdrivelink.
+## Limits
 
-F7b runs the actual per-loop test generator, capture-start trigger, terminal
-events and aggregate status flag. It registers no separate waveform emulator.
-Host integration runs step/chirp and handoff tests at 50 Hz; deterministic
-native tests cover exact timing and concurrent loops. Its TCP endpoint also
-supports the test-only lost-ARM-response proxy, which verifies cleanup DISARM
-in both `testgen-run` and `cmd-run`.
-
-F8 time requests use the shared exact codecs, take RX time at dispatch, and
-patch TX time/CRC only when their queued write begins. They have the same
-reliable-response deadline as core/diag replies, including on PTY. Malformed
-requests are dropped and counted. See `docs/protocol/time.md`.
-
-## OTA simulation (F9)
-
-The actual core OTA service operates on a native two-slot backend. `ota.bin`
-stores checked slot/build identities and boot state in the exclusive state
-directory. A fresh baseline uses the compiled source build ID (zero-extended
-for the simulated full hash). A candidate's descriptor supplies its simulated
-identity/version, while GET_INFO keeps a -vdev suffix. This preserves existing
-physical-hardware preflight refusals.
-
-FINISH prepares only; explicit SYSTEM REBOOT commits after its reply is written.
-The peer fences later CoreCommand dispatch while an after-reply action is
-queued, replying Busy/StagingBusy; fast DISARM/time remain available. A failed
-drain/cancelled queue cannot commit, and a failed select keeps the service
-gated for STATUS-based recovery. Pending boot, confirmation and the next-reset
-rollback are modeled across soft/process restarts. Corrupt metadata fails
-closed. Uploaded bytes/handles are not resumed after reset.
-
-The same native executable continues running after a simulated update. It
-cannot establish ESP image execution, eFuse compatibility, physical flash
-timing or power-loss behavior; those need the bare board. Shared integration
-and failure-proxy cases are documented in the host README and OTA spec.
+vdev cannot establish ESP image execution, eFuse compatibility, flash timing or power-loss behavior, and a native BenchStall exercises the monitor but not the Task WDT panic reset. Those checks need the bare board; see the [bench instructions](../../docs/bench.md).
