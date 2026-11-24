@@ -20,8 +20,8 @@
 #include <climits>
 #include <cmath>
 #include <cstdio>
-#include <vector>
 #include <thread>
+#include <vector>
 
 namespace {
 namespace defs = drivelink::protocol::defs;
@@ -393,10 +393,10 @@ TEST_CASE("A staged PWM frequency or glitch filter applies at the next boot, cla
     CHECK(fake_motor_hw::output_count == 1);
     REQUIRE(f.c.save().ok());
 
-    fake_motor_hw::reset();
     core::Core next{core::CoreConfig{}};
     REQUIRE(next.init(f.types).ok()); REQUIRE(next.boot(core::prepareBoot(f.store)).ok());
-    CHECK(outputs[0].pwm_freq_hz == 20000); CHECK(counters[0].glitch_ns == 0);
+    REQUIRE(fake_motor_hw::output_count == 2); REQUIRE(fake_motor_hw::counter_count == 2);
+    CHECK(outputs[1].pwm_freq_hz == 20000); CHECK(counters[1].glitch_ns == 0);
 }
 
 TEST_CASE("Two actuators run at their own PWM frequencies") {
