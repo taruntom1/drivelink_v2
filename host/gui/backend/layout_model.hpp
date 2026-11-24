@@ -63,7 +63,8 @@ std::vector<Candidate> wiringCandidates(const DeviceSnapshot &, InstanceKey cons
 // signal, any loop, the consumer itself excluded. First entry: Disconnect (0).
 std::vector<Candidate> sourceCandidates(const DeviceSnapshot &, InstanceKey consumer, const ItemDescriptor &param);
 
-// Every staged change: configured view against pending view.
+// Every staged change: the running system settings and the configured view
+// against the pending ones.
 struct PendingChange { QString kind, key, subject, from, to; };
 std::vector<PendingChange> pendingChanges(const DeviceSnapshot &);
 

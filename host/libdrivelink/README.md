@@ -52,7 +52,7 @@ if (snapshot->connected && snapshot->ready) {
 
 Model construction negotiates and loads discovery data. The model retains the Session reference beyond construction, so the Session must outlive it. A shared snapshot stays valid after later publications. Discovery spans several device requests. Coordinate writers if a stable cross-request view is required.
 
-After SET or a layout change, `refreshConfigAsync()` refreshes configured/pending layouts and parameter values against the current boot's descriptors. Use a full reload after rename or REVERT to refresh identity. Boot invalidates readiness and managed traffic. The model reloads if the link remains open. After disconnect, reconnect explicitly. A retained snapshot alone cannot establish that the current device is ready.
+After SET or a layout change, `refreshConfigAsync()` refreshes configured/pending layouts and parameter values (the system's as `system_params` and `pending_system_params`) against the current boot's descriptors. Use a full reload after rename or REVERT to refresh identity. Boot invalidates readiness and managed traffic. The model reloads if the link remains open. After disconnect, reconnect explicitly. A retained snapshot alone cannot establish that the current device is ready.
 
 | Delivery path | How to detect incomplete data |
 |---|---|

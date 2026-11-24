@@ -30,6 +30,10 @@ int main(int argc, char **argv)
         {
             std::cout << "SYSTEM\t" << id << '\t' << drivelink::valueBits(value) << '\n';
         }
+        for (const auto &[id, value] : snapshot.pending_system_params)
+        {
+            std::cout << "SYSTEM_PENDING\t" << id << '\t' << drivelink::valueBits(value) << '\n';
+        }
         for (auto pair : {std::pair{"CONFIG", &snapshot.configured}, std::pair{"PENDING", &snapshot.pending}})
         {
             for (const auto &[key, entry] : *pair.second)

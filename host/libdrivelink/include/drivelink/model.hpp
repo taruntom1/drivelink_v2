@@ -32,6 +32,10 @@ struct DeviceSnapshot
     std::map<uint8_t, ModelType> types;
     std::vector<CodeDescriptor> codes;
     std::map<uint16_t, Value> system_params;
+    // What SAVE writes: the pending value of a reboot_required param, the live
+    // one of any other. Differs from system_params only while a setting is
+    // staged or saved but not rebooted, or (saved ones) in safe mode.
+    std::map<uint16_t, Value> pending_system_params;
     ModelLayout configured;
     ModelLayout pending;
     uint64_t generation=0;

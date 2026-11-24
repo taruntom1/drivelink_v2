@@ -14,9 +14,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix='drivelink-model-') as state:
         process = None
 
-        def start():
+        def start(*extra):
             nonlocal process, endpoint
-            process = subprocess.Popen([args.vdev, '--port', '0', '--state', state],
+            process = subprocess.Popen([args.vdev, '--port', '0', '--state', state, *extra],
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             line = process.stdout.readline().strip()
             assert line.startswith('READY '), (line, process.poll())
@@ -48,6 +48,10 @@ def main():
             assert next(int(r[1]) for r in rows if r[0] == 'CODES') > 0
             assert any(r == ['ENUM', '5', '3', '2', 'any'] for r in rows), rows
             return rows, instances, params
+
+        def setting():
+            rows, _, _ = snapshot()
+            return [int(r[2]) for kind in ('SYSTEM', 'SYSTEM_PENDING') for r in rows if r[:2] == [kind, '32512']]
 
         endpoint = ''
         try:
@@ -86,6 +90,20 @@ def main():
             assert int(next(r[1] for r in rows if r[0] == 'INFO')) & 8
             assert all(value[1] == 4 for key, value in instances.items() if key[0] == 'CONFIG')
             assert params['CONFIG', 5, extra, 1] == 125
+            # A reboot_required system setting (test-only): both views, across
+            # SAVE, a reboot, crashes and safe mode (which runs the default).
+            cli('exit-safe-mode')
+            stop(); start('--test-setting'); cli('reboot')
+            assert setting() == [10, 10]
+            assert cli('set', '0:0:32512=25')['pending_reboot']
+            assert setting() == [10, 25]
+            cli('discard'); assert setting() == [10, 10]
+            cli('set', '0:0:32512=40'); cli('revert'); assert setting() == [10, 40]
+            cli('save'); assert setting() == [10, 40]
+            cli('reboot'); assert setting() == [40, 40]
+            for _ in range(3):
+                stop(); start('--test-setting')
+            assert setting() == [10, 40]
             print('PASS device snapshots: discovery, limits, enums, sparse/pending layouts, reload and safe mode')
         finally:
             stop()

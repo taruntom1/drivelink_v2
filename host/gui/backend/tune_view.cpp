@@ -519,6 +519,7 @@ void TuneView::setSnapshot(std::shared_ptr<const DeviceSnapshot> snapshot, const
         for(const auto &[id,value]:entry.params) {print.push_back(uint64_t(id)<<32|valueBits(value));}
     }
     for(const auto &[id,value]:snapshot->system_params) {print.push_back(uint64_t(id)<<32|valueBits(value));}
+    for(const auto &[id,value]:snapshot->pending_system_params) {print.push_back(uint64_t(1)<<48|uint64_t(id)<<32|valueBits(value));}
     m_snapshot=std::move(snapshot);
     if(print==m_print) {return;}
     m_print=std::move(print);
