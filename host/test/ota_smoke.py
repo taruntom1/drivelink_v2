@@ -55,7 +55,7 @@ def run(cli_path, endpoint, baseline, candidate, stack_wait=0):
     original = cli('instances')
     assert all(x['type'] == 5 for x in original), 'requires a loops-only bare-board layout'
     info = cli('info')
-    assert info['protocol_version'] == 10 and not (info['flags'] & 9), info
+    assert info['protocol_version'] == 11 and not (info['flags'] & 9), info
     refs = [f"5:{loop['id']}:1" for loop in info['loops']] + ['0:0:3', '0:0:4']
     settings = cli('get', *refs)['values']
     a, hash_a = identity(baseline)

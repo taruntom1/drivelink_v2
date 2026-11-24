@@ -126,6 +126,11 @@ wire_enums:
     UnknownDevice: 56
     DeviceOffline: 57
     LeaseRequired: 58
+    # Reserved in core v11 for the runtime settings (plans/runtime-settings.md);
+    # no device sends them yet.
+    LinkTrialActive: 59
+    NoLinkTrial: 60
+    NotEnoughMemory: 61
   Family:
     System: 1
     Layout: 2
@@ -147,6 +152,7 @@ wire_enums:
     Reboot: 8
     ExitSafeMode: 9
     SetName: 10
+    LinkConfirm: 11
     BenchStall: 253
     BenchCrash: 254
   LayoutOp:

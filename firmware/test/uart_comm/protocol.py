@@ -19,7 +19,7 @@ from __future__ import annotations
 import struct
 import time
 
-CORE_PROTOCOL_VERSION = 10
+CORE_PROTOCOL_VERSION = 11
 TIME_PROTOCOL_VERSION = 1
 
 
@@ -35,7 +35,7 @@ def decode_time_reply(payload: bytes) -> tuple[int, int, int]:
 
 
 def command_group_payload(epoch: int, counter: int, values: tuple[int, ...] = ()) -> bytes:
-    """Core v7 command stream; values are descriptor-typed raw u32 slots."""
+    """Core command stream; values are descriptor-typed raw u32 slots."""
     if len(values) > 64:
         raise ValueError("at most 64 group entries")
     return struct.pack("<BBH", CORE_PROTOCOL_VERSION, epoch, counter) + struct.pack("<" + "I" * len(values), *values)

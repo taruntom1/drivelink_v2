@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x7FB5CC36;
+inline constexpr uint32_t kDescriptorHash = 0xC4152586;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -93,6 +93,9 @@ enum class Detail : uint8_t {
     UnknownDevice = 56,
     DeviceOffline = 57,
     LeaseRequired = 58,
+    LinkTrialActive = 59,
+    NoLinkTrial = 60,
+    NotEnoughMemory = 61,
 };
 
 enum class Family : uint8_t {
@@ -118,6 +121,7 @@ enum class SystemOp : uint8_t {
     Reboot = 8,
     ExitSafeMode = 9,
     SetName = 10,
+    LinkConfirm = 11,
     BenchStall = 253,
     BenchCrash = 254,
 };

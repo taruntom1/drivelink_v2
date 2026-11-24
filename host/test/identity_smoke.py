@@ -45,7 +45,7 @@ def run(cli, endpoint, probe=None, expected_id=None):
             time.sleep(.1)
 
     original = connected()
-    assert original['protocol_version'] == 10 and len(original['device_id']) == 12
+    assert original['protocol_version'] == 11 and len(original['device_id']) == 12
     if expected_id:
         assert original['device_id'] == expected_id
     assert not original['flags'] & 11, 'requires clean valid normal layout'
