@@ -1,122 +1,37 @@
 # core_os
 
-Thin OS adapters for the pure `core`. The core uses only these, `protocol/` and the C++ standard library, so it builds both on the device and natively (`firmware/test/native`, later the virtual device).
+The firmware core and virtual device use the same [public adapter headers](include/core_os/). The [IDF component](CMakeLists.txt) and [native test build](../../test/native/CMakeLists.txt) select backend sources and the corresponding private state types at build time. Callers supply task settings and resource limits.
 
-## Backends
+## Scheduling and callback lifetime
 
-| Backend | Where | Built by |
+| Adapter | ESP-IDF | Native |
 |---|---|---|
-| ESP-IDF | `backend/idf/` | this component's `CMakeLists.txt` |
-| native | `backend/native/` | `firmware/test/native/CMakeLists.txt` |
+| [PeriodicTask](include/core_os/periodic_task.hpp) | A timer wakes a dedicated task. Notification counts include missed periods. Real-time tasks register with the Task WDT before the timer starts, feed it after callbacks, and unregister on stop. Stop fences the timer before joining the task. | A worker waits on deadlines and passes the elapsed period count. Stop and period changes wake it. Affinity is observable by tests but does not constrain the desktop scheduler. |
+| [PeriodicTimer](include/core_os/periodic_timer.hpp) | The callback runs on the ESP timer task, independently of loop progress. Stop fences callbacks before releasing their context. | A separate thread runs callbacks under the real-time guard. Stop joins the worker. |
+| [OneShotTimer](include/core_os/one_shot.hpp) | Cancellation stops a pending timer. A callback already running can outlive cancellation. Its context must stay valid until it finishes. | Cancellation wakes and joins the worker, including a callback already in progress. |
+| [Event](include/core_os/event.hpp) and [clock](include/core_os/clock.hpp) | A static binary semaphore coalesces signals. A positive timeout rounds up to ticks with an extra tick for the minimum delay. Time comes from the monotonic ESP timer. | A flag and condition variable coalesce signals. Signalling briefly acquires the event mutex. Time comes from a steady clock. |
 
-The API headers in `include/core_os/` are common to both. Each backend has its own `core_os/detail/backend_types.hpp` (the state the API types hold) in `backend/<name>/include`, and the build picks the backend by include dir and sources. There is no `#ifdef` in the API headers.
+The owner serializes task and timer lifecycle calls. On ESP32-S3, a task started with no affinity can become pinned after using the FPU. The [bench affinity observer](backend/idf/include/core_os/bench_affinity.hpp) exposes initial and post-callback placement in instrumented builds. Read observations outside the real-time path.
 
-## API (namespace `core_os`)
+## Tick-safe operations and instrumentation
 
-| Header | What |
-|---|---|
-| `types.hpp` | `Err` (0 = `kOk`; `esp_err_t` values on the device, -1 natively), `TickFn`, `kNoAffinity` |
-| `clock.hpp` | `nowUs()`: monotonic µs since boot (`esp_timer_get_time` / `steady_clock`) |
-| `mutex.hpp` | `Mutex` (`lock`, `tryLock`, `unlock`) and `LockGuard`. Static storage. |
-| `event.hpp` | `Event`: a binary signal. `signal()` never blocks and is safe from a loop tick; `wait(timeout_us)` takes it or times out (at least `timeout_us`); `clear()` |
-| `periodic_task.hpp` | `PeriodicTask`: `start(name, stack, prio, core, period_us, fn, ctx, realtime=false)` calls `fn(ctx, elapsed_periods)` once per period; `setPeriod`, `stop`, `stackHighWaterMark` |
-| `diag_sink.hpp` | `reportDiag(code, err, arg0, arg1)` and `countDiag(code, n)` |
-| `kv_store.hpp` | `KvStore`: `get(ns, key, buf, len)` (a null `buf` gives the size), `set` (commits), `eraseNamespace`, `listNamespaces(fn, ctx)`; `nvsInit()` |
-| `boot_info.hpp` | `resetWasCrash()`, `loadCrashCount()` / `storeCrashCount()` (RTC no-init), `reboot()` |
-| `ota.hpp` | `Ota`: boot info, sequential begin/write/read, finish/validate, select, abort and confirm. One config caller; fixed buffers supplied by the core |
-| `one_shot.hpp` | `OneShotTimer`: `start(name, delay_us, fn, ctx, realtime=false)` calls `fn(ctx)` once; `cancel()` |
-| `atomics.hpp` | `lockFreeAtomic<T>()`: always lock-free, or a word-sized atomic served by IDF's IRAM S32C1I helpers when PSRAM makes IDF build with `-mdisable-hardware-atomics` (`kAtomicsOutOfLine`). Atomics must never live in PSRAM |
-| `capture_memory.hpp` | `captureCapacity(limit)`, `captureAlloc(bytes)`, `captureFree(ring)`: the capture ring. IDF: PSRAM through `heap_caps_malloc(MALLOC_CAP_SPIRAM)` (the largest free PSRAM block at boot is the capacity), or a 32 KB internal ring when the board has no PSRAM. Native: malloc, 4 MiB unless `native::setCaptureCapacity`; `native::failNextCaptureAlloc()` (in `native_task.hpp`) injects a failure. Configure time only |
+A loop tick can read the clock, signal an event, attempt a [mutex](include/core_os/mutex.hpp) once, increment diagnostic counters, raise or clear **latched** conditions, and query active safety flags. Record reporting and clearing a **record** condition belong on a task outside the tick. The [diagnostic sink](include/core_os/diag_sink.hpp) accepts explicit instance identity. Install the single-device disarm observer before enabling loops. Clear it after stopping them so the configuration caller fences in-flight notifications before releasing the callback context.
 
-Native only, for the tests:
-- `core_os/native_diag.hpp`: what the diag sink recorded (`recordedReports()`, `reportCount()`, `counterTotal()`, `resetRecordedDiag()`).
-- `core_os/native_kv.hpp`: fault injection for the in-memory `KvStore`. `failWritesAfter(n)` is a power loss (every write after the next `n` fails), `failWriteAfter(n, err)` / `failNextWrite(err)` fail one write, `tearWriteAfter(n, mode)` / `tearNextWrite(mode)` store a truncated or corrupted blob and still report success. Plus `clearFaults`, `writeCount`, `hasKey`, `removeKey`, `namespaceCount`. A write is a `set` or an `eraseNamespace`.
-- `core_os/native_boot.hpp`: `setResetWasCrash()`, `rebootCount()`, `resetBootInfo()`. The crash counter is a process-wide variable, so it survives a `Core` being rebuilt, like RTC memory.
+Use the [atomic capability check](include/core_os/atomics.hpp) for shared words. It accounts for IDF's out-of-line word atomics on PSRAM builds. Keep shared atomic storage in internal RAM. See the [firmware real-time rules](../../CLAUDE.md) for allocation and blocking constraints.
 
-**IDF backend:**
-- `PeriodicTask` is an `rtos_util::StoppableTask` woken by an `rtos_util::TaskTimer`, a periodic esp_timer with task dispatch. The elapsed count is the `ulTaskNotifyTake` count, so a late wake-up reports every period that went by. `stop()` destroys the timer (fenced) before stopping the task.
-- `Mutex` and `Event` are static FreeRTOS semaphores (a mutex and a binary semaphore). `Event::wait` rounds the timeout up to whole ticks, plus one, because the timeout is a minimum.
-- The diag sink calls `diag::report` / `diag::count`, and `reportDiag` also writes the code and args on the console (the core has no log text of its own).
-- `KvStore` uses the `nvs` handle API on the default partition: it opens a handle per call (read-only for `get`, so a missing namespace isn't created) and commits every `set` and erase. `listNamespaces` walks the entries with `nvs_entry_find` and calls `fn` once per distinct namespace after the walk. `nvsInit()` runs `nvs_flash_init()`, and on `ESP_ERR_NVS_NO_FREE_PAGES` / `ESP_ERR_NVS_NEW_VERSION_FOUND` erases the partition and initialises it again (`erased` in the result; main reports `core.NvsInitFailed`). NVS has room for 254 namespaces per partition, and an erased namespace keeps its slot.
-- The crash counter is three `RTC_NOINIT_ATTR` words (magic, count, complement): they survive every reset but a power-on, and read 0 when the magic or the complement is wrong. `resetWasCrash()` is `esp_reset_reason()` in {`ESP_RST_PANIC`, `ESP_RST_INT_WDT`, `ESP_RST_TASK_WDT`}; `reboot()` is `esp_restart()`.
-- `OneShotTimer` is an esp_timer one-shot with task dispatch. `cancel()` stops it but doesn't wait for a callback that is already running.
+[RealtimeScope](include/core_os/realtime.hpp) instruments native execution. It counts C++ allocation, project C allocator calls routed through GNU linker wrappers, blocking mutex acquisition, event waits and KV operations. Native tests can install a [violation sink](backend/native/include/core_os/native_realtime.hpp). IDF implements the guard as a no-op. Vdev installs [bounded diagnostic sinks](backend/native/include/core_os/native_diag.hpp) before starting tasks and detaches them after joining. Native counters use fixed atomic storage.
 
-**Native backend:**
-- `PeriodicTask` is a `std::thread` that sleeps until each deadline (a condition variable, so `stop` and `setPeriod` wake it), with the same catch-up count.
-- `Mutex` is a `std::mutex`, `Event` a mutex, condition variable and flag, and the clock `steady_clock`.
-- The diag sink records calls for tests by default. `native::setDiagSinks` optionally installs the vdev's bounded record queue and fixed atomic counter table before starting tasks; detach only after all tasks are joined. No recording vector/map is used by the vdev's steady-state loop paths.
-- `KvStore` is an in-memory map with fault injection by default. F3c adds `native_file.hpp`: `openFileStore(store, directory)` attaches a durable, exclusively-owned directory before boot. Every blob is flushed and atomically replaced separately, so the real core A/B algorithm still handles incomplete generations. `nvsInit()` does nothing. `openBootFile` persists the reset marker/crash counter across vdev processes; the normal native tests do not attach either file backend.
-- `OneShotTimer` is a thread that waits on a condition variable; `cancel()` wakes and joins it.
+## Storage, reset and image state
 
+| Adapter | ESP-IDF | Native |
+|---|---|---|
+| [KvStore](include/core_os/kv_store.hpp) | Opens NVS handles per call and commits each write or erase. A missing read leaves the namespace absent. Enumeration collects namespaces before invoking the caller. On exhausted pages or an incompatible NVS version, initialization erases the partition, retries, and reports the erase. | In-memory by default. Attaching an [exclusive file store](backend/native/include/core_os/native_file.hpp) before boot makes each blob durable by flushing and atomically replacing it. A multi-blob save still relies on the core's generation commit. |
+| [Boot information](include/core_os/boot_info.hpp) | Panic and interrupt/task watchdog resets count as crashes. RTC no-init words retain the count across resets and validate it with a magic value and complement. | Process state survives Core reconstruction. An attached boot file carries reset state across vdev processes. |
+| [Capture memory](include/core_os/capture_memory.hpp) | Capacity is capped by the requested limit and largest free PSRAM block, or a 32 KiB internal-memory allowance on boards without PSRAM. Allocate the ring at configuration time. | Heap-backed with an adjustable capacity and an injectable allocation failure. |
+| [OTA](include/core_os/ota.hpp) | The app-update API writes sequentially to the inactive slot. Finish validates the upload. Select commits boot metadata. Confirm marks the pending running image valid. Adapter errors preserve the IDF cause. | Isolated in-memory slots by default. Vdev can persist selection, pending verification and rollback in atomically replaced metadata. Prepared uploads expire on reset. Corrupt metadata fails closed. The simulation exercises boot state and identity without executing the image. |
 
-## Rules
+## Native test controls
 
-- **Periodic task affinity.** `start` accepts 0, 1 or `kNoAffinity` (-1).
-  The IDF backend maps the sentinel to `tskNO_AFFINITY`; native scheduling
-  ignores placement. IDF pins unpinned ESP32-S3 tasks when they use the FPU.
-  The native `setPeriodicStartObserver` is a setup-only test seam: install or
-  restore it only while all tasks are stopped; it observes requested affinity
-  without emulating ESP scheduling. On a `CORE_BENCH_CRASH` build, fixed internal
-  storage records initial and first pinned post-callback affinity/CPU. The task
-  publishes once with release/acquire; the owner that serializes start/stop
-  calls `logBenchTaskAffinities` outside real-time paths. The console stack
-  logger does this on main. Snapshot pointers are removed after task join.
-  Observations are console-only, and normal firmware compiles them out.
-
-- **Allocate only in `start()`.** `PeriodicTask::start` creates the task (and the IDF timer), `OneShotTimer::start` its timer or thread. Nothing allocates after it. `KvStore` calls are configure-time operations (`listNamespaces` allocates).
-- **NVS writes stall both cores' caches.** Never call `KvStore` from a real-time path; the core refuses SAVE while armed.
-- **Real-time use:** a loop tick may call `Event::signal()`, `Mutex::tryLock()`, `nowUs()` and `countDiag()`. Nothing else here belongs on a real-time path. (The native `Event::signal` takes a mutex for a few instructions; it is a test backend.)
-- `PeriodicTask` is not thread-safe: its owner serializes `start`, `setPeriod` and `stop`.
-- `core_os` has no Kconfig of its own: the task parameters come from its callers (the core's `CoreConfig`).
-- The IDF backend checks every IDF return and returns it as `Err`; it never aborts.
-
-F3d: PeriodicTask subscribes real-time tasks to the ESP Task WDT before starting
-the timer, resets the WDT after each callback (including paused/gated ticks),
-and removes the subscription on cooperative stop. Setup waits at most one
-second for the registration result. The native backend accepts the same flag.
-
-`realtime.hpp` supplies RealtimeScope and the cumulative violation count. IDF
-uses a no-op implementation. Native instruments C++ allocation and project C
-malloc/calloc/realloc calls (GNU linker wrappers), Mutex::lock, Event::wait and
-all KvStore operations. Native tests install a failure sink with
-native_realtime.hpp; vdev leaves it unset and reports counter changes on stderr.
-The default native diagnostic counters use fixed atomic storage, without a
-mutex or an allocation in countDiag. Event::signal is still allowed in ticks.
-`native_task.hpp` supplies one-shot task-start and timer-restart fault injection.
-
-
-F4b adds `periodic_timer.hpp`: PeriodicTimer calls directly on esp_timer's
-priority-22 task every period, independently of loop tasks. Its fence timer
-and semaphore are allocated at setup; stop waits for the callback fence before
-releasing context. The native backend uses a separate thread and runs callbacks
-under the real-time guard. `native_task.hpp::setManualScheduling` is test-only:
-with all owners stopped, tests can select manual Loop/monitor advancement.
-
-The diagnostic sink adds allocation-free `raiseDiag`, `clearDiag`,
-`diagBlocksArm`, `diagDisarmsActive`, and a single-device disarm observer.
-Notification never waits; unregistering waits on the config caller for readers
-to finish. Native/vdev share one fixed atomic diagnostic table. Record sinks
-remain task-only, while raise/clear and safety queries are allowed in ticks.
-
-F4b enables CONFIG_ESP_TASK_WDT_PANIC in firmware defaults and requires the
-initialized panic-reset Task WDT at build time. Existing generated sdkconfigs
-must be regenerated when taking this default.
-
-## OTA backend (F9)
-
-IDF uses app_update APIs with sequential erasure and compile-time rollback
-enforcement. `finish()` closes/validates the upload without selecting it;
-`select()` is the explicit reboot commit. `abort()` never restores or rewrites
-boot metadata, and refuses a different selected slot. `confirm()` marks only
-the pending running image valid. Errors retain their ESP-IDF cause for the
-core's diagnostic stage. No direct otadata bit programming is used.
-
-Native `native_ota.hpp` defaults to isolated in-memory slots. Vdev sets its
-exclusive state directory and initial source build identity before Core
-construction. Checked, atomically replaced `ota.bin` metadata models selection,
-pending verification and rollback across process/soft resets. A prepared image
-and its handle do not survive reset; FINISH/ABORT do not write this metadata.
-`failOtaOperation` injects before-operation errors; `select_after` reports an
-error after durable selection to test an uncertain commit. A corrupt/torn
-metadata file fails closed. This backend simulates identity/boot state and
-does not execute uploaded ESP machine code or prove physical flash timing.
+- [Scheduling and allocation](backend/native/include/core_os/native_task.hpp) supports manual loop and monitor advancement, requested-affinity observation, and injected task-start, timer-restart and capture-allocation failures. Change scheduling mode or the start observer only while owners are stopped.
+- [KV faults](backend/native/include/core_os/native_kv.hpp) distinguish permanent write failure, a single failed write, and a truncated or corrupted blob whose write reports success. [Boot controls](backend/native/include/core_os/native_boot.hpp) provide reset and reboot observations.
+- [OTA faults](backend/native/include/core_os/native_ota.hpp) can fail before an operation or after durable boot selection. Use the latter to exercise recovery when the caller receives an error after the commit.

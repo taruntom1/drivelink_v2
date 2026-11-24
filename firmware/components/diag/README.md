@@ -1,50 +1,20 @@
-# diag
+# Firmware diagnostics
 
-Reports errors, warnings, counts and latched conditions to the host as codes
-(diag wire v3, `docs/protocol/diag.md`), and optionally as console text. The
-codes are defined in `protocol/defs/diag_codes.yaml`, generated into the code
-table and listed in `docs/protocol/diag-codes.md`; call sites use
-`diag::codes::<source>::k<Name>` through `diag_codes.hpp`.
+The [code registry](../../../protocol/defs/diag_codes.yaml) defines each diagnostic’s kind, severity and safety flags. Use the [reporting macros](include/diag.hpp) at firmware call sites for compile-time checks. The [core_os diagnostic sink](../core_os/include/core_os/diag_sink.hpp) passes instance identity through to the same diagnostic table.
 
-## API
+## Reporting context
 
-**Reporting (`diag.hpp`).** Use the macros, never the functions behind them:
-
-| Macro | Context | Use |
+| Code kind | Operation | Execution context |
 |---|---|---|
-| `DIAG_ERROR(code, err, arg0, arg1, fmt, ...)`, `DIAG_WARN(...)` | task only | Queue a record and log the text with the file's `TAG` |
-| `DIAG_COUNT(code)`, `DIAG_COUNT_N(code, n)` | any, real-time safe | Add to a counter code |
-| `DIAG_RAISE(code)`, `DIAG_RAISE_INSTANCE(code, instance)` | any, real-time safe | Raise a `kind: latched` condition |
-| `DIAG_CLEAR(code)` | latched: any; records: task only | Clear a condition when it recovers |
+| Record | Report an error or warning. Clear a recoverable record when its condition ends. | Task outside the real-time path. Reporting and clearing can enqueue events. |
+| Counter | Add one or more occurrences. The reporter publishes counter deltas periodically. | Real-time safe. |
+| Latched condition | Raise a condition or clear it on recovery if the code permits clearing. | Both transitions are real-time safe. Atomic dirty bits signal pending changes to the reporter. |
 
-The macros check the code's kind and severity at compile time. The core
-reports through `core_os`'s diag sink, which calls `diag::report`/`count`/
-`raise`/`clear` with an instance id. `blocksArm()`, `disarmsActive()` and
-`setDisarmHandler()` connect the codes' `blocks_arm` / `disarms` flags to
-arming and the safety monitor.
+## Reporter and backpressure
 
-**Sending (`diag_reporter.hpp`).** `diag::Reporter` owns the diag task. It
-sends the Boot event once, then queued records and Cleared events, answers
-queries (GetInfo, GetEntries, Clear on 0x23/0x63), and sends CounterDelta
-events every `CONFIG_DIAG_COUNTER_PERIOD_MS` (folding in `UartComm`'s error
-counters). `main` constructs it last, so Boot carries the final instance
-counts and the safe-mode flag; records from startup wait in the queue.
+The [reporter](src/diag_reporter.cpp) sends startup and diagnostic events, answers host queries, and folds UART error counters into periodic updates. Message formats and query semantics live in the [diagnostic wire contract](../../../docs/protocol/diag.md).
 
-## Kconfig ("Diagnostics (diag)")
+- **Queued records and record clears:** the reporter peeks at the head and removes it only after UART TX accepts it. A full TX queue leaves that event pending for the next pass. The diagnostic queue itself is bounded, so a new record can still be dropped at admission.
+- **Latched transitions:** each slot tracks pending raise and clear bits. Repeated transitions coalesce. If both bits are pending, the reporter emits the current state last. If TX fills partway through, it restores only the unsent bits.
 
-Record and query queue depths, the counter period, the reporter poll period,
-the task stack and priority, and `DIAG_CONSOLE_LOG`. With `DIAG_CONSOLE_LOG=n`
-all first-party console text compiles out (no format strings, arguments not
-evaluated); CI builds that variant with zero warnings.
-
-## Rules
-
-- Only the core (through the sink), the module components and `main` report.
-  The hardware layers return errors and don't depend on `diag`.
-- A recoverable condition is reported once when it starts and cleared on
-  recovery, not on every occurrence. Real-time code only counts or raises.
-- Stage and cause args are wire contract: named constants next to the report,
-  documented in `diag_codes.yaml`, never renumbered. Retired codes and sources
-  (`motor_manager` 0x10, `time_sync` 0x11) are never reused.
-- Pure codecs and the slot table (`diag_protocol.cpp`, `diag_table.cpp`) are
-  covered by the native tests.
+[Kconfig](Kconfig) controls queue depths, reporter scheduling, counter publication and console logging. With `DIAG_CONSOLE_LOG=n`, format arguments are type-checked but never evaluated. Perform required side effects before the macro call. The numeric record still reaches the reporting path.

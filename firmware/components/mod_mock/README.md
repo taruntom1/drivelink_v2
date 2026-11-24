@@ -1,64 +1,48 @@
 # mod_mock
 
-Pure deterministic module types for native tests, the virtual device and
-bare-board firmware checks. `mod_mock::kTypes` is the explicit registration
-list. It uses the pure motor interfaces and estimator; allocation is at instance creation.
+Pure, deterministic module types for native tests, the [virtual device](../../../host/vdev/README.md) and bare-board firmware checks. [`mod_mock::kTypes`](include/mod_mock/modules.hpp) is the explicit registration list; the logic is in [`src/modules.cpp`](src/modules.cpp). Ticks and actions never allocate, block or log.
 
-- actuator.mock (0x70, real-time loop required): exact first-order velocity response to duty,
-  with integrated position; configurable time constant and gain. `drive`
-  supplies duty and samples velocity/position; paused `reset` zeros state
-  and echoes a blob, exercising bounded bidirectional action payloads.
-- feedback.mock (0x71, real-time loop required): optional structural actuator reference,
-  sampling its previous tick's state before the actuator ticks through
-  optional simulation observations; unsupported actuator types fail
-  safely at start.
-- imu.mock (0x72, real-time loop forbidden): constant-rate yaw, wrapped to +/-pi, with sample
-  and paused reset actions.
-- fusion.mock (0x73, any loop): sources `feedback` and `imu`, their generated
-  value/age signals, and `combined`, the sum of valid source values (missing
-  values contribute zero). It exercises same-loop and cross-loop sampling
-  without an actuator output. Source targets use packed signal/input refs.
+Descriptors, IDs, allowed loops, params and defaults, signals, inputs and actions are generated from the YAML files:
 
-Descriptors, IDs, params, signals, inputs and actions are generated from the
-four module YAML files. Actions and ticks never allocate, block or log.
-Native command tests and `smoke_core_firmware.py` exercise them. The `drive`
-action is a simulation test control; command inputs and arming work as for any
-module.
+| Type | Generated reference | Definition |
+|---|---|---|
+| `actuator.mock` | [actuator.mock.md](../../../docs/protocol/types/actuator.mock.md) | [actuator.mock.yaml](../../../protocol/defs/actuator.mock.yaml) |
+| `feedback.mock` | [feedback.mock.md](../../../docs/protocol/types/feedback.mock.md) | [feedback.mock.yaml](../../../protocol/defs/feedback.mock.yaml) |
+| `imu.mock` | [imu.mock.md](../../../docs/protocol/types/imu.mock.md) | [imu.mock.yaml](../../../protocol/defs/imu.mock.yaml) |
+| `fusion.mock` | [fusion.mock.md](../../../docs/protocol/types/fusion.mock.md) | [fusion.mock.yaml](../../../protocol/defs/fusion.mock.yaml) |
 
+Native command tests and [`smoke_core_firmware.py`](../../test/uart_comm/smoke_core_firmware.py) exercise these types. Command inputs and arming work as for any module.
 
-F4b gates actuator motion on an atomic emergency force, released by its owning
-loop's arm transition. Disarmed drive actions leave zero target duty. The
-`diagnostic(disarms, active)` loop action raises/clears either a mock arm blocker
-or a disarming latched fault, allowing the real safety path to be tested without
-motors. It is ordinary descriptor-driven behavior in the host.
+## actuator.mock
 
-## F5a-1 motor model
+A first-order velocity plant with integrated position, driven by duty through `tau_s` and `gain`. It implements the `mod_motor` actuator interface.
 
-The actuator has `deadband` (default 0.02), symmetric `duty_limit` (1) and
-`one_tick_delay` (true). The delay is in addition to feedback sampling the
-preceding actuator state. The current cap constrains queued duty too. Emergency
-force discards delayed effort, while the first-order plant can coast. ARM clears
-the queued duty. `applied_duty` reports the plant's effort, distinct from a
-controller's commanded duty.
+- Each tick clamps the requested duty to `duty_limit`, zeroes it inside `deadband`, then applies it directly or, with `one_tick_delay`, one tick later. Feedback sampling the previous tick adds a further tick.
+- Emergency force or the disarmed state zeroes both requested and queued duty; the plant then coasts. Every arm transition clears duty, queued duty and applied duty, so disarmed `drive` actions leave zero target duty.
+- `applied_duty` is the plant's effort after limit, deadband and delay, not a controller's commanded duty.
+- `drive` is a simulation test control: it sets the standalone duty and returns velocity and position. Once a controller claims the actuator at startup, the duty input has no effect and `drive` returns `Busy/AlreadyBound`.
+- Paused `reset` zeroes the plant, advances its reset generation and echoes its blob, exercising bounded bidirectional action payloads.
+- The `diagnostic(disarms, active)` loop action raises or clears a mock arm blocker (`disarms` false) or a disarming latched fault (`disarms` true), so the real safety path can be tested without motors.
 
-`feedback.mock` quantizes simulated position to signed int32 `count` with
-`counts_per_rev` (1440) and `gear_ratio` (1), then derives position and filtered
-velocity from that count using the same estimator as hardware feedback.
-The count wraps; the velocity delta handles wrap. Position is float radians
-from the signed count and therefore wraps too. Use raw counts for odometry.
-`velocity_cutoff` defaults to 30 Hz. `noise_counts` adds bounded count noise
-before rounding (default off); `noise_seed` defaults to 1. The xorshift sequence
-is deterministic. Plant reset clears the estimator and restarts the sequence;
-ARM/DISARM re-prime the estimator without clearing encoder position.
+## feedback.mock
 
-Both mocks implement `mod_motor` interfaces. A controller claims its actuator
-at startup, making the standalone duty input ineffective; `drive` then returns
-Busy/AlreadyBound. Duplicate controllers fail startup and block ARM. A standalone
-mock retains its original input/action API. There are no new wire encodings.
+Simulated encoder feedback implementing the `mod_motor` feedback interface.
 
-F6 extends `imu.mock` with representative quaternion/vector/temperature and
-calibration-status signals, validity/age/count, modes and the shared versioned
-calibration codec. `calibration_read`/`write` stage params through the paused
-action transaction; `apply` updates the simulated sensor. Saved calibration is
-applied at boot. Existing rate/yaw/sample/reset IDs remain stable. See
-`docs/protocol/imu.md`; physical calibration quality is a separate HW check.
+- Its optional `actuator` reference supplies a plant observation, sampled from the previous tick before the actuator ticks. A referenced type without plant observation fails start at stage 1 (simulation source).
+- Position is quantized to a signed int32 `count` with `counts_per_rev` and `gear_ratio`; position and filtered velocity come from that count through the hardware feedback estimator. The count wraps, the velocity delta handles the wrap, and float position wraps with the count. Use raw counts for odometry.
+- `noise_counts` adds bounded count noise before rounding from a deterministic xorshift seeded by `noise_seed`. A plant reset or a seed change clears the estimator and restarts the sequence.
+- Arm transitions re-prime the estimator without clearing the count.
+
+## imu.mock
+
+Constant-rate yaw wrapped to ±π, with a matching quaternion and representative gyro, accel, gravity, magnetometer and temperature signals, plus `sample` and paused `reset` actions. It uses the [`mod_imu_bno055`](../mod_imu_bno055/README.md) state, modes and calibration codec, so calibration actions behave as in the [IMU contract](../../../docs/protocol/imu.md#calibration-actions-and-persistence). Mode 0 (CONFIG) publishes no valid samples.
+
+All four calibration levels report 3 only while a valid calibration is applied, and 0 otherwise. A saved calibration applies at start. On a fresh device, write and apply (or save and reboot with) a calibration before a check that needs levels at 3, such as the GUI's Read.
+
+## fusion.mock
+
+Two [sources](../../../docs/protocol/core.md#sources-f4c), `feedback` and `imu`, with their generated value and age signals, and `combined`, the sum of the valid source values (invalid sources contribute zero). It runs on any loop and exercises same-loop and cross-loop sampling without an actuator output.
+
+## Controllers
+
+A controller claims its actuator at startup. Duplicate controllers fail startup and block ARM. A mock without a controller keeps its standalone input and action API. See [Wiring and ownership](../mod_motor/README.md#wiring-and-ownership) for interface lifetime and emergency force.

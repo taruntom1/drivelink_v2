@@ -1,115 +1,92 @@
 # drivelink-cli
 
-Since core v9, `info` includes `device_id` (12 lowercase hex digits) and `name`.
-`name [TEXT]` reads or renames; `name ""` clears. Names allow 0..16 UTF-8 bytes
-without C0/C1 controls, also while armed. SAVE persists; REVERT restores.
+Generic command-line client over [libdrivelink](../libdrivelink/README.md). `drivelink-cli --help` is the command and argument inventory and does not open a port. This README covers the contracts `--help` does not state.
 
-Generic CLI over libdrivelink. `--help` lists commands and arguments.
-Options precede the command; supply `--endpoint tcp://127.0.0.1:8765` or
-`--endpoint serial://COM3` (921600 baud by default).
+## Invocation
+
+Global options precede the command: `--endpoint tcp://HOST:PORT|serial://PORT`, `--baud` (default 921600), `--timeout-ms` (default 1500), `--json`, and the agent options in [Through an agent](#through-an-agent).
 
 ```sh
 drivelink-cli --endpoint tcp://127.0.0.1:8765 --json types
-drivelink-cli --endpoint tcp://127.0.0.1:8765 add 112 motor
-drivelink-cli --endpoint tcp://127.0.0.1:8765 set 112:0:1=0.2
-drivelink-cli --endpoint tcp://127.0.0.1:8765 save
-drivelink-cli --endpoint tcp://127.0.0.1:8765 reboot
+drivelink-cli --endpoint serial://COM3 set 112:0:1=0.2
 drivelink-cli --endpoint tcp://127.0.0.1:8765 action 112:0:768 0.5
 ```
 
-The numeric mock IDs above are examples. `types`, `items TYPE`, `enums TYPE ITEM`
-and `codes` discover definitions. `instances [pending]`, `add`, `remove`, `label`
-and `discard` edit the layout. An add is pending until SAVE and reboot.
-`get REF...`, `get-pending REF...` and `set REF=VALUE...` support batches, with
-Refs written as `type:instance:item`. IDs accept decimal or `0x` hexadecimal.
-Param values are parsed from device descriptors (booleans, integers, float or
-enum names). GET/SET show raw slot bits and typed values. A pending parameter
-write is a successful command with `pending_reboot: true`.
+A REF is `TYPE:INSTANCE:ITEM`; IDs accept decimal or `0x` hexadecimal. The numeric IDs in examples are mock-module values; discover real ones with `types`, `items TYPE`, `enums TYPE ITEM` and `codes`. `get`, `get-pending` and `set` accept several REFs in one batch.
 
-Actions use `action REF [ARG...] [--blob HEX]`, with descriptor-defined scalar
-args/results and up to 512 blob bytes. `status [COUNT]` and `events [COUNT]`
-watch bounded event queues. `diag-info`, `diag-entries`, `diag-clear`, `save`,
-`revert`, `factory-reset`, `reboot` and `exit-safe-mode` use the current firmware
-services. `bench-crash` is a test hook rejected by normal firmware and normal
-vdev. Every connection checks core v10 before any requested mutation.
+Values are parsed with the item's device descriptor: `true`/`false`, integers, floats or enum names. NaN and infinity are rejected. GET and SET print raw slot bits and typed values. `action REF [ARG...] [--blob HEX]` takes descriptor-typed scalar arguments and up to 512 blob bytes.
 
-F4c source parameters have `is_source: true` in item JSON (flag 0x80).
-Configure them through `set`, using the numeric packed reference
-`type << 24 | instance << 16 | item_id`, then `save` and `reboot`.
-For example, `set 115:0:2=1912602880` connects fusion.mock instance 0's
-IMU source to imu.mock instance 0's yaw (type 114, signal 256).
-Discover and subscribe to `<name>.value` and `<name>.age_us` on the consumer
-loop normally. Age 4294967295 means no valid sample; zero disconnects a
-source parameter. Sources stay sampled while disarmed.
+Every connection reads INFO and checks core v10 before the requested command runs, so a mismatched device fails before any mutation.
 
-Default output is readable key/value text. With `--json`, stdout holds only
-`{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`.
-Watch commands produce one JSON envelope per line (NDJSON). Exit codes: 0
-success, 1 internal failure, 2 usage/value error, 3 connection, 4 timeout,
-5 device rejection, 6 malformed/incompatible protocol. Help does not open a port.
-Writes never retry; a write timeout has an unknown outcome.
+## Output and exit codes
 
-The CLI consumes typed library results and owns JSON formatting in
-`src/format.cpp`. CTest's `host-cli-golden` compares 60 readable/JSON outputs
-against vdev; `host-cli-replay` compares 12 deterministic event, action,
-subscription, capture and CSV outputs. Fixtures were captured from the original
-2793125 CLI before migration, with only documented dynamic fields normalized.
-Linux replay also interrupts an in-flight testgen START and requires DISARM
-plus the original null-status output when no STATUS has been read. Run these
-through the normal host validation checks; do not re-record fixtures to make
-a changed implementation pass.
+Default output is readable key/value text. With `--json`, stdout holds only `{"ok":true,"data":...}` or `{"ok":false,"error":...,"exit_code":...,"result":...,"detail":...}`. Watch commands (`status`, `events`, `sub-stream`) print one envelope per line (NDJSON). `sub-csv` and `capture-read --csv` print CSV to stdout; omit `--json` for them. `ota-upload` reports progress on stderr.
 
-Loops are built-in type 5. For example, `add 5 fusion` allocates its loop id;
-`set 5:2:1=250` changes its rate, and `set 5:2:2=true` stages its real-time flag.
-Use the returned id rather than assuming 2. Add modules with `add TYPE LABEL LOOP`.
-SAVE/reboot applies additions, removals and reboot-required settings. `info`
-reports running loop ids/flags; status overruns are objects with loop_id and
-overruns. Safe mode reports no running loops, while instances lists offline config.
+| Exit | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Internal failure |
+| 2 | Usage or value error |
+| 3 | Connection |
+| 4 | Timeout |
+| 5 | Device or agent rejection (`result`, `detail` set) |
+| 6 | Malformed or incompatible protocol |
 
-Groups: `groups` lists slots and limits. `sub-config GROUP LOOP DIVIDER REF...`
-and `cmd-config GROUP LOOP REF...` return the new epoch/channel. Use
-`sub-enable GROUP true|false`, `sub-clear GROUP`, or `cmd-clear GROUP` to change
-resources. `sub-stream GROUP [COUNT]` prints typed samples and filters stale
-epochs. `cmd-send GROUP COUNTER [VALUE...]` parses configured input types; no
-values means keepalive. It drains its frame with an ordered GET_INFO before
-closing; the stream itself has no acknowledgement. Commands received while disarmed are ignored, so
-sending command values cannot change device inputs. NaN/Inf are rejected.
+## Writes
 
+No write is retried, except that `ota-upload` resends identical WRITE chunks at the same offset after STATUS confirms the acknowledged offset; it reconciles CONFIRM through STATUS and never repeats REBOOT. A write timeout has an unknown outcome. `cmd-run` and `testgen-run` still attempt DISARM when an ARM reply is lost.
 
-F4b adds `arm`, `disarm` (MSG_TYPE 0x03), and `ack-fault`. ARM failures include
-the device result/detail; acknowledging a fault never clears its active cause.
-`cmd-run GROUP PERIOD_MS COUNT [VALUE...]` validates typed values, arms, sends
-repeated frames and disarms when done or on SIGINT/error. The period must be
-less than half watchdog_ms. With no values it sends prefix-only keepalives.
-`keepalive GROUP PERIOD_MS COUNT` sends those frames without arming or taking
-ownership of an existing arm session. Both workflows stop on connection errors;
-command streams have no acknowledgement, so status/diag supervision is separate.
-CLI values remain finite and explicit. The library's managed command API can
-map NaN through consumer-supplied finite holds; these CLI commands keep their
-existing manual command/keepalive behavior.
+A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
 
-`sub-csv GROUP COUNT` writes timestamp_us, counter and descriptor-typed values
-to stdout as CSV. Redirect to a file; omit --json. `sub-stream` retains NDJSON.
-Read group capacities through `get 0:0:18 0:0:19 0:0:20`; GROUP LIST has no
-capacity prefix, while the Client::groups JSON convenience fields remain.
-`bench-stall LOOP DURATION_MS` is refused by normal firmware and vdev. A
-bench-enabled firmware / vdev --allow-crash schedules a deliberate loop stall.
+## Layout and loops
 
-Capture (F7a): `capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...`
-with TRIGGER `manual`, `testgen_start`, `value_change REF` or `threshold REF rising|falling VALUE`
-(the value is parsed with the trigger item's descriptor). `capture-arm`,
-`capture-trigger`, `capture-abort` and `capture-status` map to the ops.
-`capture-wait [TIMEOUT_MS]` returns once the capture is done, with the
-CaptureDone event when it arrived during the call. `capture-read` pages every
-sample of a done capture and adds typed rows; `capture-read --csv` prints
-`index,time_us,REF...`, where time is relative to the trigger sample
-(`(index - trigger_index) × period_us × divider`). `events` decodes 0xC1.
+Loops are built-in type 5. `add 5 fusion` returns the allocated loop id; use that id rather than assuming one. Add a module to a loop with `add TYPE LABEL LOOP`, then `save` and `reboot`.
+
+```sh
+drivelink-cli --endpoint tcp://127.0.0.1:8765 add 5 fusion        # returns the loop id, e.g. 2
+drivelink-cli --endpoint tcp://127.0.0.1:8765 set 5:2:1=250 5:2:2=true
+drivelink-cli --endpoint tcp://127.0.0.1:8765 add 112 motor 2
+drivelink-cli --endpoint tcp://127.0.0.1:8765 save
+drivelink-cli --endpoint tcp://127.0.0.1:8765 reboot
+```
+
+`info` reports running loop ids and flags. Status overruns are objects with `loop_id` and `overruns`. Safe mode reports no running loops while `instances` still lists the offline configuration.
+
+## Sources
+
+Source parameters have `is_source: true` in item JSON. Set one with the packed numeric reference described in [Sources](../../docs/protocol/core.md#sources-f4c), then `save` and `reboot`; `0` disconnects it. For example, `set 115:0:2=1912602880` connects fusion.mock instance 0's IMU source to imu.mock instance 0's yaw (type 114, signal 256). Read `<name>.value` and `<name>.age_us` on the consumer like any other item.
+
+## Groups and commands
+
+`groups` lists slots and limits; read capacities with `get 0:0:18 0:0:19 0:0:20`. `sub-config GROUP LOOP DIVIDER REF...` and `cmd-config GROUP LOOP REF...` return the new epoch and channel. `sub-stream GROUP [COUNT]` prints typed samples and drops stale epochs; `sub-csv GROUP COUNT` writes `timestamp_us`, counter and typed values.
+
+`cmd-send GROUP COUNTER [VALUE...]` sends one frame; no values sends a keepalive. Command streams have no acknowledgement, so it drains its frame with an ordered GET_INFO before closing. The device ignores commands while disarmed.
+
+`cmd-run GROUP PERIOD_MS COUNT [VALUE...]` arms, sends repeated frames and disarms when done, on SIGINT or on error. `keepalive GROUP PERIOD_MS COUNT` sends prefix-only frames without arming or taking over an existing arm session. PERIOD_MS must be less than half `watchdog_ms`. Both stop on connection errors; supervise with `status` or diagnostics. ARM failures include the device result and detail, and `ack-fault` never clears an active cause. See [Arming and safety](../../docs/protocol/core.md#arming-and-safety-f4b).
+
+## Capture
+
+`capture-config LOOP DIVIDER SAMPLES PRE_TRIGGER TRIGGER REF...` takes TRIGGER `manual`, `testgen_start`, `value_change REF` or `threshold REF rising|falling VALUE`; VALUE is parsed with the trigger item's descriptor. `capture-wait [TIMEOUT_MS]` returns once the capture is done, with the CaptureDone event when it arrived during the call. `capture-read` pages every sample of a done capture. `capture-read --csv` prints `index,time_us,REF...` with time relative to the trigger sample, `(index - trigger_index) × period_us × divider`. See [Capture](../../docs/protocol/core.md#capture-family-6-f7a).
+
+## Test signals
+
+`testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT` needs an armed device and an independently fed command watchdog; `testgen-wait` does not feed it. Use zero for unused frequencies. `testgen-stop` is idempotent.
+
+`testgen-run GROUP PERIOD_MS TIMEOUT_MS LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT` arms, feeds prefix-only keepalives through an already configured GROUP, starts the test, waits up to TIMEOUT_MS and disarms on completion, interruption or failure. PERIOD_MS must be less than half `watchdog_ms`. See [Test generator](../../docs/protocol/core.md#test-generator-family-7-f7b) for waveforms, target requirements, clamping and hold behavior.
+
+## OTA
+
+`ota-upload IMAGE [--upload-only | --no-confirm] [--window 1..4]` uploads, reboots, verifies the running image and confirms it. `--upload-only` stops before boot selection; `--no-confirm` leaves the candidate unconfirmed. The window defaults to 4. The JSON result is OTA STATUS plus `rebooted` and `confirmed`. Recovery steps are in the [host overview](../README.md) and [OTA](../../docs/protocol/ota.md#safety-recovery-and-host-behavior).
+
+## Time
+
+`time-ping` takes one four-timestamp sample. `time-sync [DURATION_S]` defaults to 180 s (1–3600), sampling every 100 ms for five seconds and every 1 s after; it reports raw samples, estimator snapshots, held-out predictions, timeouts and dropped events. JSON samples add `mapping_valid`, `mapping_generation`, `mapped_host_us` and `mapped_uncertainty_us` from the Session fit; host fields are null when the mapping is invalid. CLI sessions disable background periodic pings. No firmware clock is set.
+
+Through an agent, both commands ping the agent: the `esp_*` fields are agent monotonic times, `mapping_valid` reports the composed device clock, and mapped host fields stay null. For the bare-board stability check, run `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`, then repeat with `--traffic`. See the [time contract](../../docs/protocol/time.md) for accuracy limits.
 
 ## Through an agent
 
-`drivelink-agent` (Linux; [agent protocol](../../docs/protocol/agent.md)) owns
-the device ports and shares each device with several clients. Point the CLI at
-the agent's `tcp://` endpoint and name the device:
+[`drivelink-agent`](../agent/README.md) owns device ports and shares each device with several clients ([agent protocol](../../docs/protocol/agent.md)).
 
 ```sh
 export DRIVELINK_AGENT_TOKEN=...            # or --token TOKEN
@@ -118,97 +95,28 @@ drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base info
 drivelink-cli --endpoint tcp://127.0.0.1:47620 --device 02444c000001 --json get 0:0:4
 ```
 
-`--device` takes an alias or a 12-hex device id; with it every command above
-works through the agent. It needs a `tcp://` endpoint and a token (`--token`,
-else the `DRIVELINK_AGENT_TOKEN` environment variable); otherwise it is a usage
-error (exit 2). Without `--device` the token is ignored. `--client-name NAME`
-(default `drivelink-cli`) is what the agent shows other clients; the CLI's
-Hello names its kind `cli` (agent protocol v3).
+`--device ALIAS|ID12` routes every command through the agent. It needs a `tcp://` endpoint and a token from `--token` or `DRIVELINK_AGENT_TOKEN`; otherwise it is a usage error (exit 2). Without `--device` the token is ignored. `--client-name NAME` (default `drivelink-cli`) is shown to other clients, with kind `cli`. Agent refusals (bad token, unknown or offline device, missing lease) exit 5 with the agent's `result` and `detail`.
 
-`agent-devices` (no `--device`) lists the agent's devices, one line each:
-`ALIAS online|offline ID NAME ENDPOINT clients=N`, followed by
-` holder=CLIENT_ID:NAME (KIND)` when a client holds the device's lease (`-`
-for an unknown ID or an empty name; KIND is `gui`, `cli`, `ros` or `other`).
-With `--json` the envelope's `data.devices` is an array of `{alias, online,
-device_id, name, endpoint, clients, holder_id, holder_name, holder_kind}`;
-`device_id` is `null` until the agent has read it, `holder_id` is 0,
-`holder_name` empty and `holder_kind` `null` when nobody holds the lease. Agent refusals (bad token, unknown or offline
-device, a missing lease) are device rejections: exit 5, with the agent's
-`result` and `detail`. An unreachable agent is exit 3 and a timeout 4, as
-for a direct endpoint.
+`agent-devices` (no `--device`) prints `ALIAS online|offline ID NAME ENDPOINT clients=N`, followed by ` holder=CLIENT_ID:NAME (KIND)` when a client holds the lease (`-` for an unknown ID or empty name; KIND is `gui`, `cli`, `ros` or `other`). JSON `data.devices` holds `{alias, online, device_id, name, endpoint, clients, holder_id, holder_name, holder_kind}`; `device_id` is `null` until the agent has read it, and an unheld lease gives `holder_id` 0, empty `holder_name` and `null` `holder_kind`.
 
-`agent-browse [--timeout-ms N]` needs no endpoint, device or token (giving
-`--endpoint`, `--device`, `--token`, `--lease` or arguments is a usage error,
-exit 2). It does one mDNS browse round (`_drivelink._tcp`, IPv4, N ms, default
-1500, allowed 100..10000, else exit 2) and prints one line per agent:
-`INSTANCE ADDRESS protocol N DriveLink VERSION HOST` (`?` when the agent did
-not advertise the value), or `No agents found.` (exit 0). With `--json` the
-envelope's `data.agents` is an array of `{instance, host, port, address,
-endpoint, addresses, from, proto, version}` (`proto` is `null` when absent;
-empty when no agent answered). `address` is `a.b.c.d:port` and `endpoint` the
-`tcp://` form to pass to `--endpoint`. Agents on loopback or with
-`--no-advertise` do not appear.
+`agent-clients` (needs `--device`) prints `CLIENT_ID NAME (KIND)`, with ` [holder]` on the lease holder. JSON `data.clients` holds `{client_id, name, kind, holder}`.
 
-`--lease` (a global option before the command, needs `--device`) takes the
-device's control lease before the command runs, preempting the current holder
-(who is disarmed). Arming, command groups and the exclusive operations (SAVE,
-REVERT, FACTORY_RESET, REBOOT, layout edits, capture, test signals, OTA) need
-the lease, or a device nobody holds that is not armed; otherwise they are
-refused `Busy/LeaseRequired` (exit 5, detail 58). The lease ends when the CLI
-process exits: the agent then disarms the device and clears the process's
-command groups, so `--lease arm` disarms again at once; use a long-lived
-client to keep an armed device. A refused take is a device rejection (exit 5).
-`--lease` does not apply to `ota-upload` (it opens its own session), so OTA
-through an agent works only while nobody holds the device's lease.
+`agent-browse [--timeout-ms N]` takes no endpoint, device, token, lease or arguments (exit 2 otherwise). It runs one IPv4 mDNS browse for `_drivelink._tcp` for N ms (default 1500, 100..10000) and prints `INSTANCE ADDRESS protocol N DriveLink VERSION HOST` per agent (`?` for unadvertised values) or `No agents found.` (exit 0). JSON `data.agents` holds `{instance, host, port, address, endpoint, addresses, from, proto, version}`; `address` is `a.b.c.d:port`, `endpoint` is the `tcp://` form, and `proto` is `null` when absent. Loopback agents and agents started with `--no-advertise` do not appear.
 
-`agent-clients` (needs `--device`) lists the clients connected to the device,
-one line each, `CLIENT_ID NAME (KIND)`, with ` [holder]` on the lease holder.
-With `--json`, `data.clients` is an array of `{client_id, name, kind, holder}`.
+`--lease` (needs `--device`) takes the control lease before the command, preempting and disarming the current holder. Arming, command groups and exclusive operations need the lease or an unheld, disarmed device; otherwise they fail `Busy/LeaseRequired` (exit 5, detail 58). See [The lease](../../docs/protocol/agent.md#the-lease).
 
-Each CLI process is one agent client, and the agent clears a client's group
-slots when it disconnects. `sub-config` therefore does not outlive its process:
-`sub-stream` and `cmd-send` in a later process find the group unconfigured.
-Use a long-lived client (the GUI, a script on the agent protocol) for groups.
+Each CLI process is one agent client, so its lease and groups end with the process:
 
-## Test signals (F7b)
+- When the process exits, the agent disarms the device and clears the process's command groups, so `--lease arm` disarms again at once.
+- `sub-config` does not outlive its process; `sub-stream` or `cmd-send` in a later process finds the group unconfigured.
+- `ota-upload` opens its own session and refuses `--lease`, so OTA through an agent works only while nobody holds the lease.
 
-`testgen-start LOOP REF WAVE OFFSET AMPLITUDE F0 F1 DURATION_MS REPEAT`
-requires an already armed device and an independently fed command watchdog.
-WAVE is `step`, `square`, `ramp`, `sine`, `chirp_linear` or `chirp_log`.
-Unused frequencies must be zero. Duration is per repetition; repeat 0 means
-until STOP/DISARM. The target must be a running f32 input flagged Testgen.
-Values are clamped to its descriptor limits.
+Use a long-lived client, such as the GUI or an agent-protocol script, to keep a device armed or a group configured.
 
-`testgen-stop LOOP` is idempotent. STOP/completion holds the last generated
-value until a command received after termination; ignored commands and
-keepalives cannot restore an older value. DISARM resets inputs as usual.
-`testgen-status LOOP` reports the run and configuration. `testgen-wait LOOP
-[TIMEOUT_MS]` correlates loop/run, polls STATUS, and returns an optional matching
-TestgenDone event. It does not feed the watchdog.
+## Test hooks
 
-`testgen-run GROUP PERIOD_MS TIMEOUT_MS LOOP REF WAVE OFFSET AMPLITUDE F0 F1
-DURATION_MS REPEAT` arms, supplies prefix-only command-group keepalives, starts
-the test, waits within the supplied timeout, and disarms on completion,
-interruption or failure. GROUP must already be configured; PERIOD_MS must be
-less than half watchdog_ms. Both this workflow and `cmd-run` attempt DISARM
-even when ARM may have applied but its reply was lost. Mutations are never
-retried. See `docs/protocol/core.md` for exact waveform phases and wire fields.
+`bench-crash` and `bench-stall LOOP DURATION_MS` are refused by normal firmware and normal vdev. Bench-enabled firmware or `drivelink-vdev --allow-crash` accepts them.
 
-## Time measurements (F8)
+## Output compatibility
 
-`time-ping` obtains one four-timestamp sample. `time-sync [DURATION_S]` defaults
-to 180 s (1–3600), using a 100 ms warmup cadence for five seconds and 1 s
-thereafter. Both support readable/JSON output. The measurement command reports
-raw samples, bounded-estimator snapshots, held-out predictions, timeouts and
-dropped event counts. JSON samples additionally expose `mapping_valid`,
-`mapping_generation`, `mapped_host_us` and `mapped_uncertainty_us` from the
-production Session fit; readable output is unchanged. Invalid mappings use null
-host/uncertainty fields. Interrupt stops sampling; no firmware clock is set.
-CLI sessions disable background periodic pings and retain this explicit cadence.
-Through an agent (`--device`) both commands ping the agent: the `esp_*` fields
-are the agent's monotonic times and the estimator fits the agent's clock;
-`mapping_valid` says whether the Session's composed device clock (the agent's
-ClockModel with this fit) is valid, and the mapped host fields stay null.
-Use `host/test/time_smoke.py --cli <cli> --endpoint serial://COM3 --duration 180`
-and repeat with `--traffic` for the bare-board stability check. See the
-[time contract](../../docs/protocol/time.md) for the accuracy limits.
+The CLI consumes typed library results and owns JSON formatting in `src/format.cpp`. CTest `host-cli-golden` compares 60 readable and JSON outputs against vdev; `host-cli-replay` compares 12 deterministic event, action, subscription, capture and CSV outputs. Linux replay also interrupts an in-flight testgen START and requires DISARM plus the original null-status output when no STATUS was read. Only documented dynamic fields are normalized. Run them through the normal host validation; do not re-record fixtures to make a changed implementation pass.

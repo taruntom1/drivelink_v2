@@ -14,7 +14,8 @@ The firmware overhaul (S0, S1, F1–F10, LP) is finished; its step table, decisi
 
 ## Keeping this file short
 
-Every session reads all of this file, so it holds only what has no other home.
+Read this file when the task depends on board state, deferred hardware checks,
+or the current host milestone. Keep only information that has no other home.
 
 - **A fact goes where its subject lives.** If it is already there, don't repeat it here.
 

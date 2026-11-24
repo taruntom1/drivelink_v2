@@ -549,7 +549,7 @@ its standalone duty input and refuses its `drive` action with Busy/AlreadyBound.
 ARM/DISARM reset controller state and receipts, holding zero duty/velocity or
 measured position; they preserve encoder position and source storage. See
 `firmware/components/mod_motor/README.md` for implementation contracts. These
-are discovered module behaviors over core v5; diag remains v3 and NVS unchanged.
+are discovered module behaviors with no wire encoding of their own.
 
 ## IMU module (F6)
 
