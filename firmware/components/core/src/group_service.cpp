@@ -256,8 +256,8 @@ void GroupService::beginTick(uint8_t loop, bool armed, int64_t armed_at_us)
 {
     auto &d = *m_impl;
     for (auto kind : {GroupKind::Subscription, GroupKind::Command}) {
-        for (size_t i = 0; i < capacity(kind); ++i) {
-            auto &s = *d.slot(kind, static_cast<uint8_t>(i));
+        for (auto &slot : kind == GroupKind::Subscription ? d.subs : d.cmds) {
+            auto &s = *slot;
             if (s.route.load(std::memory_order_acquire) != loop || !s.claim()) { continue; }
             if (s.route.load(std::memory_order_acquire) != loop) { s.release(); continue; }
             auto expected = Swap::Ready;
