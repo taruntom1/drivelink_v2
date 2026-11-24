@@ -248,7 +248,7 @@ ready with both parts' checks, and this plan says step 5 is done.
 
 ### Handoff from 5a
 
-**Last commit.** The one that fills in this section; the code is `0da0e50` (firmware)
+**Last commit.** The branch tip when the PR was opened; its code is `a5a29c9`: `0da0e50` (firmware)
 and `c6eb24e` (vdev, library), and the board runs `c6eb24e`.
 
 **User decisions (2026-11-25).**
