@@ -93,6 +93,7 @@ struct TestgenService::Impl {
 TestgenService::TestgenService(const detail::InstanceTable &t, std::span<Loop *> l, ArmState &a, CaptureService &c)
     : m_impl(std::make_unique<Impl>(t, l, a, c)) {}
 TestgenService::~TestgenService() = default;
+size_t TestgenService::slotBytes() { return sizeof(Slot); }
 
 Status TestgenService::stageStart(const TestgenConfig &c, uint32_t &run)
 {

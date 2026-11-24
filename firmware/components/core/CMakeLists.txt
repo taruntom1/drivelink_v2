@@ -22,6 +22,7 @@ idf_component_register(
          "src/pending_layout.cpp"
          "src/boot.cpp"
          "src/persistence.cpp"
+         "src/ram_estimate.cpp"
          "src/registry.cpp"
          "src/value.cpp"
          "src/wiring_order.cpp"

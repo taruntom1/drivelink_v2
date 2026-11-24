@@ -36,7 +36,7 @@ Default output is readable key/value text. With `--json`, stdout holds only `{"o
 
 No write is retried, except that `ota-upload` resends identical WRITE chunks at the same offset after STATUS confirms the acknowledged offset; it reconciles CONFIRM through STATUS and never repeats REBOOT. A write timeout has an unknown outcome. `cmd-run` and `testgen-run` still attempt DISARM when an ARM reply is lost.
 
-A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
+A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. System settings work the same way: the capacity limits `limits.*` (0:0:16 to 0:0:23) are pending, the diagnostic timing `diag.*` (0:0:32 to 0:0:34) is live. `get` shows what runs, `get-pending` what `save` writes. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
 
 ## Layout and loops
 
@@ -58,7 +58,7 @@ Source parameters have `is_source: true` in item JSON. Set one with the packed n
 
 ## Groups and commands
 
-`groups` lists slots and limits; read capacities with `get 0:0:18 0:0:19 0:0:20`. `sub-config GROUP LOOP DIVIDER REF...` and `cmd-config GROUP LOOP REF...` return the new epoch and channel. `sub-stream GROUP [COUNT]` prints typed samples and drops stale epochs; `sub-csv GROUP COUNT` writes `timestamp_us`, counter and typed values.
+`groups` lists slots and limits; read capacities with `get 0:0:18 0:0:19 0:0:20` and change them with `set`, `save` and `reboot`. `sub-config GROUP LOOP DIVIDER REF...` and `cmd-config GROUP LOOP REF...` return the new epoch and channel. `sub-stream GROUP [COUNT]` prints typed samples and drops stale epochs; `sub-csv GROUP COUNT` writes `timestamp_us`, counter and typed values.
 
 `cmd-send GROUP COUNTER [VALUE...]` sends one frame; no values sends a keepalive. Command streams have no acknowledgement, so it drains its frame with an ordered GET_INFO before closing. The device ignores commands while disarmed.
 

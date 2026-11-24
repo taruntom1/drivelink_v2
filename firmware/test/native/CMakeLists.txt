@@ -66,6 +66,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/pending_layout.cpp
     ${COMPONENTS_DIR}/core/src/boot.cpp
     ${COMPONENTS_DIR}/core/src/persistence.cpp
+    ${COMPONENTS_DIR}/core/src/ram_estimate.cpp
     ${COMPONENTS_DIR}/core/src/registry.cpp
     ${COMPONENTS_DIR}/core/src/value.cpp
     ${COMPONENTS_DIR}/core/src/wiring_order.cpp

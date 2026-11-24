@@ -218,7 +218,7 @@ TEST_CASE("Configurable loops: limits, sparse ids and empty saved layouts")
         if (count==0) { CHECK(st.detail==core::Detail::LoopMismatch); }
         else { REQUIRE(st.ok()); CHECK(c.pendingLayout().entries().back().loop==2); }
     }
-    core_os::KvStore store; core::CoreConfig cfg; cfg.max_loops=1;
+    core_os::KvStore store; core::CoreConfig cfg; cfg.max_loops=1; cfg.configure_system=nullptr;
     core::Core c(cfg); boot(c,store); uint8_t id=255;
     CHECK(c.addInstance(defs::kLoopTypeId,255,"extra",id).detail==core::Detail::Capacity);
     CHECK(c.removeInstance(defs::kLoopTypeId,0).ok());

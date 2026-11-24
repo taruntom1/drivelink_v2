@@ -42,7 +42,11 @@ struct PendingEntry {
 /// settings give, and an op is
 /// undone and refused when, after it, an entry fails that passed before, or an
 /// entry the op added or changed fails. The refusal carries that entry's
-/// status.
+/// status. An op is refused too when it drops a limit below what the layout
+/// uses (`Capacity`), or when the layout and the settings grow past the RAM the
+/// device has (`NotEnoughMemory`, core/ram_estimate.hpp). Neither stands in the
+/// way of a layout that is already over: an op that does not make it worse is
+/// accepted.
 class PendingLayout {
 public:
     PendingLayout(const Registry &registry, detail::InstanceTable &table, const CoreConfig &config);
@@ -108,8 +112,14 @@ private:
     bool ensureCopy();
     PendingEntry *find(uint8_t type_id, uint8_t instance);
     std::vector<LayoutEntry> view() const;
+    /// What the core is built with at these system values.
+    CoreConfig configFor(const std::vector<uint32_t> &system) const;
     /// The layout's limits with these system values.
     ValidationConfig limits(const std::vector<uint32_t> &system) const;
+    /// `Capacity` when the layout got larger than a limit, or a limit smaller
+    /// than the layout.
+    Status checkCounts(const std::vector<PendingEntry> &before, const ValidationConfig &was,
+                       const ValidationConfig &now) const;
     /// Validate after an op. `before` and `before_system` are the copy before
     /// it; `touched` names the (type, inst) the op added or changed.
     Status check(const std::vector<PendingEntry> &before, const std::vector<uint32_t> &before_system,

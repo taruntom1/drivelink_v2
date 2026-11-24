@@ -148,7 +148,7 @@ items:
 - Items are params and signals only. Inputs and actions are rejected.
 - A param may be `reboot_required`: it is staged with the layout and takes effect after SAVE and a reboot (see [core.md](core.md#pending-system-settings-v11)). The core binds no storage for it; `CoreConfig::configure_system` takes its value at boot.
 
-Everything else follows the module type rules above: ids, names, value types, limits, flags. The file is optional for the generator (its test fixtures can leave it out); the firmware needs it. The items are listed in [types/system.md](types/system.md). It holds only the items in use; later steps add theirs (the watchdog timeout, the status rate).
+Everything else follows the module type rules above: ids, names, value types, limits, flags. The file is optional for the generator (its test fixtures can leave it out); the firmware needs it. The items are listed in [types/system.md](types/system.md). It holds only the items in use. Every `limits.*` and `diag.*` setting lives here alone: no Kconfig option repeats its default or range.
 
 ## The descriptor format
 

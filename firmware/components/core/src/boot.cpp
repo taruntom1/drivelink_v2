@@ -7,6 +7,7 @@
 #include "core/core.hpp"
 #include "core_os/boot_info.hpp"
 #include "core_os/diag_sink.hpp"
+#include "core_os/memory.hpp"
 #include "drivelink/protocol/gen/diag_codes.hpp"
 
 namespace core {
@@ -45,14 +46,18 @@ std::vector<uint32_t> runningSystemValues(const BootPlan &plan, const defs::Type
 
 CoreConfig bootConfig(const BootPlan &plan, const CoreConfig &base)
 {
-    return withSystemSettings(base, runningSystemValues(plan, *base.system_type));
+    CoreConfig config = withSystemSettings(base, runningSystemValues(plan, *base.system_type));
+    config.saved_entries = plan.config.instances.size();
+    return config;
 }
 
 BringUp bringUp(core_os::KvStore &store, const CoreConfig &base, std::span<const ModuleType *const> types)
 {
     BringUp up;
+    CoreConfig measured = base;
+    measured.ram.heap_bytes = core_os::freeInternalBytes();
     BootPlan plan = prepareBoot(store);
-    auto core = std::make_unique<Core>(bootConfig(plan, base));
+    auto core = std::make_unique<Core>(bootConfig(plan, measured));
     up.status = core->init(types);
     if (!up.status.ok()) {
         up.stage = kInitStageRegistry;

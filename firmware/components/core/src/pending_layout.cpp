@@ -6,6 +6,7 @@
 #include <cstring>
 #include <utility>
 
+#include "core/ram_estimate.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
 #include "drivelink/protocol/gen/type_loop.hpp"
 
@@ -56,6 +57,10 @@ void copyLabel(char (&dst)[kLabelBytes + 1], const char *src)
     dst[n] = '\0';
 }
 
+/// The system's key: a SET refusal with it names the batch's system entry.
+constexpr uint16_t kSystemKey = 0;
+static_assert(drivelink::protocol::defs::kSystemTypeId == 0);
+
 std::vector<LayoutEntry> viewOf(const std::vector<PendingEntry> &entries)
 {
     std::vector<LayoutEntry> view;
@@ -89,7 +94,12 @@ uint32_t PendingLayout::systemValue(size_t index) const
 
 ValidationConfig PendingLayout::limits(const std::vector<uint32_t> &system) const
 {
-    return validationConfig(withSystemSettings(m_config, system));
+    return validationConfig(configFor(system));
+}
+
+CoreConfig PendingLayout::configFor(const std::vector<uint32_t> &system) const
+{
+    return withSystemSettings(m_config, system);
 }
 
 bool PendingLayout::ensureCopy()
@@ -146,31 +156,71 @@ std::vector<LayoutEntry> PendingLayout::view() const
 Status PendingLayout::check(const std::vector<PendingEntry> &before, const std::vector<uint32_t> &before_system,
                             std::span<const uint16_t> touched) const
 {
-    const std::vector<LayoutEntry> after_view = view();
-    std::vector<Status> after(after_view.size());
-    if (validateLayout(after_view, limits(m_system), after) == 0U) {
-        return Status::success();
+    const ValidationConfig now = limits(m_system);
+    const ValidationConfig was_limits = limits(before_system);
+    Status st = checkCounts(before, was_limits, now);
+    if (!st.ok()) {
+        return st;
     }
+    const std::vector<LayoutEntry> after_view = view();
     const std::vector<LayoutEntry> before_view = viewOf(before);
-    std::vector<Status> was(before_view.size());
-    (void)validateLayout(before_view, limits(before_system), was);
-
-    for (size_t i = 0; i < after.size(); ++i) {
-        if (after[i].ok()) {
-            continue;
+    std::vector<Status> after(after_view.size());
+    if (validateLayout(after_view, now, after) != 0U) {
+        std::vector<Status> was(before_view.size());
+        (void)validateLayout(before_view, was_limits, was);
+        for (size_t i = 0; i < after.size(); ++i) {
+            if (after[i].ok()) {
+                continue;
+            }
+            const LayoutEntry &e = after_view[i];
+            bool is_touched = false;
+            for (const uint16_t k : touched) {
+                is_touched = is_touched || (k == key(e.type_id, e.instance));
+            }
+            const size_t j = findEntry(before_view, e.type_id, e.instance);
+            const bool passed_before = (j != kNoEntry) && was[j].ok();
+            if (!is_touched && !passed_before) {
+                continue;
+            }
+            // Name the cause, not an entry that only depends on it.
+            if (st.ok() || (st.detail == Detail::DependencyMissing && after[i].detail != Detail::DependencyMissing)) {
+                st = after[i];
+                st.index = key(e.type_id, e.instance); // the caller turns it into its own index
+            }
         }
-        const LayoutEntry &e = after_view[i];
-        bool is_touched = false;
-        for (const uint16_t k : touched) {
-            is_touched = is_touched || (k == key(e.type_id, e.instance));
-        }
-        const size_t j = findEntry(before_view, e.type_id, e.instance);
-        const bool passed_before = (j != kNoEntry) && was[j].ok();
-        if (is_touched || passed_before) {
-            Status st = after[i];
-            st.index = key(e.type_id, e.instance); // the caller turns it into its own index
+        if (!st.ok()) {
             return st;
         }
+    }
+
+    const CoreConfig config = configFor(m_system);
+    const size_t need = estimateRam(config, after_view);
+    if (need > ramLimit(config) && need > estimateRam(configFor(before_system), before_view)) {
+        return Status::fail(Result::NoMemory, Detail::NotEnoughMemory, kSystemKey);
+    }
+    return Status::success();
+}
+
+Status PendingLayout::checkCounts(const std::vector<PendingEntry> &before, const ValidationConfig &was,
+                                  const ValidationConfig &now) const
+{
+    // Counted, not left to the validator: an entry that is invalid for another
+    // reason must not slip past a lowered limit either.
+    const auto loops = [](const std::vector<PendingEntry> &entries) {
+        size_t n = 0;
+        for (const PendingEntry &e : entries) {
+            n += (e.type_id == defs::kLoopTypeId) ? 1U : 0U;
+        }
+        return n;
+    };
+    const auto over = [](size_t used, size_t limit, size_t used_before, size_t limit_before) {
+        return used > limit && (used > used_before || limit < limit_before);
+    };
+    const size_t loops_now = loops(m_entries);
+    const size_t loops_was = loops(before);
+    if (over(loops_now, now.max_loops, loops_was, was.max_loops) ||
+        over(m_entries.size() - loops_now, now.max_instances, before.size() - loops_was, was.max_instances)) {
+        return Status::fail(Result::NoMemory, Detail::Capacity, kSystemKey);
     }
     return Status::success();
 }

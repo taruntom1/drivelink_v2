@@ -8,7 +8,8 @@ namespace core {
 
 enum class GroupKind : uint8_t { Subscription, Command };
 inline constexpr size_t kMaxGroupEntries = 64;
-inline constexpr size_t kGroupStreamBytes = 12 + 4 * kMaxGroupEntries;
+inline constexpr size_t kGroupStreamPrefix = 12;
+inline constexpr size_t kGroupStreamBytes = kGroupStreamPrefix + 4 * kMaxGroupEntries;
 
 // A resolved scalar. The storage is read only on its owning loop. F4c can
 // reuse latchSignals for a coherent list of values at the end of a tick.
@@ -47,6 +48,10 @@ public:
     ~GroupService();
     GroupService(const GroupService &) = delete;
     GroupService &operator=(const GroupService &) = delete;
+
+    // For the RAM estimate: one group of either kind, and what is there anyway.
+    static size_t slotBytes();
+    static size_t baseBytes();
 
     size_t capacity(GroupKind kind) const;
     uint8_t entryCapacity() const;

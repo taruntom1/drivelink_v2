@@ -1,5 +1,5 @@
 // Layout validation (core/layout_validation.hpp): pure, configure time. The
-// layouts are small (at most CORE_MAX_INSTANCES entries), so the checks are
+// layouts are small (at most 64 modules and 8 loops), so the checks are
 // plain quadratic scans.
 
 #include "core/layout_validation.hpp"

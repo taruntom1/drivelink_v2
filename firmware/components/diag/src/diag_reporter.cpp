@@ -147,6 +147,11 @@ Reporter::~Reporter()
     }
 }
 
+size_t Reporter::ramBytes()
+{
+    return sizeof(Impl) + CONFIG_DIAG_TASK_STACK + (CONFIG_DIAG_QUERY_QUEUE_DEPTH * sizeof(uart_comm::RxFrame));
+}
+
 bool Reporter::isValid() const
 {
     return m_impl && m_impl->valid;
@@ -168,9 +173,7 @@ void Reporter::Impl::onQueryFrame(const uart_comm::RxFrame &frame)
 
 void Reporter::Impl::taskLoop()
 {
-    const TickType_t poll_ticks = rtos_util::msToTicksCeil(CONFIG_DIAG_REPORTER_POLL_MS);
-    const int64_t period_us = static_cast<int64_t>(CONFIG_DIAG_COUNTER_PERIOD_MS) * 1000;
-    int64_t next_scan_us = esp_timer_get_time() + period_us;
+    int64_t last_scan_us = esp_timer_get_time();
 
     while (!task.stopRequested()) {
         const int64_t now_us = esp_timer_get_time();
@@ -186,19 +189,21 @@ void Reporter::Impl::taskLoop()
 
         handleQueries();
 
-        if (now_us >= next_scan_us) {
+        // Both periods are live settings: read again on every pass.
+        const int64_t period_us = static_cast<int64_t>(counterPeriodMs()) * 1000;
+        if (now_us - last_scan_us >= period_us) {
             foldUartCounters();
             if (now_us >= tx_backoff_until_us) {
                 sendCounterDeltas();
             }
-            next_scan_us += period_us;
-            if (next_scan_us <= now_us) {
-                next_scan_us = now_us + period_us;
+            last_scan_us += period_us;
+            if (now_us - last_scan_us >= period_us) {
+                last_scan_us = now_us; // fell behind, or the period got shorter
             }
         }
 
         // Woken early by a query (notify) or by stop().
-        (void)ulTaskNotifyTake(pdTRUE, poll_ticks);
+        (void)ulTaskNotifyTake(pdTRUE, rtos_util::msToTicksCeil(pollMs()));
     }
 }
 

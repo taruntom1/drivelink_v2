@@ -354,9 +354,11 @@ inline const std::array<const core::ModuleType *, 5> kTypes{&kFullType, &kSensor
 /// The tests' pin policy: GPIO 0..39 except 13.
 inline constexpr uint64_t kTestGpioMask = core::gpio_policy::gpioRange(0, 39) & ~core::gpio_policy::gpioBit(13);
 
+/// Limits fixed by the test: the `limits.*` settings do not size this core.
 inline core::CoreConfig testConfig(uint16_t max_instances = 16)
 {
     core::CoreConfig cfg;
+    cfg.configure_system = nullptr;
     cfg.max_instances = max_instances;
     cfg.gpio_allowed_mask = kTestGpioMask;
     return cfg;

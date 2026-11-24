@@ -1,6 +1,7 @@
 #include "core/group_service.hpp"
 
 #include <algorithm>
+#include <vector>
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "drivelink/protocol/core_codec.hpp"
@@ -67,17 +68,24 @@ struct GroupService::Impl {
     const detail::InstanceTable &table;
     std::span<Loop *> loops;
     uint8_t sub_count, cmd_count, entries;
-    std::unique_ptr<Slot[]> subs, cmds;
+    // One allocation per slot (about 4 KB): all of them in one array would need
+    // one contiguous block of up to 120 KB.
+    std::vector<std::unique_ptr<Slot>> subs, cmds;
     Config candidate; // fixed config-caller scratch; never on a task stack
     Impl(const detail::InstanceTable &t, std::span<Loop *> l, uint8_t s, uint8_t c, uint8_t e)
         : table(t), loops(l),
           sub_count(std::min<uint8_t>(s, defs::kSubGroupChannelCount)),
           cmd_count(std::min<uint8_t>(c, defs::kCmdGroupChannelCount)),
           entries(std::clamp<uint8_t>(e, 1, kMaxGroupEntries)),
-          subs(std::make_unique<Slot[]>(sub_count)), cmds(std::make_unique<Slot[]>(cmd_count)) {}
+          subs(makeSlots(sub_count)), cmds(makeSlots(cmd_count)) {}
+    static std::vector<std::unique_ptr<Slot>> makeSlots(size_t count) {
+        std::vector<std::unique_ptr<Slot>> slots(count);
+        for (auto &slot : slots) { slot = std::make_unique<Slot>(); }
+        return slots;
+    }
     Slot *slot(GroupKind kind, uint8_t id) const {
-        if (kind == GroupKind::Subscription) { return id < sub_count ? &subs[id] : nullptr; }
-        if (kind == GroupKind::Command) { return id < cmd_count ? &cmds[id] : nullptr; }
+        if (kind == GroupKind::Subscription) { return id < sub_count ? subs[id].get() : nullptr; }
+        if (kind == GroupKind::Command) { return id < cmd_count ? cmds[id].get() : nullptr; }
         return nullptr;
     }
     Loop *loop(uint8_t id) const {
@@ -110,6 +118,8 @@ GroupService::GroupService(const detail::InstanceTable &table, std::span<Loop *>
                          uint8_t subscriptions, uint8_t commands, uint8_t entries)
     : m_impl(std::make_unique<Impl>(table, loops, subscriptions, commands, entries)) {}
 GroupService::~GroupService() = default;
+size_t GroupService::slotBytes() { return sizeof(Slot); }
+size_t GroupService::baseBytes() { return sizeof(Impl); }
 size_t GroupService::capacity(GroupKind kind) const
 { return kind == GroupKind::Subscription ? m_impl->sub_count : kind == GroupKind::Command ? m_impl->cmd_count : 0; }
 uint8_t GroupService::entryCapacity() const { return m_impl->entries; }
@@ -141,7 +151,7 @@ Status GroupService::stageConfig(GroupKind kind, uint8_t id, uint8_t loop, uint1
         if (kind == GroupKind::Command) {
             for (size_t g = 0; g < d.cmd_count; ++g) {
                 if (g == id) { continue; }
-                const auto &other = d.cmds[g].shadow;
+                const auto &other = d.cmds[g]->shadow;
                 for (size_t j = 0; other.configured && j < other.count; ++j) {
                     if (sameRef(ref, other.refs[j])) { return bad(Detail::AlreadyBound); }
                 }
@@ -283,7 +293,7 @@ void GroupService::endTick(uint8_t loop, int64_t timestamp_us)
 {
     auto &d = *m_impl;
     for (size_t i = 0; i < d.sub_count; ++i) {
-        auto &s = d.subs[i];
+        auto &s = *d.subs[i];
         if (s.route.load(std::memory_order_acquire) != loop || !s.claim()) { continue; }
         const auto &cfg = s.active;
         if (cfg.info.loop != loop) { s.release(); continue; }

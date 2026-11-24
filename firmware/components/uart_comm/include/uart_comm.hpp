@@ -113,6 +113,10 @@ public:
     ///         channel or max_len is out of range, ESP_ERR_NO_MEM
     esp_err_t openStream(uint8_t channel, size_t max_len);
 
+    /// The heap one openStream(channel, max_len) takes, without the heap's own
+    /// overhead.
+    static size_t streamSlotBytes(size_t max_len);
+
     /// Update a data stream channel with the latest value.
     /// The payload overwrites any pending data for this channel.
     /// Fire-and-forget: there is no delivery confirmation.

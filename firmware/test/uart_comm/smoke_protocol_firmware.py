@@ -14,7 +14,7 @@ It checks, each with the protocol version the firmware must speak:
 
 Exit code 0 when every check passes. Watch the USB-Serial-JTAG console
 (idf.py -C firmware monitor) for the "Stack high-water" lines, logged every
-CONFIG_DRIVELINK_STACK_LOG_PERIOD_S (30 s).
+diag.stack_log_s (30 s by default).
 """
 
 from __future__ import annotations

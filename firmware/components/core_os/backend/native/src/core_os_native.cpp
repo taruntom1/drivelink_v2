@@ -2,6 +2,7 @@
 // recording diag sink. Built by firmware/test/native (and later the vdev).
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <map>
 #include <utility>
@@ -14,6 +15,7 @@
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "core_os/event.hpp"
+#include "core_os/memory.hpp"
 #include "core_os/mutex.hpp"
 #include "core_os/native_diag.hpp"
 #include "core_os/periodic_task.hpp"
@@ -37,6 +39,8 @@ std::atomic<bool> s_manual_scheduling{false};
 native::PeriodicStartObserver s_periodic_start_observer = nullptr;
 std::atomic<size_t> s_capture_capacity{4U * 1024U * 1024U};
 std::atomic<bool> s_capture_fail_next{false};
+std::atomic<size_t> s_free_internal{SIZE_MAX};
+std::array<std::atomic<uint32_t>, 3> s_diag_timing{};
 
 } // namespace
 
@@ -46,6 +50,8 @@ size_t captureCapacity(size_t limit_bytes)
     const size_t available = s_capture_capacity.load();
     return available < limit_bytes ? available : limit_bytes;
 }
+bool captureUsesInternalRam() { return false; }
+size_t freeInternalBytes() { return s_free_internal.load(); }
 void *captureAlloc(size_t bytes)
 {
     if (s_capture_fail_next.exchange(false)) { return nullptr; }
@@ -55,6 +61,7 @@ void captureFree(void *ring) { std::free(ring); }
 namespace native {
 void setCaptureCapacity(size_t bytes) { s_capture_capacity.store(bytes); }
 void failNextCaptureAlloc() { s_capture_fail_next.store(true); }
+void setFreeInternalBytes(size_t bytes) { s_free_internal.store(bytes); }
 }
 
 int64_t nowUs()
@@ -314,6 +321,7 @@ void clearDiag(DiagCode code, uint8_t instance) {
     if (slot >= diag::detail::kRuntimeSlots) { s_diag_table.safetyOverflow(code,instance,false); return; }
     if (s_diag_table.clearActive(slot)) { s_diag_table.markDirty(slot, 2); }
 }
+void setDiagTiming(DiagTiming which, uint32_t value) { s_diag_timing.at(static_cast<size_t>(which)).store(value); }
 bool diagBlocksArm() { return s_diag_table.activeSafety(false); }
 bool diagDisarmsActive() { return s_diag_table.activeSafety(true); }
 void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn) {
@@ -325,6 +333,7 @@ void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn) {
 namespace native {
 
 diag::detail::SlotTable &diagTable() { return s_diag_table; }
+uint32_t diagTiming(DiagTiming which) { return s_diag_timing.at(static_cast<size_t>(which)).load(); }
 
 void setDiagSinks(void *ctx,ReportSink report,CountSink count) { s_diag_ctx=ctx;s_report_sink=report;s_count_sink=count; }
 

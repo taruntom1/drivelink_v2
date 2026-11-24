@@ -149,7 +149,7 @@ def main():
             # F4a never arms: the command above must not alter the mock input.
             assert cli('sub-stream', '0')['typed_values'][1] == 0.0
             assert cli('get', '0:0:16', '0:0:17', '0:0:18', '0:0:19', '0:0:20')['typed_values'] == [4,16,8,8,64]
-            assert cli('set', '0:0:16=1', code=5)['detail'] == 7
+            assert cli('set', '0:0:16=1', code=5)['detail'] == 30  # Capacity: the layout has more loops
             # Desktop scheduling needs a wider stall window than a 1 kHz board.
             cli('set', '5:0:1=100', '0:0:4=1000')
             assert cli('cmd-run', '0', '20', '8', '0.6')['sent'] == 8
@@ -277,7 +277,6 @@ def main():
             assert items['feedback.value']['value_type'] == 5
             assert items['feedback.age_us']['value_type'] == 3
             assert cli('get', '0:0:21')['typed_values'] == [32]
-            assert cli('set', '0:0:21=1', code=5)['detail'] == 7
             feedback = cli('add', '113', 'source_feedback', '0')['instance']
             imu = cli('add', '114', 'source_imu', '1')['instance']
             fusion = cli('add', '115', 'fusion', '0')['instance']
@@ -332,6 +331,16 @@ def main():
             assert cli('get', setting)['typed_values'] == [25]
             assert cli('get-pending', setting)['typed_values'] == [25]
             assert not cli('info')['flags'] & 1
+            # The limits are settings too: they size the next boot. The diag
+            # timing is live.
+            assert cli('set', '0:0:16=6', '0:0:18=12', '0:0:23=64')['pending_reboot']
+            assert not cli('set', '0:0:33=50')['pending_reboot']
+            cli('save'); cli('reboot')
+            assert cli('get', '0:0:16', '0:0:18', '0:0:23', '0:0:33')['typed_values'] == [6, 12, 64, 50]
+            assert cli('groups')['subscription_capacity'] == 12
+            assert cli('info')['capture_capacity'] == 64 * 1024
+            cli('set', '0:0:16=4', '0:0:18=8', '0:0:23=4096'); cli('set', '0:0:33=20')
+            cli('save'); cli('reboot')
             cli('reboot') # a clean reset: the process kills above count as crashes
             # The loop-stall scenario needs the bench stall: restart the same
             # state with --allow-crash, on the same transport.

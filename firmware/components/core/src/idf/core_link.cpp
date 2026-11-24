@@ -195,6 +195,9 @@ CoreLink::CoreLink(Core &core,uart_comm::UartComm &uart):m_impl(std::make_unique
     d.valid=true;
 }
 CoreLink::~CoreLink() { m_impl->time_registration.reset(); m_impl->disarm_registration.reset();for(auto &r:m_impl->command_registrations) { r.reset(); } m_impl->registration.reset();m_impl->task.stop();if(m_impl->queue) { vQueueDelete(m_impl->queue); } }
+size_t CoreLink::ramBytes() {
+    return sizeof(Impl)+CONFIG_CORE_COMMAND_TASK_STACK+uart_comm::UartComm::streamSlotBytes(sizeof(Impl::status));
+}
 bool CoreLink::isValid() const { return m_impl->valid; }
 uint32_t CoreLink::stackHighWater() const { return m_impl->task.stackHighWaterMark(); }
 }

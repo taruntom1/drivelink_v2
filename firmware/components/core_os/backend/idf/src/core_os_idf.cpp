@@ -6,6 +6,7 @@
 #include "core_os/clock.hpp"
 #include "core_os/diag_sink.hpp"
 #include "core_os/event.hpp"
+#include "core_os/memory.hpp"
 #include "core_os/mutex.hpp"
 #include "diag.hpp"
 #include "esp_heap_caps.h"
@@ -45,6 +46,16 @@ size_t captureCapacity(size_t limit_bytes)
     const size_t available = hasPsram() ? heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
                                         : kCaptureFallbackBytes;
     return available < limit_bytes ? available : limit_bytes;
+}
+
+bool captureUsesInternalRam()
+{
+    return !hasPsram();
+}
+
+size_t freeInternalBytes()
+{
+    return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 void *captureAlloc(size_t bytes)
@@ -145,6 +156,14 @@ void countDiag(DiagCode code, uint32_t n, uint8_t instance)
 }
 void raiseDiag(DiagCode code, uint8_t instance) { diag::raise(code, instance); }
 void clearDiag(DiagCode code, uint8_t instance) { diag::clear(code, instance); }
+void setDiagTiming(DiagTiming which, uint32_t value)
+{
+    switch (which) {
+        case DiagTiming::CounterPeriodMs: diag::setCounterPeriodMs(value); break;
+        case DiagTiming::PollMs: diag::setPollMs(value); break;
+        case DiagTiming::StackLogS: diag::setStackLogPeriodS(value); break;
+    }
+}
 bool diagBlocksArm() { return diag::blocksArm(); }
 bool diagDisarmsActive() { return diag::disarmsActive(); }
 void setDiagDisarmHandler(void *ctx, DiagDisarmFn fn) { diag::setDisarmHandler(ctx, fn); }

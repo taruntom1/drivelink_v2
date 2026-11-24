@@ -101,8 +101,6 @@ TEST_CASE("Sources: cross-loop snapshots, freshness, aging and arm retention") {
     c.disarm(); c.loop(1).runTick(1); CHECK(sample.a.valid); CHECK(sample.a.value == 7.F);
     const core::Ref limit{0,0,defs::system::kLimitsLinkValues}; uint32_t value = 0;
     REQUIRE(c.params().get({&limit,1},{&value,1}).ok()); CHECK(value == 32);
-    const core::SetEntry write{limit,1}; std::array<uint32_t,1> applied{};
-    CHECK(c.params().set({&write,1},applied).detail == core::Detail::ReadOnly);
 }
 
 TEST_CASE("Sources: same-loop producer ticks first, sources can read command inputs") {
@@ -138,7 +136,7 @@ TEST_CASE("Sources: same-loop chains use current producer output despite reverse
 }
 
 TEST_CASE("Sources: pending validation is atomic, deduplicates refs and protects targets") {
-    Manual manual; core_os::KvStore store; core::CoreConfig config; config.link_values = 1; core::Core c(config);
+    Manual manual; core_os::KvStore store; core::CoreConfig config; config.link_values = 1; config.configure_system = nullptr; core::Core c(config);
     boot(c, store, {{fx::kTypeId,0,0,"producer"},{fusion::kTypeId,0,1,"consumer"}});
     std::array<uint32_t,2> applied{};
     const std::array<core::SetEntry,2> duplicates{{{{fusion::kTypeId,0,1},target()},{{fusion::kTypeId,0,2},target()}}};

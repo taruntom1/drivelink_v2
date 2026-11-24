@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <memory>
 #include <cstdint>
 namespace uart_comm { class UartComm; }
@@ -10,6 +11,8 @@ public:
     ~CoreLink();
     bool isValid() const;
     uint32_t stackHighWater() const;
+    // The heap a link takes besides the groups' streams (RAM estimate).
+    static size_t ramBytes();
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

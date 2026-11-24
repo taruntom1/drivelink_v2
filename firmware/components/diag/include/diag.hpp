@@ -53,6 +53,16 @@ void setDisarmHandler(void *ctx, DisarmFn fn);
 void clear(Code code, uint8_t instance = 255);
 uint8_t activeErrorCount();
 
+/// The live timing settings (`diag.*` system params). The core sets them
+/// through core_os; the reporter and main's stack log read them. Any task:
+/// word-sized atomics. Until the core boots they are the params' defaults.
+void setCounterPeriodMs(uint32_t ms);
+void setPollMs(uint32_t ms);
+void setStackLogPeriodS(uint32_t s); ///< 0: off
+uint32_t counterPeriodMs();
+uint32_t pollMs();
+uint32_t stackLogPeriodS();
+
 namespace detail {
 
 /// Type-checks a log format string and its arguments; never called.
