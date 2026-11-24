@@ -68,6 +68,10 @@ never renumber or reuse it.
 - [ ] Allocate and claim hardware (pins, pools, buses) only in `start()`, bind
       first and take hardware last, and release everything in the destructor.
       GPIO params go through the core's pin policy.
+- [ ] If one instance can allocate more than `kModuleRamBytes` (object and driver
+      handles), raise it in
+      [ram_estimate.hpp](../firmware/components/core/include/core/ram_estimate.hpp):
+      the core's RAM check counts that much per module.
 - [ ] Export its `core::ModuleType` and add it to `kModuleTypes` in
       `firmware/main/main.cpp`. A pure type may also be registered by the vdev
       (`host/vdev/src/main.cpp`).
