@@ -12,7 +12,7 @@ namespace {
 namespace defs = drivelink::protocol::defs;
 namespace d = defs::actuator_pwm_dir;
 namespace codes = defs::diag::codes;
-// core.InstanceStartFailed arg1 stages (documented in diag_codes.yaml).
+// actuator_pwm_dir.InitFailed arg0 stages (documented in diag_codes.yaml).
 constexpr uint32_t kStartStagePins = 1;
 constexpr uint32_t kStartStageDriver = 2;
 

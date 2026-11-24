@@ -36,7 +36,7 @@ Default output is readable key/value text. With `--json`, stdout holds only `{"o
 
 No write is retried, except that `ota-upload` resends identical WRITE chunks at the same offset after STATUS confirms the acknowledged offset; it reconciles CONFIRM through STATUS and never repeats REBOOT. A write timeout has an unknown outcome. `cmd-run` and `testgen-run` still attempt DISARM when an ARM reply is lost.
 
-A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`, `discard`) stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings; `revert` restores the saved configuration. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
+A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
 
 ## Layout and loops
 
