@@ -108,7 +108,7 @@ A check that needs motors, a real IMU, the Pi or the robot doesn't block its ste
 
 ## Board state
 
-Runtime settings step 2 (2026-11-24) left the bare board on its normal firmware `0.1.1+g84d5449` (ELF build id `7e36c3e68572df76`, core v11; the released CLI and GUI speak v10 and cannot talk to it), running from `ota_0`. Device id `1cdbd446ff38`, empty name, factory control and sensor loops at 1000/100 Hz, every system setting at its default, no added instances, disarmed. These values are saved now; before, nothing was saved. It ran the released 0.1.1 before. COM4 (the console) was not present. The CH343 (busid 1-1) is bound for usbipd and the WSL user is in `dialout`, so `tools/wsl_serial.py run` can lend it to the agent. See [bench ports and traps](../docs/bench.md).
+Runtime settings step 2 (2026-11-24) left the bare board on its normal firmware `0.1.1+gfb665c3` (ELF build id `28fbef138e1b12a9`, core v11; the released CLI and GUI speak v10 and cannot talk to it), running from `ota_0`. Device id `1cdbd446ff38`, empty name, factory control and sensor loops at 1000/100 Hz, every system setting at its default, no added instances, disarmed. These values are saved now; before, nothing was saved. It ran the released 0.1.1 before. COM4 (the console) was not present. The CH343 (busid 1-1) is bound for usbipd and the WSL user is in `dialout`, so `tools/wsl_serial.py run` can lend it to the agent. See [bench ports and traps](../docs/bench.md).
 
 ## Decision log
 
