@@ -20,6 +20,7 @@ idf_component_register(
          "src/loop_instance.cpp"
          "src/param_service.cpp"
          "src/pending_layout.cpp"
+         "src/boot.cpp"
          "src/persistence.cpp"
          "src/registry.cpp"
          "src/value.cpp"

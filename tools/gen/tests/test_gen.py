@@ -178,6 +178,8 @@ class GoldenOutput(TempCase):
         self.assertIn("// Retired ids, never reused: 0x0003 fx.old_rate", t)
         self.assertIn(".loops = loopMask(),", t)
         self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
+        self.assertIn("inline constexpr uint16_t kFxSetting = 0x0004;", t)
+        self.assertIn(".flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),", t)  # a pending setting
 
     def test_empty_type_table(self) -> None:
         for path in self.defs.glob("*.yaml"):
@@ -588,7 +590,7 @@ class SystemType(TempCase):
         self.assertEqual(system["type"], "system")
         self.assertEqual(system["ns"], "system")
         self.assertEqual(system["loops"], [])
-        self.assertEqual([i["kind"] for i in system["items"] if not i["retired"]], ["param", "signal"])
+        self.assertEqual([i["kind"] for i in system["items"] if not i["retired"]], ["param", "signal", "param"])
 
     def test_is_in_the_hash(self) -> None:
         base = self.hash()

@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "core/core_config.hpp"
 #include "core/status.hpp"
 #include "drivelink/protocol/defs.hpp"
 
@@ -30,6 +31,9 @@ struct ValidationConfig {
     size_t max_loops = 4;
     size_t link_values = 32;     ///< distinct values per ordered pair of different loops
 };
+
+/// The limits of a core built from `config` (normalized first).
+ValidationConfig validationConfig(const CoreConfig &config);
 
 inline constexpr size_t kNoEntry = static_cast<size_t>(-1);
 

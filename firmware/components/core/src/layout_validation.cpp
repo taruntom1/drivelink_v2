@@ -108,6 +108,12 @@ bool reaches(const std::vector<std::vector<size_t>> &edges, size_t from, size_t 
 
 } // namespace
 
+ValidationConfig validationConfig(const CoreConfig &config)
+{
+    const CoreConfig c = normalizedConfig(config);
+    return ValidationConfig{c.gpio_allowed_mask, c.max_instances, c.max_loops, c.link_values};
+}
+
 size_t findEntry(std::span<const LayoutEntry> entries, uint8_t type_id, uint8_t instance)
 {
     for (size_t i = 0; i < entries.size(); ++i) {

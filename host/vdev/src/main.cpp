@@ -140,6 +140,36 @@ struct Diagnostics
         return static_cast<uint8_t>(n);
     }
 };
+// --test-setting: the system type with one more param, reboot_required, for
+// the pending-settings tests. No generated definition has it.
+const p::defs::TypeDesc &testSystemType()
+{
+    static const std::vector<p::defs::ItemDesc> items = []
+    {
+        const auto &real = p::defs::system::kDesc.items;
+        std::vector<p::defs::ItemDesc> all(real.begin(), real.end());
+        p::defs::ItemDesc item{};
+        item.id = 0x7F00;
+        item.kind = p::defs::ItemKind::Param;
+        item.type = p::defs::ValueType::U16;
+        item.flags = p::defs::flagBits(p::defs::ItemFlag::RebootRequired, p::defs::ItemFlag::Persist);
+        item.name = "test.setting";
+        item.unit = item.description = "";
+        item.min_bits = 1;
+        item.max_bits = 100;
+        item.default_bits = 10;
+        item.has_min = item.has_max = true;
+        all.push_back(item);
+        return all;
+    }();
+    static const p::defs::TypeDesc type = []
+    {
+        auto desc = p::defs::system::kDesc;
+        desc.items = items;
+        return desc;
+    }();
+    return type;
+}
 struct Server;
 struct Peer : std::enable_shared_from_this<Peer>
 {
@@ -205,6 +235,7 @@ struct Server
     int64_t next_status = 0;
     p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
     bool crash_enabled = false, stopping = false;
+    bool test_setting = false;
     // Opt-in, local test controls. No device wire operation is added.
     std::filesystem::path scenario_file;
     uint64_t scenario_sequence=0;
@@ -244,10 +275,11 @@ struct Server
             });
         core::CoreConfig config;
         config.gpio_allowed_mask &= ~((1ULL << 43) | (1ULL << 44));
-        core = std::make_unique<core::Core>(config);
+        if (test_setting) { config.system_type = &testSystemType(); }
         static const std::array<const core::ModuleType *, 5> types{
             mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0]};
-        if (!core->init(types).ok() || !core->boot(store).ok() || !core->start().ok())
+        core = core::bringUp(store, config, types).core;
+        if (!core || !core->start().ok())
         {
             throw std::runtime_error("core boot failed");
         }
@@ -946,7 +978,7 @@ int main(int argc, char **argv)
         unsigned port = 8765;
         p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
         bool pty = false, bench = false;
-        bool safe_mode=false;
+        bool safe_mode=false, test_setting = false;
         std::filesystem::path scenario_file;
         int64_t fail_after = -1;
         for (int i = 1; i < argc; ++i)
@@ -984,6 +1016,7 @@ int main(int argc, char **argv)
             }
             else if(arg=="--scenario-file") {scenario_file=value();}
             else if(arg=="--safe-mode") {safe_mode=true;}
+            else if(arg=="--test-setting") {test_setting=true;}
             else if (arg == "--fail-writes-after")
             {
                 fail_after = drivelink::parseUnsigned(value());
@@ -991,7 +1024,7 @@ int main(int argc, char **argv)
             else if (arg == "--help")
             {
                 std::cout << "drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] "
-                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode]\n";
+                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting]\n";
                 return 0;
             }
             else
@@ -1011,6 +1044,7 @@ int main(int argc, char **argv)
 #endif
         Server s(bench);
         s.scenario_file=scenario_file;
+        s.test_setting=test_setting;
         s.device_id = device_id;
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)

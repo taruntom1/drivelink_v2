@@ -72,7 +72,7 @@ struct Hw {
         REQUIRE(core::persist::saveConfig(store, 1, layout, {}).ok());
         fake_motor_hw::fail_next_pwm_open = o.pwm_open_error;
         fake_motor_hw::fail_next_quadrature_open = o.quadrature_open_error;
-        REQUIRE(c.init(types).ok()); REQUIRE(c.boot(store).ok());
+        REQUIRE(c.init(types).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
         if (o.controller && !c.instancesFailed()) {
             std::array<core::Ref, 3> inputs{{{kPid, 0, 514}, {kPid, 0, 512}, {kPid, 0, 513}}};
             REQUIRE(c.groups().stageConfig(core::GroupKind::Command, 0, 0, 1, inputs).ok());

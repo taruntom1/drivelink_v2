@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 
+#include "core/boot.hpp"
 #include "core/capture_service.hpp"
 #include "core/testgen_service.hpp"
 #include "core/ota_service.hpp"
@@ -49,9 +50,11 @@ constexpr uint32_t periodUsFromHz(uint32_t rate_hz)
 /// with their tasks, the instance records, the param service, the pending
 /// layout and the persistence.
 ///
-/// Boot sequence: construct, `init()` with the module list, `boot(store)`
-/// (safe mode, NVS load, validation, creation in dependency order, tick
-/// order), then `start()`. Everything the loops touch is allocated by then.
+/// Boot sequence (core/boot.hpp, `bringUp()`): `prepareBoot()` decides safe
+/// mode and loads NVS, `bootConfig()` takes the saved settings, then construct,
+/// `init()` with the module list, `boot(plan)` (validation, creation in
+/// dependency order, tick order) and `start()`. Everything the loops touch is
+/// allocated by then.
 ///
 /// The layout, persistence and safe-mode ops (`addInstance` ... `exitSafeMode`)
 /// are config task operations: one caller at a time, after `boot()`.
@@ -68,12 +71,12 @@ public:
     /// reports `core.InitFailed` stage 1 with the index on failure).
     Status init(std::span<const ModuleType *const> types);
 
-    /// Once, after `init()` and before `start()`:
-    ///   1. Safe mode: the crash counter goes +1 on a crash reset, 0 on any
-    ///      other; at 3 the device boots in safe mode (`core.SafeModeEntered`).
-    ///   2. Load the newest complete generation from `store`, or boot with the
-    ///      defaults and no instances (`core.ConfigLoadFailed` unless the
-    ///      store is blank). The system params are applied.
+    /// Once, after `init()` and before `start()`, with the plan this core's
+    /// config came from:
+    ///   1. Safe mode, as `prepareBoot()` decided it.
+    ///   2. Take the generation the plan loaded, or boot with the defaults and
+    ///      the factory loops (`core.ConfigLoadFailed` unless the store is
+    ///      blank). The system params are applied.
     ///   3. Validate the layout. An invalid entry is left out
     ///      (`core.LayoutInvalid`, `layoutInvalid()`).
     ///   4. Make a record for every entry (an unknown type, a duplicate or an
@@ -86,10 +89,10 @@ public:
     ///   6. Fill each loop in the tick order of the wiring.
     ///   7. Outside safe mode, clear the crash counter after
     ///      `crash_clear_delay_us`.
-    /// `store` must outlive the core. @return Ok, or `Busy` / `NotAtBoot`
-    /// (called twice, or after `start()`), or `Fault` / `StartFailed` (the
-    /// system instance failed).
-    Status boot(core_os::KvStore &store);
+    /// The plan's store must outlive the core. @return Ok, or `Busy` /
+    /// `NotAtBoot` (called twice, or after `start()`), `Fault` / `StartFailed`
+    /// (the system instance failed), or `InvalidArgument` (an empty plan).
+    Status boot(BootPlan plan);
 
     /// Release the loop tick gates after boot. Safe mode has no loop task.
     /// Idempotent while running; a stopped Core must be reconstructed.
@@ -98,7 +101,7 @@ public:
     /// Stop every loop task. Idempotent.
     void stop();
 
-    // -- layout (the pending copy) ----------------------------------------------
+    // -- the pending copy: the layout and reboot_required settings --------------
     // Refused while armed (`Armed`) and before boot (`Busy` / `NotAtBoot`).
     // They change only the pending layout: SAVE and a reboot apply it.
 
@@ -106,7 +109,8 @@ public:
     Status removeInstance(uint8_t type_id, uint8_t instance);
     Status setLabel(uint8_t type_id, uint8_t instance, const char *label);
     Status discardPending();
-    /// Params as the pending layout has them (GET_PENDING).
+    /// Params as the pending copy has them, system settings included
+    /// (GET_PENDING): what SAVE writes and the reboot after it uses.
     Status getPending(std::span<const Ref> refs, std::span<uint32_t> values) const;
     const PendingLayout &pendingLayout() const { return m_pending; }
 
@@ -114,7 +118,8 @@ public:
 
     /// Write a new generation: the pending layout if there is one, else the
     /// configured records (every record, running or not), with every
-    /// `persist` param, and the system params. Refused while armed (`Armed`).
+    /// `persist` param, and the system params (the `reboot_required` ones from
+    /// the pending copy). Refused while armed (`Armed`).
     /// A write failure answers `Fault` / `StorageFailed` and leaves the
     /// previous generation intact.
     Status save();
@@ -153,8 +158,8 @@ public:
     bool safeMode() const { return m_safe_mode; }
     bool layoutInvalid() const { return m_layout_invalid; }
     bool configLoadedFromNvs() const { return m_config_loaded; }
-    /// The pending layout was changed, or the last SAVE wrote a layout that
-    /// the device is not running yet.
+    /// The pending copy (layout or reboot_required settings) was changed, or
+    /// the last SAVE wrote one that the device is not running yet.
     bool pendingReboot() const { return m_pending.active() || m_saved_differs; }
     bool nvsDirty() const { return m_params.nvsDirty(); }
 
@@ -169,6 +174,8 @@ public:
     size_t loopCapacity() const { return m_config.max_loops; }
     size_t loopCount() const;
     const Registry &registry() const { return m_registry; }
+    /// The system type's descriptor (type id 0x00).
+    const defs::TypeDesc &systemType() const { return *m_config.system_type; }
 
     /// Running layout instances, loops included (system excluded).
     size_t instanceCount() const;
@@ -241,7 +248,7 @@ private:
     bool m_safe_mode = false;
     bool m_layout_invalid = false;
     bool m_config_loaded = false;
-    bool m_saved_differs = false; ///< the last SAVE wrote the pending layout
+    bool m_saved_differs = false; ///< the last SAVE wrote the pending copy
 };
 
 } // namespace core

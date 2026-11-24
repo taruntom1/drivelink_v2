@@ -1,4 +1,4 @@
-# Core protocol v10 (H2e-1)
+# Core protocol v11 (issue 105)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
@@ -7,13 +7,14 @@ F7b (v7) adds test generation, its completion event and capture trigger.
 F9 (v8) adds OTA, its status/identity query and the OTA ARM gate.
 H1c (v9) adds factory device identity and a live, persisted device name.
 H2e-1 (v10) widens the item descriptor flags to u16 and adds the `Tune` flag.
-Firmware, host library, CLI and vdev use v10 together; older peers are
-incompatible. Diagnostic framing remains v3 and time remains v1. NVS layout
+Issue 105 (v11) adds pending system settings and reserves LINK_CONFIRM and
+three details. Firmware, host library, CLI, agent, GUI, ROS and vdev use v11
+together; older peers are incompatible. Diagnostic framing remains v3 and time remains v1. NVS layout
 format 3 includes the name; LP format 2 loads with an empty name.
 F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 9.
+`core_response` (0x41). All integers are little-endian. Version is 11.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -94,6 +95,12 @@ configuration in the same A/B layout commit; REVERT restores it after its
 parameter batches succeed. NoSavedConfig leaves it unchanged. FACTORY_RESET
 clears it. Identity remains readable in safe mode.
 
+LINK_CONFIRM (11) is reserved for the link trial of
+[runtime settings](../../plans/runtime-settings.md): empty body, answered
+InvalidArgument/Unsupported. So are the details LinkTrialActive (59),
+NoLinkTrial (60) and NotEnoughMemory (61); no device sends them yet. Details
+54 to 58 are the agent's.
+
 ## Layout (family 2)
 
 - LIST_INSTANCES (1): `view u8 | start u16`. View 0 is configured records,
@@ -159,6 +166,32 @@ module batches must name a single actual loop ID. Reboot-required params and
 pending-only instances use the pending domain. Pending writes answer PendingReboot. Values outside numeric
 limits are clamped and returned; invalid types, NaN/Inf, enums and wiring
 are rejected. A response must fit before any SET is attempted.
+
+### Pending system settings (v11)
+
+A `reboot_required` system param (type 0) follows the module rule:
+
+- SET stages the value in the pending copy beside the pending layout and answers
+  PendingReboot. It shares a batch with other pending params, never with live
+  ones. Staging sets `pending_reboot` and `nvs_dirty`; ARM is then refused with
+  RebootPending.
+- GET is the value the device runs with. GET_PENDING is the value SAVE writes
+  and the boot after it uses. For a live system param both are the live value.
+- SAVE writes the pending value with the layout, in the same A/B commit.
+  DISCARD_PENDING drops the whole pending copy. REVERT restores live params only
+  and keeps the pending copy.
+- The whole pending layout is validated against the pending system settings, on
+  every layout op and pending SET. A setting that would make a valid entry
+  invalid is refused with that entry's result and detail.
+- After SAVE and then DISCARD_PENDING, GET_PENDING is again the value loaded at
+  boot, as for the layout; NVS keeps the saved one and `pending_reboot` stays
+  set. A further SAVE writes back what GET_PENDING shows.
+- In safe mode every `reboot_required` system param runs at its default. GET
+  shows that; GET_PENDING shows the saved value, which SAVE keeps. Nothing is
+  staged by that difference.
+
+The boot counts a crash before it reads the settings, and reads them before it
+sizes anything from them. No system param is `reboot_required` yet.
 
 ## Group (family 5)
 
@@ -480,7 +513,7 @@ ACK_FAULT is refused Armed/LockedWhileArmed while armed, or Fault/FaultActive
 the fault latch. DISARM never acknowledges a fault.
 
 Fast DISARM uses MSG_TYPE 0x03 with exactly the same four-byte core header:
-`version=10 | seq | family=1 | op=3`, with no body. Its response is the normal
+`version=11 | seq | family=1 | op=3`, with no body. Its response is the normal
 six-byte core response on 0x41. Both this form and system DISARM on 0x01 are
 handled directly on UART RX, bypassing the config queue. Malformed requests
 apply nothing. A lost response never undoes the stop.

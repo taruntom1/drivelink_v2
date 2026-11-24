@@ -68,9 +68,28 @@ std::vector<LayoutEntry> viewOf(const std::vector<PendingEntry> &entries)
 
 } // namespace
 
-PendingLayout::PendingLayout(const Registry &registry, detail::InstanceTable &table, ValidationConfig config)
+PendingLayout::PendingLayout(const Registry &registry, detail::InstanceTable &table, const CoreConfig &config)
     : m_registry(registry), m_table(table), m_config(config)
 {
+}
+
+void PendingLayout::setSavedSystem(std::span<const uint32_t> values)
+{
+    m_saved_system.assign(values.begin(), values.end());
+}
+
+uint32_t PendingLayout::systemValue(size_t index) const
+{
+    const detail::InstanceRecord &system = m_table.at(0);
+    if (!defs::hasFlag(system.desc->items[index], defs::ItemFlag::RebootRequired)) {
+        return system.shadow[index];
+    }
+    return m_active ? m_system[index] : m_saved_system[index];
+}
+
+ValidationConfig PendingLayout::limits(const std::vector<uint32_t> &system) const
+{
+    return validationConfig(withSystemSettings(m_config, system));
 }
 
 bool PendingLayout::ensureCopy()
@@ -78,6 +97,7 @@ bool PendingLayout::ensureCopy()
     if (m_active) {
         return false;
     }
+    m_system = m_saved_system;
     m_entries.clear();
     m_entries.reserve(m_table.size());
     for (size_t i = 0; i < m_table.size(); ++i) {
@@ -123,16 +143,17 @@ std::vector<LayoutEntry> PendingLayout::view() const
     return viewOf(m_entries);
 }
 
-Status PendingLayout::check(const std::vector<PendingEntry> &before, std::span<const uint16_t> touched) const
+Status PendingLayout::check(const std::vector<PendingEntry> &before, const std::vector<uint32_t> &before_system,
+                            std::span<const uint16_t> touched) const
 {
     const std::vector<LayoutEntry> after_view = view();
     std::vector<Status> after(after_view.size());
-    if (validateLayout(after_view, m_config, after) == 0U) {
+    if (validateLayout(after_view, limits(m_system), after) == 0U) {
         return Status::success();
     }
     const std::vector<LayoutEntry> before_view = viewOf(before);
     std::vector<Status> was(before_view.size());
-    (void)validateLayout(before_view, m_config, was);
+    (void)validateLayout(before_view, limits(before_system), was);
 
     for (size_t i = 0; i < after.size(); ++i) {
         if (after[i].ok()) {
@@ -158,15 +179,17 @@ template <typename Op> Status PendingLayout::run(Op op)
 {
     const bool created = ensureCopy();
     std::vector<PendingEntry> before = m_entries;
+    std::vector<uint32_t> before_system = m_system;
     std::vector<uint16_t> touched;
     Status st = op(touched);
     if (st.ok()) {
-        st = check(before, touched);
+        st = check(before, before_system, touched);
     }
     if (!st.ok()) {
         m_entries = std::move(before);
+        m_system = std::move(before_system);
         if (created) {
-            m_entries.clear(); // still inactive
+            discard(); // still inactive
         }
         return st;
     }
@@ -289,6 +312,7 @@ void PendingLayout::discard()
 {
     m_active = false;
     m_entries.clear();
+    m_system.clear();
 }
 
 Status PendingLayout::setValues(std::span<const SetEntry> entries, std::span<const uint32_t> applied)
@@ -296,6 +320,15 @@ Status PendingLayout::setValues(std::span<const SetEntry> entries, std::span<con
     Status st = run([&](std::vector<uint16_t> &touched) {
         for (size_t k = 0; k < entries.size(); ++k) {
             const Ref &r = entries[k].ref;
+            if (r.type == drivelink::protocol::defs::kSystemTypeId) {
+                const detail::InstanceRecord *system = m_table.find(r.type, r.instance);
+                const size_t item = (system != nullptr) ? itemIndex(*system->desc, r.id) : detail::kNoItem;
+                if (item == detail::kNoItem) {
+                    return Status::fail(Result::InvalidArgument, Detail::UnknownRef, static_cast<uint16_t>(k));
+                }
+                m_system[item] = applied[k];
+                continue;
+            }
             PendingEntry *e = find(r.type, r.instance);
             const size_t index = (e != nullptr) ? itemIndex(*e->desc, r.id) : detail::kNoItem;
             if (index == detail::kNoItem) {
@@ -358,7 +391,12 @@ Status PendingLayout::get(std::span<const Ref> refs, std::span<uint32_t> values)
         if (desc->items[item].kind != defs::ItemKind::Param) {
             return Status::fail(Result::InvalidArgument, Detail::WrongKind, index);
         }
-        values[i] = (pe != nullptr) ? valueAt(*pe, item) : rec->shadow[item];
+        if (pe != nullptr) {
+            values[i] = valueAt(*pe, item);
+        } else {
+            values[i] = (rec->type_id == drivelink::protocol::defs::kSystemTypeId) ? systemValue(item)
+                                                                                    : rec->shadow[item];
+        }
     }
     return Status::success();
 }

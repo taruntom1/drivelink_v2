@@ -98,7 +98,7 @@ TEST_CASE("OTA status parser rejects invalid states limits and truncated payload
 }
 TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{"native","native",1024,false,4});
         std::array<bool,7> dropped{};std::array<uint8_t,1024> response{};
         for (;;) {
@@ -114,7 +114,7 @@ TEST_CASE("SDK reconciles applied BEGIN WRITE and FINISH after lost replies") {
 }
 TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         for (;;) { const auto req=readFrame(s);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
@@ -124,7 +124,7 @@ TEST_CASE("SDK cancellation attempts ABORT and clears update state") {
 }
 TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         for (;;) {
             const auto req=readFrame(s);const auto n=commands.handle(req,response);
@@ -142,7 +142,7 @@ TEST_CASE("SDK OTA cleanup preserves DeviceError context and dynamic type") {
 }
 TEST_CASE("SDK OTA failed reconciliation retains the lost mutation's uncertainty") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         bool dropped=false;
         for (;;) {
@@ -162,7 +162,7 @@ TEST_CASE("SDK OTA failed reconciliation retains the lost mutation's uncertainty
 }
 TEST_CASE("SDK pipelined OTA malformed WRITE bodies retain mutation context") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         bool malformed=false;
         for (;;) {
@@ -182,7 +182,7 @@ TEST_CASE("SDK pipelined OTA malformed WRITE bodies retain mutation context") {
 }
 TEST_CASE("SDK OTA honors reduced payload limits including batch acknowledgements") {
     Device device([](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{"native","native",512,false,4});std::array<uint8_t,1024> response{};
         for (;;) { const auto req=readFrame(s);CHECK(req.size()<=512);const auto n=commands.handle(req,response);send(s,Bytes(response.begin(),response.begin()+n)); }
     });
@@ -232,7 +232,7 @@ TEST_CASE("OTA reboot outcome: a lost reply is uncertain and a refusal throws") 
     // The peer answers GET_INFO, then refuses or ignores REBOOT.
     for (const bool refuse : {false,true}) {
         Device device([refuse](Socket &s) {
-            core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+            core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
             core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
             for (;;) {
                 const auto req=readFrame(s);
@@ -254,7 +254,7 @@ TEST_CASE("OTA reboot outcome: a lost reply is uncertain and a refusal throws") 
 TEST_CASE("OTA confirmation sends nothing for an idle device that never ran the candidate") {
     std::atomic<int> confirms{0};
     Device device([&confirms](Socket &s) {
-        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());
+        core_os::KvStore store;core::Core core({});REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());
         core::CommandService commands(core,{});std::array<uint8_t,1024> response{};
         for (;;) {
             const auto req=readFrame(s);if (req[2]==9 && req[3]==5) { ++confirms; }

@@ -10,7 +10,6 @@
 
 #include "core/layout_validation.hpp"
 #include "core/persistence.hpp"
-#include "core/safe_mode.hpp"
 #include "core/value.hpp"
 #include "core/wiring_order.hpp"
 #include "core_os/boot_info.hpp"
@@ -84,7 +83,9 @@ bool revertable(const defs::ItemDesc &item)
            !defs::hasFlag(item, defs::ItemFlag::ReadOnly) && !defs::hasFlag(item, defs::ItemFlag::RebootRequired);
 }
 
-CoreConfig normalized(CoreConfig config)
+} // namespace
+
+CoreConfig normalizedConfig(CoreConfig config)
 {
     config.max_loops = std::clamp<uint8_t>(config.max_loops, 1, kMaxLoops);
     config.max_instances = std::clamp<uint16_t>(config.max_instances, 1, 64);
@@ -93,10 +94,16 @@ CoreConfig normalized(CoreConfig config)
     return config;
 }
 
-} // namespace
+CoreConfig withSystemSettings(CoreConfig base, std::span<const uint32_t> values)
+{
+    if (base.configure_system != nullptr) {
+        base.configure_system(base, values);
+    }
+    return base;
+}
 
 Core::Core(const CoreConfig &config)
-    : m_config(normalized(config)),
+    : m_config(normalizedConfig(config)),
       m_table(static_cast<size_t>(m_config.max_instances) + m_config.max_loops + 1U),
       m_tasks(std::make_unique<core_os::PeriodicTask[]>(m_config.max_loops)),
       m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
@@ -106,15 +113,16 @@ Core::Core(const CoreConfig &config)
                 core_os::captureCapacity(m_config.capture_max_bytes)),
       m_testgen(m_table, std::span(m_loops.data(), m_config.max_loops), m_arm, m_capture),
       m_ota(*this),
-      m_pending(m_registry, m_table, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values})
+      m_pending(m_registry, m_table, m_config)
 {
     m_params.setPendingLayout(&m_pending);
     m_params.useArmWord(&m_arm.word);
     m_actuators = std::make_unique<Instance *[]>(m_config.max_instances);
     std::unique_ptr<detail::InstanceRecord> record =
-        makeRecord(sys::kDesc, drivelink::protocol::defs::kSystemTypeId, 0, kNoLoop, "system", nullptr);
+        makeRecord(systemType(), drivelink::protocol::defs::kSystemTypeId, 0, kNoLoop, "system", nullptr);
     record->object = std::make_unique<SystemInstance>();
     initializeLimits(*record);
+    m_pending.setSavedSystem({record->shadow.get(), systemType().items.size()});
     m_system_ok = startInstance(*record).ok();
     if (m_system_ok) {
         (void)m_table.add(std::move(record)); // the table has room: it was just made
@@ -189,6 +197,10 @@ Status Core::startInstance(detail::InstanceRecord &record)
                 for (const auto &source : record.sources) { source_bound |= source.param_index == i; }
                 if (!source_bound) { stage = kStartStageUnbound; break; }
             }
+            if (record.type_id == defs::kSystemTypeId &&
+                defs::hasFlag(record.desc->items[i], defs::ItemFlag::RebootRequired)) {
+                continue; // no live storage: CoreConfig took it, and the shadow holds its running value
+            }
             if (record.desc->items[i].kind != defs::ItemKind::Action && !record.bindings[i].bound) {
                 stage = kStartStageUnbound;
                 break;
@@ -229,7 +241,7 @@ void Core::createObject(detail::InstanceRecord &record)
     record.state = InstanceState::Running;
 }
 
-Status Core::boot(core_os::KvStore &store)
+Status Core::boot(BootPlan plan)
 {
     m_ota.initialize();
     if (!m_system_ok) {
@@ -238,26 +250,27 @@ Status Core::boot(core_os::KvStore &store)
     if (m_booted || m_started) {
         return Status::fail(Result::Busy, Detail::NotAtBoot);
     }
-    m_booted = true;
-    m_store = &store;
-
-    // 1. Safe mode.
-    const SafeModeDecision safe = decideSafeMode(core_os::loadCrashCount(), core_os::resetWasCrash());
-    core_os::storeCrashCount(safe.counter);
-    m_safe_mode = safe.safe_mode;
-    if (m_safe_mode) {
-        core_os::reportDiag(diag_codes::core::kSafeModeEntered, 0, safe.counter, 0);
+    if (plan.store == nullptr) {
+        return Status::fail(Result::InvalidArgument, Detail::BadValue);
     }
+    m_booted = true;
+    m_store = plan.store;
 
-    // 2. Load. The system params apply now (the loop periods too).
-    persist::LoadedConfig cfg = persist::loadConfig(store);
+    // 1. Safe mode: prepareBoot() decided it and stored the counter.
+    m_safe_mode = plan.safe.safe_mode;
+
+    // 2. What prepareBoot() loaded. The system params apply now (the loop
+    //    periods too). A reboot_required one runs at the value bootConfig()
+    //    built this core with; the pending copy starts from the saved one.
+    persist::LoadedConfig &cfg = plan.config;
     m_newest_gen = cfg.newest_gen;
     if (cfg.complete) {
         m_config_loaded = true;
         m_complete_gen = cfg.gen;
         m_name = cfg.name;
         detail::InstanceRecord &system = systemRecord();
-        persist::applyPairs(*system.desc, cfg.system, system.shadow.get());
+        m_pending.setSavedSystem(savedSystemValues(plan, *system.desc));
+        std::ranges::copy(runningSystemValues(plan, *system.desc), system.shadow.get());
         initializeLimits(system);
         for (size_t i = 0; i < system.desc->items.size(); ++i) {
             const defs::ItemDesc &item = system.desc->items[i];
@@ -299,7 +312,7 @@ Status Core::boot(core_os::KvStore &store)
         entries[i] = LayoutEntry{desc, s.type_id, s.instance, s.loop, s.label, values[i].data()};
     }
     std::vector<Status> status(n);
-    (void)validateLayout(entries, ValidationConfig{m_config.gpio_allowed_mask, m_config.max_instances, m_config.max_loops, m_config.link_values}, status);
+    (void)validateLayout(entries, validationConfig(m_config), status);
 
     // 4. Records.
     std::vector<detail::InstanceRecord *> records(n, nullptr);
@@ -609,7 +622,7 @@ Status Core::save()
     }
     const detail::InstanceRecord &system = systemRecord();
     const std::vector<ParamPair> system_pairs =
-        persist::persistPairs(*system.desc, [&system](size_t k) { return system.shadow[k]; });
+        persist::persistPairs(*system.desc, [this](size_t k) { return m_pending.systemValue(k); });
 
     // Newer than anything in NVS, and never in the slot of the complete
     // generation: after an incomplete newer one (a torn earlier SAVE),

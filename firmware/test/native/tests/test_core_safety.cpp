@@ -33,7 +33,7 @@ struct Safety {
         std::strcpy(layout[1].label, "background"); layout[1].pairs = {{1,100}, {2,0}};
         layout[2].type_id = 112; layout[2].instance = 0; layout[2].loop = 0; std::strcpy(layout[2].label, "motor");
         REQUIRE(core::persist::saveConfig(store,1,layout,{}).ok());
-        REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(store).ok());
+        REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
         if (command) {
             const core::Ref input{112,0,512};
             REQUIRE(c.groups().stageConfig(core::GroupKind::Command,0,0,1,{&input,1}).ok());
@@ -136,7 +136,7 @@ TEST_CASE("Record and counter occurrences also drive the synchronous disarm inte
 }
 TEST_CASE("Active startup diagnostics seed the fault latch before loop gates open") {
     Manual manual; core_os::KvStore store; core::Core c(core::CoreConfig{});
-    REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(store).ok());
+    REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
     core_os::raiseDiag(codes::actuator_mock::kFaultInjected,0);
     REQUIRE(c.start().ok());
     core_os::clearDiag(codes::actuator_mock::kFaultInjected,0);
@@ -205,7 +205,7 @@ TEST_CASE("Runtime limits override YAML defaults, refuse writes and are never sa
     REQUIRE(loaded.complete);
     for (const auto &pair:loaded.system) { CHECK(pair.id<16); }
     f.c.stop(); config.group_entries=7;
-    core::Core rebooted(config); REQUIRE(rebooted.init(mod_mock::kTypes).ok()); REQUIRE(rebooted.boot(f.store).ok());
+    core::Core rebooted(config); REQUIRE(rebooted.init(mod_mock::kTypes).ok()); REQUIRE(rebooted.boot(core::prepareBoot(f.store)).ok());
     REQUIRE(rebooted.params().get(refs,values).ok()); CHECK(values[4]==7);
 }
 TEST_CASE("Sparse diagnostic exhaustion preserves safety identities through recovery") {
