@@ -186,6 +186,13 @@ TestCase {
 
     // Device settings (issue 105 step 4): the lease block says so on the row,
     // safe mode shows a neutral note, and neither hides a staged value.
+    function test_refusal_before_its_text() {
+        const row = createTemporaryObject(rowComponent, testCase)
+        row.editState = "rejected"; row.editNote = "Enter a whole number"
+        row.editText = "abc"
+        compare(field(row).text, "abc")
+        compare(note(row), "Enter a whole number")
+    }
     function test_blocked_and_neutral_notes() {
         const reason = "Needs the control lease: ROS (ros_bridge) holds it"
         const blocked = createTemporaryObject(rowComponent, testCase,

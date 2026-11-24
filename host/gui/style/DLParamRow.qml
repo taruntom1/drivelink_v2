@@ -84,6 +84,8 @@ Item {
     }
     onShownChanged: resetText()
     onEditStateChanged: resetText()
+    // The model's roles arrive in any order: a refusal can come before its text.
+    onEditTextChanged: if (editState === "rejected") resetText()
     Component.onCompleted: resetText()
 
     implicitWidth: 760
