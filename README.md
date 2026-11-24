@@ -19,10 +19,10 @@ To install a release and operate a device, start with the [user guide](https://t
 
 ## Validation
 
-From the repository root, run the full gate before opening a pull request:
+Before opening a pull request, run the checks for the areas it touches from the repository root, for example:
 
 ```bash
-python tools/validate.py full
+python tools/validate.py --only gen native fw fw-nolog
 ```
 
-For a focused run, select a check by name, for example `python tools/validate.py --only native`. See the [validation matrix and prerequisites](docs/development.md#validation-toolsvalidatepy) and [repository rules](CLAUDE.md).
+CI runs every check, and all its jobs must pass before a merge. `python tools/validate.py full` runs the same checks locally. See [which checks to run](docs/development.md#checks-before-a-pr), the [validation matrix and prerequisites](docs/development.md#validation-toolsvalidatepy) and [repository rules](CLAUDE.md).
