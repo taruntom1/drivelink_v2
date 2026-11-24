@@ -158,6 +158,12 @@ private slots:
         QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),valueBits(Value(float(2))));
         QVERIFY(!rows.data(rows.index(1),DescriptorRows::ValueBits).isValid());
         rows.reset(s,112,11,true);QCOMPARE(rows.rowCount(),0);
+        // The system's rows: the running or the pending value.
+        ModelItem setting;setting.descriptor.id=0x7F00;setting.descriptor.name="setting";setting.descriptor.value_type=ValueType::U16;
+        s->types[0].descriptor.name="system";s->types[0].items[0x7F00]=setting;
+        s->system_params[0x7F00]=uint16_t(10);s->pending_system_params[0x7F00]=uint16_t(25);
+        rows.reset(s,0,0);QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),10U);
+        rows.reset(s,0,0,true);QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),25U);
         Error error(ErrorKind::Timeout,"uncertain",3,4);error.family=1;error.op=2;error.has_request_context=true;error.outcome_unknown=true;
         const auto fields=errorFields(error);QVERIFY(fields["outcomeUnknown"].toBool());QCOMPARE(fields["op"].toInt(),2);
     }
