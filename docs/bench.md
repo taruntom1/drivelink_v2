@@ -135,6 +135,10 @@ Every task keeps more than 1 KB free. Check the marks after adding a task or a
 large buffer. `app_main`'s locals are large, so look at `main` after adding
 anything it starts. Stack sizes: main 5632, core_cfg 6144, others 4096.
 
+Marks with 6 loops, 12 + 12 groups and 20 mock modules (runtime settings step 2,
+normal build, console): main 3552, uart_rx 2996, uart_tx 3056, diag 1728,
+esp_timer 3264, core_cfg 3952 (2624 after an edit and SAVE), loops 2908 to 3080.
+
 Latest marks (H1c normal firmware, minimum across maximum-name and affinity
 observations, bytes free): main 3552, uart_rx 3028, uart_tx 3056, diag 1752,
 esp_timer 3264, core_cfg 2632, core_loop_0 3136, core_loop_1 3252, temporary

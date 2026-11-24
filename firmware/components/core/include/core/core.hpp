@@ -60,7 +60,7 @@ constexpr uint32_t periodUsFromHz(uint32_t rate_hz)
 /// are config task operations: one caller at a time, after `boot()`.
 class Core {
 public:
-    /// Allocates the tables, loop slots and system instance; boot creates the loops.
+    /// Allocates the tables, loop slots, groups and system instance; boot creates the loops.
     explicit Core(const CoreConfig &config);
     ~Core(); ///< stop(), then destroy the instances
 
@@ -79,9 +79,10 @@ public:
     ///      blank). The system params are applied.
     ///   3. Validate the layout. An invalid entry is left out
     ///      (`core.LayoutInvalid`, `layoutInvalid()`).
-    ///   4. Make a record for every entry (an unknown type, a duplicate or an
-    ///      entry beyond the capacity gets none). In safe mode they all stay
-    ///      `Offline` and nothing is created.
+    ///   4. Make a record for every entry (an unknown type or a duplicate gets
+    ///      none; one beyond the capacity is `Invalid`). In safe mode they all
+    ///      stay `Offline` and nothing is created; the limits that run are the
+    ///      defaults, but the layout is judged by the saved ones.
     ///   5. Create and start the instances in dependency order. One that
     ///      fails is `Failed` (`core.InstanceStartFailed`), and every instance
     ///      wired to one that isn't running is `DependencyMissing`

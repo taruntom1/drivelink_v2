@@ -345,7 +345,7 @@ TEST_CASE("Capture wire ops, STATUS, READ paging and the done event") {
     REQUIRE(run(request(3)) == 6);CHECK(out[4] == 0);
     CHECK(f.cap().snapshot().state == CaptureState::Idle);
     CHECK(run(request(9)) == 6);CHECK(out[5] == static_cast<uint8_t>(core::Detail::Unsupported));
-    // The capture limit is a read-only system param.
+    // The capture limit is a system param.
     CHECK(getParam(f.c, 0, 0, defs::system::kLimitsCaptureRefs) == 16);
 }
 

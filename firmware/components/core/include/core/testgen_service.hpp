@@ -36,6 +36,7 @@ public:
     TestgenService(const detail::InstanceTable &table, std::span<Loop *> loops,
                    ArmState &arm, CaptureService &capture);
     ~TestgenService();
+    static size_t slotBytes(); // per loop of the capacity, for the RAM estimate
     Status start(const TestgenConfig &config, uint32_t &run);
     Status stop(uint8_t loop);
     Status snapshot(uint8_t loop, TestgenSnapshot &out) const;

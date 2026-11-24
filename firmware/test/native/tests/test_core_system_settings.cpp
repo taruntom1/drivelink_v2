@@ -1,8 +1,9 @@
 // core: reboot_required system settings. Staging, SAVE, reboot, DISCARD and
 // REVERT, the limits they give the pending layout, power loss during SAVE, and
 // the boot order: crashes before and after the core is built both count, and
-// safe mode runs with the defaults. The setting is test-only: the generated
-// system type has no reboot_required item yet.
+// safe mode runs with the defaults. The setting is test-only. The limits.*
+// settings follow: their capacity and RAM checks, safe mode with a layout over
+// the default limits, and the live diag.* timing.
 
 #include "doctest.h"
 
@@ -13,8 +14,13 @@
 #include "core/boot.hpp"
 #include "core/command_service.hpp"
 #include "core/core.hpp"
+#include "core/ram_estimate.hpp"
 #include "core_os/boot_info.hpp"
+#include "core_os/native_task.hpp"
+#include "core_os/native_diag.hpp"
 #include "core_test_modules.hpp"
+#include "drivelink/protocol/gen/type_fusion_mock.hpp"
+#include "mod_mock/modules.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
 
 using namespace testmod;
@@ -515,4 +521,332 @@ TEST_CASE("System settings: the wire describes, stages and reads them; LINK_CONF
     CHECK(out[4] == static_cast<uint8_t>(Result::InvalidArgument));
     CHECK(out[5] == static_cast<uint8_t>(Detail::Unsupported));
     CHECK(service.takeAfterReply() == core::AfterReply::None);
+}
+
+// -- limits.* ------------------------------------------------------------------
+
+namespace {
+
+/// A boot with the real system type and `heap` bytes free before Core is built.
+std::unique_ptr<core::Core> limitsBoot(core_os::KvStore &store, size_t heap = SIZE_MAX)
+{
+    core_os::native::setFreeInternalBytes(heap);
+    core::CoreConfig cfg;
+    cfg.gpio_allowed_mask = kTestGpioMask;
+    core::BringUp up = core::bringUp(store, cfg, kTypes);
+    core_os::native::setFreeInternalBytes(SIZE_MAX);
+    REQUIRE(up.status.ok());
+    return std::move(up.core);
+}
+
+core::Status setOne(core::Core &c, const core::Ref &r, uint32_t value)
+{
+    const core::SetEntry e{r, value};
+    uint32_t bits = 0;
+    return c.params().set({&e, 1}, {&bits, 1});
+}
+
+core::Status setLimit(core::Core &c, uint16_t id, uint32_t value)
+{
+    return setOne(c, ref(kSys, 0, id), value);
+}
+
+/// The estimate for the pending settings and layout, as the check sees it.
+size_t pendingNeed(const core::Core &c)
+{
+    core::CoreConfig cfg;
+    std::vector<uint32_t> values;
+    for (size_t i = 0; i < sys::kDesc.items.size(); ++i) {
+        values.push_back(c.pendingLayout().systemValue(i));
+    }
+    core::configureLimits(cfg, values);
+    std::vector<core::LayoutEntry> view;
+    for (const core::PendingEntry &e : c.pendingLayout().entries()) {
+        view.push_back({e.desc, e.type_id, e.instance, e.loop, e.label, e.values.data()});
+    }
+    return core::estimateRam(cfg, view);
+}
+
+constexpr size_t kReserve = core::RamBudget{}.reserve_bytes;
+
+std::vector<Inst> modules(size_t count)
+{
+    std::vector<Inst> all;
+    for (size_t i = 0; i < count; ++i) {
+        all.push_back({fx::kTypeId, static_cast<uint8_t>(i), 1, "m" + std::to_string(i)});
+    }
+    return all;
+}
+
+const std::vector<core::ParamPair> kRaisedLimits{
+    {sys::kLimitsLoops, 6}, {sys::kLimitsInstances, 24}, {sys::kLimitsSubGroups, 12}, {sys::kLimitsCmdGroups, 12}};
+
+} // namespace
+
+TEST_CASE("Limits: every one is saved and sizes the next boot; frame and memory caps stay")
+{
+    reset();
+    core_os::KvStore store;
+    {
+        auto c = limitsBoot(store);
+        CHECK(getParam(*c, kSys, 0, sys::kLimitsCaptureKb) == 4096);
+        const std::array<core::SetEntry, 8> set{
+            entry(kSys, 0, sys::kLimitsLoops, 6),         entry(kSys, 0, sys::kLimitsInstances, 24),
+            entry(kSys, 0, sys::kLimitsSubGroups, 31),    entry(kSys, 0, sys::kLimitsCmdGroups, 32),
+            entry(kSys, 0, sys::kLimitsGroupEntries, 10), entry(kSys, 0, sys::kLimitsLinkValues, 5),
+            entry(kSys, 0, sys::kLimitsCaptureRefs, 64),  entry(kSys, 0, sys::kLimitsCaptureKb, 64)};
+        std::array<uint32_t, 8> applied{};
+        REQUIRE(c->params().set(set, applied).result == Result::PendingReboot);
+        CHECK(getParam(*c, kSys, 0, sys::kLimitsLoops) == 4);
+        CHECK(c->groups().capacity(core::GroupKind::Subscription) == 8);
+        REQUIRE(c->save().ok());
+    }
+    auto c = limitsBoot(store);
+    CHECK(c->loopCapacity() == 6);
+    CHECK(c->groups().capacity(core::GroupKind::Subscription) == 31);
+    CHECK(c->groups().capacity(core::GroupKind::Command) == 32);
+    CHECK(c->groups().info(core::GroupKind::Subscription, 30) != nullptr);
+    CHECK(c->groups().entryCapacity() == 10);
+    CHECK(c->capture().refCapacity() == 64);
+    CHECK(c->capture().capacityBytes() == 64U * 1024U);
+    CHECK(getParam(*c, kSys, 0, sys::kLimitsCaptureKb) == 64);
+    CHECK(pending(*c, sys::kLimitsInstances) == 24);
+    CHECK_FALSE(c->pendingReboot());
+    c.reset();
+
+    // A small frame caps the two limits it carries: GET shows the cap.
+    core::CoreConfig small;
+    small.group_entries_cap = 9;
+    small.capture_refs_cap = 19;
+    core::BringUp up = core::bringUp(store, small, kTypes);
+    REQUIRE(up.core != nullptr);
+    CHECK(getParam(*up.core, kSys, 0, sys::kLimitsGroupEntries) == 9);
+    CHECK(getParam(*up.core, kSys, 0, sys::kLimitsCaptureRefs) == 19);
+    CHECK(pending(*up.core, sys::kLimitsGroupEntries) == 10);
+}
+
+TEST_CASE("Limits: one below what the pending layout uses is refused; a raised one can be used at once")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(3));
+    auto c = limitsBoot(store);
+    core::Status st = setLimit(*c, sys::kLimitsLoops, 1); // two loops
+    CHECK(st.result == Result::NoMemory);
+    CHECK(st.detail == Detail::Capacity);
+    CHECK(st.index == 0);
+    CHECK(setLimit(*c, sys::kLimitsInstances, 2).detail == Detail::Capacity);
+    CHECK_FALSE(c->pendingReboot());
+
+    REQUIRE(setLimit(*c, sys::kLimitsLoops, 2).accepted());
+    uint8_t id = 0;
+    CHECK(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "third", id).detail == Detail::Capacity);
+    REQUIRE(setLimit(*c, sys::kLimitsLoops, 5).accepted());
+    REQUIRE(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "third", id).ok());
+    REQUIRE(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "fourth", id).ok());
+    REQUIRE(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "fifth", id).ok()); // past the running 4
+    CHECK(setLimit(*c, sys::kLimitsLoops, 4).detail == Detail::Capacity);
+    REQUIRE(c->save().ok());
+    c.reset();
+    c = limitsBoot(store);
+    CHECK(c->loopCount() == 5);
+    CHECK(c->instancesFailed() == 0);
+}
+
+TEST_CASE("Limits: an entry that is invalid for another reason still counts")
+{
+    reset();
+    core_os::KvStore store;
+    // Three modules, the last in no loop: it already fails, for another reason.
+    auto layout = modules(3);
+    layout[2].loop = 7;
+    writeLayout(store, layout);
+    auto c = limitsBoot(store);
+    REQUIRE(stateOf(*c, fx::kTypeId, 2) == core::InstanceState::Invalid);
+    CHECK(setLimit(*c, sys::kLimitsInstances, 2).detail == Detail::Capacity);
+    CHECK(setLimit(*c, sys::kLimitsInstances, 3).accepted());
+}
+
+TEST_CASE("Limits: link_values below what a loop pair uses is refused")
+{
+    reset();
+    namespace fus = defs::fusion_mock;
+    static const std::array<const core::ModuleType *, 2> types{&kFullType, mod_mock::kTypes[3]};
+    core_os::KvStore store;
+    writeLayout(store, {{fx::kTypeId, 0, 0, "producer"},
+                        {fus::kTypeId, 0, 1, "consumer",
+                         {{1, defs::sourceRef(fx::kTypeId, 0, fx::kPosition)},
+                          {2, defs::sourceRef(fx::kTypeId, 0, fx::kVelocitySp)}}}});
+    core::BringUp up = core::bringUp(store, core::CoreConfig{}, types);
+    REQUIRE(up.core != nullptr);
+    REQUIRE(up.core->instancesFailed() == 0);
+    CHECK(setLimit(*up.core, sys::kLimitsLinkValues, 1).detail == Detail::Capacity);
+    CHECK(setLimit(*up.core, sys::kLimitsLinkValues, 2).accepted());
+}
+
+TEST_CASE("RAM check: limits, loops, stacks and modules that do not fit are refused")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(1));
+    size_t base = 0;
+    {
+        auto c = limitsBoot(store);
+        REQUIRE(setLimit(*c, sys::kLimitsSubGroups, 8).accepted()); // the default: only makes the copy
+        base = pendingNeed(*c);
+    }
+    const size_t group = core::GroupService::slotBytes();
+    // Room for three more command groups, and not for four.
+    auto c = limitsBoot(store, base + kReserve + (3U * (group + 64U)));
+    const core::Status st = setLimit(*c, sys::kLimitsCmdGroups, 12);
+    CHECK(st.result == Result::NoMemory);
+    CHECK(st.detail == Detail::NotEnoughMemory);
+    CHECK(st.index == 0);
+    CHECK(pending(*c, sys::kLimitsCmdGroups) == 8);
+    CHECK_FALSE(c->pendingReboot());
+    uint8_t id = 0;
+    REQUIRE(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "l", id).ok()); // about 7 KB
+    const core::Ref stack = ref(defs::kLoopTypeId, id, defs::loop::kStackBytes);
+    const uint8_t extra = id;
+    CHECK(setOne(*c, stack, 16384).detail == Detail::NotEnoughMemory);
+    CHECK(c->addInstance(defs::kLoopTypeId, core::kNoLoop, "l2", id).detail == Detail::NotEnoughMemory);
+    REQUIRE(c->removeInstance(defs::kLoopTypeId, extra).ok());
+    REQUIRE(setLimit(*c, sys::kLimitsCmdGroups, 11).accepted());
+    CHECK(setLimit(*c, sys::kLimitsSubGroups, 9).detail == Detail::NotEnoughMemory);
+    // Raised and lowered in one batch: what counts is the result.
+    const std::array<core::SetEntry, 2> swap{entry(kSys, 0, sys::kLimitsSubGroups, 9),
+                                             entry(kSys, 0, sys::kLimitsCmdGroups, 9)};
+    std::array<uint32_t, 2> applied{};
+    CHECK(c->params().set(swap, applied).accepted());
+    bool refused = false;
+    for (unsigned i = 0; i < 12 && !refused; ++i) {
+        const core::Status add = c->addInstance(fx::kTypeId, 1, ("x" + std::to_string(i)).c_str(), id);
+        refused = add.detail == Detail::NotEnoughMemory;
+        CHECK((add.ok() || refused));
+    }
+    CHECK(refused);
+}
+
+TEST_CASE("RAM check: a saved layout that no longer fits boots, and can be made smaller")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(6), 1, kRaisedLimits);
+    auto c = limitsBoot(store, 1000); // nothing fits
+    CHECK(c->groups().capacity(core::GroupKind::Subscription) == 12);
+    CHECK(c->instanceCount() == 8);
+    CHECK(setLimit(*c, sys::kLimitsSubGroups, 13).detail == Detail::NotEnoughMemory);
+    uint8_t id = 0;
+    CHECK(c->addInstance(fx::kTypeId, 1, "more", id).detail == Detail::NotEnoughMemory);
+    CHECK(c->setLabel(fx::kTypeId, 0, "renamed").ok()); // costs nothing
+    CHECK(setLimit(*c, sys::kLimitsSubGroups, 11).accepted());
+    CHECK(c->removeInstance(fx::kTypeId, 1).ok());
+    REQUIRE(c->save().ok());
+}
+
+TEST_CASE("Limits: safe mode runs the defaults and keeps a layout that needs the raised limits")
+{
+    reset();
+    core_os::KvStore store;
+    // 24 modules and 6 loops: over the default 16 and 4.
+    auto layout = modules(24);
+    for (uint8_t id = 2; id < 6; ++id) {
+        layout.push_back({defs::kLoopTypeId, id, core::kNoLoop, "loop" + std::to_string(id)});
+    }
+    writeLayout(store, layout, 1, kRaisedLimits);
+    core_os::native::setResetWasCrash(true);
+    core_os::storeCrashCount(2);
+    auto c = limitsBoot(store);
+    REQUIRE(c->safeMode());
+    CHECK(getParam(*c, kSys, 0, sys::kLimitsInstances) == 16);
+    CHECK(c->groups().capacity(core::GroupKind::Command) == 8);
+    CHECK(c->loopCapacity() == 4);
+    CHECK(pending(*c, sys::kLimitsInstances) == 24);
+    CHECK(c->configuredCount() == 30);
+    CHECK_FALSE(c->layoutInvalid()); // judged by its own limits
+    CHECK(c->instancesFailed() == 0);
+    REQUIRE(c->start().ok());
+
+    // Its edits are checked against the saved limits.
+    CHECK(setLimit(*c, sys::kLimitsInstances, 23).detail == Detail::Capacity);
+    uint8_t id = 0;
+    CHECK(c->addInstance(fx::kTypeId, 1, "extra", id).detail == Detail::Capacity);
+    REQUIRE(c->save().ok()); // with no pending copy
+    REQUIRE(setLimit(*c, sys::kLimitsSubGroups, 4).accepted());
+    REQUIRE(c->save().ok()); // from the pending copy
+    REQUIRE(c->exitSafeMode().ok());
+    c.reset();
+    core_os::native::setResetWasCrash(false);
+    c = limitsBoot(store);
+    CHECK_FALSE(c->safeMode());
+    CHECK(c->instanceCount() == 30);
+    CHECK(c->loopCount() == 6);
+    CHECK(c->groups().capacity(core::GroupKind::Subscription) == 4);
+    CHECK(c->groups().capacity(core::GroupKind::Command) == 12);
+}
+
+TEST_CASE("Limits: SAVE in safe mode drops none of 22 entries under a saved limit of 40")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(20), 1, {{sys::kLimitsInstances, 40}});
+    core_os::native::setResetWasCrash(true);
+    core_os::storeCrashCount(2);
+    auto c = limitsBoot(store);
+    REQUIRE(c->safeMode());
+    CHECK(getParam(*c, kSys, 0, sys::kLimitsInstances) == 16);
+    CHECK(c->configuredCount() == 22);
+    REQUIRE(c->save().ok());
+    const auto saved = core::persist::loadConfig(store);
+    CHECK(saved.instances.size() == 22);
+    REQUIRE(setLimit(*c, sys::kLimitsInstances, 30).accepted()); // through a pending copy
+    REQUIRE(c->save().ok());
+    CHECK(core::persist::loadConfig(store).instances.size() == 22);
+}
+
+TEST_CASE("Limits: a layout saved without its limits keeps its extra instances through SAVE")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(18)); // e.g. from a build with a raised Kconfig limit
+    auto c = limitsBoot(store);
+    CHECK(c->configuredCount() == 20);
+    CHECK(stateOf(*c, fx::kTypeId, 17) == core::InstanceState::Invalid);
+    CHECK(c->instancesFailed() == 2);
+    REQUIRE(c->save().ok());
+    REQUIRE(setLimit(*c, sys::kLimitsInstances, 18).accepted());
+    REQUIRE(c->save().ok());
+    c.reset();
+    c = limitsBoot(store);
+    CHECK(c->instanceCount() == 20);
+    CHECK(c->instancesFailed() == 0);
+}
+
+TEST_CASE("Diagnostic timing: live, saved and handed to the platform, at the defaults too")
+{
+    using core_os::DiagTiming;
+    using core_os::native::diagTiming;
+    reset();
+    core_os::KvStore store;
+    {
+        auto c = limitsBoot(store);
+        CHECK(diagTiming(DiagTiming::CounterPeriodMs) == 1000);
+        CHECK(diagTiming(DiagTiming::PollMs) == 20);
+        CHECK(diagTiming(DiagTiming::StackLogS) == 30);
+        CHECK(setLimit(*c, sys::kDiagCounterPeriodMs, 250).result == Result::Ok);
+        CHECK(setLimit(*c, sys::kDiagPollMs, 1).result == Result::Ok); // clamped
+        CHECK(setLimit(*c, sys::kDiagStackLogS, 0).result == Result::Ok);
+        CHECK(diagTiming(DiagTiming::CounterPeriodMs) == 250);
+        CHECK(diagTiming(DiagTiming::PollMs) == 10);
+        CHECK(diagTiming(DiagTiming::StackLogS) == 0);
+        CHECK_FALSE(c->pendingReboot());
+        REQUIRE(c->save().ok());
+        CHECK(setLimit(*c, sys::kDiagPollMs, 500).result == Result::Ok);
+        REQUIRE(c->revert().ok());
+        CHECK(diagTiming(DiagTiming::PollMs) == 10);
+    }
+    core_os::setDiagTiming(DiagTiming::PollMs, 0);
+    auto c = limitsBoot(store);
+    CHECK(diagTiming(DiagTiming::PollMs) == 10);
+    CHECK(getParam(*c, kSys, 0, sys::kDiagCounterPeriodMs) == 250);
 }

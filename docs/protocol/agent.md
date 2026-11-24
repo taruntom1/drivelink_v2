@@ -319,7 +319,8 @@ Group ids are device resources; the agent gives each client its own view.
   that kind on the device (subscriptions on disconnect, command groups when
   the lease ends). A slot whose CLEAR fails is not handed out again until a
   later CLEAR succeeds.
-- On a device Boot every slot is free again (the device lost its groups);
+- On a device Boot every slot is free again (the device lost its groups) and
+  the agent reads the pool sizes again, which are settings that a boot applies;
   clients learn of the Boot from the diag Boot event, as on a direct link.
 
 ## Time

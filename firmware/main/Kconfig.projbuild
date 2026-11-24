@@ -1,15 +1,5 @@
 menu "DriveLink main"
 
-    config DRIVELINK_STACK_LOG_PERIOD_S
-        int "Task stack high-water log period (s)"
-        default 30
-        range 0 3600
-        help
-            While app_main idles, log the smallest free stack (high-water
-            mark, in bytes) of each firmware task this often. 0 turns the
-            log off. Used to size task stacks. Compiled out when
-            DIAG_CONSOLE_LOG is off (no console text).
-
     config CORE_BENCH_CRASH
         bool "Enable wire crash/stall commands (bare-board tests only)"
         default n

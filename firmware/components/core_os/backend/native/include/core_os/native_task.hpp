@@ -15,4 +15,6 @@ bool manualScheduling();
 // Capture memory: the capacity a later Core reports, and one failing allocation.
 void setCaptureCapacity(size_t bytes);
 void failNextCaptureAlloc();
+// The free internal heap a later boot records (SIZE_MAX: unlimited, the default).
+void setFreeInternalBytes(size_t bytes);
 }

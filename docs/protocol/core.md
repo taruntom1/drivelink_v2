@@ -56,10 +56,10 @@ after their producer, with age zero. Same-loop cycles return `WiringCycle`;
 cross-loop cycles are permitted. ARM/DISARM preserve sources. A consumer
 decides how much staleness is acceptable.
 
-`limits.link_values` (system 0x0015, read-only u16) is the maximum number of
+`limits.link_values` (system 0x0015) is the maximum number of
 distinct target values per ordered pair of different loops (default 32).
 Repeated targets within a pair share one slot. Exceeding it returns
-`Capacity` and leaves the pending layout unchanged. This limit is not saved.
+`Capacity` and leaves the pending layout unchanged.
 
 ## System (family 1)
 
@@ -97,9 +97,8 @@ clears it. Identity remains readable in safe mode.
 
 LINK_CONFIRM (11) is reserved for the link trial of
 [runtime settings](../../plans/runtime-settings.md): empty body, answered
-InvalidArgument/Unsupported. So are the details LinkTrialActive (59),
-NoLinkTrial (60) and NotEnoughMemory (61); no device sends them yet. Details
-54 to 58 are the agent's.
+InvalidArgument/Unsupported. So are the details LinkTrialActive (59) and
+NoLinkTrial (60); no device sends them yet. Details 54 to 58 are the agent's.
 
 ## Layout (family 2)
 
@@ -191,14 +190,56 @@ A `reboot_required` system param (type 0) follows the module rule:
   staged by that difference.
 
 The boot counts a crash before it reads the settings, and reads them before it
-sizes anything from them. No system param is `reboot_required` yet.
+sizes anything from them.
+
+### Limits
+
+The `limits.*` system params are persisted, `reboot_required` u16 settings. A
+boot sizes the device from them. Defaults and ranges are in
+[types/system.md](types/system.md).
+
+| Param | Limits |
+|---|---|
+| `limits.loops` (0x0010) | loop instances |
+| `limits.instances` (0x0011) | module instances, counted apart from the loops |
+| `limits.sub_groups` (0x0012), `limits.cmd_groups` (0x0013) | the group pools |
+| `limits.group_entries` (0x0014) | entries per group |
+| `limits.link_values` (0x0015) | distinct source values per ordered loop pair |
+| `limits.capture_refs` (0x0016) | values per capture |
+| `limits.capture_kb` (0x0017) | the capture ring, in KB |
+
+- GET is the limit in effect, which hosts size themselves by. `max_payload` caps
+  `limits.group_entries` and `limits.capture_refs` there (see Group and Capture);
+  GET_PENDING keeps the setting. The PSRAM caps the capture ring, and GET_INFO's
+  `capture_capacity` is the result.
+- A limit below what the pending layout uses is refused with
+  NoMemory/`Capacity`. ADD_INSTANCE checks the pending limit, so a limit can be
+  raised and used before the same SAVE and reboot.
+- A pending edit that makes the settings and the layout need more RAM than the
+  device has is refused with NoMemory/`NotEnoughMemory` (61): any limit, a loop's
+  `stack_bytes`, or ADD_INSTANCE. The device estimates on the safe side, from
+  the internal heap that was free at boot. An edit that needs no more RAM than
+  before is always accepted, and a saved layout always boots.
+- In a SET these refusals carry the index of the batch's first system param (0
+  without one).
+- A layout entry past its limit (an older layout, saved with larger built-in
+  limits) is listed as Invalid and kept by SAVE. In safe mode the default limits
+  run, and the layout is checked against the saved ones; every entry is listed.
+
+### Diagnostic timing
+
+`diag.counter_period_ms`, `diag.poll_ms` and `diag.stack_log_s` (0x0020 to
+0x0022) are live, persisted u16 settings: how often changed counters are sent,
+how long a record waits at most, and the period of the console's task stack log
+(0 turns it off; a build without console text has none). Counters are looked at
+once per poll, so a period shorter than the poll takes the poll.
 
 ## Group (family 5)
 
 All groups are boot-allocated resources, with independent subscription and
 command IDs. They survive reconnects but are never persisted. Limits are
-CORE_SUBSCRIPTION_GROUPS (8, 1..31), CORE_COMMAND_GROUPS (8, 1..32), and CORE_GROUP_ENTRIES (64, 1..64). The effective entry
-limit is min(configured limit, 64, floor((max_payload - 19)/4)), so both a
+`limits.sub_groups`, `limits.cmd_groups` and `limits.group_entries`. The effective entry
+limit is min(`limits.group_entries`, floor((max_payload - 19)/4)), so both a
 complete LIST record and telemetry fit. A 128-byte build advertises 27. The channel is
 registry SubGroupChannelFirst + subscription ID, or CmdGroupChannelFirst +
 command ID.
@@ -233,7 +274,7 @@ therefore refuse a mutation. Command CONFIG/CLEAR are refused while armed;
 subscription changes are allowed.
 
 LIST starts with the usual `total u16, next u16, count u8` page header.
-Read capacities through the read-only system params `limits.sub_groups`,
+Read capacities through the system params `limits.sub_groups`,
 `limits.cmd_groups` and `limits.group_entries`. There is no capacity prefix.
 It lists every slot, subscriptions first, then commands, each in ascending ID:
 `kind u8 (0 subscription, 1 command), group u8, flags u8, loop u8, epoch u8,
@@ -271,12 +312,12 @@ NaN-to-hold conversion remains for later semantic device modeling.
 
 ## Capture (family 6, F7a)
 
-One capture records up to `limits.capture_refs` (system 0x0016, read-only u16,
-`CORE_CAPTURE_MAX_REFS`, default 16, capped so STATUS fits the payload) signals
+One capture records up to `limits.capture_refs` (system 0x0016, default 16,
+capped so STATUS fits the payload) signals
 or inputs of one loop into a ring of `samples × count × 4` bytes. The ring is
 allocated at CONFIG from PSRAM (internal RAM, at most 32 KB, on a board without
 PSRAM) and kept until the next CONFIG. GET_INFO's `capture_capacity` is the
-largest ring: the smaller of `CORE_CAPTURE_MAX_KB` and the largest free PSRAM
+largest ring: the smaller of `limits.capture_kb` and the largest free PSRAM
 block at boot. Captures are not persisted, survive DISARM and record while
 disarmed; a reboot leaves the capture unconfigured.
 
@@ -485,9 +526,9 @@ encoding and core version do not.
 
 A blank store, factory reset or incompatible old layout creates control (id 0,
 1000 Hz, real-time, core 1, priority 20) and sensor (id 1, 100 Hz, non-real-time,
-core 0, priority 10), both with 4096-byte stacks. CORE_MAX_LOOPS=1 creates only
-control. A valid saved layout can contain zero loops. CORE_MAX_LOOPS bounds loop
-instances separately from CORE_MAX_INSTANCES, which bounds module instances.
+core 0, priority 10), both with 4096-byte stacks. A core limited to one loop creates only
+control. A valid saved layout can contain zero loops. `limits.loops` bounds loop
+instances separately from `limits.instances`, which bounds module instances.
 The layout blob format is 3 (H1c); LP format 2 loads with an empty name.
 Instance blobs retain format 1. Pre-F3d layouts
 are discarded in favor of the factory layout, without migrating their modules.
@@ -545,14 +586,6 @@ actuator. It repeats the force while disarmed, without depending on a loop
 transition. A stop gate prevents a concurrent ARM commit during those calls.
 Real-time loop tasks also feed the panic-reset Task WDT after each completed
 tick, providing a backstop when esp_timer itself cannot run.
-
-The read-only, non-persisted u16 system params are `limits.loops` (16),
-`limits.instances` (17), `limits.sub_groups` (18), `limits.cmd_groups` (19)
-and `limits.group_entries` (20), plus `limits.link_values` (21, F4c) and
-`limits.capture_refs` (22, F7a). Values come from the normalized runtime
-configuration, overriding YAML defaults and stored data at boot. Instance
-capacity counts modules separately from loop capacity. SET returns ReadOnly;
-SAVE omits them all.
 
 BenchStall (system op 253) takes `loop u8 | duration_ms u16`, 1..10000 ms.
 Like BenchCrash it requires the default-off `CONFIG_CORE_BENCH_CRASH` test

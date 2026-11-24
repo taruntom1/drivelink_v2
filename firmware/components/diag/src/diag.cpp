@@ -5,6 +5,7 @@
 
 #include "diag_internal.hpp"
 #include "diag_observer.hpp"
+#include "drivelink/protocol/gen/type_system.hpp"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
@@ -19,6 +20,16 @@ StaticQueue_t s_queue_storage;
 uint8_t s_queue_buffer[CONFIG_DIAG_RECORD_QUEUE_DEPTH * sizeof(detail::QueuedEvent)];
 std::atomic<QueueHandle_t> s_queue{nullptr};
 
+namespace sys = drivelink::protocol::defs::system;
+
+constexpr uint32_t defaultOf(uint16_t id)
+{
+    return drivelink::protocol::defs::findItem(sys::kDesc, id)->default_bits;
+}
+
+std::atomic<uint32_t> s_counter_period_ms{defaultOf(sys::kDiagCounterPeriodMs)};
+std::atomic<uint32_t> s_poll_ms{defaultOf(sys::kDiagPollMs)};
+std::atomic<uint32_t> s_stack_log_s{defaultOf(sys::kDiagStackLogS)};
 
 
 void enqueue(const detail::QueuedEvent &ev)
@@ -39,6 +50,13 @@ void init()
                                                     &s_queue_storage);
     s_queue.store(queue, std::memory_order_release);
 }
+
+void setCounterPeriodMs(uint32_t ms) { s_counter_period_ms.store(ms, std::memory_order_relaxed); }
+void setPollMs(uint32_t ms) { s_poll_ms.store(ms, std::memory_order_relaxed); }
+void setStackLogPeriodS(uint32_t s) { s_stack_log_s.store(s, std::memory_order_relaxed); }
+uint32_t counterPeriodMs() { return s_counter_period_ms.load(std::memory_order_relaxed); }
+uint32_t pollMs() { return s_poll_ms.load(std::memory_order_relaxed); }
+uint32_t stackLogPeriodS() { return s_stack_log_s.load(std::memory_order_relaxed); }
 
 void report(Code code, esp_err_t err, uint32_t arg0, uint32_t arg1, uint8_t instance)
 {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -28,10 +29,12 @@ struct ReporterConfig {
 ///
 /// Owns one task that, in order: sends the Boot event once, sends queued
 /// records and Cleared events, answers queries, and every
-/// CONFIG_DIAG_COUNTER_PERIOD_MS sends CounterDelta events for changed
+/// `diag.counter_period_ms` sends CounterDelta events for changed
 /// counters (after folding in UartComm::getErrorCounters()). When the
 /// UART TX queue is full, events stay queued and are retried; nothing is
 /// lost except query responses (counted as diag.EventTxDropped).
+///
+/// It looks at the queue, and at the counter period, every `diag.poll_ms`.
 ///
 /// Construct it after the core (so Boot carries the final
 /// instance counts); records reported before then wait in the queue.
@@ -48,6 +51,10 @@ public:
 
     /// True when the query callback is registered and the task is running.
     bool isValid() const;
+
+    /// The heap a reporter with the default config takes: its state, task
+    /// stack and query queue. For the core's RAM check.
+    static size_t ramBytes();
 
 private:
     struct Impl;

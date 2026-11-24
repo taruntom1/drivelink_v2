@@ -16,11 +16,11 @@ See the [firmware design](firmware-architecture.md) and
   a rate, a `realtime` flag and a discovered core placement enum (`core_0` 0,
   `core_1` 1, `any` 2; new loops default to Any, LP), and each module type
   requires, forbids or accepts a real-time loop
-- limited by read-only `limits.*` system params (loops, instances, groups,
+- limited by the `limits.*` system params (settings since runtime settings step 2; loops, instances, groups,
   link values), so a host can show "4 of 4 loops" before it tries an op
 - streamed through subscription groups (31 channels, 0x81–0x9F) and command
   groups (32 channels, 0xA0–0xBF), preallocated, with epochs; the pool sizes
-  are Kconfig (default 8 each) and reported in `limits.*`
+  are in `limits.*` (default 8 each)
 - protected by arming (`ARM` needs a configured command group), a command
   watchdog, a safety monitor, the `DISARM` fast path (MSG_TYPE 0x03) and diag
   codes that block arming or disarm

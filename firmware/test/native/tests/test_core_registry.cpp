@@ -78,17 +78,19 @@ TEST_CASE("Boot: entries are checked for type, loop, uniqueness and capacity")
                            {fxs::kTypeId, 0, core::kFactoryControlLoop, "s"},     // sensor-only type
                            {fx::kTypeId, 0, core::kFactoryControlLoop, "ok"},     // fine
                            {fx::kTypeId, 0, core::kFactorySensorLoop, "again"},   // (type, inst) twice
-                           {fx::kTypeId, 1, core::kFactorySensorLoop, "full"},    // beyond the capacity
+                           {fx::kTypeId, 1, core::kFactorySensorLoop, "full"},    // beyond the capacity: Invalid, kept
                            {fx::kTypeId, 2, 7, "bad loop"},                // also beyond it
                        });
     core::Core c(testConfig(4));
     REQUIRE(bootCore(c, store).ok());
     CHECK(c.instanceCount() == 3);
-    CHECK(c.configuredCount() == 4); // ok and the sensor-only one: the others have no record
+    CHECK(c.configuredCount() == 6); // no record only for the unknown type and the duplicate
     CHECK(c.instancesFailed() == 5);
     CHECK(c.layoutInvalid());
     CHECK(stateOf(c, fx::kTypeId, 0) == core::InstanceState::Running);
     CHECK(stateOf(c, fxs::kTypeId, 0) == core::InstanceState::Invalid);
+    CHECK(stateOf(c, fx::kTypeId, 1) == core::InstanceState::Invalid);
+    CHECK(stateOf(c, fx::kTypeId, 2) == core::InstanceState::Invalid);
     CHECK(c.loop(core::kFactoryControlLoop).instanceCount() == 1);
     CHECK(c.loop(core::kFactorySensorLoop).instanceCount() == 0);
 

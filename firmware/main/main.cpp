@@ -36,7 +36,7 @@ static const char *const TAG = "main";
 
 namespace {
 
-#if CONFIG_DRIVELINK_STACK_LOG_PERIOD_S > 0 && CONFIG_DIAG_CONSOLE_LOG
+#if CONFIG_DIAG_CONSOLE_LOG
 #define DRIVELINK_LOG_STACKS 1
 
 // The firmware's tasks, by the names they are created with. A name with no
@@ -167,10 +167,16 @@ std::unique_ptr<core::Core> startCore()
 {
     (void)core;
 #if DRIVELINK_LOG_STACKS
-    constexpr TickType_t kPeriod = pdMS_TO_TICKS(CONFIG_DRIVELINK_STACK_LOG_PERIOD_S * 1000);
+    // diag.stack_log_s is live (0 = off): look at it once a second.
+    uint32_t waited_s = 0;
     while (true) {
-        vTaskDelay(kPeriod);
-        logStackHighWater(core);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        const uint32_t period_s = diag::stackLogPeriodS();
+        waited_s = (period_s == 0U) ? 0U : waited_s + 1U;
+        if (period_s != 0U && waited_s >= period_s) {
+            waited_s = 0;
+            logStackHighWater(core);
+        }
     }
 #else
     while (true) {

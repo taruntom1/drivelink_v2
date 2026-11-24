@@ -12,13 +12,17 @@ Device-wide settings owned by the core.
 |---|---|---|---|---|---|---|---|
 | 0x0003 | `status.rate_hz` | u16 | Hz | 1 .. 100 | 10 | persist |  |
 | 0x0004 | `watchdog_ms` | u16 | ms | 20 .. 1000 | 200 | persist, locked_while_armed |  |
-| 0x0010 | `limits.loops` | u16 |  |  | 0 | read_only |  |
-| 0x0011 | `limits.instances` | u16 |  |  | 0 | read_only |  |
-| 0x0012 | `limits.sub_groups` | u16 |  |  | 0 | read_only |  |
-| 0x0013 | `limits.cmd_groups` | u16 |  |  | 0 | read_only |  |
-| 0x0014 | `limits.group_entries` | u16 |  |  | 0 | read_only |  |
-| 0x0015 | `limits.link_values` | u16 |  |  | 0 | read_only |  |
-| 0x0016 | `limits.capture_refs` | u16 |  |  | 0 | read_only |  |
+| 0x0010 | `limits.loops` | u16 |  | 1 .. 8 | 4 | reboot_required, persist | Loop instances |
+| 0x0011 | `limits.instances` | u16 |  | 1 .. 64 | 16 | reboot_required, persist | Module instances, across all loops |
+| 0x0012 | `limits.sub_groups` | u16 |  | 1 .. 31 | 8 | reboot_required, persist | Subscription groups |
+| 0x0013 | `limits.cmd_groups` | u16 |  | 1 .. 32 | 8 | reboot_required, persist | Command groups |
+| 0x0014 | `limits.group_entries` | u16 |  | 1 .. 64 | 64 | reboot_required, persist | Entries per group; the frame size can cap it |
+| 0x0015 | `limits.link_values` | u16 |  | 1 .. 64 | 32 | reboot_required, persist | Distinct source values per ordered loop pair |
+| 0x0016 | `limits.capture_refs` | u16 |  | 1 .. 64 | 16 | reboot_required, persist | Values per capture; the frame size can cap it |
+| 0x0017 | `limits.capture_kb` | u16 | KB | 32 .. 16384 | 4096 | reboot_required, persist | Largest capture ring; the free PSRAM can cap it |
+| 0x0020 | `diag.counter_period_ms` | u16 | ms | 100 .. 60000 | 1000 | persist | How often changed counters are sent |
+| 0x0021 | `diag.poll_ms` | u16 | ms | 10 .. 1000 | 20 | persist | How long a record waits for the reporter, at most |
+| 0x0022 | `diag.stack_log_s` | u16 | s | 0 .. 3600 | 30 | persist | Console stack log period, 0 = off; needs a build with console text |
 
 ## Retired ids
 

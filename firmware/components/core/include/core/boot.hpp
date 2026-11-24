@@ -47,7 +47,8 @@ std::vector<uint32_t> savedSystemValues(const BootPlan &plan, const defs::TypeDe
 /// crashes the boot cannot crash safe mode too.
 std::vector<uint32_t> runningSystemValues(const BootPlan &plan, const defs::TypeDesc &type);
 
-/// Stage (b): `base` with the running system settings applied.
+/// Stage (b): `base` with the running system settings applied, and the record
+/// table sized for the saved layout.
 CoreConfig bootConfig(const BootPlan &plan, const CoreConfig &base);
 
 /// What `bringUp()` made. On failure `core` is null and `stage` is the
@@ -58,7 +59,8 @@ struct BringUp {
     uint32_t stage = 0;
 };
 
-/// Stages (a) to (c): a booted core, ready for `start()`.
+/// Stages (a) to (c): a booted core, ready for `start()`. Records the free
+/// internal heap first, for the RAM check of later settings.
 BringUp bringUp(core_os::KvStore &store, const CoreConfig &base, std::span<const ModuleType *const> types);
 
 } // namespace core

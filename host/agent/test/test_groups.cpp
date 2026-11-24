@@ -224,6 +224,30 @@ TEST_CASE("GroupMap: each client gets its own slot for the same id")
     CHECK(map.lastEpoch(1, 0) == 8);
 }
 
+TEST_CASE("GroupMap: pool sizes read after a Boot")
+{
+    GroupMap map;
+    map.reset(1, 1);
+    auto a = map.acquire(1, 0);
+    REQUIRE(a);
+    CHECK_FALSE(map.acquire(2, 0));
+    map.resize(3, 2);
+    CHECK(map.subs() == 3);
+    CHECK(map.cmds() == 2);
+    CHECK(map.find(1, 0) == a); // taken meanwhile: kept
+    auto b = map.acquire(2, 0);
+    auto c = map.acquire(2, 1);
+    REQUIRE(b);
+    REQUIRE(c);
+    map.resize(2, 1);
+    CHECK(map.subs() == 2);
+    CHECK_FALSE(map.acquire(3, 0));
+    // The device refuses the request on the slot past the pool.
+    map.finish(*c, map.slot(*c).serial, false, 0, false, false);
+    CHECK_FALSE(map.find(2, 1));
+    CHECK_FALSE(map.acquire(3, 0));
+}
+
 TEST_CASE("GroupMap: exhaustion, refused and uncertain mutations")
 {
     GroupMap map;

@@ -82,6 +82,8 @@ public:
     bool addInstance(Instance *instance);
     void addInputs(const detail::InstanceRecord &record); // boot only
     size_t instanceCount() const { return m_count; }
+    /// Per input, vector slack included, for the RAM estimate.
+    static constexpr size_t inputBytes() { return 2U * sizeof(Input); }
 
     /// One tick, following the plan's tick order:
     ///   1. increment the heartbeat

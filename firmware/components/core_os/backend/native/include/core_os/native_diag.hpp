@@ -38,5 +38,7 @@ uint64_t counterTotal(DiagCode code, uint8_t instance = 255);
 void resetRecordedDiag();
 // Same atomic state used by the native safety interlock and vdev reporter.
 diag::detail::SlotTable &diagTable();
+/// The last `setDiagTiming` value (0 before the first).
+uint32_t diagTiming(DiagTiming which);
 
 } // namespace core_os::native

@@ -19,9 +19,13 @@ New modules follow [the checklist](../../docs/adding-a-module.md).
   `CoreConfig` and use `core_os::Err` for cross-platform errors.
 - Pure core reports through the `core_os` diagnostic sink. HALs, `rtos_util`
   and `pid` return errors without depending on `diag`; their caller reports.
-- Deployment tunables belong in Kconfig with valid ranges; wire/math constants
-  stay `constexpr`. Loop task settings are persisted params, not per-loop Kconfig.
-  Third-party source stays untouched in `vendor/`; wrap it.
+- A setting a user changes on a deployed device (limits, timing, per-module
+  values) is a system or module param: the YAML owns its default and range, and
+  nothing duplicates it in Kconfig. Kconfig holds what the build decides: the
+  UART port, pins and payload, task stacks and priorities, queues, buffers and
+  build features, with valid ranges. Wire/math constants stay `constexpr`.
+  A setting that sizes memory is `reboot_required` and joins the core's RAM
+  estimate. Third-party source stays untouched in `vendor/`; wrap it.
 
 ## Ownership and diagnostics
 

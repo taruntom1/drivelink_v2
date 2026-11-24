@@ -150,7 +150,7 @@ items:
 - A `reboot_required` param must persist, so it takes neither `persist: false` nor `read_only`: otherwise SAVE would not write the staged value and the reboot would lose it.
 - `gpio` and `ref` are rejected. Layout validation checks pins and references of layout entries only, and the system is not one.
 
-Everything else follows the module type rules above: ids, names, value types, limits, flags. The file is optional for the generator (its test fixtures can leave it out); the firmware needs it. The items are listed in [types/system.md](types/system.md). It holds only the items in use; later steps add theirs (the watchdog timeout, the status rate).
+Everything else follows the module type rules above: ids, names, value types, limits, flags. The file is optional for the generator (its test fixtures can leave it out); the firmware needs it. The items are listed in [types/system.md](types/system.md). It holds only the items in use. Every `limits.*` and `diag.*` setting lives here alone: no Kconfig option repeats its default or range.
 
 ## The descriptor format
 

@@ -496,6 +496,11 @@ esp_err_t UartComm::sendCommand(uint8_t msg_type, const uint8_t* payload, size_t
 
 // ── openStream ──────────────────────────────────────────────────────────
 
+size_t UartComm::streamSlotBytes(size_t max_len)
+{
+    return sizeof(StreamSlot) + sizeof(StaticSemaphore_t) + (2U * max_len);
+}
+
 esp_err_t UartComm::openStream(uint8_t channel, size_t max_len)
 {
     if (!m_impl || !m_impl->valid) {

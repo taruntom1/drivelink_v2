@@ -20,6 +20,11 @@ void countDiag(DiagCode code, uint32_t n, uint8_t instance = 255);
 
 void raiseDiag(DiagCode code, uint8_t instance = 255);
 void clearDiag(DiagCode code, uint8_t instance = 255);
+/// The live timing settings of the diag reporter and the stack log.
+enum class DiagTiming : uint8_t { CounterPeriodMs, PollMs, StackLogS };
+/// Hand one setting to the platform (a word store; the reporter picks it up at
+/// its next pass). Natively it is only recorded (`native::diagTiming`).
+void setDiagTiming(DiagTiming which, uint32_t value);
 bool diagBlocksArm();
 bool diagDisarmsActive();
 using DiagDisarmFn = void (*)(void *, DiagCode);

@@ -36,13 +36,9 @@ public:
     {
         ctx.bindParam(sys::kStatusRateHz, &m_status_rate_hz);
         ctx.bindParam(sys::kWatchdogMs, &m_watchdog_ms);
-        ctx.bindParam(sys::kLimitsLoops, &m_limits[0]);
-        ctx.bindParam(sys::kLimitsInstances, &m_limits[1]);
-        ctx.bindParam(sys::kLimitsSubGroups, &m_limits[2]);
-        ctx.bindParam(sys::kLimitsCmdGroups, &m_limits[3]);
-        ctx.bindParam(sys::kLimitsGroupEntries, &m_limits[4]);
-        ctx.bindParam(sys::kLimitsLinkValues, &m_limits[5]);
-        ctx.bindParam(sys::kLimitsCaptureRefs, &m_limits[6]);
+        ctx.bindParam(sys::kDiagCounterPeriodMs, &m_diag_counter_period_ms);
+        ctx.bindParam(sys::kDiagPollMs, &m_diag_poll_ms);
+        ctx.bindParam(sys::kDiagStackLogS, &m_diag_stack_log_s);
         return true;
     }
 
@@ -51,7 +47,9 @@ public:
 private:
     uint16_t m_status_rate_hz = 10;
     uint16_t m_watchdog_ms = 200;
-    std::array<uint16_t, 7> m_limits{};
+    uint16_t m_diag_counter_period_ms = 0;
+    uint16_t m_diag_poll_ms = 0;
+    uint16_t m_diag_stack_log_s = 0;
 };
 
 void reportStartFailed(uint8_t type,uint8_t instance,core_os::Err err,uint32_t stage) {
@@ -91,7 +89,33 @@ CoreConfig normalizedConfig(CoreConfig config)
     config.max_instances = std::clamp<uint16_t>(config.max_instances, 1, 64);
     config.link_values = std::clamp<uint16_t>(config.link_values, 1, 64);
     config.capture_refs = std::clamp<uint8_t>(config.capture_refs, 1, static_cast<uint8_t>(kMaxCaptureRefs));
+    config.subscription_groups = std::min<uint8_t>(config.subscription_groups, defs::kSubGroupChannelCount);
+    config.command_groups = std::min<uint8_t>(config.command_groups, defs::kCmdGroupChannelCount);
+    config.group_entries = std::clamp<uint8_t>(config.group_entries, 1, kMaxGroupEntries);
     return config;
+}
+
+void configureLimits(CoreConfig &config, std::span<const uint32_t> values)
+{
+    const auto &items = config.system_type->items;
+    for (size_t i = 0; i < items.size() && i < values.size(); ++i) {
+        const uint32_t v = values[i];
+        switch (items[i].id) {
+            case sys::kLimitsLoops: config.max_loops = static_cast<uint8_t>(v); break;
+            case sys::kLimitsInstances: config.max_instances = static_cast<uint16_t>(v); break;
+            case sys::kLimitsSubGroups: config.subscription_groups = static_cast<uint8_t>(v); break;
+            case sys::kLimitsCmdGroups: config.command_groups = static_cast<uint8_t>(v); break;
+            case sys::kLimitsGroupEntries:
+                config.group_entries = static_cast<uint8_t>(std::min<uint32_t>(v, config.group_entries_cap));
+                break;
+            case sys::kLimitsLinkValues: config.link_values = static_cast<uint16_t>(v); break;
+            case sys::kLimitsCaptureRefs:
+                config.capture_refs = static_cast<uint8_t>(std::min<uint32_t>(v, config.capture_refs_cap));
+                break;
+            case sys::kLimitsCaptureKb: config.capture_max_bytes = v * 1024U; break;
+            default: break;
+        }
+    }
 }
 
 CoreConfig withSystemSettings(CoreConfig base, std::span<const uint32_t> values)
@@ -104,7 +128,7 @@ CoreConfig withSystemSettings(CoreConfig base, std::span<const uint32_t> values)
 
 Core::Core(const CoreConfig &config)
     : m_config(normalizedConfig(config)),
-      m_table(static_cast<size_t>(m_config.max_instances) + m_config.max_loops + 1U),
+      m_table(std::max(static_cast<size_t>(m_config.max_instances) + m_config.max_loops, m_config.saved_entries) + 1U),
       m_tasks(std::make_unique<core_os::PeriodicTask[]>(m_config.max_loops)),
       m_params(m_table, std::span(m_loops.data(), m_config.max_loops), &Core::applySystemParam, this),
       m_groups(m_table, std::span(m_loops.data(), m_config.max_loops), m_config.subscription_groups,
@@ -121,8 +145,8 @@ Core::Core(const CoreConfig &config)
     std::unique_ptr<detail::InstanceRecord> record =
         makeRecord(systemType(), drivelink::protocol::defs::kSystemTypeId, 0, kNoLoop, "system", nullptr);
     record->object = std::make_unique<SystemInstance>();
+    m_pending.setSavedSystem({record->shadow.get(), systemType().items.size()}); // the defaults, until boot()
     initializeLimits(*record);
-    m_pending.setSavedSystem({record->shadow.get(), systemType().items.size()});
     m_system_ok = startInstance(*record).ok();
     if (m_system_ok) {
         (void)m_table.add(std::move(record)); // the table has room: it was just made
@@ -130,12 +154,13 @@ Core::Core(const CoreConfig &config)
 }
 
 void Core::initializeLimits(detail::InstanceRecord &record) {
-    const std::array<std::pair<uint16_t, uint32_t>, 7> values{{
+    const std::array<std::pair<uint16_t, uint32_t>, 8> values{{
         {sys::kLimitsLoops, m_config.max_loops}, {sys::kLimitsInstances, m_config.max_instances},
         {sys::kLimitsSubGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Subscription))},
         {sys::kLimitsCmdGroups, static_cast<uint32_t>(m_groups.capacity(GroupKind::Command))},
         {sys::kLimitsGroupEntries, m_groups.entryCapacity()}, {sys::kLimitsLinkValues, m_config.link_values},
-        {sys::kLimitsCaptureRefs, m_capture.refCapacity()}}};
+        {sys::kLimitsCaptureRefs, m_capture.refCapacity()},
+        {sys::kLimitsCaptureKb, m_config.capture_max_bytes / 1024U}}};
     for (const auto &[id, value] : values) { record.shadow[record.itemIndex(id)] = value; }
 }
 
@@ -264,23 +289,24 @@ Status Core::boot(BootPlan plan)
     //    built this core with; the pending copy starts from the saved one.
     persist::LoadedConfig &cfg = plan.config;
     m_newest_gen = cfg.newest_gen;
+    detail::InstanceRecord &system = systemRecord();
     if (cfg.complete) {
         m_config_loaded = true;
         m_complete_gen = cfg.gen;
         m_name = cfg.name;
-        detail::InstanceRecord &system = systemRecord();
         m_pending.setSavedSystem(savedSystemValues(plan, *system.desc));
         std::ranges::copy(runningSystemValues(plan, *system.desc), system.shadow.get());
         initializeLimits(system);
-        for (size_t i = 0; i < system.desc->items.size(); ++i) {
-            const defs::ItemDesc &item = system.desc->items[i];
-            if (item.kind == defs::ItemKind::Param && system.bindings[i].bound) {
-                storeValue(item.type, system.bindings[i].ptr, system.shadow[i]);
-                (void)applySystemParam(this, Ref{system.type_id, system.instance, item.id}, system.shadow[i]); // the tasks aren't running: cannot fail
-            }
-        }
     } else if (cfg.found_any) {
         core_os::reportDiag(diag_codes::core::kConfigLoadFailed, 0, cfg.newest_gen, cfg.cause);
+    }
+
+    for (size_t i = 0; i < system.desc->items.size(); ++i) {
+        const defs::ItemDesc &item = system.desc->items[i];
+        if (item.kind == defs::ItemKind::Param && system.bindings[i].bound) {
+            storeValue(item.type, system.bindings[i].ptr, system.shadow[i]);
+            (void)applySystemParam(this, Ref{system.type_id, system.instance, item.id}, system.shadow[i]); // the tasks aren't running: cannot fail
+        }
     }
 
     if (!cfg.complete) {
@@ -312,7 +338,9 @@ Status Core::boot(BootPlan plan)
         entries[i] = LayoutEntry{desc, s.type_id, s.instance, s.loop, s.label, values[i].data()};
     }
     std::vector<Status> status(n);
-    (void)validateLayout(entries, validationConfig(m_config), status);
+    // Safe mode runs the default limits, but the layout is judged by its own.
+    const CoreConfig judged = m_safe_mode ? withSystemSettings(m_config, savedSystemValues(plan, *system.desc)) : m_config;
+    (void)validateLayout(entries, validationConfig(judged), status);
 
     // 4. Records.
     std::vector<detail::InstanceRecord *> records(n, nullptr);
@@ -324,7 +352,7 @@ Status Core::boot(BootPlan plan)
             core_os::reportDiag(diag_codes::core::kLayoutInvalid, 0, instanceArg(e.type_id, e.instance),
                                 static_cast<uint32_t>(st.detail));
         }
-        if (e.desc == nullptr || st.result == Result::Exists || st.detail == Detail::Capacity) {
+        if (e.desc == nullptr || st.result == Result::Exists || m_table.find(e.type_id, e.instance) != nullptr) {
             ++m_left_out; // nothing to hold it in
             continue;
         }
@@ -338,8 +366,14 @@ Status Core::boot(BootPlan plan)
             record->state =
                 (st.detail == Detail::DependencyMissing) ? InstanceState::DependencyMissing : InstanceState::Invalid;
         }
-        records[i] = record.get();
-        (void)m_table.add(std::move(record)); // room: an entry past the capacity got no record
+        // An entry past the capacity keeps its record too (Invalid), so a SAVE
+        // does not drop it. The table has room for the saved layout.
+        detail::InstanceRecord *const added = record.get();
+        if (!m_table.add(std::move(record))) {
+            ++m_left_out;
+            continue;
+        }
+        records[i] = added;
     }
     if (m_safe_mode) {
         return Status::success(); // no instance, and the crash counter stays
@@ -758,6 +792,15 @@ bool Core::applySystemParam(void *ctx, const Ref &ref, uint32_t bits)
     auto *self = static_cast<Core *>(ctx);
     if (ref.type == defs::kSystemTypeId && ref.id == sys::kWatchdogMs) {
         self->m_watchdog_us.store(bits * 1000U, std::memory_order_relaxed); return true;
+    }
+    if (ref.type == defs::kSystemTypeId) {
+        switch (ref.id) {
+            case sys::kDiagCounterPeriodMs: core_os::setDiagTiming(core_os::DiagTiming::CounterPeriodMs, bits); break;
+            case sys::kDiagPollMs: core_os::setDiagTiming(core_os::DiagTiming::PollMs, bits); break;
+            case sys::kDiagStackLogS: core_os::setDiagTiming(core_os::DiagTiming::StackLogS, bits); break;
+            default: break;
+        }
+        return true;
     }
     if (ref.type != defs::kLoopTypeId || ref.id != defs::loop::kRateHz) { return true; }
     const size_t slot = self->loopSlot(ref.instance);

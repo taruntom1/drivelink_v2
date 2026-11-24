@@ -18,22 +18,6 @@ menu "Diagnostics (diag)"
             Host queries waiting for the reporter task. A full queue drops
             the query and counts diag.QueryDropped.
 
-    config DIAG_COUNTER_PERIOD_MS
-        int "Counter delta period (ms)"
-        default 1000
-        range 100 60000
-        help
-            How often changed counters are sent as CounterDelta events.
-            A counter that did not change sends nothing.
-
-    config DIAG_REPORTER_POLL_MS
-        int "Reporter poll period (ms)"
-        default 20
-        range 10 1000
-        help
-            How often the reporter task checks the record queue. Queries
-            wake it immediately; records wait at most this long.
-
     config DIAG_TASK_STACK
         int "Reporter task stack size"
         default 4096

@@ -9,65 +9,6 @@ menu "DriveLink core"
             ESP timer must be the runtime stats clock. No stack scan is used.
 
 
-    config CORE_MAX_INSTANCES
-        int "Maximum module instances"
-        default 16
-        range 1 64
-        help
-            How many module instances the core can hold, across all loops (loop instances have their own limit).
-            The instance table and each loop's instance list are sized for
-            this at boot.
-
-    config CORE_MAX_LOOPS
-        int "Maximum loop instances"
-        default 4
-        range 1 8
-        help
-            Loop tasks are configured by persisted loop instance parameters.
-            With a limit of one, the factory layout contains only control.
-
-    config CORE_MAX_LINK_VALUES
-        int "Maximum distinct source values per ordered loop pair"
-        default 32
-        range 1 64
-        help
-            Each used pair allocates three snapshots at boot. Identical
-            target refs share one value slot within a pair.
-
-    config CORE_CAPTURE_MAX_REFS
-        int "Maximum signals or inputs per capture"
-        default 16
-        range 1 64
-        help
-            The bindings are fixed arrays for 64 refs; this only limits a
-            capture. The effective limit is also capped by the UART payload
-            size, so a capture STATUS reply fits.
-
-    config CORE_CAPTURE_MAX_KB
-        int "Largest capture ring (KB)"
-        default 4096
-        range 32 16384
-        help
-            The ring is allocated from PSRAM at capture CONFIG. The device
-            reports the smaller of this and the largest free PSRAM block at
-            boot. A board without PSRAM uses a 32 KB internal ring instead.
-
-    config CORE_SUBSCRIPTION_GROUPS
-        int "Subscription group pool size"
-        default 8
-        range 1 31
-    config CORE_COMMAND_GROUPS
-        int "Command group pool size"
-        default 8
-        range 1 32
-    config CORE_GROUP_ENTRIES
-        int "Maximum entries per group"
-        default 64
-        range 1 64
-        help
-            The effective limit is capped by the UART payload size so a whole
-            group LIST record and a telemetry sample both fit in one frame.
-
     config CORE_COMMAND_QUEUE_DEPTH
         int "Core command queue depth"
         default 8

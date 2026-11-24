@@ -190,20 +190,17 @@ TEST_CASE("Fast DISARM validates exact bodies, bypasses service state, and prese
     core_os::raiseDiag(codes::actuator_mock::kFaultInjected,0);
     REQUIRE(core::fastDisarm(f.c,{request.data(),4},out)==6); CHECK(f.c.armStatus()==core::ArmStatus::Fault);
 }
-TEST_CASE("Runtime limits override YAML defaults, refuse writes and are never saved") {
+TEST_CASE("The limits in effect override the saved ones in GET; GET_PENDING keeps those") {
     core::CoreConfig config; config.max_loops=3; config.max_instances=23;
     config.subscription_groups=3; config.command_groups=2; config.group_entries=12;
+    config.configure_system=nullptr; // fixed by this test
     Safety f(true,config);
     const std::array<core::Ref,5> refs{{{0,0,16},{0,0,17},{0,0,18},{0,0,19},{0,0,20}}};
     std::array<uint32_t,5> values{}; REQUIRE(f.c.params().get(refs,values).ok());
     CHECK(values==std::array<uint32_t,5>{3,23,3,2,12});
-    for (const auto ref:refs) {
-        const core::SetEntry entry{ref,1}; uint32_t out;
-        CHECK(f.c.params().set({&entry,1},{&out,1}).detail==core::Detail::ReadOnly);
-    }
-    REQUIRE(f.c.save().ok()); const auto loaded=core::persist::loadConfig(f.store);
-    REQUIRE(loaded.complete);
-    for (const auto &pair:loaded.system) { CHECK(pair.id<16); }
+    REQUIRE(f.c.getPending(refs,values).ok());
+    CHECK(values==std::array<uint32_t,5>{4,16,8,8,64});
+    REQUIRE(f.c.save().ok());
     f.c.stop(); config.group_entries=7;
     core::Core rebooted(config); REQUIRE(rebooted.init(mod_mock::kTypes).ok()); REQUIRE(rebooted.boot(core::prepareBoot(f.store)).ok());
     REQUIRE(rebooted.params().get(refs,values).ok()); CHECK(values[4]==7);

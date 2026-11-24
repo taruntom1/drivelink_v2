@@ -22,9 +22,9 @@
 
 | Change | Source of truth |
 |---|---|
-| Build-time pins, queue depths, task stacks or capacity limits | The owning component's Kconfig, for example [uart_comm/Kconfig](components/uart_comm/Kconfig). |
+| Build-time pins, queue depths or task stacks | The owning component's Kconfig, for example [uart_comm/Kconfig](components/uart_comm/Kconfig). |
 | Wire message or stream channel ID | [Protocol registry](../protocol/defs/registry.yaml). |
-| Device loop rates, persistent module parameters or layout | Device configuration, edited over UART and saved to NVS. See the [core configuration contract](../docs/protocol/core.md). |
+| Capacity limits, diagnostic timing, device loop rates, persistent module parameters or layout | Device configuration, edited over UART and saved to NVS. See the [core configuration contract](../docs/protocol/core.md). |
 
 ## Build, test and release
 

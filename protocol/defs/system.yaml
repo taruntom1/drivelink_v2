@@ -17,10 +17,16 @@ items:
   - {id: 0x0002, name: sensor.rate_hz, retired: true}
   - {id: 0x0003, kind: param, name: status.rate_hz, type: u16, unit: Hz, min: 1, max: 100, default: 10}
   - {id: 0x0004, kind: param, name: watchdog_ms, type: u16, unit: ms, min: 20, max: 1000, default: 200, flags: [locked_while_armed]}
-  - {id: 0x0010, kind: param, name: limits.loops, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0011, kind: param, name: limits.instances, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0012, kind: param, name: limits.sub_groups, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0013, kind: param, name: limits.cmd_groups, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0014, kind: param, name: limits.group_entries, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0015, kind: param, name: limits.link_values, type: u16, default: 0, flags: [read_only], persist: false}
-  - {id: 0x0016, kind: param, name: limits.capture_refs, type: u16, default: 0, flags: [read_only], persist: false}
+  # Capacity limits: the boot sizes the core from them. GET is the limit in effect.
+  - {id: 0x0010, kind: param, name: limits.loops, type: u16, min: 1, max: 8, default: 4, flags: [reboot_required], description: "Loop instances"}
+  - {id: 0x0011, kind: param, name: limits.instances, type: u16, min: 1, max: 64, default: 16, flags: [reboot_required], description: "Module instances, across all loops"}
+  - {id: 0x0012, kind: param, name: limits.sub_groups, type: u16, min: 1, max: 31, default: 8, flags: [reboot_required], description: "Subscription groups"}
+  - {id: 0x0013, kind: param, name: limits.cmd_groups, type: u16, min: 1, max: 32, default: 8, flags: [reboot_required], description: "Command groups"}
+  - {id: 0x0014, kind: param, name: limits.group_entries, type: u16, min: 1, max: 64, default: 64, flags: [reboot_required], description: "Entries per group; the frame size can cap it"}
+  - {id: 0x0015, kind: param, name: limits.link_values, type: u16, min: 1, max: 64, default: 32, flags: [reboot_required], description: "Distinct source values per ordered loop pair"}
+  - {id: 0x0016, kind: param, name: limits.capture_refs, type: u16, min: 1, max: 64, default: 16, flags: [reboot_required], description: "Values per capture; the frame size can cap it"}
+  - {id: 0x0017, kind: param, name: limits.capture_kb, type: u16, unit: KB, min: 32, max: 16384, default: 4096, flags: [reboot_required], description: "Largest capture ring; the free PSRAM can cap it"}
+  # Diagnostic timing: applied live by the firmware's reporter and stack log.
+  - {id: 0x0020, kind: param, name: diag.counter_period_ms, type: u16, unit: ms, min: 100, max: 60000, default: 1000, description: "How often changed counters are sent"}
+  - {id: 0x0021, kind: param, name: diag.poll_ms, type: u16, unit: ms, min: 10, max: 1000, default: 20, description: "How long a record waits for the reporter, at most"}
+  - {id: 0x0022, kind: param, name: diag.stack_log_s, type: u16, unit: s, min: 0, max: 3600, default: 30, description: "Console stack log period, 0 = off; needs a build with console text"}
