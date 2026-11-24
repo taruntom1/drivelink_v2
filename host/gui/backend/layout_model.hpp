@@ -64,11 +64,17 @@ std::vector<Candidate> wiringCandidates(const DeviceSnapshot &, InstanceKey cons
 std::vector<Candidate> sourceCandidates(const DeviceSnapshot &, InstanceKey consumer, const ItemDescriptor &param);
 
 // Every staged change: the running system settings and the configured view
-// against the pending ones.
-struct PendingChange { QString kind, key, subject, from, to; };
-std::vector<PendingChange> pendingChanges(const DeviceSnapshot &);
+// against the pending ones. In safe mode the reboot settings run at defaults
+// while GET_PENDING keeps the saved values: that difference alone is not a
+// staged change, so it is left out until the device reports a pending reboot
+// (it cannot tell saved from staged per setting then, so all are listed with
+// `note` "Safe mode runs 4 · 6 after a normal boot").
+struct PendingChange { QString kind, key, subject, from, to, note; };
+std::vector<PendingChange> pendingChanges(const DeviceSnapshot &, bool safeMode=false, bool pendingReboot=false);
 
-// Pending counts against limits.loops / limits.instances (0 = not reported).
+// Pending counts against the pending limits.loops / limits.instances (the
+// device checks layout ops against those; the running ones when absent;
+// 0 = not reported).
 struct LayoutCounts { int loops=0, loopLimit=0, instances=0, instanceLimit=0; };
 LayoutCounts layoutCounts(const DeviceSnapshot &);
 
@@ -113,7 +119,7 @@ public:
     explicit ParamTable(QObject *parent=nullptr) : QAbstractListModel(parent) {}
     enum Role { Key=Qt::UserRole+1, Name, Group, Unit, Description, Editor, ValueText, PendingText,
                 IsPending, Unsaved, Locked, ReadOnly, RebootRequired, RangeText, Enums, ValueBits,
-                EditState, EditNote, EditText, Minimum, Maximum, ValueType };
+                EditState, EditNote, EditText, Minimum, Maximum, ValueType, SafeNote, GroupStart };
     int rowCount(const QModelIndex &p={}) const override { return p.isValid()?0:int(m_rows.size()); }
     QVariant data(const QModelIndex &,int) const override;
     QHash<int,QByteArray> roleNames() const override;
@@ -121,16 +127,29 @@ public:
     // 2 Pending. `text` matches the name, case-insensitive.
     void reset(const std::shared_ptr<const DeviceSnapshot> &, std::optional<InstanceKey>, bool armed,
                const QHash<QString,ParamEdit> &, const QSet<QString> &changed, int filter, const QString &text);
+    // The device settings (system params, no instance): every Param item that
+    // is not ReadOnly and has a value. Reboot rows show the pending value; in
+    // safe mode (without a pending reboot) a row whose saved value differs from
+    // the running one is not pending: it shows the saved value and `SafeNote`.
+    // With a pending reboot those rows are pending and keep `SafeNote`.
+    // Reboot rows lock while armed like the layout, the others by their flag.
+    void resetSystem(const std::shared_ptr<const DeviceSnapshot> &, bool armed, const QHash<QString,ParamEdit> &,
+                     const QSet<QString> &changed, bool safeMode, bool pendingReboot);
     // Counts for the filter chips (unfiltered).
     int total() const { return m_total; }
     int changedCount() const { return m_changed; }
     int pendingCount() const { return m_pending; }
+    int unsavedCount() const { return m_unsaved; }
 private:
     struct Row { QString key, name, group, unit, description, editor, value, pendingValue, range,
-                 editState, editNote, editText; QVariantList enums; uint32_t bits=0; int valueType=0;
+                 editState, editNote, editText, safeNote; QVariantList enums; uint32_t bits=0; int valueType=0;
                  QVariant minimum, maximum;
                  bool pending=false, unsaved=false, locked=false, readOnly=false, reboot=false; };
+    // The descriptor-derived fields, shared by both tables.
+    static Row describe(const ModelItem &, const QString &key);
+    static void groupRows(std::vector<Row> &);
+    void publish(std::vector<Row> next);
     std::vector<Row> m_rows;
-    int m_total=0, m_changed=0, m_pending=0;
+    int m_total=0, m_changed=0, m_pending=0, m_unsaved=0;
 };
 } // namespace drivelink::gui

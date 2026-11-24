@@ -4,7 +4,7 @@ import DriveLink.Style
 
 // G3 Device: identity with Rename, loops and CPU per core, ARM checks,
 // faults, configuration (Save, Revert, Reboot, Save and reboot, Factory
-// reset), limits and the firmware update card. Refused-while-armed buttons say why.
+// reset), the device settings, limits and the firmware update card. Refused-while-armed buttons say why.
 Flickable {
     id: page
     objectName: "devicePage"
@@ -27,6 +27,11 @@ Flickable {
     function showClients() {
         if (!backend.remote) return
         const top = remoteCards.clientsCard.mapToItem(page.contentItem, 0, 0).y
+        page.contentY = Math.max(0, Math.min(top - Theme.space24, page.contentHeight - page.height))
+    }
+    // Scrolls the Device settings card to the top (the device-settings screenshot).
+    function showSettings() {
+        const top = settingsCard.mapToItem(page.contentItem, 0, 0).y
         page.contentY = Math.max(0, Math.min(top - Theme.space24, page.contentHeight - page.height))
     }
     function micros(value) { return value === undefined ? "—" : value >= 1000 ? (value / 1000).toFixed(2) + " ms" : value + " µs" }
@@ -345,6 +350,17 @@ Flickable {
                     }
                 }
             }
+        }
+
+        // Device settings: wide, it spans two columns and two rows with Firmware
+        // and Limits stacked to its right; narrow, the full width.
+        DeviceSettingsCard {
+            id: settingsCard
+            Layout.fillWidth: true
+            Layout.columnSpan: 2
+            Layout.rowSpan: page.wide ? 2 : 1
+            Layout.alignment: Qt.AlignTop
+            backend: page.backend
         }
 
         // G3 Firmware update: what runs, the slots, the last update, and the

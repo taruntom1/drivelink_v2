@@ -69,6 +69,11 @@ class Connection : public QObject {
     // are blocked).
     Q_PROPERTY(QAbstractItemModel* layoutTree READ layoutTree CONSTANT)
     Q_PROPERTY(QAbstractItemModel* params READ params CONSTANT)
+    // The Device settings card: the writable system params as ParamTable rows
+    // and {total, pending, unsavedCount, unsaved, blocked, paramBlocked,
+    // rebootNote, safeMode, savedThenDiscarded, discardAfterSave}.
+    Q_PROPERTY(QAbstractItemModel* systemParams READ systemParams CONSTANT)
+    Q_PROPERTY(QVariantMap deviceSettings READ deviceSettings NOTIFY changed)
     Q_PROPERTY(QVariantMap layout READ layout NOTIFY changed)
     // The selected node's live data (its own signal, about 5 Hz): {note,
     // telemetry, hidden, signals[], statistics{}, sources{key: state}}.
@@ -157,6 +162,8 @@ public:
     virtual QAbstractItemModel *faults()=0;
     virtual QAbstractItemModel *layoutTree()=0;
     virtual QAbstractItemModel *params()=0;
+    virtual QAbstractItemModel *systemParams()=0;
+    virtual QVariantMap deviceSettings() const=0;
     virtual QVariantMap layout() const=0;
     virtual QVariantMap live() const=0;
     virtual QAbstractItemModel *actions()=0;
@@ -338,6 +345,8 @@ public:
     QAbstractItemModel *faults() override {return &m_faults;}
     QAbstractItemModel *layoutTree() override {return &m_layoutTree;}
     QAbstractItemModel *params() override {return &m_params;}
+    QAbstractItemModel *systemParams() override {return &m_systemParams;}
+    QVariantMap deviceSettings() const override;
     QVariantMap layout() const override;
     QVariantMap live() const override;
     QAbstractItemModel *actions() override {return &m_actions;}
@@ -413,6 +422,11 @@ public:
     // Why layout ops (add, remove, label, discard, reboot params) are refused
     // now; empty when they are allowed.
     QString layoutBlocked() const;
+    // Layout ops and reboot params also follow the agent's lease rule; live
+    // params only the common blocks (and a reboot in progress). One place for
+    // the Layout page and the Device settings card.
+    QString rebootBlocked() const;
+    QString liveParamBlocked() const;
     QString selectedNode() const {return m_selected;}
     void connectTo(const QString &,int baud=921600) override;
     void retry() override;
@@ -531,10 +545,10 @@ private:
     QString firmwareActionBlocked() const;
     // Layout (connection_layout.cpp).
     LayoutTree m_layoutTree;
-    ParamTable m_params;
+    ParamTable m_params,m_systemParams;
     QString m_selected,m_paramFilterText;
     int m_paramFilter=0;
-    bool m_paramsArmed=false,m_layoutReady=false;
+    bool m_paramsArmed=false,m_layoutReady=false,m_paramsSafe=false,m_paramsReboot=false;
     // Per item key: sending, applied, clamped, rejected, uncertain.
     QHash<QString,ParamEdit> m_edits;
     // Params this GUI changed since the last SAVE, per device id.

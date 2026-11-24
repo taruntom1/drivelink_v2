@@ -131,6 +131,16 @@ struct Window {
         const auto *entry=anyEntry(*c.snapshot(),{ref.type,ref.instance});
         return entry?valueBits(entry->params.at(ref.item)):0;
     }
+    // A system param, running or pending (a device setting).
+    uint32_t system(uint16_t id,bool pending=false) {
+        const auto &map=pending?c.snapshot()->pending_system_params:c.snapshot()->system_params;
+        return valueBits(map.at(id));
+    }
+    QVariant role(const QString &key,int role) {
+        auto *model=c.systemParams();
+        for(int i=0;i<model->rowCount();++i) {if(model->index(i,0).data(ParamTable::Key).toString()==key) {return model->index(i,0).data(role);}}
+        return {};
+    }
 };
 #endif
 } // namespace
@@ -805,6 +815,53 @@ Window { width: 800; height: 1200; visible: true
         QVERIFY(a.open(f));a.c.selectNode("5:0");
         QVERIFY(waitFor([&]{return a.c.lease()["chip"].toInt()==int(LeaseChip::Other);}));
         a.c.setParamText("5:0:1","25");QVERIFY(!a.c.liveEdit().isEmpty());a.c.cancelLiveEdit();
+    }
+    // Device settings through the agent (issue 105 step 4): with nobody
+    // holding the lease both kinds go through; an observer's reboot rows are
+    // blocked with the lease reason and send nothing, and its live rows wait
+    // for the operator's confirmation, then go.
+    void deviceSettingsThroughAgent() {
+        AgentFixture f;Window a("gui-a"),b("gui-b");
+        QVERIFY(a.open(f));QVERIFY(b.open(f));
+        QCOMPARE(a.c.systemParams()->rowCount(),13);QVERIFY(a.c.deviceSettings()["blocked"].toString().isEmpty());
+        // No lease held: a live edit and a staged limit are sent at once.
+        a.c.setParamText("0:0:3","20");
+        QVERIFY(waitFor([&]{return a.role("0:0:3",ParamTable::EditState)=="applied" && a.system(defs::system::kStatusRateHz)==20u;}));
+        QVERIFY(a.c.liveEdit().isEmpty());QVERIFY(a.role("0:0:3",ParamTable::Unsaved).toBool());
+        a.c.setParamText("0:0:16","6");
+        QVERIFY(waitFor([&]{return a.role("0:0:16",ParamTable::IsPending).toBool();}));
+        QCOMPARE(a.system(defs::system::kLimitsLoops,true),6u);QCOMPARE(a.system(defs::system::kLimitsLoops),4u);
+        QCOMPARE(a.c.layout()["counts"].toMap()["loopLimit"].toInt(),6);
+        // The holder (b) sees the same pending value.
+        QVERIFY(waitFor([&]{return b.c.pendingReboot();}));
+        QVERIFY(waitFor([&]{return b.role("0:0:16",ParamTable::IsPending).toBool();}));
+        a.c.discardPending();QVERIFY(waitFor([&]{return !a.c.pendingReboot() && !a.role("0:0:16",ParamTable::IsPending).toBool();}));
+        // b takes the lease: a observes. Reboot rows are blocked, nothing is sent.
+        b.c.takeLease();QVERIFY(waitFor([&]{return a.c.lease()["chip"].toInt()==int(LeaseChip::Other);},15000));
+        const auto reason=a.c.deviceSettings()["blocked"].toString();
+        QVERIFY2(reason.startsWith("Needs the control lease:") && reason.contains("gui-b"),qPrintable(reason));
+        QCOMPARE(a.c.deviceSettings()["rebootNote"].toString(),QString("Needs the control lease"));
+        QVERIFY(a.c.deviceSettings()["paramBlocked"].toString().isEmpty());
+        a.c.setParamText("0:0:17","30");
+        QCOMPARE(a.role("0:0:17",ParamTable::EditState).toString(),QString("rejected"));
+        QCOMPARE(a.role("0:0:17",ParamTable::EditNote).toString(),reason);
+        QVERIFY(a.c.liveEdit().isEmpty());
+        QTest::qWait(300);QCOMPARE(a.system(defs::system::kLimitsInstances,true),16u);QVERIFY(!b.c.pendingReboot());
+        // A live row waits for the confirmation; cancelling sends nothing.
+        a.c.setParamText("0:0:3","25");
+        QVERIFY(!a.c.liveEdit().isEmpty());QVERIFY(a.c.liveEdit()["holder"].toString().contains("gui-b"));
+        QTest::qWait(300);QCOMPARE(a.system(defs::system::kStatusRateHz),20u);
+        a.c.cancelLiveEdit();QVERIFY(a.c.liveEdit().isEmpty());QTest::qWait(300);QCOMPARE(a.system(defs::system::kStatusRateHz),20u);
+        a.c.setParamText("0:0:3","25");QVERIFY(!a.c.liveEdit().isEmpty());a.c.applyLiveEdit(false);
+        QVERIFY(waitFor([&]{return a.system(defs::system::kStatusRateHz)==25u;}));
+        QVERIFY(waitFor([&]{return a.role("0:0:3",ParamTable::EditState)=="applied";}));
+        // The holder is never asked and stages its limit; the observer sees it pending.
+        b.c.setParamText("0:0:17","30");
+        QVERIFY(waitFor([&]{return b.role("0:0:17",ParamTable::IsPending).toBool();}));
+        QVERIFY(b.c.liveEdit().isEmpty());
+        QVERIFY(waitFor([&]{return a.c.pendingReboot();}));
+        QVERIFY(waitFor([&]{return a.role("0:0:17",ParamTable::IsPending).toBool();}));
+        QCOMPARE(a.system(defs::system::kLimitsInstances,true),30u);
     }
     void refusalsAndListing() {
         AgentFixture f;Window a("gui-a");

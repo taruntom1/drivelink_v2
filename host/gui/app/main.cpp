@@ -62,6 +62,7 @@ int main(int argc,char **argv) {
     parser.addOption({"out","Render the shell in both sizes and themes, then disconnect.","directory"});
     parser.addOption({"screen","connect, settings (both also without --endpoint), device, layout, tune, monitor, drawer, dialog, rename, reset, unsaved, notice, update, "
                       "update-writing, update-confirmed, update-rolledback (unsaved, notice and update-* change a tcp:// vdev), "
+                      "device-settings (Device, scrolled to the Device settings card; this window changes status.rate_hz live), "
                       "layout-review, layout-add-instance, layout-add-loop, monitor-paused, monitor-budget, tune-running, tune-disarm, tune-ab or tune-identify (a vdev; --identify does the same on tune). "
                       "Remote screens (through --agent): agent-connect (the Agent tab's listing; --agent/--token optional, no --device), agent-failure (the failed connect), "
                       "lease-take, lease-release (needs --take-lease), live-edit (needs --live-edit; on Tune with --tune, else Layout) and revoked "
@@ -94,7 +95,7 @@ int main(int argc,char **argv) {
     // Pages first (their index is the nav index plus one; Settings is page 4,
     // the rail's footer item), then shell states.
     const QStringList pages={"connect","device","layout","tune","monitor","settings"};
-    const QStringList states={"drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
+    const QStringList states={"device-settings","drawer","dialog","rename","reset","unsaved","notice","update","update-writing","update-confirmed","update-rolledback",
                               "layout-review","layout-add-instance","layout-add-loop","monitor-paused","monitor-budget",
                               "tune-running","tune-disarm","tune-ab","tune-identify",
                               "agent-connect","agent-failure","lease-take","lease-release","live-edit","revoked"};
@@ -174,6 +175,10 @@ int main(int argc,char **argv) {
     auto capture=[&] {
         for(const QSize size:{QSize(2560,1440),QSize(1920,1080)}) {
             window->resize(size);
+            if(screen=="device-settings") {
+                (void)window->grabWindow(); // lays the page out at this size
+                if(auto *page=window->findChild<QObject *>("devicePage")) {QMetaObject::invokeMethod(page,"showSettings");}
+            }
             for(const bool dark:{true,false}) {
                 appSettings.setTheme(dark?QStringLiteral("dark"):QStringLiteral("light"));
                 QCoreApplication::processEvents();
@@ -239,6 +244,8 @@ int main(int argc,char **argv) {
         if(screen=="rename") {openDialog("renameDialog");}
         if(screen=="reset") {openDialog("resetDialog");}
         if(screen=="unsaved" || screen=="notice") {connection.rename(QStringLiteral("bench-left"));}
+        // A live change made by this window (Unsaved), next to the staged limit.
+        if(screen=="device-settings") {connection.setParamText(QStringLiteral("0:0:3"),QStringLiteral("20"));}
         if(update) {
             const auto choice=connection.inspectImage(parser.value("image"));
             if(screen=="update") {window->property("otaDialog").value<QObject *>()->setProperty("choice",choice);}
@@ -289,6 +296,9 @@ int main(int argc,char **argv) {
     if(screen=="unsaved" || screen=="notice") {
         stages.push_back({[&] {return connection.unsaved() && connection.deviceName()=="bench-left" && !connection.configBusy();},
                           [&] {if(screen=="notice") {connection.reboot();}}});
+    }
+    if(screen=="device-settings") {
+        stages.push_back({[&] {return connection.unsaved() && connection.deviceSettings().value("unsaved").toBool();},[] {}});
     }
     if(screen=="notice") {
         stages.push_back({[&] {return connection.ready() && connection.rebootNotice().value("visible").toBool();},[] {}});

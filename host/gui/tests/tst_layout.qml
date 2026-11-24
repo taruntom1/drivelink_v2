@@ -182,4 +182,32 @@ TestCase {
         compare(sent.count, 0)
         compare(arm.focusPolicy, Qt.TabFocus)
     }
+    function note(row) { return findChild(row, "paramNote").text }
+
+    // Device settings (issue 105 step 4): the lease block says so on the row,
+    // safe mode shows a neutral note, and neither hides a staged value.
+    function test_blocked_and_neutral_notes() {
+        const reason = "Needs the control lease: ROS (ros_bridge) holds it"
+        const blocked = createTemporaryObject(rowComponent, testCase,
+            { rebootRequired: true, blockedReason: reason, blockedNote: "Needs the control lease" })
+        compare(note(blocked), "Needs the control lease")
+        verify(!field(blocked).parent.enabled)
+        const safe = createTemporaryObject(rowComponent, testCase,
+            { rebootRequired: true, valueText: "6", neutralNote: "Safe mode runs 4 · 6 after a normal boot" })
+        compare(note(safe), "Safe mode runs 4 · 6 after a normal boot")
+        compare(field(safe).status, DLNumberField.Normal, "not pending-violet")
+        safe.unsaved = true
+        compare(note(safe), "Changed since the last save")
+        safe.unsaved = false
+        safe.isPending = true; safe.pendingText = "7"
+        compare(note(safe), "Safe mode runs 4 · 6 after a normal boot")
+        compare(field(safe).status, DLNumberField.Pending)
+        safe.neutralNote = ""
+        compare(note(safe), "Current 6 → Pending 7 · after reboot")
+        const armed = createTemporaryObject(rowComponent, testCase,
+            { locked: true, blockedNote: "Needs the control lease" })
+        compare(note(armed), "Locked while armed")
+        const plain = createTemporaryObject(rowComponent, testCase)
+        compare(note(plain), "0 … 10")
+    }
 }

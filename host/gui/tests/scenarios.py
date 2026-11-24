@@ -112,6 +112,10 @@ TUNE = {
     # default; the backend switches to it for the step and writes it back).
     'tune-identify': ('tune-identify', '', SIGNAL),
 }
+# Device settings (issue 105 step 4) on the plain vdev: a staged limit
+# (Pending) before the GUI connects; the GUI itself then changes the live
+# status rate, so the row shows Unsaved.
+DEVICE_SETTINGS = [['set', '0:0:16=6']]
 # Scenarios that render a screen of another name.
 SCREENS = {'safe': 'device', 'fault': 'drawer', 'lost': 'device', 'monitor-command-disarmed': 'monitor', 'tune-disarmed': 'tune',
            'settings-offline': 'settings'}
@@ -192,6 +196,9 @@ def render(gui, vdev, destination, scenario, cli=None):
                 endpoint = line[6:]
             screen = SCREENS.get(scenario, scenario)
             select = None
+            if scenario == 'device-settings':
+                for command in DEVICE_SETTINGS:
+                    cli_run(cli, endpoint, command)
             if scenario in LAYOUT:
                 screen, select, staged = LAYOUT[scenario]
                 provision(cli, endpoint, staged, CALIBRATED.get(scenario, ()))
@@ -306,7 +313,7 @@ def main():
     destination = Path(args.out).resolve()
     destination.mkdir(parents=True, exist_ok=True)
     for scenario in (['connect', 'device'] if args.smoke else
-                     ['connect', 'settings-offline', 'device', 'settings', *LAYOUT, *TUNE, *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
+                     ['connect', 'settings-offline', 'device', 'device-settings', 'settings', *LAYOUT, *TUNE, *MONITOR, 'drawer', 'dialog', 'safe', 'fault', 'lost',
                       'rename', 'reset', 'unsaved', 'notice',
                       'update', 'update-writing', 'update-confirmed', 'update-rolledback']):
         if not args.only or scenario in args.only:

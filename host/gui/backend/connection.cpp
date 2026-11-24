@@ -314,8 +314,13 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
             if(it.key()!=m_actionRunning) {it=m_actionResults.erase(it);} else {++it;}
         }
     }
+    // Another client staged or dropped a setting: the reboot flag moved, but the
+    // pending values only change with a configuration read.
+    const bool stagedElsewhere=before && !booted && before->status && snapshot->status &&
+        ((before->status->flags^snapshot->status->flags)&4);
     m_snapshot=std::move(snapshot);
     if(!m_snapshot->connected) {finishClose(true);return;}
+    if(stagedElsewhere && ready()) {refreshConfig();}
     if(metadata) {m_instances.reset(m_snapshot);m_loops.reset(m_snapshot);}
     const auto sameDiagnostics=[&] {
         if(!before || before->diagnostics.size()!=m_snapshot->diagnostics.size()) {return false;}
@@ -1203,6 +1208,8 @@ void LocalConnection::runOp(Op op,const QString &name) {
                 self->m_rebootElapsed.start();
                 emit self->notification(tr("The device is rebooting"),0);break;
             }
+            // SAVE and REVERT clear the Unsaved marks of the param rows.
+            self->updateParams();
             emit self->changed();
         });
     } catch(const Error &e) {

@@ -260,6 +260,15 @@ Item {
             Repeater {
                 model: (root.backend.layout.pendingChanges || []).slice(0, 12)
                 delegate: PendingChangeText { width: discardDialog.availableWidth }
+            },
+            // What was already saved still loads at the next boot (Device settings).
+            Text {
+                objectName: "discardSavedNote"
+                width: discardDialog.availableWidth
+                visible: root.backend.deviceSettings.discardAfterSave === true
+                wrapMode: Text.Wrap
+                text: qsTr("These changes were already saved. Discarding puts the values from the last boot back here, but the next boot still loads the saved ones. To keep the old values, use Save and reboot after discarding.")
+                font: Theme.fontCaption; color: Theme.statePending
             }
         ]
     }

@@ -31,6 +31,12 @@ Item {
     property string editText
     // Why the editor is disabled (armed, rebooting, busy); empty when enabled.
     property string blockedReason
+    // A short row note for what blocks the row (needs the lease), shown instead
+    // of the pending or range text; `blockedReason` stays the tooltip.
+    property string blockedNote
+    // A neutral note for a value that is neither live nor staged (safe mode
+    // runs another value than the saved one shown in the field).
+    property string neutralNote
     property real nameWidth: 160
     property real editorWidth: 200
 
@@ -176,16 +182,22 @@ Item {
             elide: Text.ElideRight
             font: Theme.fontCaption
             readonly property var content: {
-                if (row.edited) return [qsTr("Not sent · Enter sends"), Theme.stateUnsaved]
+                // A refused value that was kept (focus stays after Enter) shows its
+                // refusal, not "Not sent": it was sent, and the device said no.
+                const kept = (row.editState === "rejected" || row.editState === "uncertain") && field.text === row.editText
+                if (row.edited && !kept) return [qsTr("Not sent · Enter sends"), Theme.stateUnsaved]
                 if (row.editState === "sending") return [qsTr("Sending…"), Theme.textSecondary]
                 if (row.editState === "rejected" || row.editState === "uncertain") return [row.editNote, Theme.stateFault]
                 if (row.editState === "clamped") return [row.editNote, Theme.accentText]
                 if (row.locked) return [qsTr("Locked while armed"), Theme.stateLocked]
+                if (row.blockedNote.length > 0) return [row.blockedNote, Theme.stateLocked]
+                if (row.isPending && row.neutralNote.length > 0) return [row.neutralNote, Theme.statePending]
                 if (row.isPending && row.valueText.length > 0 && row.valueText !== row.pendingText)
                     return [qsTr("Current %1 → Pending %2 · after reboot").arg(row.valueText).arg(row.pendingText), Theme.statePending]
                 if (row.isPending) return [qsTr("Pending · after reboot"), Theme.statePending]
                 if (row.editState === "applied") return [qsTr("Applied"), Theme.stateOk]
                 if (row.unsaved) return [qsTr("Changed since the last save"), Theme.textSecondary]
+                if (row.neutralNote.length > 0) return [row.neutralNote, Theme.textSecondary]
                 return [row.rangeText, Theme.textTertiary]
             }
             text: content[0]
