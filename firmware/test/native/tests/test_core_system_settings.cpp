@@ -785,6 +785,25 @@ TEST_CASE("Limits: safe mode runs the defaults and keeps a layout that needs the
     CHECK(c->groups().capacity(core::GroupKind::Command) == 12);
 }
 
+TEST_CASE("Limits: SAVE in safe mode drops none of 22 entries under a saved limit of 40")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, modules(20), 1, {{sys::kLimitsInstances, 40}});
+    core_os::native::setResetWasCrash(true);
+    core_os::storeCrashCount(2);
+    auto c = limitsBoot(store);
+    REQUIRE(c->safeMode());
+    CHECK(getParam(*c, kSys, 0, sys::kLimitsInstances) == 16);
+    CHECK(c->configuredCount() == 22);
+    REQUIRE(c->save().ok());
+    const auto saved = core::persist::loadConfig(store);
+    CHECK(saved.instances.size() == 22);
+    REQUIRE(setLimit(*c, sys::kLimitsInstances, 30).accepted()); // through a pending copy
+    REQUIRE(c->save().ok());
+    CHECK(core::persist::loadConfig(store).instances.size() == 22);
+}
+
 TEST_CASE("Limits: a layout saved without its limits keeps its extra instances through SAVE")
 {
     reset();
