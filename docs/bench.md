@@ -115,6 +115,27 @@ for a GUI on another machine than the agent.
   are described in [host/README.md](../host/README.md). Every one restores the
   layout and settings it found.
 
+## Link trial
+
+`link_probe` (built with the host tests, `host/superbuild/build/windows-mingw/test/link_probe.exe`)
+runs a [link trial](protocol/core.md#link-settings-and-trial) with `libdrivelink` and
+prints what it found. A rate change needs no permission; **ask before a pin change**,
+which drives the new TX pin. Use normal firmware, disarmed, with nothing pending.
+
+```
+link_probe serial://COM3 --baud auto state                          # read only
+link_probe serial://COM3 --baud auto trial 2000000 43 44            # confirmed
+link_probe serial://COM3 --baud auto watch 115200 43 44             # left to revert, 30 s
+link_probe serial://COM3 --baud auto watch 921600 17 18             # a bad pin: reverts after 120 s
+link_probe serial://COM3 --baud auto trial 921600 43 44             # restore
+```
+
+`trial` must end with `OUTCOME Confirmed` and the new `BAUD`; `watch` with
+`OUTCOME Unconfirmed`, then `OUTCOME Reverted` (a bad pin shows only `Reverted`).
+Afterwards `state` must show `RUNNING` and `NEXT` as `921600 43 44` and `TRIAL 0`, and
+the CLI must connect without `--baud`. If the board does not answer at any rate,
+reset it once: a trial never survives a reset.
+
 ## Bench builds
 
 Use `python tools/bench_fw.py bench|normal|xip|ota-image` (see

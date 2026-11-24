@@ -38,7 +38,7 @@ def exact(peer, count):
     return bytes(data)
 
 
-INFO = pack('B', V) + string('replay') + string('0123456789abcdef') + pack('IIHBBB', 123, 4096, 1024, 2, 0, 0) + bytes.fromhex('02444c00000100')
+INFO = pack('B', V) + string('replay') + string('0123456789abcdef') + pack('IIHBBB', 123, 4096, 1024, 2, 0, 0) + bytes.fromhex('02444c00000100') + bytes(4)
 REF = pack('BBH', 112, 0, 1)
 CAPTURE = (pack('BBBHIIB', 3, 1, 0, 1, 2, 1, 0) + bytes(4) + pack('BIIIIQB', 0, 0, 2, 1, 1000, 42, 1) + REF)
 EVENTS = [

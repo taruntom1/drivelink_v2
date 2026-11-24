@@ -437,10 +437,10 @@ and checked at the IDF boundary; pure CommandService gets an injected id.
 
 **Boot sequence:**
 1. `diag::init()`
-2. `UartComm`
-3. the safe-mode check (below)
-4. core init: load the layout and params from NVS, or the defaults
-5. validate the layout, then create the instances in dependency order. An instance that fails is reported (`<source>.InitFailed`) and left out, and anything wired to it is left out too (`core.DependencyMissing`).
+2. the safe-mode check (below)
+3. NVS: load the layout and params, or the defaults, and decide the link ([core.md](../docs/protocol/core.md#link-settings-and-trial)); a trial is marked as used here
+4. `UartComm` on that link, with its fallbacks
+5. core init: validate the layout, then create the instances in dependency order. An instance that fails is reported (`<source>.InitFailed`) and left out, and anything wired to it is left out too (`core.DependencyMissing`).
 6. start the loops and the safety monitor
 7. the diag `Reporter`
 8. the `Boot` event goes out

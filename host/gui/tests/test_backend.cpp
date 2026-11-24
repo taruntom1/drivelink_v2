@@ -1556,8 +1556,8 @@ private slots:
         };
         c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled();}));
         // Nothing hard-coded: the writable system params of the descriptors.
-        QCOMPARE(model->rowCount(),13);QCOMPARE(model->index(0,0).data(ParamTable::Name).toString(),QString("watchdog_ms"));
-        QCOMPARE(c.deviceSettings()["total"].toInt(),13);QVERIFY(c.deviceSettings()["blocked"].toString().isEmpty());
+        QCOMPARE(model->rowCount(),16);QCOMPARE(model->index(0,0).data(ParamTable::Name).toString(),QString("watchdog_ms"));
+        QCOMPARE(c.deviceSettings()["total"].toInt(),16);QVERIFY(c.deviceSettings()["blocked"].toString().isEmpty());
         QVERIFY(!c.deviceSettings()["safeMode"].toBool());QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
         // Live: applied at once, Unsaved until SAVE, never pending.
         c.setParamText("0:0:3","20");
@@ -1745,7 +1745,7 @@ private slots:
     void deviceSettingsInSafeMode() {
         Fixture fixture(true);LocalConnection c;
         c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.ready() && c.safeMode();}));
-        QVERIFY(c.deviceSettings()["safeMode"].toBool());QCOMPARE(c.systemParams()->rowCount(),13);
+        QVERIFY(c.deviceSettings()["safeMode"].toBool());QCOMPARE(c.systemParams()->rowCount(),16);
         QCOMPARE(c.deviceSettings()["pending"].toInt(),0);QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
         c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
     }

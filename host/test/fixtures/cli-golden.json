@@ -5,7 +5,7 @@
     ],
     "json": false,
     "code": 0,
-    "stdout": "build_id: <identity>\ncapture_capacity: 4194304\ndescriptor_hash: 1190249834\ndevice_id: 02444c000001\nfirmware_version: <identity>\nflags: 0\nloops:\n  [0]\n    flags: 1\n    id: 0\n    name: control\n    rate_hz: 1000\n    realtime: true\n  [1]\n    flags: 0\n    id: 1\n    name: sensor\n    rate_hz: 100\n    realtime: false\nmax_payload: 1024\nname: \nprotocol_version: 11\nrunning_instances: 2\n",
+    "stdout": "build_id: <identity>\ncapture_capacity: 4194304\ndescriptor_hash: 1080812097\ndevice_id: 02444c000001\nfirmware_version: <identity>\nflags: 0\nloops:\n  [0]\n    flags: 1\n    id: 0\n    name: control\n    rate_hz: 1000\n    realtime: true\n  [1]\n    flags: 0\n    id: 1\n    name: sensor\n    rate_hz: 100\n    realtime: false\nmax_payload: 1024\nname: \nprotocol_version: 12\nrunning_instances: 2\n",
     "stderr": ""
   },
   {
@@ -24,7 +24,7 @@
     ],
     "json": false,
     "code": 0,
-    "stdout": "[0]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 10\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 3\n  is_source: false\n  kind: 0\n  max_bits: 100\n  min_bits: 1\n  name: status.rate_hz\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: Hz\n  value_type: 2\n[1]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 200\n  description: \n  flags: 10\n  has_max: true\n  has_min: true\n  id: 4\n  is_source: false\n  kind: 0\n  max_bits: 1000\n  min_bits: 20\n  name: watchdog_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[2]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 4\n  description: Loop instances\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 16\n  is_source: false\n  kind: 0\n  max_bits: 8\n  min_bits: 1\n  name: limits.loops\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[3]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 16\n  description: Module instances, across all loops\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 17\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.instances\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[4]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 8\n  description: Subscription groups\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 18\n  is_source: false\n  kind: 0\n  max_bits: 31\n  min_bits: 1\n  name: limits.sub_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[5]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 8\n  description: Command groups\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 19\n  is_source: false\n  kind: 0\n  max_bits: 32\n  min_bits: 1\n  name: limits.cmd_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[6]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 64\n  description: Entries per group; the frame size can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 20\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.group_entries\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[7]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 32\n  description: Distinct source values per ordered loop pair\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 21\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.link_values\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[8]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 16\n  description: Values per capture; the frame size can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 22\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.capture_refs\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[9]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 4096\n  description: Largest capture ring; the free PSRAM can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 23\n  is_source: false\n  kind: 0\n  max_bits: 16384\n  min_bits: 32\n  name: limits.capture_kb\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: KB\n  value_type: 2\n[10]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1000\n  description: How often changed counters are sent\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 32\n  is_source: false\n  kind: 0\n  max_bits: 60000\n  min_bits: 100\n  name: diag.counter_period_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[11]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 20\n  description: How long a record waits for the reporter, at most\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 33\n  is_source: false\n  kind: 0\n  max_bits: 1000\n  min_bits: 10\n  name: diag.poll_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[12]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 30\n  description: Console stack log period, 0 = off; needs a build with console text\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 34\n  is_source: false\n  kind: 0\n  max_bits: 3600\n  min_bits: 0\n  name: diag.stack_log_s\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: s\n  value_type: 2\n",
+    "stdout": "[0]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 10\n  description: \n  flags: 2\n  has_max: true\n  has_min: true\n  id: 3\n  is_source: false\n  kind: 0\n  max_bits: 100\n  min_bits: 1\n  name: status.rate_hz\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: Hz\n  value_type: 2\n[1]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 200\n  description: \n  flags: 10\n  has_max: true\n  has_min: true\n  id: 4\n  is_source: false\n  kind: 0\n  max_bits: 1000\n  min_bits: 20\n  name: watchdog_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[2]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 4\n  description: Loop instances\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 16\n  is_source: false\n  kind: 0\n  max_bits: 8\n  min_bits: 1\n  name: limits.loops\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[3]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 16\n  description: Module instances, across all loops\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 17\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.instances\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[4]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 8\n  description: Subscription groups\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 18\n  is_source: false\n  kind: 0\n  max_bits: 31\n  min_bits: 1\n  name: limits.sub_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[5]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 8\n  description: Command groups\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 19\n  is_source: false\n  kind: 0\n  max_bits: 32\n  min_bits: 1\n  name: limits.cmd_groups\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[6]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 64\n  description: Entries per group; the frame size can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 20\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.group_entries\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[7]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 32\n  description: Distinct source values per ordered loop pair\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 21\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.link_values\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[8]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 16\n  description: Values per capture; the frame size can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 22\n  is_source: false\n  kind: 0\n  max_bits: 64\n  min_bits: 1\n  name: limits.capture_refs\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 2\n[9]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 4096\n  description: Largest capture ring; the free PSRAM can cap it\n  flags: 3\n  has_max: true\n  has_min: true\n  id: 23\n  is_source: false\n  kind: 0\n  max_bits: 16384\n  min_bits: 32\n  name: limits.capture_kb\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: KB\n  value_type: 2\n[10]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 1000\n  description: How often changed counters are sent\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 32\n  is_source: false\n  kind: 0\n  max_bits: 60000\n  min_bits: 100\n  name: diag.counter_period_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[11]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 20\n  description: How long a record waits for the reporter, at most\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 33\n  is_source: false\n  kind: 0\n  max_bits: 1000\n  min_bits: 10\n  name: diag.poll_ms\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: ms\n  value_type: 2\n[12]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 30\n  description: Console stack log period, 0 = off; needs a build with console text\n  flags: 2\n  has_max: true\n  has_min: true\n  id: 34\n  is_source: false\n  kind: 0\n  max_bits: 3600\n  min_bits: 0\n  name: diag.stack_log_s\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: s\n  value_type: 2\n[13]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 3\n  description: Serial link rate; a change reverts after 30 s unless a host confirms it\n  flags: 3\n  has_max: false\n  has_min: false\n  id: 48\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: link.baud\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 6\n[14]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 43\n  description: Serial link TX pin; a pin change reverts after 120 s unless a host confirms it\n  flags: 3\n  has_max: false\n  has_min: false\n  id: 49\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: link.tx_pin\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 1\n[15]\n  args:\n    (empty)\n  blob_direction: 0\n  default_bits: 44\n  description: Serial link RX pin; a pin change reverts after 120 s unless a host confirms it\n  flags: 3\n  has_max: false\n  has_min: false\n  id: 50\n  is_source: false\n  kind: 0\n  max_bits: 0\n  min_bits: 0\n  name: link.rx_pin\n  ref: \n  results:\n    (empty)\n  runs_in: 0\n  unit: \n  value_type: 1\n",
     "stderr": ""
   },
   {
@@ -64,7 +64,7 @@
     ],
     "json": false,
     "code": 0,
-    "stdout": "[0]\n  code: 1\n  flags: 0\n  kind: 1\n  name: CrcError\n  severity: 2\n  source: 2\n[1]\n  code: 2\n  flags: 0\n  kind: 1\n  name: PartialFrame\n  severity: 2\n  source: 2\n[2]\n  code: 3\n  flags: 0\n  kind: 1\n  name: FrameOrParityError\n  severity: 2\n  source: 2\n[3]\n  code: 4\n  flags: 0\n  kind: 1\n  name: RxOverflow\n  severity: 2\n  source: 2\n[4]\n  code: 5\n  flags: 0\n  kind: 1\n  name: LengthError\n  severity: 2\n  source: 2\n[5]\n  code: 6\n  flags: 0\n  kind: 1\n  name: DiscardedBytes\n  severity: 2\n  source: 2\n[6]\n  code: 7\n  flags: 0\n  kind: 1\n  name: HeaderCrcError\n  severity: 2\n  source: 2\n[7]\n  code: 1\n  flags: 0\n  kind: 1\n  name: RecordDropped\n  severity: 2\n  source: 3\n[8]\n  code: 2\n  flags: 0\n  kind: 1\n  name: EventTxDropped\n  severity: 2\n  source: 3\n[9]\n  code: 3\n  flags: 0\n  kind: 1\n  name: QueryDropped\n  severity: 2\n  source: 3\n[10]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 4\n[11]\n  code: 2\n  flags: 0\n  kind: 0\n  name: InstanceStartFailed\n  severity: 1\n  source: 4\n[12]\n  code: 3\n  flags: 0\n  kind: 0\n  name: TimerRestartFailed\n  severity: 1\n  source: 4\n[13]\n  code: 4\n  flags: 0\n  kind: 0\n  name: SafeModeEntered\n  severity: 1\n  source: 4\n[14]\n  code: 5\n  flags: 0\n  kind: 0\n  name: LayoutInvalid\n  severity: 1\n  source: 4\n[15]\n  code: 6\n  flags: 0\n  kind: 0\n  name: DependencyMissing\n  severity: 1\n  source: 4\n[16]\n  code: 7\n  flags: 0\n  kind: 0\n  name: ConfigLoadFailed\n  severity: 1\n  source: 4\n[17]\n  code: 8\n  flags: 0\n  kind: 0\n  name: NvsWriteFailed\n  severity: 1\n  source: 4\n[18]\n  code: 9\n  flags: 0\n  kind: 0\n  name: NvsInitFailed\n  severity: 1\n  source: 4\n[19]\n  code: 262\n  flags: 0\n  kind: 1\n  name: BadTimeRequest\n  severity: 2\n  source: 4\n[20]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 112\n[21]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 113\n[22]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 33\n[23]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 34\n[24]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 114\n[25]\n  code: 256\n  flags: 0\n  kind: 1\n  name: CommandDropped\n  severity: 2\n  source: 4\n[26]\n  code: 257\n  flags: 0\n  kind: 1\n  name: ResponseDropped\n  severity: 2\n  source: 4\n[27]\n  code: 8\n  flags: 0\n  kind: 1\n  name: StreamSkipped\n  severity: 2\n  source: 2\n[28]\n  code: 258\n  flags: 0\n  kind: 1\n  name: LoopOverBudget\n  severity: 2\n  source: 4\n[29]\n  code: 259\n  flags: 0\n  kind: 1\n  name: CommandFrameRejected\n  severity: 2\n  source: 4\n[30]\n  code: 260\n  flags: 5\n  kind: 2\n  name: LoopStalled\n  severity: 1\n  source: 4\n[31]\n  code: 261\n  flags: 5\n  kind: 2\n  name: WatchdogTimeout\n  severity: 2\n  source: 4\n[32]\n  code: 2\n  flags: 5\n  kind: 2\n  name: FaultInjected\n  severity: 1\n  source: 112\n[33]\n  code: 3\n  flags: 3\n  kind: 2\n  name: ArmBlocked\n  severity: 2\n  source: 112\n[34]\n  code: 2\n  flags: 5\n  kind: 2\n  name: DriverFault\n  severity: 1\n  source: 33\n[35]\n  code: 2\n  flags: 5\n  kind: 2\n  name: ReadFailed\n  severity: 1\n  source: 34\n[36]\n  code: 263\n  flags: 0\n  kind: 0\n  name: OtaFailed\n  severity: 1\n  source: 4\n[37]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 48\n[38]\n  code: 2\n  flags: 1\n  kind: 2\n  name: ReadFailed\n  severity: 2\n  source: 48\n[39]\n  code: 3\n  flags: 0\n  kind: 0\n  name: ActionFailed\n  severity: 1\n  source: 48\n",
+    "stdout": "[0]\n  code: 1\n  flags: 0\n  kind: 1\n  name: CrcError\n  severity: 2\n  source: 2\n[1]\n  code: 2\n  flags: 0\n  kind: 1\n  name: PartialFrame\n  severity: 2\n  source: 2\n[2]\n  code: 3\n  flags: 0\n  kind: 1\n  name: FrameOrParityError\n  severity: 2\n  source: 2\n[3]\n  code: 4\n  flags: 0\n  kind: 1\n  name: RxOverflow\n  severity: 2\n  source: 2\n[4]\n  code: 5\n  flags: 0\n  kind: 1\n  name: LengthError\n  severity: 2\n  source: 2\n[5]\n  code: 6\n  flags: 0\n  kind: 1\n  name: DiscardedBytes\n  severity: 2\n  source: 2\n[6]\n  code: 7\n  flags: 0\n  kind: 1\n  name: HeaderCrcError\n  severity: 2\n  source: 2\n[7]\n  code: 1\n  flags: 0\n  kind: 1\n  name: RecordDropped\n  severity: 2\n  source: 3\n[8]\n  code: 2\n  flags: 0\n  kind: 1\n  name: EventTxDropped\n  severity: 2\n  source: 3\n[9]\n  code: 3\n  flags: 0\n  kind: 1\n  name: QueryDropped\n  severity: 2\n  source: 3\n[10]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 4\n[11]\n  code: 2\n  flags: 0\n  kind: 0\n  name: InstanceStartFailed\n  severity: 1\n  source: 4\n[12]\n  code: 3\n  flags: 0\n  kind: 0\n  name: TimerRestartFailed\n  severity: 1\n  source: 4\n[13]\n  code: 4\n  flags: 0\n  kind: 0\n  name: SafeModeEntered\n  severity: 1\n  source: 4\n[14]\n  code: 5\n  flags: 0\n  kind: 0\n  name: LayoutInvalid\n  severity: 1\n  source: 4\n[15]\n  code: 6\n  flags: 0\n  kind: 0\n  name: DependencyMissing\n  severity: 1\n  source: 4\n[16]\n  code: 7\n  flags: 0\n  kind: 0\n  name: ConfigLoadFailed\n  severity: 1\n  source: 4\n[17]\n  code: 8\n  flags: 0\n  kind: 0\n  name: NvsWriteFailed\n  severity: 1\n  source: 4\n[18]\n  code: 10\n  flags: 0\n  kind: 0\n  name: LinkReverted\n  severity: 1\n  source: 4\n[19]\n  code: 9\n  flags: 0\n  kind: 0\n  name: NvsInitFailed\n  severity: 1\n  source: 4\n[20]\n  code: 262\n  flags: 0\n  kind: 1\n  name: BadTimeRequest\n  severity: 2\n  source: 4\n[21]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 112\n[22]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 113\n[23]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 33\n[24]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 34\n[25]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 114\n[26]\n  code: 256\n  flags: 0\n  kind: 1\n  name: CommandDropped\n  severity: 2\n  source: 4\n[27]\n  code: 257\n  flags: 0\n  kind: 1\n  name: ResponseDropped\n  severity: 2\n  source: 4\n[28]\n  code: 8\n  flags: 0\n  kind: 1\n  name: StreamSkipped\n  severity: 2\n  source: 2\n[29]\n  code: 258\n  flags: 0\n  kind: 1\n  name: LoopOverBudget\n  severity: 2\n  source: 4\n[30]\n  code: 259\n  flags: 0\n  kind: 1\n  name: CommandFrameRejected\n  severity: 2\n  source: 4\n[31]\n  code: 260\n  flags: 5\n  kind: 2\n  name: LoopStalled\n  severity: 1\n  source: 4\n[32]\n  code: 261\n  flags: 5\n  kind: 2\n  name: WatchdogTimeout\n  severity: 2\n  source: 4\n[33]\n  code: 2\n  flags: 5\n  kind: 2\n  name: FaultInjected\n  severity: 1\n  source: 112\n[34]\n  code: 3\n  flags: 3\n  kind: 2\n  name: ArmBlocked\n  severity: 2\n  source: 112\n[35]\n  code: 2\n  flags: 5\n  kind: 2\n  name: DriverFault\n  severity: 1\n  source: 33\n[36]\n  code: 2\n  flags: 5\n  kind: 2\n  name: ReadFailed\n  severity: 1\n  source: 34\n[37]\n  code: 263\n  flags: 0\n  kind: 0\n  name: OtaFailed\n  severity: 1\n  source: 4\n[38]\n  code: 1\n  flags: 0\n  kind: 0\n  name: InitFailed\n  severity: 1\n  source: 48\n[39]\n  code: 2\n  flags: 1\n  kind: 2\n  name: ReadFailed\n  severity: 2\n  source: 48\n[40]\n  code: 3\n  flags: 0\n  kind: 0\n  name: ActionFailed\n  severity: 1\n  source: 48\n",
     "stderr": ""
   },
   {
@@ -299,7 +299,7 @@
       "data": {
         "build_id": "<identity>",
         "capture_capacity": 4194304,
-        "descriptor_hash": 1190249834,
+        "descriptor_hash": 1080812097,
         "device_id": "02444c000001",
         "firmware_version": "<identity>",
         "flags": 0,
@@ -321,7 +321,7 @@
         ],
         "max_payload": 1024,
         "name": "",
-        "protocol_version": 11,
+        "protocol_version": 12,
         "running_instances": 2
       },
       "ok": true
@@ -659,6 +659,66 @@
           "runs_in": 0,
           "unit": "s",
           "value_type": 2
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 3,
+          "description": "Serial link rate; a change reverts after 30 s unless a host confirms it",
+          "flags": 3,
+          "has_max": false,
+          "has_min": false,
+          "id": 48,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "link.baud",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 6
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 43,
+          "description": "Serial link TX pin; a pin change reverts after 120 s unless a host confirms it",
+          "flags": 3,
+          "has_max": false,
+          "has_min": false,
+          "id": 49,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "link.tx_pin",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 1
+        },
+        {
+          "args": [],
+          "blob_direction": 0,
+          "default_bits": 44,
+          "description": "Serial link RX pin; a pin change reverts after 120 s unless a host confirms it",
+          "flags": 3,
+          "has_max": false,
+          "has_min": false,
+          "id": 50,
+          "is_source": false,
+          "kind": 0,
+          "max_bits": 0,
+          "min_bits": 0,
+          "name": "link.rx_pin",
+          "ref": "",
+          "results": [],
+          "runs_in": 0,
+          "unit": "",
+          "value_type": 1
         }
       ],
       "ok": true
@@ -1304,6 +1364,14 @@
           "flags": 0,
           "kind": 0,
           "name": "NvsWriteFailed",
+          "severity": 1,
+          "source": 4
+        },
+        {
+          "code": 10,
+          "flags": 0,
+          "kind": 0,
+          "name": "LinkReverted",
           "severity": 1,
           "source": 4
         },

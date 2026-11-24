@@ -22,7 +22,7 @@ New modules follow [the checklist](../../docs/adding-a-module.md).
 - A setting a user changes on a deployed device (limits, timing, per-module
   values) is a system or module param: the YAML owns its default and range, and
   nothing duplicates it in Kconfig. Kconfig holds what the build decides: the
-  UART port, pins and payload, task stacks and priorities, queues, buffers and
+  UART port and payload, task stacks and priorities, queues, buffers and
   build features, with valid ranges. Wire/math constants stay `constexpr`.
   A setting that sizes memory is `reboot_required` and joins the core's RAM
   estimate. Third-party source stays untouched in `vendor/`; wrap it.

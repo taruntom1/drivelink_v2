@@ -19,7 +19,7 @@ from __future__ import annotations
 import struct
 import time
 
-CORE_PROTOCOL_VERSION = 11
+CORE_PROTOCOL_VERSION = 12
 TIME_PROTOCOL_VERSION = 1
 
 

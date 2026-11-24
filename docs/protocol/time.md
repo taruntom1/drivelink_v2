@@ -2,7 +2,7 @@
 
 The host initiates pings on registry `time_request` (0x02); the device answers
 on `time_response` (0x42). This protocol has its own version, independent of
-core v11 and diag v3. All multi-byte fields are little-endian. The device never
+core v12 and diag v3. All multi-byte fields are little-endian. The device never
 sets a wall clock: every device timestamp is monotonic microseconds since boot.
 
 | Payload | Fields | Exact size |

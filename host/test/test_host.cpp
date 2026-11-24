@@ -525,7 +525,7 @@ TEST_CASE("GET_INFO v5 validates sparse ids, loop flags and duplicate loop ident
         w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);w.appendU8(2);w.appendU8(0);w.appendU8(2);
         w.appendU8(3);protocol::core_wire::string(w,"first");w.appendU32Le(1000);w.appendU8(1);
         w.appendU8(duplicate?3:19);protocol::core_wire::string(w,"second");w.appendU32Le(100);w.appendU8(bad_flags?2:0);
-        const uint8_t id[6]={2,0x44,0x4c,0,0,1};w.appendBytes(id,6);w.appendU8(0);
+        const uint8_t id[6]={2,0x44,0x4c,0,0,1};w.appendBytes(id,6);w.appendU8(0);w.appendU32Le(0);
         bytes.resize(w.size());return bytes;
     };
     FakeDevice device([&](Socket &socket) {
@@ -612,7 +612,7 @@ TEST_CASE("host capture decodes STATUS, pages READ within the payload and decode
         Bytes info(64);protocol::wire::Writer iw(info.data(),info.size());
         iw.appendU8(protocol::core_wire::kVersion);protocol::core_wire::string(iw,"t");protocol::core_wire::string(iw,"b");
         iw.appendU32Le(1);iw.appendU32Le(65536);iw.appendU16Le(28);iw.appendU8(0);iw.appendU8(0);iw.appendU8(0);
-        const uint8_t id[6]={2,0x44,0x4c,0,0,1};iw.appendBytes(id,6);iw.appendU8(0);
+        const uint8_t id[6]={2,0x44,0x4c,0,0,1};iw.appendBytes(id,6);iw.appendU8(0);iw.appendU32Le(0);
         info.resize(iw.size());
         answer(socket,readFrame(socket),info);
         answer(socket,readFrame(socket),status(2,1));
@@ -706,7 +706,7 @@ TEST_CASE("SET_NAME owns valid UTF-8 bytes and reports uncertain malformed mutat
     catch(const Error &e) {CHECK(e.kind==ErrorKind::Protocol);CHECK(e.outcome_unknown);CHECK(e.family==1);CHECK(e.op==10);}
 }
 
-TEST_CASE("GET_INFO requires complete identity and validates name bytes")
+TEST_CASE("GET_INFO requires complete identity and trial time, and validates name bytes")
 {
     auto info=[] {
         Bytes b(128); protocol::wire::Writer w(b.data(),b.size());
@@ -715,19 +715,20 @@ TEST_CASE("GET_INFO requires complete identity and validates name bytes")
         w.appendU32Le(1);w.appendU32Le(0);w.appendU16Le(1024);
         w.appendU8(0);w.appendU8(8);w.appendU8(0);
         const uint8_t id[]{2,4,6,8,10,12};w.appendBytes(id,6);
-        (void)protocol::writeDeviceName(w,"robot");b.resize(w.size());return b;
+        (void)protocol::writeDeviceName(w,"robot");w.appendU32Le(29500);b.resize(w.size());return b;
     };
     FakeDevice device([&](Socket &socket) {
         auto good=info();answer(socket,readFrame(socket),good);
         auto b=good;b.pop_back();answer(socket,readFrame(socket),b);
-        b=good;b.back()=0;answer(socket,readFrame(socket),b);
+        b=good;b[b.size()-5]=0;answer(socket,readFrame(socket),b);
         b=good;b.push_back(0);answer(socket,readFrame(socket),b);
-        b=good;b.resize(b.size()-12);answer(socket,readFrame(socket),b);
+        b=good;b.resize(b.size()-4);answer(socket,readFrame(socket),b);
+        b=good;b.resize(b.size()-16);answer(socket,readFrame(socket),b);
     });
     Session session(device.endpoint(),testOptions());Client client(session);
     const auto result=client.info();
-    CHECK(hex(result.device_id)=="020406080a0c");CHECK(result.name=="robot");
-    for(int i=0;i<4;++i) {CHECK_THROWS_AS(client.info(),Error);}
+    CHECK(hex(result.device_id)=="020406080a0c");CHECK(result.name=="robot");CHECK(result.link_trial_ms==29500);
+    for(int i=0;i<5;++i) {CHECK_THROWS_AS(client.info(),Error);}
 }
 
 TEST_CASE("resolveTcpEndpoint keeps numeric addresses, resolves names and refuses malformed endpoints")

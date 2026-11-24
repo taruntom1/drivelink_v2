@@ -4,10 +4,13 @@ These add to [firmware rules](../CLAUDE.md).
 The bench and its ports are in [bench.md](../../docs/bench.md), the board's
 current state in [host-status.md](../../plans/host-status.md).
 
-- Preserve startup order: diag, UART, NVS/core, CoreLink, then Reporter, so the
-  Boot event has final instance counts/safe-mode state. Report partial failures
+- Preserve startup order: diag, crash/safe-mode decision, NVS, link settings, UART,
+  core, CoreLink, then Reporter. The UART opens on the link `core::loadBoot()` chose,
+  which marks a trial as used first; nothing may open it earlier. The Boot event has
+  final instance counts/safe-mode state. Report partial failures
   and leave the console usable; destructors tolerate partial setup.
-  `app_main` never returns, including when UART fails.
+  `app_main` never returns, including when UART fails. A trial that the core cannot
+  end (no core, no UART) ends with main's own reboot at its longest time.
   The core starts through `core::bringUp()`: the crash counter goes up before
   anything is sized from saved settings. Nothing large is allocated between
   its heap reading and the running core without a place in the RAM estimate.
