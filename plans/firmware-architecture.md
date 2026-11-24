@@ -277,6 +277,7 @@ The rules follow the protocol conventions:
 - **Limits** (from F4b). The device reports the limits of its build as read-only system params, not in `GET_INFO`:
   - F4b adds `limits.loops` (`CORE_MAX_LOOPS`), `limits.instances` (`CORE_MAX_INSTANCES`), and the group limits that F4a built (`limits.sub_groups`, `limits.cmd_groups`, `limits.group_entries`). F4c adds `limits.link_values`. A later step that adds a limit adds its param.
   - Each is a `u16` param of `system.yaml` flagged `read_only` (so it is not persisted). The core writes its value at boot from `CoreConfig`. A `SET` is refused (`ReadOnly`).
+  - Since [runtime settings](runtime-settings.md) step 2 they are persisted, `reboot_required` settings and replace the Kconfig options named here and below.
   - The host reads them with the normal param `GET` and learns their names from the describe family, so this needs no new op and no change to a wire format. Only the descriptor hash changes.
   - A host uses them to say "4 of 4 loops" before it sends an op. The device still refuses one over the limit (`Capacity`).
   - `GET_INFO` keeps the two it already has: the capture capacity and the receive limit.
