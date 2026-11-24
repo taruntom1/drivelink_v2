@@ -315,7 +315,7 @@ def _self_test() -> None:
             raise AssertionError('accepted malformed time reply')
         except ValueError:
             pass
-    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("0bffffff0000c03f2a000000")
+    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("0cffffff0000c03f2a000000")
     assert len(command_group_payload(0, 0)) == 4
     assert len(command_group_payload(0, 0, (0,) * 64)) == 260
     try:

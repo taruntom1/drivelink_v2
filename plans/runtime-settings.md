@@ -2,8 +2,8 @@
 
 Plan for [issue 105](https://github.com/taruntom1/drivelink_v2/issues/105): change at
 run time, through the CLI, GUI and agent, what now needs a Kconfig edit and a
-rebuild. Five PRs, one per step, in order. State: **steps 1 to 4 done**; step 5
-planned in two parts (5a, 5b): two sessions, one branch and one PR.
+rebuild. Five PRs, one per step, in order. State: **steps 1 to 4 and 5a
+done**; 5b is left, on the same branch and PR as 5a (`claude/runtime-settings-5`).
 
 ## Why it fits the current design
 
@@ -33,7 +33,7 @@ things are missing:
 | Safe mode, FACTORY_RESET | Both keep the confirmed link |
 | GUI | A settings card on the Device page (Figma first) |
 | CLI | Numeric references only; no `settings` command |
-| Wire | Core v10 to v11 once, in step 1, with LINK_CONFIRM and its details reserved |
+| Wire | Core v10 to v11 in step 1, with LINK_CONFIRM and its details reserved; v12 in step 5 (GET_INFO's trial time, decided 2026-11-25) |
 
 ## What moves
 
@@ -195,10 +195,9 @@ Two parts, two sessions, **one branch (`claude/runtime-settings-5`) and one PR**
   DISARMs, reports a diag code and reboots. A link change is refused while an OTA
   image is unconfirmed, and OTA BEGIN is refused during a trial. GET_INFO reports the
   trial and its remaining time.
-- **Wire.** LINK_CONFIRM and its details are reserved in v11, but GET_INFO has no
-  field for the trial or its remaining time. **Open decision, ask the user before
-  coding it:** new GET_INFO fields mean core v12, although step 1 planned a single
-  bump. Update `docs/protocol/` and the Python HIL reference in the same change.
+- **Wire.** LINK_CONFIRM and its details are reserved in v11. GET_INFO gets
+  `link_trial_ms` at its end, so core is v12 (user decision, see the handoff).
+  Update `docs/protocol/` and the Python HIL reference in the same change.
 - **Kconfig.** Remove the three `UART_COMM_*` options. The UART test app sets its own
   pins and baud.
 - **vdev.** Link settings, trial, timeout and LINK_CONFIRM through the shared core
@@ -249,9 +248,60 @@ ready with both parts' checks, and this plan says step 5 is done.
 
 ### Handoff from 5a
 
-Not started. 5a replaces this paragraph with its last commit, the library calls and
-types 5b builds on, the wire decision, what ran (local checks, board), deviations from
-this plan and known gaps.
+**Last commit.** The one that fills in this section; the code is `0da0e50` (firmware)
+and `c6eb24e` (vdev, library), and the board runs `c6eb24e`.
+
+**User decisions (2026-11-25).**
+
+1. Core v12: GET_INFO appends `link_trial_ms u32` (rounded up; 0 only without a trial).
+2. OTA BEGIN is refused in a trial (`LinkTrialActive`) and while a link change is
+   staged or saved (`RebootPending`). A boot on an unconfirmed image, and in safe mode,
+   runs the confirmed link and leaves the saved trial for a later boot.
+3. FACTORY_RESET drops a saved, untried trial and keeps the confirmed link.
+4. The UART opens on the trial, else the confirmed link, else the factory one, reported
+   with `core.LinkReverted`; nothing is stored.
+
+**Wire.** [core.md](../docs/protocol/core.md#link-settings-and-trial) has the settings
+(0x0030 to 0x0032), the trial and every refusal.
+
+**Library for 5b** (`drivelink/link.hpp`, `drivelink/session.hpp`):
+
+| 5b needs | Call |
+|---|---|
+| Open at an unknown rate | `SessionOptions::baud = kBaudAuto` (0), `last_baud` (hint), `detect_timeout` (5 s: about three rounds of eight rates, 200 ms each). Nothing answered: `Error` of kind `Timeout`. `Session::baud()` is the rate found: store it as the hint |
+| Show the link and a trial's countdown | `linkState(client)`: `running`, `next` (the confirmed link in a trial), `trial()`, `changed()`, `info.link_trial_ms` (also in `Client::info()`) |
+| Before the REBOOT | `expectLinkTrial(state)`: device id, both links, `window()` (45 s or 135 s) |
+| CLI, or a wait of its own | `followLinkTrial(endpoint, options, expectation, {confirm, window}, cancelled)` |
+| GUI and agent, on their own connection | `settleLinkTrial(client, expectation, confirm)` after each reconnect |
+| A trial nobody expected (`link-confirm`, an agent that reconnects) | `confirmLinkTrial(client, device_id)`: Confirmed, Unconfirmed (lost, may be sent again), NoTrial, Reverted, WrongDevice |
+| Outcomes | `LinkOutcome`: Confirmed, Unconfirmed, Reverted, NotRebooted, Deferred (safe mode), WrongDevice, OtherLink, NotReachable; `linkOutcomeText()` |
+
+`link_probe` (host tests) is a small caller of all of it. vdev: `--link-trial-ms`, the
+scenarios `drop-confirm`, `drop-confirm-reply` and `wires TX RX`, and on a PTY no traffic
+at another rate or on moved wires.
+
+**What ran.** Native tests (17 link cases: every write lost, timeout, crash, UART failure,
+late confirm). `host-link` (new): auto-detect, all eight rates, confirm, revert, lost
+request and reply, crash, moved wires; TCP on Windows and Linux, PTY on Linux. Local
+checks and board runs are in the PR and in [hardware-log.md](hardware-log.md): every rate,
+an unconfirmed trial, a bad pin and a reset in a trial, from Windows and from WSL.
+
+**Beyond the plan.** Every rate already ran on the board through the library; 5b repeats
+it through its clients. The 1500000 rate needed a serial option of our own on Linux (Asio
+1.30.2 does not know it).
+
+**For 5b.**
+
+- `kBaudAuto` is 0, so `--baud 0` of the CLI already auto-detects (undocumented).
+- Opening with `kBaudAuto` blocks for up to `detect_timeout` in the constructor and cannot
+  be cancelled: keep it off the UI thread and short in a reconnect loop.
+- A device in a trial that expired reports at least 1 ms until it reboots, and answers
+  LINK_CONFIRM with NoLinkTrial: wait for the revert.
+- `host/agent/src/groups.cpp` still comments LINK_CONFIRM as reserved.
+- The CLI's `info` does not show `link_trial_ms` yet. The Device settings card shows the
+  three link rows like any other setting, without a warning or a trial.
+- Not done here, as planned: the guide, the recovery text, and the deferred rows for a
+  real pin change and the Pi UART.
 
 ## For every step
 
