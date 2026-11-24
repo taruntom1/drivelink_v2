@@ -49,6 +49,8 @@ struct KvStoreState {
     Err fail_err = 0;
     int64_t tear_after = -1;       ///< writes left before one set is torn; -1 never
     uint8_t tear_mode = 0;         ///< native::Tear
+    void (*on_read)(void *ctx) = nullptr; ///< native::setReadObserver
+    void *on_read_ctx = nullptr;
 };
 
 struct OneShotState {
