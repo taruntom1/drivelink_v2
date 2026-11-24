@@ -10,9 +10,12 @@
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
 #include "drivelink/protocol/gen/registry.hpp"
+#include "drivelink/protocol/gen/type_system.hpp"
+#include "drivelink/protocol/wire_codec.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include <asio.hpp>
 #include <unistd.h>
+#include <array>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -189,6 +192,7 @@ struct Device
     void linkLost();
     void frame(const Frame &f);
     void boot();
+    void refreshPools();
     void refreshIdentity();
     void cleanDirty();
     void scheduleMaintenance();
@@ -746,8 +750,42 @@ void Device::boot()
     ++map_generation;
     for (auto &set : clearing) { set.clear(); }
     arm.reset();
+    refreshPools();
     refreshIdentity();
     clock_sent = {}; // frame() sends the new model after the Boot event
+}
+
+void Device::refreshPools()
+{
+    // The group pools are settings a boot applies. Sent before any client sees
+    // the Boot, so the answer comes before the one to its first request.
+    if (!session) { return; }
+    namespace sys = defs::system;
+    const std::array<uint16_t, 2> ids{sys::kLimitsSubGroups, sys::kLimitsCmdGroups};
+    Bytes body{static_cast<uint8_t>(ids.size())};
+    for (const auto item : ids)
+    {
+        body.insert(body.end(), {defs::kSystemTypeId, 0, static_cast<uint8_t>(item), static_cast<uint8_t>(item >> 8)});
+    }
+    try
+    {
+        session->asyncRequest(static_cast<uint8_t>(defs::Family::Param), static_cast<uint8_t>(defs::ParamOp::Get), std::move(body),
+            [this, link_id = link, gen = map_generation](std::expected<Reply, Error> r) {
+                // A later Boot or reconnect reads its own.
+                if (link != link_id || gen != map_generation) { return; }
+                p::wire::Reader reader(r ? r->body.data() : nullptr, r ? r->body.size() : 0);
+                const auto count = reader.readU8();
+                const auto subs = reader.readU32Le(), cmds = reader.readU32Le();
+                if (!r || !accepted(r->result) || count != 2 || !reader.done() || subs > defs::kSubGroupChannelCount ||
+                    cmds > defs::kCmdGroupChannelCount)
+                {
+                    log("device " + config.alias + ": the group limits could not be read after the reboot; keeping the old ones");
+                    return;
+                }
+                groups.resize(static_cast<uint8_t>(subs), static_cast<uint8_t>(cmds));
+            });
+    }
+    catch (const Error &) { log("device " + config.alias + ": busy after the reboot; keeping the old group limits"); }
 }
 
 void Device::refreshIdentity()

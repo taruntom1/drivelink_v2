@@ -100,7 +100,17 @@ void GroupMap::reset(uint8_t subs, uint8_t cmds)
 {
     m_slots[0].assign(subs, Slot{});
     m_slots[1].assign(cmds, Slot{});
+    m_count = {subs, cmds};
     m_seen.clear();
+}
+
+void GroupMap::resize(uint8_t subs, uint8_t cmds)
+{
+    m_count = {subs, cmds};
+    for (size_t k = 0; k < m_slots.size(); ++k)
+    {
+        if (m_slots[k].size() < m_count[k]) { m_slots[k].resize(m_count[k]); }
+    }
 }
 
 std::optional<uint8_t> GroupMap::find(ClientId client, uint8_t vid, Kind kind) const
@@ -122,7 +132,7 @@ std::optional<uint8_t> GroupMap::acquire(ClientId client, uint8_t vid, Kind kind
         ++slots[*existing].inflight;
         return existing;
     }
-    for (size_t i = 0; i < slots.size(); ++i)
+    for (size_t i = 0; i < count(kind); ++i)
     {
         auto &s = slots[i];
         if (s.state != State::Free) { continue; }

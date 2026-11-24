@@ -1516,6 +1516,55 @@ def scenario_P_pending_setting(ctx):
     return 'a reboot_required system setting is staged, discarded, saved and runs after a reboot through the agent'
 
 
+def scenario_Q_group_limits(ctx):
+    # A PTY vdev keeps its port across a REBOOT: the agent sees the Boot and must take
+    # the new group pools, which are settings, from the device.
+    vdev = Proc('vdev-limits', [ctx['vdev'], '--pty', '--state', str(ctx['tmp'] / 'limits')])
+    agent = None
+
+    def run(*command, code=0):
+        return cli(url, *command, device='lim', token=TOKEN, code=code)
+
+    def capacity():
+        g = data(run('groups'))
+        return [g['subscription_capacity'], g['command_capacity']]
+
+    def ready(values):
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                expect(capacity() == values, f'the pools are {values}')
+                return
+            except Fail:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.3)
+
+    try:
+        port = vdev.next_line(15, 'READY ')[len('READY '):]
+        agent = Proc('agent-limits', [ctx['agent_exe'], '--port', '0', '--token', TOKEN, '--device', f'lim={port}',
+                                      '--retry-ms', '300', '--no-advertise'])
+        url = agent.next_line(15, 'READY ')[len('READY '):]
+        ready([8, 8])
+        refused = run('sub-config', '11', '1', '1', '5:1:256', code=5)
+        expect(refused['detail'] == D_CAPACITY, 'id 11 is past the pool', envelope=refused)
+        expect(data(run('set', '0:0:18=12', '0:0:19=10'))['pending_reboot'], 'the limits are staged')
+        run('save')
+        run('reboot')
+        ready([12, 10])
+        # A client's ids reach the new size; the device has the slot.
+        run('sub-config', '11', '1', '1', '5:1:256')
+        run('set', '0:0:18=3', '0:0:19=8')
+        run('save')
+        run('reboot')
+        ready([3, 8])
+    finally:
+        if agent is not None:
+            agent.kill()
+        vdev.kill()
+    return 'group pools follow limits.sub_groups and limits.cmd_groups across a Boot, larger and smaller'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -1544,7 +1593,8 @@ SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_dir
              scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
              scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
              scenario_L_discovery_lan, scenario_M_discovery_quiet, scenario_N_browse_usage,
-             scenario_O_no_devices, scenario_P_pending_setting, scenario_9_device_clean_after_agent]
+             scenario_O_no_devices, scenario_P_pending_setting, scenario_Q_group_limits,
+             scenario_9_device_clean_after_agent]
 
 
 def main():

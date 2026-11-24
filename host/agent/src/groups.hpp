@@ -72,9 +72,13 @@ class GroupMap
     };
     // Device online or Boot: every slot free, every client record dropped.
     void reset(uint8_t subs, uint8_t cmds);
+    // The pool sizes read after a Boot (they are settings). Keeps the mappings:
+    // a slot past a smaller pool is only still known to the request on it, which
+    // the device refuses.
+    void resize(uint8_t subs, uint8_t cmds);
     uint8_t subs() const { return count(Kind::Sub); }
     uint8_t cmds() const { return count(Kind::Cmd); }
-    uint8_t count(Kind kind) const { return static_cast<uint8_t>(pool(kind).size()); }
+    uint8_t count(Kind kind) const { return m_count[static_cast<size_t>(kind)]; }
     const Slot &slot(uint8_t device_slot, Kind kind = Kind::Sub) const { return pool(kind).at(device_slot); }
 
     // The device slot behind a client's id, if any.
@@ -110,6 +114,7 @@ class GroupMap
     std::vector<Slot> &pool(Kind kind) { return m_slots[static_cast<size_t>(kind)]; }
     const std::vector<Slot> &pool(Kind kind) const { return m_slots[static_cast<size_t>(kind)]; }
     std::array<std::vector<Slot>, 2> m_slots;
+    std::array<uint8_t, 2> m_count{};
     uint64_t m_serial = 0;
     struct Seen { ClientId client; Kind kind; uint8_t vid; uint8_t epoch; };
     std::vector<Seen> m_seen;
