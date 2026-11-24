@@ -41,12 +41,13 @@ struct StackHighWater {
     uint32_t tx_free;
 };
 
-/// Configuration for UartComm. All fields default to Kconfig values.
+/// Configuration for UartComm. The caller sets the pins and the rate (the
+/// firmware from its link settings); UartComm is invalid without them.
 struct UartCommConfig {
     int port_num    = CONFIG_UART_COMM_PORT_NUM;
-    int tx_pin      = CONFIG_UART_COMM_TX_PIN;
-    int rx_pin      = CONFIG_UART_COMM_RX_PIN;
-    int baud_rate   = CONFIG_UART_COMM_BAUD_RATE;
+    int tx_pin      = -1;
+    int rx_pin      = -1;
+    int baud_rate   = 0;
 };
 
 /// Structured UART communication component.
@@ -71,7 +72,7 @@ public:
     /// Construct and initialize the UART communication component.
     /// Configures UART hardware and
     /// starts internal RX/TX tasks.
-    /// @param config  UART configuration (defaults from Kconfig)
+    /// @param config  UART configuration
     explicit UartComm(const UartCommConfig& config);
 
     /// Destructor. Stops tasks, releases UART driver.

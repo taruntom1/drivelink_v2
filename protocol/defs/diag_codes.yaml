@@ -202,9 +202,19 @@ codes:
     severity: error
     kind: record
     clears: false
-    arg0: the namespace, type id << 8 | instance id (0xFFFF for the layout namespace `core`)
+    arg0: the namespace, type id << 8 | instance id (0xFFFF for the layout namespace `core`, 0xFFFE for the link namespace `link`)
     arg1: operation (1 write a blob, 2 erase a namespace)
-    description: An NVS write or erase failed during SAVE or FACTORY_RESET. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
+    description: An NVS write or erase failed during SAVE, FACTORY_RESET or LINK_CONFIRM. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.
+
+  - source: core
+    code: 0x000A
+    name: LinkReverted
+    severity: error
+    kind: record
+    clears: false
+    arg0: "the link that was given up: baud rate / 100 << 16 | TX pin << 8 | RX pin"
+    arg1: "why: 1 the trial ended unconfirmed (reported on the trial link, the device reboots); 2 the device reset before a trial was confirmed; 3 its UART failed to open; 4 the start of the trial could not be stored, so it did not run"
+    description: The device left a serial link for an older one. Causes 1 to 4 go back to the confirmed link; cause 3 on the confirmed link itself goes to the factory link. esp_err gives the reason for causes 3 and 4.
 
   - source: core
     code: 0x0009

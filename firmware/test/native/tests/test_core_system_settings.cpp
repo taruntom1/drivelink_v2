@@ -491,7 +491,7 @@ TEST_CASE("System settings: the crash counter goes up before the core is sized; 
     CHECK(c->instancesFailed() == 0);
 }
 
-TEST_CASE("System settings: the wire describes, stages and reads them; LINK_CONFIRM is reserved")
+TEST_CASE("System settings: the wire describes, stages and reads them")
 {
     reset();
     core_os::KvStore store;
@@ -516,11 +516,6 @@ TEST_CASE("System settings: the wire describes, stages and reads them; LINK_CONF
     REQUIRE(call({2, 5}) == 6); // DISCARD_PENDING
     REQUIRE(call({4, 3, 1, 0, 0, 0x00, 0x7F}) == 11);
     CHECK(out[7] == kDefault);
-
-    REQUIRE(call({1, 11}) == 6);
-    CHECK(out[4] == static_cast<uint8_t>(Result::InvalidArgument));
-    CHECK(out[5] == static_cast<uint8_t>(Detail::Unsupported));
-    CHECK(service.takeAfterReply() == core::AfterReply::None);
 }
 
 // -- limits.* ------------------------------------------------------------------

@@ -126,8 +126,7 @@ wire_enums:
     UnknownDevice: 56
     DeviceOffline: 57
     LeaseRequired: 58
-    # Reserved in core v11 for the runtime settings (plans/runtime-settings.md);
-    # no device sends them yet.
+    # The link trial (59, 60) and the RAM check, from core v11/v12.
     LinkTrialActive: 59
     NoLinkTrial: 60
     NotEnoughMemory: 61

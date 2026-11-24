@@ -8,6 +8,7 @@
 #include "core/instance.hpp"
 #include "core/instance_table.hpp"
 #include "core/layout_validation.hpp"
+#include "core/link_settings.hpp"
 #include "core/param_service.hpp"
 #include "core/registry.hpp"
 #include "core/status.hpp"
@@ -58,6 +59,17 @@ public:
     /// copy of the `reboot_required` ones starts from them. In safe mode they
     /// differ from the running values.
     void setSavedSystem(std::span<const uint32_t> values);
+
+    /// The saved link settings, and the pending ones with them (LINK_CONFIRM).
+    void setSavedLink(const LinkSettings &link);
+
+    /// Asked before a batch that names a link setting; its refusal is the answer.
+    using LinkGateFn = Status (*)(void *ctx);
+    void setLinkGate(LinkGateFn gate, void *ctx)
+    {
+        m_link_gate = gate;
+        m_link_gate_ctx = ctx;
+    }
 
     /// The value of system item `index` that SAVE writes: the pending (else
     /// the saved) one of a `reboot_required` param, the live one of any other.
@@ -120,6 +132,9 @@ private:
     /// than the layout.
     Status checkCounts(const std::vector<PendingEntry> &before, const ValidationConfig &was,
                        const ValidationConfig &now) const;
+    /// The link settings an op changed: two different pins, in the policy, that
+    /// no entry uses. A pin that an entry takes later is the validator's.
+    Status checkLink(const std::vector<uint32_t> &before_system) const;
     /// Validate after an op. `before` and `before_system` are the copy before
     /// it; `touched` names the (type, inst) the op added or changed.
     Status check(const std::vector<PendingEntry> &before, const std::vector<uint32_t> &before_system,
@@ -130,6 +145,8 @@ private:
     const Registry &m_registry;
     detail::InstanceTable &m_table;
     const CoreConfig m_config;
+    LinkGateFn m_link_gate = nullptr;
+    void *m_link_gate_ctx = nullptr;
     bool m_active = false;
     std::vector<PendingEntry> m_entries;
     std::vector<uint32_t> m_saved_system; ///< by item index, as loaded at boot

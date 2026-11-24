@@ -1,8 +1,8 @@
 // main.cpp - DriveLink v2 entry point.
 //
-// Startup order: diag, UartComm, NVS, the core (crash counter and NVS load,
-// CoreConfig from the saved settings, construct, boot, start) and its CoreLink,
-// then the diag Reporter. A core that fails to start is reported
+// Startup order: diag, the crash counter (safe mode), NVS and what it holds, the
+// UART on the stored link, the core (CoreConfig from the saved settings,
+// construct, boot, start) and its CoreLink, then the diag Reporter. A core that fails to start is reported
 // (core.InitFailed) and left out; the link and diag keep running, so the host
 // can still connect and ask what went wrong. app_main never returns.
 
@@ -20,6 +20,8 @@
 #include "core/core_config.hpp"
 #include "core/module_type.hpp"
 #include "core/registry.hpp"
+#include "core_os/boot_info.hpp"
+#include "core_os/clock.hpp"
 #include "core_os/kv_store.hpp"
 #include "core_os/bench_affinity.hpp"
 #include "diag.hpp"
@@ -112,12 +114,31 @@ void initNvs()
     }
 }
 
+/// Open the UART on this boot's link: a trial, else the confirmed link, else the
+/// factory one (`core.LinkReverted` for each link that failed). nullptr when none
+/// opens.
+std::unique_ptr<uart_comm::UartComm> openLink(core::LinkBoot &link)
+{
+    do {
+        uart_comm::UartCommConfig cfg{};
+        cfg.tx_pin = link.running.tx_pin;
+        cfg.rx_pin = link.running.rx_pin;
+        cfg.baud_rate = static_cast<int>(link.running.rate());
+        auto uart = std::make_unique<uart_comm::UartComm>(cfg);
+        if (uart->isValid()) {
+            return uart;
+        }
+        ESP_LOGE(TAG, "UartComm failed to start (port=%d tx=%d rx=%d baud=%d)", cfg.port_num, cfg.tx_pin, cfg.rx_pin,
+                 cfg.baud_rate);
+    } while (core::fallBackLink(link, ESP_FAIL));
+    return nullptr;
+}
+
 /// Build, boot and start the core: the registry, the layout and params from
-/// NVS (or the defaults), the instances (none until F3b brings module types)
-/// and the configured loops. The Core lives on the heap: app_main's stack is small. On
+/// the plan (or the defaults), the instances and the configured loops. The Core lives on the heap: app_main's stack is small. On
 /// failure it reports core.InitFailed and returns nullptr; the rest of the
 /// firmware keeps running.
-std::unique_ptr<core::Core> startCore()
+std::unique_ptr<core::Core> startCore(core::BootPlan plan)
 {
     const std::span<const core::ModuleType *const> types(kModuleTypes);
     for (size_t i = 0; i < types.size(); ++i) {
@@ -129,7 +150,7 @@ std::unique_ptr<core::Core> startCore()
         }
     }
 
-    core::BringUp up = core::bringUp(kvStore(), core::coreConfigFromKconfig(), types);
+    core::BringUp up = core::bringUp(std::move(plan), core::coreConfigFromKconfig(), types);
     core::Status st = up.status;
     if (!st.ok() && up.stage == core::kInitStageRegistry) {
         DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_ARG, core::kInitStageRegistry, st.index,
@@ -163,14 +184,28 @@ std::unique_ptr<core::Core> startCore()
     return c;
 }
 
-[[noreturn]] void idleForever(const core::Core *core = nullptr)
+/// A link trial ends in LINK_CONFIRM or in the config task's reboot. This is for
+/// a trial where that task never runs (the core or its link did not start, or it
+/// hangs): nobody could confirm, so go back to the confirmed link.
+void guardLinkTrial(const core::Core *core, bool trial)
 {
-    (void)core;
+    constexpr int64_t kMarginUs = 10'000'000;
+    static const int64_t deadline_us =
+        core_os::nowUs() + (static_cast<int64_t>(core::LinkTrialTimes{}.pins_ms) * 1000) + kMarginUs;
+    if (trial && (core == nullptr || core->linkTrialActive()) && core_os::nowUs() >= deadline_us) {
+        ESP_LOGE(TAG, "Link trial not ended by the core; rebooting to the confirmed link");
+        core_os::reboot();
+    }
+}
+
+[[noreturn]] void idleForever(const core::Core *core = nullptr, bool trial = false)
+{
 #if DRIVELINK_LOG_STACKS
     // diag.stack_log_s is live (0 = off): look at it once a second.
     uint32_t waited_s = 0;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        guardLinkTrial(core, trial);
         const uint32_t period_s = diag::stackLogPeriodS();
         waited_s = (period_s == 0U) ? 0U : waited_s + 1U;
         if (period_s != 0U && waited_s >= period_s) {
@@ -180,7 +215,8 @@ std::unique_ptr<core::Core> startCore()
     }
 #else
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        guardLinkTrial(core, trial);
     }
 #endif
 }
@@ -192,24 +228,27 @@ extern "C" void app_main(void)
     // First, so that anything below can report.
     diag::init();
 
-    uart_comm::UartCommConfig uart_cfg{}; // Kconfig defaults
-    uart_comm::UartComm uart(uart_cfg);
-    if (!uart.isValid()) {
+    // Before anything a saved setting decides, the link included.
+    const core::SafeModeDecision safe = core::countBoot();
+    initNvs();
+    core::BootPlan plan = core::loadBoot(kvStore(), safe);
+
+    std::unique_ptr<uart_comm::UartComm> uart_obj = openLink(plan.link);
+    if (!uart_obj) {
         // There is no link to report on. Stay alive so the console stays usable.
-        ESP_LOGE(TAG, "UartComm failed to start (port=%d tx=%d rx=%d); nothing can be reported to the host",
-                 uart_cfg.port_num, uart_cfg.tx_pin, uart_cfg.rx_pin);
+        ESP_LOGE(TAG, "No serial link; nothing can be reported to the host");
         idleForever();
     }
+    uart_comm::UartComm &uart = *uart_obj;
+    const bool trial = plan.link.trial;
 
     // Core owns every protocol-facing service.
-    initNvs();
-    std::unique_ptr<core::Core> core_obj = startCore();
+    std::unique_ptr<core::Core> core_obj = startCore(std::move(plan));
     std::unique_ptr<core::CoreLink> core_link;
     if(core_obj) {
         core_link=std::make_unique<core::CoreLink>(*core_obj,uart);
         if(!core_link->isValid()) { ESP_LOGE(TAG,"core link failed to start"); }
     }
-    (void)core_obj;
 
     // Last, so Boot carries the final instance counts. Records from above are
     // waiting in the diag queue and go out right after Boot.
@@ -222,5 +261,5 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG, "diag reporter failed to start; errors are on the console only");
     }
 
-    idleForever(core_obj.get());
+    idleForever(core_obj.get(), trial);
 }

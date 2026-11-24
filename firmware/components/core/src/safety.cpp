@@ -12,6 +12,7 @@ Status Core::arm() {
     if (!m_running) { return Status::fail(Result::Busy, Detail::NotAtBoot); }
     if (m_safe_mode) { return Status::fail(Result::Fault, Detail::SafeMode); }
     if (m_layout_invalid) { return Status::fail(Result::Fault, Detail::LayoutInvalid); }
+    if (m_link.trialActive()) { return Status::fail(Result::Busy, Detail::LinkTrialActive); }
     if (pendingReboot()) { return Status::fail(Result::Fault, Detail::RebootPending); }
     if (m_ota.blocksArm()) { return Status::fail(Result::Busy,m_ota.pending() ? Detail::OtaPendingConfirm : Detail::OtaActive); }
     if (instancesFailed()) { return Status::fail(Result::Fault, Detail::StartFailed); }

@@ -14,6 +14,9 @@ struct OtaBootInfo {
     drivelink::protocol::Sha256Digest elf{};
     std::array<char,33> version{};
 };
+// The running image waits for its confirmation (or that cannot be told). At
+// boot, before an Ota exists.
+bool otaImageUnconfirmed();
 // One config caller. The platform owns image validation and boot selection.
 // Setup/BEGIN may allocate; all chunk scratch belongs to the caller.
 class Ota {

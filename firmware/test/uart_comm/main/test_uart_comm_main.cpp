@@ -3,7 +3,7 @@
  * @brief ESP32-S3 test firmware for the uart_comm component.
  *
  * Acts as a command responder on UART0 (TX=GPIO43, RX=GPIO44) at
- * CONFIG_UART_COMM_BAUD_RATE (921600 by default).
+ * LINK_BAUD (921600).
  * All communication uses the uart_comm framing protocol.
  * IDF logging is routed to the built-in USB-Serial-JTAG CDC interface (GPIO19/20);
  * connect the ESP32-S3 "USB" port to your PC and open it with idf.py monitor.
@@ -70,6 +70,11 @@ static const char *const TAG = "uc_test";
 
 using namespace uart_comm;
 
+// ── The link: UART0's own pins at the firmware's default rate ────────────────
+static constexpr int LINK_TX_PIN = 43;
+static constexpr int LINK_RX_PIN = 44;
+static constexpr int LINK_BAUD   = 921600;
+
 // ── Test command MSG_TYPE values ─────────────────────────────────────────────
 static constexpr uint8_t CMD_ECHO           = 0x01;
 static constexpr uint8_t CMD_GET_COUNTERS   = 0x02;
@@ -105,13 +110,16 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "uart_comm test firmware starting");
     ESP_LOGI(TAG, "UART%d TX=GPIO%d RX=GPIO%d @ %d baud, max payload %d", CONFIG_UART_COMM_PORT_NUM,
-             CONFIG_UART_COMM_TX_PIN, CONFIG_UART_COMM_RX_PIN, CONFIG_UART_COMM_BAUD_RATE,
+             LINK_TX_PIN, LINK_RX_PIN, LINK_BAUD,
              CONFIG_UART_COMM_MAX_PAYLOAD);
     ESP_LOGI(TAG, "Logging via USB-Serial-JTAG CDC (this port).");
     ESP_LOGI(TAG, "Connect the board UART0 port to PC and run pytest_uart_comm.py");
 
-    // ── Initialise uart_comm with Kconfig defaults ───────────────────────────
-    UartCommConfig cfg{};   // all fields come from Kconfig / sdkconfig.defaults
+    // ── Initialise uart_comm: the port comes from Kconfig ────────────────────
+    UartCommConfig cfg{};
+    cfg.tx_pin = LINK_TX_PIN;
+    cfg.rx_pin = LINK_RX_PIN;
+    cfg.baud_rate = LINK_BAUD;
     UartComm comm(cfg);
 
     if (!comm.isValid()) {

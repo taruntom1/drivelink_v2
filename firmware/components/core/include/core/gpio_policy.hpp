@@ -33,9 +33,16 @@ inline constexpr uint64_t kEsp32s3Nonexistent = gpioRange(22, 25);
 ///   cannot make them unsafe)
 inline constexpr uint64_t kEsp32s3Reserved = gpioBit(19) | gpioBit(20) | gpioRange(26, 37);
 
-/// The pins the ESP32-S3 policy allows. `core_config_idf.cpp` also takes out the uart_comm TX/RX
-/// pins; native builds set `CoreConfig::gpio_allowed_mask` themselves.
+/// The pins the ESP32-S3 policy allows: the serial link may use these.
 inline constexpr uint64_t kEsp32s3Allowed =
     gpioRange(0, kEsp32s3GpioCount - 1U) & ~(kEsp32s3Nonexistent | kEsp32s3Reserved);
+
+/// UART0's own pins, the factory link. The ROM prints on GPIO 43 at every
+/// reset, which would drive whatever a module has there, so no module may claim
+/// them even when the link has moved away.
+inline constexpr uint64_t kEsp32s3Uart0 = gpioBit(43) | gpioBit(44);
+
+/// The pins a module may claim, before the link's own are taken out.
+inline constexpr uint64_t kEsp32s3ModulePins = kEsp32s3Allowed & ~kEsp32s3Uart0;
 
 } // namespace core::gpio_policy

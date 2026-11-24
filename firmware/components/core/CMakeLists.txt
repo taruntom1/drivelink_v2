@@ -21,6 +21,8 @@ idf_component_register(
          "src/param_service.cpp"
          "src/pending_layout.cpp"
          "src/boot.cpp"
+         "src/link_service.cpp"
+         "src/link_settings.cpp"
          "src/persistence.cpp"
          "src/ram_estimate.cpp"
          "src/registry.cpp"

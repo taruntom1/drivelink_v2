@@ -78,8 +78,8 @@ LoadedConfig loadConfig(core_os::KvStore &store);
 Status saveConfig(core_os::KvStore &store, uint32_t gen, std::span<const StoredInstance> instances,
                   std::span<const ParamPair> system, std::string_view name = {});
 
-/// Erase the layout namespace and every instance namespace. A failure is
-/// reported (`core.NvsWriteFailed`) and answers `Fault` / `StorageFailed`.
+/// Erase the layout namespace and every instance namespace (never the link's).
+/// A failure is reported (`core.NvsWriteFailed`) and answers `Fault` / `StorageFailed`.
 Status eraseAll(core_os::KvStore &store);
 
 /// Fill `shadow` (one slot per item of `desc`) from stored pairs: every param

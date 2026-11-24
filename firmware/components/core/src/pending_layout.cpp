@@ -83,6 +83,13 @@ void PendingLayout::setSavedSystem(std::span<const uint32_t> values)
     m_saved_system.assign(values.begin(), values.end());
 }
 
+void PendingLayout::setSavedLink(const LinkSettings &link)
+{
+    const defs::TypeDesc &type = *m_table.at(0).desc;
+    linkInto(type, link, m_saved_system);
+    linkInto(type, link, m_system); // empty while inactive
+}
+
 uint32_t PendingLayout::systemValue(size_t index) const
 {
     const detail::InstanceRecord &system = m_table.at(0);
@@ -159,6 +166,9 @@ Status PendingLayout::check(const std::vector<PendingEntry> &before, const std::
     const ValidationConfig now = limits(m_system);
     const ValidationConfig was_limits = limits(before_system);
     Status st = checkCounts(before, was_limits, now);
+    if (st.ok()) {
+        st = checkLink(before_system);
+    }
     if (!st.ok()) {
         return st;
     }
@@ -221,6 +231,30 @@ Status PendingLayout::checkCounts(const std::vector<PendingEntry> &before, const
     if (over(loops_now, now.max_loops, loops_was, was.max_loops) ||
         over(m_entries.size() - loops_now, now.max_instances, before.size() - loops_was, was.max_instances)) {
         return Status::fail(Result::NoMemory, Detail::Capacity, kSystemKey);
+    }
+    return Status::success();
+}
+
+Status PendingLayout::checkLink(const std::vector<uint32_t> &before_system) const
+{
+    const defs::TypeDesc &type = *m_table.at(0).desc;
+    const LinkSettings now = linkFrom(type, m_system);
+    if (now == linkFrom(type, before_system)) {
+        return Status::success();
+    }
+    if (now.tx_pin == now.rx_pin) {
+        return Status::fail(Result::InvalidArgument, Detail::GpioConflict, kSystemKey);
+    }
+    if (!linkValid(now, m_config.link_pin_mask)) {
+        return Status::fail(Result::InvalidArgument, Detail::GpioNotAllowed, kSystemKey);
+    }
+    for (const PendingEntry &e : m_entries) {
+        for (size_t i = 0; i < e.desc->items.size(); ++i) {
+            if (defs::hasFlag(e.desc->items[i], defs::ItemFlag::Gpio) &&
+                (e.values[i] == now.tx_pin || e.values[i] == now.rx_pin)) {
+                return Status::fail(Result::InvalidArgument, Detail::GpioConflict, kSystemKey);
+            }
+        }
     }
     return Status::success();
 }
@@ -367,6 +401,15 @@ void PendingLayout::discard()
 
 Status PendingLayout::setValues(std::span<const SetEntry> entries, std::span<const uint32_t> applied)
 {
+    for (size_t k = 0; k < entries.size() && m_link_gate != nullptr; ++k) {
+        if (entries[k].ref.type == drivelink::protocol::defs::kSystemTypeId && isLinkItem(entries[k].ref.id)) {
+            Status gate = m_link_gate(m_link_gate_ctx);
+            if (!gate.ok()) {
+                gate.index = static_cast<uint16_t>(k);
+                return gate;
+            }
+        }
+    }
     Status st = run([&](std::vector<uint16_t> &touched) {
         for (size_t k = 0; k < entries.size(); ++k) {
             const Ref &r = entries[k].ref;

@@ -1,6 +1,6 @@
-// IDF only: what the platform decides in CoreConfig: the link's pins and frame
-// size, and the heap the rest of the firmware takes (all from Kconfig). The core
-// never sees sdkconfig.h or a CONFIG_ symbol. The limits are system settings.
+// IDF only: what the platform decides in CoreConfig: the link's frame size, and
+// the heap the rest of the firmware takes (all from Kconfig). The core never sees
+// sdkconfig.h or a CONFIG_ symbol. The limits and the link are system settings.
 
 #include "core/capture_service.hpp"
 #include "core/core_config.hpp"
@@ -26,9 +26,6 @@ CoreConfig coreConfigFromKconfig()
     cfg.ram.stream_slot_bytes = uart_comm::UartComm::streamSlotBytes(0);
     cfg.ram.after_core_bytes = CoreLink::ramBytes() + diag::Reporter::ramBytes() + kAfterCoreExtra +
                                (core_os::captureUsesInternalRam() ? core_os::kCaptureFallbackBytes : 0U);
-    // A module must never take over the host link.
-    cfg.gpio_allowed_mask = gpio_policy::kEsp32s3Allowed &
-                            ~(gpio_policy::gpioBit(CONFIG_UART_COMM_TX_PIN) | gpio_policy::gpioBit(CONFIG_UART_COMM_RX_PIN));
     return cfg;
 }
 

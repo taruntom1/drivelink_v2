@@ -25,6 +25,9 @@ Status OtaService::begin(uint32_t size,const p::Sha256Digest &digest) {
     if (auto st=disarmed();!st.ok()) { return st; }
     if (auto st=refresh();!st.ok()) { return st; }
     if (m_boot.pending) { return Status::fail(Result::Busy,Detail::OtaPendingConfirm); }
+    // A trial's timeout reboot would roll an unconfirmed image back.
+    if (m_core.linkTrialActive()) { return Status::fail(Result::Busy,Detail::LinkTrialActive); }
+    if (m_core.linkChangePending()) { return Status::fail(Result::Busy,Detail::RebootPending); }
     if (m_state==State::Receiving && size==m_size && digest==m_digest) { return {}; }
     if (m_state!=State::Idle) { return Status::fail(Result::Busy,Detail::OtaActive); }
     if (!size || size>m_boot.capacity) { return Status::fail(Result::InvalidArgument,Detail::Capacity); }
