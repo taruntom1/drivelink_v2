@@ -230,7 +230,7 @@ agent's system clock when it recorded the entry.
 
   | Family | Ops |
   |---|---|
-  | System | SAVE, REVERT, FACTORY_RESET, REBOOT, EXIT_SAFE_MODE, SET_NAME, BenchStall and BenchCrash (test builds only) |
+  | System | SAVE, REVERT, FACTORY_RESET, REBOOT, EXIT_SAFE_MODE, SET_NAME, LINK_CONFIRM (reserved), BenchStall and BenchCrash (test builds only) |
   | Layout | ADD_INSTANCE, REMOVE_INSTANCE, SET_LABEL, DISCARD_PENDING |
   | Capture | CONFIG, ARM, ABORT, TRIGGER |
   | Testgen | START, STOP |

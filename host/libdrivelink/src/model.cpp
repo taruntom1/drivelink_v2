@@ -82,6 +82,7 @@ void loadConfig(Client &client, DeviceSnapshot &snapshot)
     snapshot.configured = layout(client, snapshot, configured, false, batch_size);
     snapshot.pending = layout(client, snapshot, pending, true, batch_size);
     snapshot.system_params = params(client, system->second, 0, false, batch_size);
+    snapshot.pending_system_params = params(client, system->second, 0, true, batch_size);
 }
 
 DeviceSnapshot load(Client &client)
@@ -320,6 +321,7 @@ RequestHandle DeviceModel::refreshConfigAsync(Completion<OperationResult> comple
         auto latest=std::make_shared<DeviceSnapshot>(*state->snapshot);
         latest->configured=std::move(next.configured);latest->pending=std::move(next.pending);
         latest->system_params=std::move(next.system_params);
+        latest->pending_system_params=std::move(next.pending_system_params);
         state->snapshot=std::move(latest);
         return OperationResult{};
     },[weak=std::weak_ptr<State>(state),completion=std::move(completion)](auto result) mutable {

@@ -144,8 +144,8 @@ class Proc:
         return self.p.returncode
 
 
-def start_vdev(name, vdev, state, port=0, device_id=None):
-    argv = [vdev, '--port', str(port), '--state', str(state)]
+def start_vdev(name, vdev, state, port=0, device_id=None, extra=()):
+    argv = [vdev, '--port', str(port), '--state', str(state), *extra]
     if device_id:
         argv += ['--device-id', device_id]
     proc = Proc(name, argv)
@@ -1474,6 +1474,48 @@ def scenario_O_no_devices(ctx):
     return 'an agent with no devices lists none, refuses a device Hello (UnknownDevice) and exits 0 on SIGTERM'
 
 
+def scenario_P_pending_setting(ctx):
+    # A reboot_required system setting (vdev's test-only one) through an agent of its own.
+    vdev, vdev_url = start_vdev('vdev-setting', ctx['vdev'], ctx['tmp'] / 'setting', extra=('--test-setting',))
+    agent = Proc('agent-setting', [ctx['agent_exe'], '--port', '0', '--token', TOKEN, '--device', f'set={vdev_url}',
+                                   '--retry-ms', '300', '--no-advertise'])
+    setting = '0:0:32512'
+
+    def run(*command):
+        return data(cli(url, *command, device='set', token=TOKEN))
+
+    def views():
+        return [run(op, setting)['typed_values'][0] for op in ('get', 'get-pending')]
+
+    def ready(values):
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                expect(views() == values, f'running and pending are {values}')
+                return
+            except Fail:  # the agent is (re)connecting to the device
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.3)
+
+    try:
+        url = agent.next_line(15, 'READY ')[len('READY '):]
+        ready([10, 10])
+        expect(run('set', f'{setting}=25')['pending_reboot'], 'SET stages')
+        expect(views() == [10, 25], 'staged, not running')
+        run('discard')
+        expect(views() == [10, 10], 'DISCARD drops it')
+        run('set', f'{setting}=40')
+        run('save')
+        expect(views() == [10, 40], 'saved, not running')
+        run('reboot')
+        ready([40, 40])
+    finally:
+        agent.kill()
+        vdev.kill()
+    return 'a reboot_required system setting is staged, discarded, saved and runs after a reboot through the agent'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -1502,7 +1544,7 @@ SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_dir
              scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
              scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
              scenario_L_discovery_lan, scenario_M_discovery_quiet, scenario_N_browse_usage,
-             scenario_O_no_devices, scenario_9_device_clean_after_agent]
+             scenario_O_no_devices, scenario_P_pending_setting, scenario_9_device_clean_after_agent]
 
 
 def main():

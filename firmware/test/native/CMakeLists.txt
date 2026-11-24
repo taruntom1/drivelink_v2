@@ -64,6 +64,7 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/loop.cpp
     ${COMPONENTS_DIR}/core/src/param_service.cpp
     ${COMPONENTS_DIR}/core/src/pending_layout.cpp
+    ${COMPONENTS_DIR}/core/src/boot.cpp
     ${COMPONENTS_DIR}/core/src/persistence.cpp
     ${COMPONENTS_DIR}/core/src/registry.cpp
     ${COMPONENTS_DIR}/core/src/value.cpp
@@ -134,6 +135,7 @@ set(TEST_SOURCES
     tests/test_core_layout.cpp
     tests/test_core_boot.cpp
     tests/test_core_safe_mode.cpp
+    tests/test_core_system_settings.cpp
     tests/test_pid.cpp
     tests/test_motor_modules.cpp
     tests/test_motor_hardware.cpp

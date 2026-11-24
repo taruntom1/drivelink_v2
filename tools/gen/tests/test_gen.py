@@ -178,6 +178,8 @@ class GoldenOutput(TempCase):
         self.assertIn("// Retired ids, never reused: 0x0003 fx.old_rate", t)
         self.assertIn(".loops = loopMask(),", t)
         self.assertIn(".flags = flagBits(ItemFlag::Persist, ItemFlag::LockedWhileArmed),", t)
+        self.assertIn("inline constexpr uint16_t kFxSetting = 0x0004;", t)
+        self.assertIn(".flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),", t)  # a pending setting
 
     def test_empty_type_table(self) -> None:
         for path in self.defs.glob("*.yaml"):
@@ -588,7 +590,7 @@ class SystemType(TempCase):
         self.assertEqual(system["type"], "system")
         self.assertEqual(system["ns"], "system")
         self.assertEqual(system["loops"], [])
-        self.assertEqual([i["kind"] for i in system["items"] if not i["retired"]], ["param", "signal"])
+        self.assertEqual([i["kind"] for i in system["items"] if not i["retired"]], ["param", "signal", "param"])
 
     def test_is_in_the_hash(self) -> None:
         base = self.hash()
@@ -615,6 +617,14 @@ class SystemType(TempCase):
             ("wrong type name", "type: system", "type: sys", "type must be 'system'"),
             ("unknown key", "description: Fixture system items.", "colour: red", "unknown key 'colour'"),
             ("duplicate id", "{id: 0x0002, kind: signal", "{id: 0x0001, kind: signal", "id already used"),
+            ("reboot_required, not persisted", "flags: [reboot_required]}", "flags: [reboot_required], persist: false}",
+             "a reboot_required system param must persist"),
+            ("reboot_required, read_only", "flags: [reboot_required]}", "flags: [reboot_required, read_only]}",
+             "a reboot_required system param must persist"),
+            ("gpio", "type: u16, min: 1, max: 100, default: 10, flags: [reboot_required]}",
+             "type: u8, gpio: true, flags: [reboot_required]}", "'gpio' is not allowed on a system item"),
+            ("ref", "type: u16, min: 1, max: 100, default: 10, flags: [reboot_required]}",
+             "type: u32, ref: fixture, flags: [reboot_required]}", "'ref' is not allowed on a system item"),
         ]
         for label, old, new, expected in cases:
             with self.subTest(label):
@@ -622,6 +632,11 @@ class SystemType(TempCase):
                 shutil.copytree(FIXTURES, self.defs)
                 self.mutate(self.SYS, old, new)
                 self.assertSpecError(self.SYS, expected)
+
+    def test_a_live_param_need_not_persist(self) -> None:
+        self.mutate(self.SYS, "flags: [locked_while_armed]}", "flags: [locked_while_armed], persist: false}")
+        system = model.load_defs(self.defs)["types"][0]
+        self.assertEqual(system["items"][0]["flags"], ["locked_while_armed"])
 
     def test_module_type_cannot_be_named_system(self) -> None:
         (self.defs / "system.yaml").unlink()

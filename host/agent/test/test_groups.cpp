@@ -64,7 +64,7 @@ TEST_CASE("classify: every core op is open or exclusive (agent.md, \"The lease\"
     CHECK(route(Family::System, defs::SystemOp::BenchStall) == Route::Exclusive);
     CHECK(route(Family::System, defs::SystemOp::BenchCrash) == Route::Exclusive);
     for (auto op : {defs::SystemOp::Save, defs::SystemOp::Revert, defs::SystemOp::FactoryReset, defs::SystemOp::Reboot,
-                    defs::SystemOp::ExitSafeMode, defs::SystemOp::SetName})
+                    defs::SystemOp::ExitSafeMode, defs::SystemOp::SetName, defs::SystemOp::LinkConfirm})
     {
         CHECK(route(Family::System, op) == Route::Exclusive);
     }

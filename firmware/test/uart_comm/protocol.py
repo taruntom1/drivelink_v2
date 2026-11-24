@@ -19,7 +19,7 @@ from __future__ import annotations
 import struct
 import time
 
-CORE_PROTOCOL_VERSION = 10
+CORE_PROTOCOL_VERSION = 11
 TIME_PROTOCOL_VERSION = 1
 
 
@@ -35,7 +35,7 @@ def decode_time_reply(payload: bytes) -> tuple[int, int, int]:
 
 
 def command_group_payload(epoch: int, counter: int, values: tuple[int, ...] = ()) -> bytes:
-    """Core v7 command stream; values are descriptor-typed raw u32 slots."""
+    """Core command stream; values are descriptor-typed raw u32 slots."""
     if len(values) > 64:
         raise ValueError("at most 64 group entries")
     return struct.pack("<BBH", CORE_PROTOCOL_VERSION, epoch, counter) + struct.pack("<" + "I" * len(values), *values)
@@ -315,7 +315,7 @@ def _self_test() -> None:
             raise AssertionError('accepted malformed time reply')
         except ValueError:
             pass
-    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("0affffff0000c03f2a000000")
+    assert command_group_payload(255, 65535, (0x3fc00000, 42)) == bytes.fromhex("0bffffff0000c03f2a000000")
     assert len(command_group_payload(0, 0)) == 4
     assert len(command_group_payload(0, 0, (0,) * 64)) == 260
     try:

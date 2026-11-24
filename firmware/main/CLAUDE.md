@@ -8,6 +8,8 @@ current state in [host-status.md](../../plans/host-status.md).
   Boot event has final instance counts/safe-mode state. Report partial failures
   and leave the console usable; destructors tolerate partial setup.
   `app_main` never returns, including when UART fails.
+  The core starts through `core::bringUp()`: the crash counter goes up before
+  anything is sized from saved settings.
 - Core and other large startup objects belong on the heap. Instance `start()`
   runs on the main task's small stack. Measure its high-water mark on hardware
   when a change could increase peak stack use or reduce the available stack.

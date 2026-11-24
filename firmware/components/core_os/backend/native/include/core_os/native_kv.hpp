@@ -41,6 +41,10 @@ inline void tearNextWrite(KvStore &store, Tear mode = Tear::Truncate)
 /// Drop every pending fault.
 void clearFaults(KvStore &store);
 
+/// Call `fn(ctx)` at the start of every `get`, to see what was done before it
+/// (nullptr: none).
+void setReadObserver(KvStore &store, void (*fn)(void *ctx), void *ctx);
+
 /// Writes that took effect since the store was made.
 uint32_t writeCount(KvStore &store);
 

@@ -429,7 +429,7 @@ inline void writeLayout(core_os::KvStore &store, const std::vector<Inst> &insts,
 inline core::Status bootCore(core::Core &c, core_os::KvStore &store)
 {
     REQUIRE(c.init(kTypes).ok());
-    return c.boot(store);
+    return c.boot(core::prepareBoot(store));
 }
 
 /// Write `insts` as the layout and boot `c` on it.

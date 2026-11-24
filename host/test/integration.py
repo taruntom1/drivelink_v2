@@ -190,7 +190,7 @@ def main():
             cli('set', '5:0:1=NaN', code=2)
             cli('bench-crash', code=5)
             human = subprocess.run([args.cli, '--endpoint', url, 'info'], capture_output=True, text=True, timeout=20)
-            assert human.returncode == 0 and 'protocol_version: 10' in human.stdout
+            assert human.returncode == 0 and f'protocol_version: {CORE_PROTOCOL_VERSION}' in human.stdout
             kill()
             # External process restarts load config, not just Core reconstruction.
             url = start()
@@ -225,7 +225,7 @@ def main():
                 assert process.returncode == 0
                 process = None
                 url = start('--pty')
-                assert cli('info')['protocol_version'] == 10
+                assert cli('info')['protocol_version'] == CORE_PROTOCOL_VERSION
                 assert cli('time-ping')['samples'][0]['accepted']
                 assert cli('diag-info')['reset_reason'] == 0
                 cli('set', '0:0:3=100')
@@ -250,7 +250,7 @@ def main():
                     time.sleep(3)
                 finally:
                     os.close(fd)
-                assert cli('info')['protocol_version'] == 10
+                assert cli('info')['protocol_version'] == CORE_PROTOCOL_VERSION
                 assert cli('get', '0:0:3')['typed_values'] == [100], 'undrained REBOOT must be cancelled'
                 cli('save'); cli('reboot'); assert len(cli('instances')) == 2
             # A loop is an ordinary instance; its id is preserved on the wire
@@ -313,6 +313,26 @@ def main():
             testgen_smoke(args.cli, url, loop_rate=50, flash_write=True)
             from ota_smoke import simulated as ota_smoke
             ota_smoke(args.cli, url)
+            # A reboot_required system setting (test-only), over this transport:
+            # staged, unsaved at a crash, then saved and rebooted.
+            kill()
+            transport = ('--pty',) if url.startswith('serial://') else ()
+            url = start('--test-setting', *transport)
+            setting = '0:0:32512'
+            staged = cli('set', f'{setting}=25')
+            assert staged['pending_reboot'] and staged['typed_values'] == [25], staged
+            assert cli('get', setting)['typed_values'] == [10]
+            assert cli('get-pending', setting)['typed_values'] == [25]
+            assert cli('info')['flags'] & 1
+            kill(); url = start('--test-setting', *transport)
+            assert cli('get-pending', setting)['typed_values'] == [10]
+            cli('set', f'{setting}=25'); cli('save')
+            assert cli('get', setting)['typed_values'] == [10]
+            cli('reboot')
+            assert cli('get', setting)['typed_values'] == [25]
+            assert cli('get-pending', setting)['typed_values'] == [25]
+            assert not cli('info')['flags'] & 1
+            cli('reboot') # a clean reset: the process kills above count as crashes
             # The loop-stall scenario needs the bench stall: restart the same
             # state with --allow-crash, on the same transport.
             kill()

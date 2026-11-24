@@ -114,10 +114,10 @@ TEST_CASE("Core::boot runs once, before start")
         core::Core c(testConfig());
         REQUIRE(c.init(kTypes).ok());
         CHECK(c.start().detail == Detail::NotAtBoot);
-        REQUIRE(c.boot(store).ok());
+        REQUIRE(c.boot(core::prepareBoot(store)).ok());
         REQUIRE(c.start().ok());
         CHECK(c.isRunning());
-        const core::Status st = c.boot(store);
+        const core::Status st = c.boot(core::prepareBoot(store));
         CHECK(st.result == Result::Busy);
         CHECK(st.detail == Detail::NotAtBoot);
         c.stop();
@@ -126,5 +126,5 @@ TEST_CASE("Core::boot runs once, before start")
     }
     core::Core c(testConfig());
     REQUIRE(bootCore(c, store).ok());
-    CHECK(c.boot(store).detail == Detail::NotAtBoot);
+    CHECK(c.boot(core::prepareBoot(store)).detail == Detail::NotAtBoot);
 }

@@ -16,7 +16,7 @@ struct Fixture {
     core::Core core{core::CoreConfig{}};
     core::CommandService service{core,{}};
     std::array<uint8_t,1024> out{};
-    Fixture() { core_os::storeCrashCount(0); REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok()); }
+    Fixture() { core_os::storeCrashCount(0); REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok()); }
     size_t call(std::initializer_list<uint8_t> bytes,size_t cap=1024) {
         const std::vector<uint8_t> p(bytes);return service.handle(p,{out.data(),cap});
     }
@@ -70,7 +70,7 @@ TEST_CASE("Mock actions run through loop and paused handoffs after save and rebo
     Fixture f;
     uint8_t instance=255;REQUIRE(f.core.addInstance(112,0,"motor",instance).ok());REQUIRE(f.core.save().ok());
     core::Core rebooted{core::CoreConfig{}};
-    REQUIRE(rebooted.init(mod_mock::kTypes).ok());REQUIRE(rebooted.boot(f.store).ok());const core::SetEntry rate{{drivelink::protocol::defs::kLoopTypeId,0,1},100};uint32_t applied=0;
+    REQUIRE(rebooted.init(mod_mock::kTypes).ok());REQUIRE(rebooted.boot(core::prepareBoot(f.store)).ok());const core::SetEntry rate{{drivelink::protocol::defs::kLoopTypeId,0,1},100};uint32_t applied=0;
     REQUIRE(rebooted.params().set({&rate,1},{&applied,1}).ok());REQUIRE(rebooted.start().ok());
     core::ActionArgs args;args.values[0]=drivelink::protocol::defs::f32Bits(.5F);core::ActionOut out;
     REQUIRE(rebooted.runAction({112,0,768},args,out).ok());
@@ -89,7 +89,7 @@ TEST_CASE("Mock actions run through loop and paused handoffs after save and rebo
 TEST_CASE("Action completion events are wake hints, not timeout evidence") {
     Fixture f;uint8_t instance=0;
     REQUIRE(f.core.addInstance(114,1,"imu",instance).ok());REQUIRE(f.core.save().ok());
-    core::Core c{core::CoreConfig{}};REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(f.store).ok());
+    core::Core c{core::CoreConfig{}};REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(core::prepareBoot(f.store)).ok());
     const core::SetEntry rate{{drivelink::protocol::defs::kLoopTypeId,1,1},10};uint32_t applied=0;
     REQUIRE(c.params().set({&rate,1},{&applied,1}).ok());REQUIRE(c.start().ok());
     auto &slot=c.loop(1).actionSlot();

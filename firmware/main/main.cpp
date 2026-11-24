@@ -1,15 +1,17 @@
 // main.cpp - DriveLink v2 entry point.
 //
-// Startup order: diag, UartComm, NVS, the core (init, boot from NVS, start)
-// and its CoreLink, then the diag Reporter. A core that fails to start is
-// reported (core.InitFailed) and left out; the link and diag keep running, so
-// the host can still connect and ask what went wrong. app_main never returns.
+// Startup order: diag, UartComm, NVS, the core (crash counter and NVS load,
+// CoreConfig from the saved settings, construct, boot, start) and its CoreLink,
+// then the diag Reporter. A core that fails to start is reported
+// (core.InitFailed) and left out; the link and diag keep running, so the host
+// can still connect and ask what went wrong. app_main never returns.
 
 #include <array>
 #include <cstdio>
 #include <memory>
 #include <optional>
 #include <span>
+#include <utility>
 
 #include "core/core.hpp"
 #include "core/core_link.hpp"
@@ -127,21 +129,21 @@ std::unique_ptr<core::Core> startCore()
         }
     }
 
-    auto c = std::make_unique<core::Core>(core::coreConfigFromKconfig());
-    core::Status st = c->init(types);
-    if (!st.ok()) {
+    core::BringUp up = core::bringUp(kvStore(), core::coreConfigFromKconfig(), types);
+    core::Status st = up.status;
+    if (!st.ok() && up.stage == core::kInitStageRegistry) {
         DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_ARG, core::kInitStageRegistry, st.index,
                    "Core: module registry rejected list index %u (detail %u)", static_cast<unsigned>(st.index),
                    static_cast<unsigned>(st.detail));
         return nullptr;
     }
-    st = c->boot(kvStore());
     if (!st.ok()) {
         DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_STATE, core::kInitStageBoot, 0,
                    "Core: boot refused (result %u, detail %u)", static_cast<unsigned>(st.result),
                    static_cast<unsigned>(st.detail));
         return nullptr;
     }
+    std::unique_ptr<core::Core> c = std::move(up.core);
     st = c->start();
     if (!st.ok()) {
         DIAG_ERROR(diag::codes::core::kInitFailed, ESP_ERR_INVALID_STATE, core::kInitStageBoot, 0,

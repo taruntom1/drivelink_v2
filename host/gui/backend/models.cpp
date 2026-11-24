@@ -134,7 +134,7 @@ void DescriptorRows::reset(std::shared_ptr<const DeviceSnapshot> s,uint8_t type,
     if(s && s->types.contains(type)) {
         const auto &layout=pending?s->pending:s->configured;
         const std::map<uint16_t,Value> *values=nullptr;
-        if(type==defs::kSystemTypeId) {values=&s->system_params;}
+        if(type==defs::kSystemTypeId) {values=pending?&s->pending_system_params:&s->system_params;}
         else if(auto it=layout.find({type,instance});it!=layout.end()) {values=&it->second.params;}
         if(values) {
             for(const auto &[id,item]:s->types.at(type).items) {

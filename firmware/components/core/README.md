@@ -6,7 +6,7 @@ Core owns the device layout, module lifecycle, configuration transactions and lo
 
 | Change | Entry points |
 |---|---|
-| Lifecycle and module binding | [Core facade](include/core/core.hpp), [instance context](include/core/instance.hpp), [boot](src/core.cpp), [wiring order](src/wiring_order.cpp) |
+| Lifecycle and module binding | [Core facade](include/core/core.hpp), [instance context](include/core/instance.hpp), [boot stages](include/core/boot.hpp), [boot](src/core.cpp), [wiring order](src/wiring_order.cpp) |
 | Configuration limits | [Kconfig](Kconfig), [CoreConfig](include/core/core_config.hpp), [IDF translation and GPIO policy](src/idf/core_config_idf.cpp) |
 | Pending layout and parameters | [Layout validation](src/layout_validation.cpp), [pending copy](src/pending_layout.cpp), [parameter service](src/param_service.cpp) |
 | Persistent state | [Blob codec](src/config_blob.cpp), [generation selection and commit](src/persistence.cpp) |
@@ -17,7 +17,15 @@ Core owns the device layout, module lifecycle, configuration transactions and lo
 
 ## Boot and module lifetime
 
-1. Initialize the registry, then boot against the supplied KV store. Load the newest complete saved generation or use the factory layout. A valid saved empty layout stays empty. The system instance has its own storage outside the layout.
+`bringUp()` runs the boot for main and vdev, in three stages:
+
+- `prepareBoot()` decides safe mode and stores the new crash counter, then loads the newest complete generation from NVS, once. Nothing that a saved setting sizes exists yet, so a setting that crashes the boot still reaches safe mode.
+- `bootConfig()` applies the saved `reboot_required` system settings to the base `CoreConfig`. In safe mode it applies their defaults.
+- Construct Core with that config, then `init()` and `boot(plan)`.
+
+The steps of `boot()` and after:
+
+1. Initialize the registry, then boot with the plan. Use the generation it loaded or the factory layout. A valid saved empty layout stays empty. The system instance has its own storage outside the layout.
 2. Validate entries and build records with configuration-owned shadows. Invalid entries can retain records for inspection. Unknown types, duplicate identities and entries beyond capacity have no record and disappear on the next save. In crash-loop safe mode, configured records stay offline and editable without creating modules or loop tasks. Exiting safe mode clears the crash counter and leaves reboot to the caller.
 3. Start loop tasks with ticks gated. Create modules in stable dependency order, breaking ties by layout index. A failed loop or module leaves dependent instances unavailable while independent loops can start. During instance startup, bind all descriptor parameters, signals and inputs. Binding a parameter initializes its storage from the boot value. Resolve optional C++ interfaces at startup through `queryInterface`.
 4. Establish tick order separately from creation order. A reference normally places its target first. A reference marked `RefTicksAfter` can put the actuator after its controller. Resolve sources and allocate cross-loop storage before enabling ticks.
@@ -47,6 +55,8 @@ A paused action transfers control through a fixed per-loop slot. After pause ack
 ## Pending layout and persistence
 
 Create the pending copy lazily from the configured records. Validate the whole layout after each edit using the boot validator. Roll back an edit if its changed entry fails or a previously valid entry becomes invalid. Added instances and reboot-required parameters use pending values. Live values come from configured records. The system instance has no pending layout entry.
+
+The copy also holds the `reboot_required` system settings, starting from the values loaded at boot (in safe mode the saved ones, not the defaults that run). `CoreConfig::configure_system` turns them into limits: each edit validates the layout after it against the new settings and the layout before it against the old ones, so a setting cannot drop below what the pending layout uses, and raising a limit and using it fit in one pending session. These settings have no bound storage. The system shadow holds the running value, and SAVE writes the pending one. DISCARD returns to the boot-loaded values even after a SAVE, like the layout. `CoreConfig::system_type` lets a test add such a setting; the generated system type has none yet.
 
 SAVE writes instance and system blobs to the alternate generation slot, then writes the layout blob as its commit record. Only then clean up removed namespaces. Load requires a valid layout and matching generation for every required blob, including the system. Fall back to the other complete slot before factory defaults. Ignore retired and nonpersistent items, default missing or invalid values, and clamp valid numeric values to current limits. Layout format 3 stores the device name in the commit record. Format 2 loads with an empty name.
 

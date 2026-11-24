@@ -47,7 +47,7 @@ struct Fixture {
     void reboot() {
         c.reset();
         c = std::make_unique<core::Core>(core::CoreConfig{});
-        REQUIRE(c->init(types).ok()); REQUIRE(c->boot(store).ok()); REQUIRE(c->start().ok());
+        REQUIRE(c->init(types).ok()); REQUIRE(c->boot(core::prepareBoot(store)).ok()); REQUIRE(c->start().ok());
     }
     void tick() { c->loop(1).runTick(1); }
     uint32_t get(uint16_t id) {

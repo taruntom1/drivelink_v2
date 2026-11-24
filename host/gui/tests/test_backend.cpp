@@ -158,6 +158,12 @@ private slots:
         QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),valueBits(Value(float(2))));
         QVERIFY(!rows.data(rows.index(1),DescriptorRows::ValueBits).isValid());
         rows.reset(s,112,11,true);QCOMPARE(rows.rowCount(),0);
+        // The system's rows: the running or the pending value.
+        ModelItem setting;setting.descriptor.id=0x7F00;setting.descriptor.name="setting";setting.descriptor.value_type=ValueType::U16;
+        s->types[0].descriptor.name="system";s->types[0].items[0x7F00]=setting;
+        s->system_params[0x7F00]=uint16_t(10);s->pending_system_params[0x7F00]=uint16_t(25);
+        rows.reset(s,0,0);QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),10U);
+        rows.reset(s,0,0,true);QCOMPARE(rows.data(rows.index(0),DescriptorRows::ValueBits).toUInt(),25U);
         Error error(ErrorKind::Timeout,"uncertain",3,4);error.family=1;error.op=2;error.has_request_context=true;error.outcome_unknown=true;
         const auto fields=errorFields(error);QVERIFY(fields["outcomeUnknown"].toBool());QCOMPARE(fields["op"].toInt(),2);
     }
@@ -288,6 +294,20 @@ private slots:
         QVERIFY(kinds.contains("remove:old"));QVERIFY(kinds.contains("add:aux"));QVERIFY(kinds.contains("label:imu_main"));
         QVERIFY(kinds.contains("param:slow.realtime"));QVERIFY(kinds.contains("param:aux.pin")); // differs from the default
         QVERIFY(!kinds.contains("param:far.pin"));
+        // System settings: a reboot_required one that differs, never a live one.
+        auto staged=*s;
+        auto &items=staged.types[0].items;
+        items[0x7F00]=item(0x7F00,"test.setting",ItemKind::Param,ValueType::U16,reboot);
+        items[4]=item(4,"watchdog_ms",ItemKind::Param,ValueType::U16);
+        staged.system_params[0x7F00]=uint16_t(10);staged.system_params[4]=uint16_t(200);
+        staged.pending_system_params=staged.system_params;
+        QCOMPARE(pendingChanges(staged).size(),size_t(kinds.size()));
+        staged.pending_system_params[0x7F00]=uint16_t(25);staged.pending_system_params[4]=uint16_t(300);
+        const auto changes=pendingChanges(staged);
+        QCOMPARE(changes.size(),size_t(kinds.size()+1));
+        QCOMPARE(changes[0].kind,QString("param"));QCOMPARE(changes[0].key,QString("0:0:32512"));
+        QCOMPARE(changes[0].subject,QString("system.test.setting"));
+        QCOMPARE(changes[0].from,QString("10"));QCOMPARE(changes[0].to,QString("25"));
         const auto counts=layoutCounts(*s);
         QCOMPARE(counts.loops,2);QCOMPARE(counts.loopLimit,4);QCOMPARE(counts.instances,6);QCOMPARE(counts.instanceLimit,5);
         // A GpioConflict names the holder from the pending layout.

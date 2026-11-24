@@ -1,6 +1,6 @@
 set(COMPONENTS ${CMAKE_CURRENT_LIST_DIR}/../../firmware/components)
 set(CORE_SOURCES
-  ota_service
+  boot ota_service
   testgen_service capture_service config_blob command_service group_service source_service core safety crc32 instance layout_validation loop loop_instance
   param_service pending_layout persistence registry value wiring_order)
 set(SOURCES)

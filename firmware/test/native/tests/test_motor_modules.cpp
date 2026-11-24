@@ -45,7 +45,7 @@ struct Motor {
             if (duplicate) { layout[4].pairs = layout[3].pairs; }
         }
         REQUIRE(core::persist::saveConfig(store,1,layout,{}).ok());
-        REQUIRE(c.init(types).ok()); REQUIRE(c.boot(store).ok());
+        REQUIRE(c.init(types).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
         if (!c.instancesFailed()) {
             std::array<core::Ref,3> inputs{{{32,0,514},{32,0,512},{32,0,513}}};
             const core::Ref direct{112,0,512};

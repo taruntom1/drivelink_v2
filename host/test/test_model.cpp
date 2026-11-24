@@ -143,7 +143,7 @@ struct ModelPeer
                         return {p::core_wire::kVersion, req[1], family, op, 1, 3};
                     }
                     if (current == Mode::Truncated) { break; }
-                    u32(body, 456);
+                    u32(body, op == 3 ? 440 + revision.load() : 456);
                 }
                 else if (item_id == 900) { u32(body, current == Mode::InvalidEnum ? 9 : 42); }
                 else { u32(body, revision.load() + id + item_id + (op == 3 ? 1000 : 0)); }
@@ -209,6 +209,7 @@ TEST_CASE("snapshot discovers unknown types, sparse IDs, typed values and safe m
     CHECK(s.types.at(223).items.at(903).descriptor.kind == ItemKind::Action);
     CHECK(s.codes.at(0).code == 4321);
     CHECK(std::get<uint16_t>(s.system_params.at(1234)) == 456);
+    CHECK(std::get<uint16_t>(s.pending_system_params.at(1234)) == 457);
     CHECK(s.configured.size() == 2); CHECK(s.pending.size() == 2);
     CHECK(s.configured.at({223, 2}).params.size() == 71);
     CHECK(std::get<uint32_t>(s.configured.at({223, 2}).params.at(169)) == 188);
@@ -305,6 +306,8 @@ TEST_CASE("configuration refresh rereads layouts and params, keeping descriptors
     const auto after=model.snapshotShared();
     CHECK(models==1);
     CHECK(std::get<uint32_t>(after->pending.at({223,31}).params.at(169))==1300);
+    CHECK(std::get<uint16_t>(after->pending_system_params.at(1234))==540);
+    CHECK(std::get<uint16_t>(after->system_params.at(1234))==456);
     CHECK(after->info.build_id=="17"); // GET_INFO and descriptors were not reread
     CHECK(after->info.name=="17");
     CHECK(after->types.at(223).items.at(900).enums.at(0).name=="custom_mode");

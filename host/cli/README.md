@@ -16,7 +16,7 @@ A REF is `TYPE:INSTANCE:ITEM`; IDs accept decimal or `0x` hexadecimal. The numer
 
 Values are parsed with the item's device descriptor: `true`/`false`, integers, floats or enum names. NaN and infinity are rejected. GET and SET print raw slot bits and typed values. `action REF [ARG...] [--blob HEX]` takes descriptor-typed scalar arguments and up to 512 blob bytes.
 
-Every connection reads INFO and checks core v10 before the requested command runs, so a mismatched device fails before any mutation.
+Every connection reads INFO and checks core v11 before the requested command runs, so a mismatched device fails before any mutation.
 
 ## Output and exit codes
 

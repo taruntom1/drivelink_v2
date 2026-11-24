@@ -5,7 +5,7 @@ A virtual device that runs the firmware [core](../../firmware/components/core/RE
 ## Run
 
 ```sh
-drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode]
+drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting]
 ```
 
 | Option | Effect |
@@ -17,6 +17,7 @@ drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id 
 | `--allow-crash` | Enables the core's bench-only crash and BenchStall operations (default off) |
 | `--fail-writes-after N` | Fails persistent KV writes after N successful operations, for save and recovery tests |
 | `--scenario-file PATH`, `--safe-mode` | GUI test controls; see [Scenario controls](#scenario-controls) |
+| `--test-setting` | Adds one test-only `reboot_required` system param, `test.setting` (0:0:32512, u16, 1..100, default 10), for the pending-settings tests |
 
 None of these options affect hardware firmware.
 
@@ -24,7 +25,7 @@ None of these options affect hardware firmware.
 
 - The real core services, generated mock definitions and loop threads, including the factory layout, safe mode, arming, heartbeat and command monitor, mock emergency force, capture, the per-loop test generator and core events. There is no host-specific module table.
 - `mod_mock` modules: `actuator.mock` and `feedback.mock` with plant parameters (deadband, saturation, optional one-tick delay, seeded encoder noise), `imu.mock` on the shared IMU state and calibration codec, `fusion.mock`, and the real `controller.cascade_pid`. vdev does not register `imu.bno055` or any pin-based module.
-- Core v10, time v1, status and diag v3. CPU load reports 255 (unavailable). Diagnostics use fixed 254-slot identities and a bounded record queue; control loops never allocate them.
+- Core v11, time v1, status and diag v3. CPU load reports 255 (unavailable). Diagnostics use fixed 254-slot identities and a bounded record queue; control loops never allocate them.
 - Time requests use the shared codecs, take RX time at dispatch, and patch TX time and CRC when their queued write begins. Malformed time requests are dropped and counted. See the [time contract](../../docs/protocol/time.md).
 - Native real-time guard violations in loop, controller and mock ticks are counted and reported on stderr. Safe mode starts no loop threads.
 

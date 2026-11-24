@@ -281,6 +281,16 @@ std::vector<Candidate> sourceCandidates(const DeviceSnapshot &s,InstanceKey cons
 
 std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
     std::vector<PendingChange> result;
+    // System settings: only reboot_required params can be pending.
+    for(const auto &[id,v]:s.pending_system_params) {
+        const auto *item=itemOf(s,defs::kSystemTypeId,id);
+        const auto running=s.system_params.find(id);
+        if(!item || running==s.system_params.end() || !flag(item->descriptor,defs::ItemFlag::RebootRequired)) {continue;}
+        const auto from=valueBits(running->second),to=valueBits(v);
+        if(from==to) {continue;}
+        result.push_back({"param",itemKey(defs::kSystemTypeId,0,id),"system."+str(item->descriptor.name),
+                          formatValue(*item,from),formatValue(*item,to)});
+    }
     std::set<InstanceKey> keys;
     for(const auto &[k,e]:s.configured) {keys.insert(k);}
     for(const auto &[k,e]:s.pending) {keys.insert(k);}

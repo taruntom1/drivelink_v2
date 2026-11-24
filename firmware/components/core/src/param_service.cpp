@@ -51,10 +51,9 @@ ParamService::Target ParamService::lookup(const Ref &ref) const
             return t;
         }
         t.item = &t.record->desc->items[t.index];
-        t.system = (t.record->type_id == drivelink::protocol::defs::kSystemTypeId);
         if (defs::hasFlag(*t.item, defs::ItemFlag::RebootRequired)) {
             t.domain = ParamDomain::Pending;
-        } else if (t.system) {
+        } else if (t.record->type_id == drivelink::protocol::defs::kSystemTypeId) {
             t.domain = ParamDomain::System;
         } else if (t.record->state != InstanceState::Running) {
             t.domain = ParamDomain::Offline;
@@ -92,8 +91,7 @@ Status ParamService::validate(const SetEntry &entry, uint16_t i, uint32_t &appli
     if (defs::hasFlag(item, defs::ItemFlag::ReadOnly)) {
         return Status::fail(Result::InvalidArgument, Detail::ReadOnly, i);
     }
-    if (t.domain == ParamDomain::Pending && (t.system || m_pending == nullptr)) {
-        // The system is not a layout entry: it has no pending copy.
+    if (t.domain == ParamDomain::Pending && m_pending == nullptr) {
         return Status::fail(Result::InvalidArgument, Detail::Unsupported, i);
     }
     if (defs::hasFlag(item, defs::ItemFlag::LockedWhileArmed) && armed()) {

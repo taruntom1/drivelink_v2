@@ -1,8 +1,9 @@
-# Fixture system type: a param and a signal.
+# Fixture system type: a live param, a reboot_required one and a signal.
 type: system
 type_id: 0x00
 description: Fixture system items.
 items:
   - {id: 0x0001, kind: param, name: fx.rate_hz, type: u16, unit: Hz, min: 10, max: 100, default: 50, flags: [locked_while_armed]}
   - {id: 0x0002, kind: signal, name: fx.uptime_s, type: u32, unit: s}
+  - {id: 0x0004, kind: param, name: fx.setting, type: u16, min: 1, max: 100, default: 10, flags: [reboot_required]}
   - {id: 0x0003, name: fx.old_rate, retired: true}

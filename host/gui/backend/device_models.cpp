@@ -30,6 +30,9 @@ QString refusalText(uint8_t result,uint8_t detail) {
     case D::NoCommandGroup: return tr("No command group keeps the device alive");
     case D::DisarmRaced: return tr("A DISARM arrived during the request");
     case D::RebootPending: return tr("A reboot is pending; reboot the device first");
+    case D::LinkTrialActive: return tr("The serial link settings are on trial; confirm them or wait until they revert");
+    case D::NoLinkTrial: return tr("There is no link trial to confirm");
+    case D::NotEnoughMemory: return tr("The device has not enough memory for this");
     case D::WrongState: return tr("The device is in the wrong state for this");
     case D::OtaActive: return tr("A firmware update is in progress");
     case D::OtaPendingConfirm: return tr("A firmware update waits for confirmation");

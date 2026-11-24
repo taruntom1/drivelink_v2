@@ -46,7 +46,7 @@ enum class ParamDomain : uint8_t {
     System,  ///< system params: applied on the caller
     Loop,    ///< live params staged in the loop identified by the target
     Offline, ///< live params of an instance that isn't running: written to its shadow on the caller
-    Pending, ///< `reboot_required` params, and params of an instance that exists only in the pending layout
+    Pending, ///< `reboot_required` params (the system's too), and params of an instance that exists only in the pending layout
 };
 
 /// The param service: reads and atomic batch writes, on the config task side.
@@ -56,8 +56,7 @@ enum class ParamDomain : uint8_t {
 ///   1. Every entry is validated first: the Ref exists (in the configured
 ///      records, or as an instance added to the pending layout), it is a param
 ///      (`WrongKind`), not `read_only`, not `locked_while_armed` while armed,
-///      and its value passes `checkValue` (clamped). No Ref twice. A
-///      `reboot_required` system param is `Unsupported`.
+///      and its value passes `checkValue` (clamped). No Ref twice.
 ///   2. Domain (`ParamDomain`): every entry has the same one, else
 ///      `CrossLoopBatch`.
 ///   3. A loop batch claims that loop's staging slot (else `Busy` /
@@ -70,7 +69,7 @@ enum class ParamDomain : uint8_t {
 ///      already applied are rolled back and the answer is `Fault` /
 ///      `TimerFailed`.
 ///   5. An offline batch is written to the shadows on the caller.
-///   6. A pending batch goes to the pending layout, which validates the whole
+///   6. A pending batch goes to the pending copy, which validates the whole
 ///      layout; accepted, it answers `PendingReboot` (`Status::accepted()`)
 ///      with the applied values.
 /// On failure `Status::index` names the entry.
@@ -139,7 +138,6 @@ private:
         const defs::ItemDesc *item = nullptr;
         size_t index = detail::kNoItem;
         ParamDomain domain = ParamDomain::System;
-        bool system = false; ///< the system record
         Loop *loop = nullptr;
     };
 

@@ -37,7 +37,7 @@ void boot(core::Core &c, core_os::KvStore &store)
 {
     core_os::native::resetBootInfo();
     REQUIRE(c.init(mod_mock::kTypes).ok());
-    REQUIRE(c.boot(store).ok());
+    REQUIRE(c.boot(core::prepareBoot(store)).ok());
 }
 core::Status set(core::Core &c, uint8_t type, uint8_t instance, uint16_t id, uint32_t value)
 {
@@ -163,7 +163,7 @@ TEST_CASE("Loop placement: safe-mode edits are applied only on the next normal b
     core_os::native::setResetWasCrash(true); core_os::storeCrashCount(2);
     {
         core::Core c(core::CoreConfig{});
-        REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(store).ok()); REQUIRE(c.safeMode());
+        REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok()); REQUIRE(c.safeMode());
         REQUIRE(set(c, defs::kLoopTypeId, 0, lp::kCore, 2).accepted());
         CHECK(placement(c, 0, true) == 2); CHECK(requested_affinities[0] == 99);
         REQUIRE(c.save().ok());
@@ -193,7 +193,7 @@ TEST_CASE("Configurable loops: safe mode edits and REVERT use offline loop shado
     { core::Core c(core::CoreConfig{});boot(c,store);REQUIRE(c.save().ok()); }
     core_os::native::setResetWasCrash(true);core_os::storeCrashCount(2);
     core::Core c(core::CoreConfig{});
-    REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(store).ok());REQUIRE(c.safeMode());
+    REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(core::prepareBoot(store)).ok());REQUIRE(c.safeMode());
     CHECK(c.loopCount()==0);
     REQUIRE(set(c,defs::kLoopTypeId,0,lp::kRateHz,500).ok());
     REQUIRE(c.revert().ok());

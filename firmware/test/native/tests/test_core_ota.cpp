@@ -22,7 +22,7 @@ struct Manual {
 struct Fixture {
     Manual manual;core_os::KvStore store;core::Core core{{}};core::CommandService service{core,{}};
     std::vector<uint8_t> image=otaFixture();
-    Fixture() { REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(store).ok());REQUIRE(core.start().ok()); }
+    Fixture() { REQUIRE(core.init(mod_mock::kTypes).ok());REQUIRE(core.boot(core::prepareBoot(store)).ok());REQUIRE(core.start().ok()); }
     void begin() { REQUIRE(core.ota().begin(static_cast<uint32_t>(image.size()),p::sha256(image)).ok()); }
     void upload() {
         begin();for (uint32_t i=0;i<image.size();) {
@@ -127,7 +127,7 @@ TEST_CASE("OTA mutations refuse armed devices and remain available in safe mode"
         std::strcpy(layout[0].label,"control");layout[0].pairs={{1,1000},{2,1}};
         layout[1].type_id=112;layout[1].instance=0;layout[1].loop=0;std::strcpy(layout[1].label,"motor");
         REQUIRE(core::persist::saveConfig(store,1,layout,{}).ok());
-        core::Core c({});REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(store).ok());
+        core::Core c({});REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(core::prepareBoot(store)).ok());
         const core::Ref input{112,0,512};REQUIRE(c.groups().stageConfig(core::GroupKind::Command,0,0,1,{&input,1}).ok());
         c.loop(0).runTick(1);REQUIRE(c.groups().complete(core::GroupKind::Command,0,0).ok());REQUIRE(c.start().ok());REQUIRE(c.arm().ok());
         auto &ota=c.ota();const auto image=otaFixture();
@@ -138,7 +138,7 @@ TEST_CASE("OTA mutations refuse armed devices and remain available in safe mode"
     }
     SUBCASE("safe mode") {
         Manual manual;core_os::storeCrashCount(2);core_os::native::setResetWasCrash(true);
-        core_os::KvStore store;core::Core c({});REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(store).ok());
+        core_os::KvStore store;core::Core c({});REQUIRE(c.init(mod_mock::kTypes).ok());REQUIRE(c.boot(core::prepareBoot(store)).ok());
         REQUIRE(c.safeMode());CHECK(c.loopCount()==0);
         const auto image=otaFixture();REQUIRE(c.ota().begin(static_cast<uint32_t>(image.size()),p::sha256(image)).ok());
         REQUIRE(c.ota().abort().ok());CHECK_FALSE(c.ota().blocksArm());

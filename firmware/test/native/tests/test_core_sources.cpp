@@ -37,7 +37,7 @@ Consumer &consumer(core::Core &c, uint8_t instance = 0) {
     return static_cast<Consumer &>(*r->object);
 }
 void boot(core::Core &c, core_os::KvStore &store, const std::vector<Inst> &layout) {
-    writeLayout(store, layout); REQUIRE(c.init(kSourceTypes).ok()); REQUIRE(c.boot(store).ok());
+    writeLayout(store, layout); REQUIRE(c.init(kSourceTypes).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
 }
 }
 
@@ -153,7 +153,7 @@ TEST_CASE("Sources: pending validation is atomic, deduplicates refs and protects
         CHECK(c.params().set({&invalid,1},applied).detail == core::Detail::BadRef);
     }
     REQUIRE(c.save().ok()); c.stop();
-    core::Core reloaded(config); REQUIRE(reloaded.init(kSourceTypes).ok()); REQUIRE(reloaded.boot(store).ok());
+    core::Core reloaded(config); REQUIRE(reloaded.init(kSourceTypes).ok()); REQUIRE(reloaded.boot(core::prepareBoot(store)).ok());
     const core::Ref saved{fusion::kTypeId,0,1};
     REQUIRE(reloaded.params().get({&saved,1},{&bits,1}).ok()); CHECK(bits == target());
     reloaded.loop(0).runTick(1); reloaded.loop(1).runTick(1); CHECK(consumer(reloaded).a.valid);
@@ -202,7 +202,7 @@ TEST_CASE("Sources: triple buffer stays coherent under a faster writer and lates
 TEST_CASE("Sources: production fusion ticks under the real-time guard") {
     Manual manual; core_os::KvStore store; core::Core c{core::CoreConfig{}};
     writeLayout(store, {{115,0,0,"fusion",{{2,defs::sourceRef(114,0,256)}}},{114,0,1,"imu"}});
-    REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(store).ok());
+    REQUIRE(c.init(mod_mock::kTypes).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
     c.loop(1).runTick(1); c.loop(0).runTick(1);
     const auto *r = c.findRecord(115,0); REQUIRE(r->state == core::InstanceState::Running);
     CHECK(core::loadValue(defs::ValueType::U32,r->bindings[r->itemIndex(259)].ptr) != core::kInvalidAgeUs);

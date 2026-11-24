@@ -332,6 +332,17 @@ private slots:
         writes.back().done({});
         // Accepted: the row shows the reverted value until the read-back.
         QCOMPARE(float(rows->data(rows->index(1,0),GainRows::Value).toDouble()),0.85f);
+        // A staged system setting notifies; the same snapshot again does not.
+        int notified=0;const auto link=connect(&view,&TuneView::changed,&view,[&]{++notified;});
+        auto staged=dirty;staged.pending_system_params[0x7F00]=uint16_t(25);
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(staged),"dev");
+        QCOMPARE(notified,1);
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(staged),"dev");
+        QCOMPARE(notified,1);
+        staged.pending_system_params[0x7F00]=uint16_t(30);
+        view.setSnapshot(std::make_shared<const DeviceSnapshot>(staged),"dev");
+        QCOMPARE(notified,2);
+        disconnect(link);
         // Another device: saved values unknown while it is dirty.
         view.setSnapshot(std::make_shared<const DeviceSnapshot>(dirty),"other");
         QVERIFY(!view.revert()["enabled"].toBool());QVERIFY(view.revert()["reason"].toString().contains("unknown"));

@@ -257,7 +257,8 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         case defs::SystemOp::Reboot:
             if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
             m_after=AfterReply::CommitAndReboot;return {};
-        default:return bad(Detail::Unsupported); // F4b arm state machine
+        case defs::SystemOp::LinkConfirm: // reserved: there is no link trial yet
+        default:return bad(Detail::Unsupported);
         }
     }
     case defs::Family::Layout: {
@@ -394,7 +395,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         if(op==defs::DescribeOp::GetItems || op==defs::DescribeOp::GetEnum) { type=r.readU8(); }
         if(op==defs::DescribeOp::GetEnum) { item_id=r.readU16Le(); }
         const auto start=r.readU16Le();if(!r.done()) { return bad(); }
-        const auto *t=defs::findType(defs::kTypeTable,type);
+        const auto *t=type==defs::kSystemTypeId?&m_core.systemType():defs::findType(defs::kTypeTable,type);
         const auto *item=t?defs::findItem(*t,item_id):nullptr;
         size_t total=0;
         switch(op) {
