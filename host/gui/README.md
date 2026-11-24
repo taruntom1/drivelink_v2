@@ -20,6 +20,12 @@ Use the host superbuild for builds and the published guide for operator workflow
 - Before changing motion controls, read the authorization, lease-loss and hold rules. The Tune workflows below describe when a device-side run releases its hold. [GUI rules](CLAUDE.md)
 - For device requests and delivery semantics, see the library's caller contract. For message details and recovery, use the corresponding protocol specifications. [Library API](../libdrivelink/README.md) · [Protocol specifications](../../docs/protocol/)
 
+## Disconnect
+
+- Disconnect (above Settings in the connected rail) returns to Connect after teardown. Closing the window uses the same warnings and quits after teardown. One Cancel/Disconnect or Cancel/Quit dialog lists every applicable warning.
+- `controllingMotion` covers this GUI's ARM in flight or active control. A remote observer can leave while the lease holder keeps driving. Unsaved configuration stays on the device until it reboots.
+- The status bar shows Disconnecting… during teardown and keeps DISARM available while there is a link. Disconnect and window close wait for [plant identification](#plant-identification-h2e-3) to write the mode back.
+
 ## Tune (H2e-1)
 
 - Discover running controllers with a testgen-capable f32 input. The gain editor uses live descriptors flagged `tune`. Gain drags coalesce to at most one send per 50 ms with a final send on release, and only one write per gain is in flight. Saved gain values are known only after a clean configuration read. Revert waits for pending writes and sends one live batch.
@@ -37,8 +43,8 @@ Use the host superbuild for builds and the published guide for operator workflow
 
 1. Require the operator's confirmation that the actuator can move freely and this window's accepted ARM. DISARM, controller change and reconnect clear confirmation. Identification requires a commandable input and does not grant permission for Auto re-run. [Module naming conventions](../../docs/adding-a-module.md)
 2. Hold manual commands at zero. Read the current mode from the device, write the selected open-loop mode if needed, and stop setup on refusal. Send CONFIG, ARM and START once. START requires the same ARM generation that authorized the step.
-3. After the signal stops, send a fresh zero before releasing the hold. Restore the previous mode while the controller is still held. A local configuration block delays write-back. Boot and close skip write-back. On close or link loss, report that the mode may still be set.
-4. Block gain and mode edits, Restore, Revert, Run, Auto re-run, Open, Save, reboot, Rename and firmware operations until write-back finishes. Keep the current Tune tab during this interval.
+3. After the signal stops, send a fresh zero before releasing the hold. Restore the previous mode while the controller is still held. A local configuration block delays write-back. An unexpected boot or link loss can interrupt write-back. On link loss, report that the mode may still be set.
+4. Block gain and mode edits, Restore, Revert, Run, Auto re-run, Open, Save, reboot, Rename and firmware operations until write-back finishes. Disable Disconnect with an explanation, and answer a window-close attempt with a notice to try again after cleanup. Stop and DISARM stay available. Keep the current Tune tab during this interval.
 5. Fit responses on a worker, using the captured input transition to end the fit window. Only the operator's Apply writes suggested gains, as one live batch with a history entry. Suggestions require an open-loop step, a settled response, a steady start, a usable fit and positive gain.
 
 ## Verification and packaging

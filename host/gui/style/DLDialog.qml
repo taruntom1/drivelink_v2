@@ -59,6 +59,7 @@ T.Dialog {
             objectName: "title"
             width: parent.width
             text: control.title
+            textFormat: Text.PlainText
             font: Theme.fontTitleSection
             color: Theme.textPrimary
             wrapMode: Text.Wrap
@@ -70,6 +71,7 @@ T.Dialog {
             width: parent.width
             visible: text.length > 0
             text: control.text
+            textFormat: Text.PlainText
             font: Theme.fontBodyDefault
             color: Theme.textSecondary
             wrapMode: Text.Wrap

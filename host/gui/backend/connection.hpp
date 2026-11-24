@@ -30,6 +30,7 @@ class Connection : public QObject {
     Q_PROPERTY(bool reconnecting READ reconnecting NOTIFY changed)
     Q_PROPERTY(bool armEnabled READ armEnabled NOTIFY changed)
     Q_PROPERTY(bool arming READ arming NOTIFY changed)
+    Q_PROPERTY(bool controllingMotion READ controllingMotion NOTIFY changed)
     Q_PROPERTY(int armState READ armState NOTIFY changed)
     Q_PROPERTY(bool ackEnabled READ ackEnabled NOTIFY changed)
     Q_PROPERTY(QString ackBlockedReason READ ackBlockedReason NOTIFY changed)
@@ -122,6 +123,7 @@ public:
     virtual bool reconnecting() const=0;
     virtual bool armEnabled() const=0;
     virtual bool arming() const=0;
+    virtual bool controllingMotion() const=0;
     virtual int armState() const=0;
     virtual bool ackEnabled() const=0;
     virtual QString ackBlockedReason() const=0;
@@ -302,6 +304,7 @@ public:
     bool reconnecting() const override {return m_reconnecting;}
     bool armEnabled() const override;
     bool arming() const override {return m_arming;}
+    bool controllingMotion() const override;
     int armState() const override;
     bool ackEnabled() const override;
     QString ackBlockedReason() const override;
