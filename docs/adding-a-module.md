@@ -82,7 +82,8 @@ never renumber or reuse it.
 
 ## 3. Checks
 
-- [ ] `python tools/validate.py full` passes.
+- [ ] `python tools/validate.py --only gen native fw fw-nolog` and the [other checks
+      for what you touched](development.md#checks-before-a-pr) pass.
 - [ ] On a bare board, an instance can be added, configured, saved and
       reloaded, and a missing device fails cleanly (`InitFailed`, ARM refused).
 - [ ] Checks that need the real hardware get a script with a mock mode and a

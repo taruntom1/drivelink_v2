@@ -2,7 +2,7 @@
 """Run DriveLink's validation checks: one list, used locally and by CI.
 
     python tools/validate.py quick          # generator, native tests, this OS's host tests (+ agent on Linux)
-    python tools/validate.py full           # every check below: the gate before a PR
+    python tools/validate.py full           # every check below (docs/development.md says when)
     python tools/validate.py --only fw-nolog
     python tools/validate.py --list
 

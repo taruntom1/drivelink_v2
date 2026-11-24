@@ -10,7 +10,7 @@ This is the operational reference; agent constraints stay in the scoped
 
 ```bash
 python tools/validate.py quick             # generator, native tests, this OS's host tests; no IDF
-python tools/validate.py full              # every check; run it before a PR
+python tools/validate.py full              # every check, as CI runs them (30 to 45 min)
 python tools/validate.py --only fw-nolog   # one check (--list names them)
 ```
 
@@ -178,7 +178,7 @@ One script holds the list of checks and their commands. CI calls it with `--only
 | `fw`, `fw-nolog`, `fw-hil-app` | `idf.py build` of the firmware, its no-log variant and the HIL test app, each from inside its app, failing on any `warning:` | ESP-IDF: the caller's export if there is one. Otherwise, on Windows, `export.ps1` with the two fixes of this guide |
 | `fw-package` | `idf.py reconfigure build` of the firmware (the version is read at configure time), then `tools/package_fw.py`: checks the app image's embedded version and project name, and writes `build/firmware/drivelink-firmware-<version>/` (a merged image for 0x0, the parts at their offsets, the OTA app, the ELF, `flash_args.json`, `README.txt`, licence, `firmware/notices/THIRD_PARTY_NOTICES.txt`, `SHA256SUMS`) | As `fw` (esptool comes with ESP-IDF) |
 
-- **Modes.** `quick` is `gen`, `native` and the host check of this OS (on Linux also `agent`). `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out; only a `full` run with nothing left out is the gate for a PR.
+- **Modes.** `quick` is `gen`, `native` and the host check of this OS (on Linux also `agent`). `full` is every check. `--only` and `--skip` pick by name. The summary names the checks a run left out. A `full` run with nothing left out is the full gate; a PR needs less ([Checks before a PR](#checks-before-a-pr)).
 - **One at a time.** Checks never run in parallel: each build already uses every CPU, and the tests have timing bounds. `--jobs` caps the CMake builds. `idf.py` has no job option for Ninja.
 - **Unchanged checks are skipped.** A check that passed shows as `pass (unchanged)` until a file it covers changes. `--force` runs it anyway.
   - A change under `plans/`, `.claude/`, `.agents/` or `.github/` reruns nothing. A change under `docs/` or to a `.md` file reruns `gen` and `guide`. Any other change reruns every check.
@@ -201,6 +201,28 @@ One script holds the list of checks and their commands. CI calls it with `--only
   and source before using it as evidence for current work.
 - **Adding a check:** one `Check` entry in `CHECKS`, and its name in the CI job that has its toolchain.
 - **Hardware.** The script never flashes a board or opens a serial port. The HIL and smoke tests above stay separate and explicit.
+
+### Checks before a PR
+
+CI runs every check on every pull request, so a PR needs only the local checks of the areas it touches. `gen` always runs; `native` too, unless the change is only docs or guide.
+
+| What changes | Local checks besides `gen` and `native` |
+|---|---|
+| Firmware | `fw`, `fw-nolog` |
+| `uart_comm`, Kconfig or sdkconfig fragments, the HIL app | also `fw-hil-app` |
+| Definitions, generator output, `protocol/`, the wire | `fw`, `fw-nolog`, `host-win` |
+| Host library, CLI, vdev or GUI | `host-win`; `host-linux` for Linux, serial or PTY code |
+| Agent, or what it uses of the host library or wire | `agent` |
+| ROS packages, or what they use of the host library | `ros` |
+| Installer, `.deb`, apt, ROS or firmware packages | the check of that package |
+| Guide, or text the guide includes | `guide` |
+
+- On Linux, `host-linux` takes the place of `host-win`. A check that cannot run on the PC is left to CI and named in the PR.
+- **Keep `native` local.** CI runs it only on Linux, the PC with UCRT64 GCC.
+- **Run `full`** when a check, a toolchain or the CI workflow changes, and before a release tag. A wording change in `tools/validate.py` needs only `gen`.
+- **Run the bare-board checks** of the affected area when firmware behavior on the device changes, not for comments, docs or a new descriptor hash alone. Ask before driving output pins, restore the configuration, and log the run. Without the board, motor or sensor the check becomes a deferred row in [host status](../plans/host-status.md) and does not block the PR.
+- **The PR says** which checks ran locally, at which commit, and which are left to CI.
+- **Every CI job must pass before a merge** (jobs that run only on a tag aside). Rerun a failure that looks unrelated and name it in the PR, whether or not the rerun passes.
 
 ### JSON report (schema version 1)
 

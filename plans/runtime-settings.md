@@ -191,7 +191,8 @@ Pi UART become deferred rows.
 
 ## For every step
 
-- `python tools/validate.py full`, zero warnings; generated files, READMEs and
+- The [checks before a PR](../docs/development.md#checks-before-a-pr), zero warnings;
+  generated files, READMEs and
   `docs/protocol/` in the same PR; `cli-golden.json` follows the descriptor hash.
 - Delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` after a Kconfig
   removal. The UART test app sets its own pins and baud from step 5.
