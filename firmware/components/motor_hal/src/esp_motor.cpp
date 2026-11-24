@@ -18,12 +18,12 @@ struct Motor::Impl {
     bool valid;
 };
 
-Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio)
-    : Motor(pwm_gpio, dir_gpio, Options{})
+Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, uint32_t pwm_freq_hz)
+    : Motor(pwm_gpio, dir_gpio, pwm_freq_hz, Options{})
 {
 }
 
-Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options)
+Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, uint32_t pwm_freq_hz, const Options &options)
     : m_impl(new Impl{})
 {
     m_impl->dir_gpio = dir_gpio;
@@ -54,7 +54,7 @@ Motor::Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options)
     gpio_set_level(dir_gpio, 0);
 
     // Allocate MCPWM channel
-    ret = detail::McpwmPool::allocate(static_cast<int>(pwm_gpio), m_impl->channel,
+    ret = detail::McpwmPool::allocate(static_cast<int>(pwm_gpio), pwm_freq_hz, m_impl->channel,
                                       options.start_forced);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate MCPWM channel for GPIO %d: %s",

@@ -25,6 +25,7 @@ public:
             ctx.bindParam(d::kPullup, &m_pullup) && ctx.bindParam(d::kCountsPerRev, &m_cpr) &&
             ctx.bindParam(d::kGearRatio, &m_ratio) && ctx.bindParam(d::kVelocityCutoff, &m_cutoff) &&
             ctx.bindParam(d::kInvert, &m_invert, &invertChanged) &&
+            ctx.bindParam(d::kGlitchNs, &m_glitch_ns) &&
             ctx.bindSignal(d::kCount, &m_measurement.count) &&
             ctx.bindSignal(d::kVelocity, &m_measurement.velocity) &&
             ctx.bindSignal(d::kPosition, &m_measurement.position);
@@ -34,7 +35,7 @@ public:
             return false;
         }
         core_os::Err err = core_os::kOk;
-        m_counter = hw::openQuadrature(m_pin_a, m_pin_b, m_pullup, err);
+        m_counter = hw::openQuadrature(m_pin_a, m_pin_b, m_pullup, m_glitch_ns, err);
         if (!m_counter) {
             ctx.fail(kStartStageDriver, err != core_os::kOk ? err : -1);
             return false;
@@ -80,6 +81,7 @@ private:
     VelocityEstimator m_estimator;
     uint8_t m_instance = 255;
     uint8_t m_pin_a = defs::kNoGpio, m_pin_b = defs::kNoGpio;
+    uint16_t m_glitch_ns = 0;
     bool m_pullup = true, m_invert = false, m_fault = false;
     float m_cpr = 1440, m_ratio = 1, m_cutoff = 30;
 };

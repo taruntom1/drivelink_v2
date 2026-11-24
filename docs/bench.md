@@ -125,7 +125,7 @@ bench commands.
 ## Pins for real modules
 
 Actuator PWM 4 / DIR 5, encoder 6 / 7 (nothing attached; pull-ups keep the count
-at 0). `motor_smoke.py`'s pool check uses 1, 2, 10–18, 21, 39–42 and 47. Avoid
+at 0). `motor_smoke.py`'s pool and frequency checks use 1, 2, 10–18, 21, 39–42 and 47. Avoid
 the strapping pins 0, 3, 45, 46, the example IMU's I2C 8/9, and 38/48 (RGB LED
 on some boards).
 
@@ -138,6 +138,10 @@ anything it starts. Stack sizes: main 5632, core_cfg 6144, others 4096.
 Marks with 6 loops, 12 + 12 groups and 20 mock modules (runtime settings step 2,
 normal build, console): main 3552, uart_rx 2996, uart_tx 3056, diag 1728,
 esp_timer 3264, core_cfg 3952 (2624 after an edit and SAVE), loops 2908 to 3080.
+
+Marks with six actuators at six PWM frequencies, or a 5th encoder or 7th actuator
+failing start (runtime settings step 3, normal build, console): main 2544,
+uart_rx 2756, uart_tx 3056, diag 1788, esp_timer 3088, core_cfg 4016, loops 3064.
 
 Latest marks (H1c normal firmware, minimum across maximum-name and affinity
 observations, bytes free): main 3552, uart_rx 3028, uart_tx 3056, diag 1752,

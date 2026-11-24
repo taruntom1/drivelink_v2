@@ -15,7 +15,7 @@ namespace drivelink::protocol::defs::actuator_pwm_dir {
 /// Module type id of actuator.pwm_dir.
 inline constexpr uint8_t kTypeId = 0x21;
 
-/// param pwm_pin: PWM output pin (speed). One MCPWM operator per instance; at most 6.
+/// param pwm_pin: PWM output pin (speed). One MCPWM operator and timer per instance; at most 6.
 inline constexpr uint16_t kPwmPin = 0x0001;
 /// param dir_pin: Direction output pin; high for negative duty (before invert).
 inline constexpr uint16_t kDirPin = 0x0002;
@@ -23,6 +23,8 @@ inline constexpr uint16_t kDirPin = 0x0002;
 inline constexpr uint16_t kInvert = 0x0003;
 /// param duty_limit: Hard cap on the duty magnitude, applied after the controller.
 inline constexpr uint16_t kDutyLimit = 0x0004;
+/// param pwm_freq_hz: PWM frequency, rounded to a whole number of timer ticks. A higher one leaves fewer duty steps: 400 at 25 kHz, 100 at 100 kHz.
+inline constexpr uint16_t kPwmFreqHz = 0x0005;
 /// signal applied_duty: Duty written to the driver after the force gate and the cap, before invert.
 inline constexpr uint16_t kAppliedDuty = 0x0100;
 /// signal forced: The output is forced low (disarmed, monitor stop or driver fault).
@@ -31,7 +33,7 @@ inline constexpr uint16_t kForced = 0x0101;
 namespace detail {
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 6> kItems{{
+inline constexpr std::array<ItemDesc, 7> kItems{{
     ItemDesc{
         .id = 0x0001,
         .kind = ItemKind::Param,
@@ -39,7 +41,7 @@ inline constexpr std::array<ItemDesc, 6> kItems{{
         .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist, ItemFlag::Gpio),
         .name = "pwm_pin",
         .unit = "",
-        .description = "PWM output pin (speed). One MCPWM operator per instance; at most 6.",
+        .description = "PWM output pin (speed). One MCPWM operator and timer per instance; at most 6.",
         .min_bits = 0x00000000,
         .max_bits = 0x00000000,
         .default_bits = 0x000000FF,
@@ -103,6 +105,26 @@ inline constexpr std::array<ItemDesc, 6> kItems{{
         .min_bits = 0x00000000 /* 0 */,
         .max_bits = 0x3F800000 /* 1 */,
         .default_bits = 0x3F800000 /* 1 */,
+        .has_min = true,
+        .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0005,
+        .kind = ItemKind::Param,
+        .type = ValueType::U32,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "pwm_freq_hz",
+        .unit = "Hz",
+        .description = "PWM frequency, rounded to a whole number of timer ticks. A higher one leaves fewer duty steps: 400 at 25 kHz, 100 at 100 kHz.",
+        .min_bits = 0x00001388,
+        .max_bits = 0x000186A0,
+        .default_bits = 0x000061A8,
         .has_min = true,
         .has_max = true,
         .enum_values = {},

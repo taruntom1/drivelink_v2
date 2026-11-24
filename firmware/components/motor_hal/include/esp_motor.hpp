@@ -15,11 +15,12 @@ struct McpwmChannel;
 /// Each Motor instance takes an MCPWM operator of its own (6 at most on the
 /// ESP32-S3), with one comparator and one generator. The two generators of an
 /// operator share one force register, updated read-modify-write, so sharing
-/// it would let one motor's releaseForce() undo another's forceLow(). The
-/// timer of each MCPWM group is created on demand and shared.
+/// it would let one motor's releaseForce() undo another's forceLow(). It also
+/// takes an MCPWM timer of its own, so motors may run at different PWM
+/// frequencies.
 ///
 /// Usage:
-///   motor_hal::Motor left(GPIO_NUM_1, GPIO_NUM_2, {.start_forced = true});
+///   motor_hal::Motor left(GPIO_NUM_1, GPIO_NUM_2, 25000, {.start_forced = true});
 ///   left.write(0.0f);
 ///   left.releaseForce();
 ///   left.write(0.7f);   // forward at 70%
@@ -33,10 +34,12 @@ public:
     };
 
     /// Construct a motor on the given pins.
-    /// @param pwm_gpio  GPIO number for the PWM output (speed)
-    /// @param dir_gpio  GPIO number for the direction output
-    Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio);
-    Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, const Options &options);
+    /// @param pwm_gpio     GPIO number for the PWM output (speed)
+    /// @param dir_gpio     GPIO number for the direction output
+    /// @param pwm_freq_hz  PWM frequency; the period is rounded to whole
+    ///                     timer ticks (CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ)
+    Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, uint32_t pwm_freq_hz);
+    Motor(gpio_num_t pwm_gpio, gpio_num_t dir_gpio, uint32_t pwm_freq_hz, const Options &options);
 
     /// Destructor. Releases the MCPWM channel back to the pool.
     ~Motor();
@@ -69,8 +72,8 @@ public:
     bool isValid() const;
 
     /// Why construction failed: ESP_OK when valid, ESP_ERR_INVALID_ARG for
-    /// bad pins, ESP_ERR_NOT_FOUND when the MCPWM pool is full, otherwise
-    /// the driver error. ESP_ERR_INVALID_STATE for a moved-from object.
+    /// bad pins or a PWM frequency the timer cannot make, ESP_ERR_NOT_FOUND
+    /// when the MCPWM pool is full, otherwise the driver error. ESP_ERR_INVALID_STATE for a moved-from object.
     esp_err_t initError() const;
 
 private:

@@ -8,10 +8,11 @@ Type id `0x21`. Loops: realtime.
 
 | Id | Name | Type | Unit | Range | Default | Flags | Description |
 |---|---|---|---|---|---|---|---|
-| 0x0001 | `pwm_pin` | u8 |  |  | 0xFF (no pin) | reboot_required, persist, gpio | PWM output pin (speed). One MCPWM operator per instance; at most 6. |
+| 0x0001 | `pwm_pin` | u8 |  |  | 0xFF (no pin) | reboot_required, persist, gpio | PWM output pin (speed). One MCPWM operator and timer per instance; at most 6. |
 | 0x0002 | `dir_pin` | u8 |  |  | 0xFF (no pin) | reboot_required, persist, gpio | Direction output pin; high for negative duty (before invert). |
 | 0x0003 | `invert` | bool |  |  | false | persist, locked_while_armed | Reverse the motor's direction. |
 | 0x0004 | `duty_limit` | f32 |  | 0 .. 1 | 1 | persist | Hard cap on the duty magnitude, applied after the controller. |
+| 0x0005 | `pwm_freq_hz` | u32 | Hz | 5000 .. 100000 | 25000 | reboot_required, persist | PWM frequency, rounded to a whole number of timer ticks. A higher one leaves fewer duty steps: 400 at 25 kHz, 100 at 100 kHz. |
 
 ## Signals
 

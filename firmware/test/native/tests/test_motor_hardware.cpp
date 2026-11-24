@@ -15,10 +15,13 @@
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/gen/type_actuator_pwm_dir.hpp"
 #include "drivelink/protocol/gen/type_feedback_quadrature.hpp"
+#include "drivelink/protocol/gen/type_loop.hpp"
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdio>
 #include <thread>
+#include <vector>
 
 namespace {
 namespace defs = drivelink::protocol::defs;
@@ -42,6 +45,7 @@ struct Options {
     uint8_t pwm_pin = 4, dir_pin = 5, pin_a = 6, pin_b = 7;
     bool controller = true;
     core_os::Err pwm_open_error = 0, quadrature_open_error = 0;
+    std::vector<core::ParamPair> pwm_extra{}, quadrature_extra{};
 };
 
 /// loop 0 (1 kHz, real-time), actuator.pwm_dir 0, feedback.quadrature 0 and,
@@ -65,6 +69,8 @@ struct Hw {
         layout[0].pairs = {{1, 1000}, {2, 1}};
         layout[1].pairs = {{pwm::kPwmPin, o.pwm_pin}, {pwm::kDirPin, o.dir_pin}};
         layout[2].pairs = {{quad::kPinA, o.pin_a}, {quad::kPinB, o.pin_b}};
+        layout[1].pairs.insert(layout[1].pairs.end(), o.pwm_extra.begin(), o.pwm_extra.end());
+        layout[2].pairs.insert(layout[2].pairs.end(), o.quadrature_extra.begin(), o.quadrature_extra.end());
         if (o.controller) {
             layout[3].pairs = {{1, uint32_t{kPwm} << 8}, {2, uint32_t{kQuad} << 8},
                 {32, defs::f32Bits(.12F)}, {33, defs::f32Bits(.8F)}, {48, defs::f32Bits(3.F)}, {49, defs::f32Bits(2.F)}};
@@ -346,6 +352,83 @@ TEST_CASE("Start failures report their stage and take no hardware") {
         CHECK(failures[0].arg0 == 2); CHECK(failures[0].err == 0x105);
         CHECK_FALSE(f.c.arm().ok());
     }
+}
+
+TEST_CASE("The PWM frequency and the glitch filter reach the driver at their defaults and as saved") {
+    SUBCASE("defaults") {
+        Hw f;
+        CHECK(outputs[0].pwm_freq_hz == 25000); CHECK(counters[0].glitch_ns == 1000);
+    }
+    SUBCASE("saved values") {
+        Hw f(Options{.pwm_extra = {{pwm::kPwmFreqHz, 8000}}, .quadrature_extra = {{quad::kGlitchNs, 250}}});
+        CHECK(outputs[0].pwm_freq_hz == 8000); CHECK(counters[0].glitch_ns == 250);
+        CHECK(f.get(kPwm, pwm::kPwmFreqHz) == 8000); CHECK(f.get(kQuad, quad::kGlitchNs) == 250);
+    }
+    SUBCASE("a filter turned off") {
+        Hw f(Options{.quadrature_extra = {{quad::kGlitchNs, 0}}});
+        CHECK(counters[0].glitch_ns == 0);
+    }
+    SUBCASE("saved values out of range load clamped") {
+        Hw f(Options{.pwm_extra = {{pwm::kPwmFreqHz, 1000}}, .quadrature_extra = {{quad::kGlitchNs, 60000}}});
+        CHECK(outputs[0].pwm_freq_hz == 5000); CHECK(counters[0].glitch_ns == 10000);
+    }
+}
+
+TEST_CASE("A staged PWM frequency or glitch filter applies at the next boot, clamped to its range") {
+    Hw f;
+    auto stage = [&](uint8_t type, uint16_t id, uint32_t bits) {
+        const core::SetEntry entry{{type, 0, id}, bits};
+        uint32_t applied = 0;
+        CHECK(f.c.params().set({&entry, 1}, {&applied, 1}).result == core::Result::PendingReboot);
+        return applied;
+    };
+    CHECK(stage(kPwm, pwm::kPwmFreqHz, 4999) == 5000);
+    CHECK(stage(kPwm, pwm::kPwmFreqHz, 100001) == 100000);
+    CHECK(stage(kPwm, pwm::kPwmFreqHz, 20000) == 20000);
+    CHECK(stage(kQuad, quad::kGlitchNs, 10001) == 10000);
+    CHECK(stage(kQuad, quad::kGlitchNs, 0) == 0);
+    f.tick();
+    CHECK(f.get(kPwm, pwm::kPwmFreqHz) == 25000); CHECK(f.get(kQuad, quad::kGlitchNs) == 1000);
+    CHECK(outputs[0].pwm_freq_hz == 25000); CHECK(counters[0].glitch_ns == 1000);
+    CHECK(fake_motor_hw::output_count == 1);
+    REQUIRE(f.c.save().ok());
+
+    core::Core next{core::CoreConfig{}};
+    REQUIRE(next.init(f.types).ok()); REQUIRE(next.boot(core::prepareBoot(f.store)).ok());
+    REQUIRE(fake_motor_hw::output_count == 2); REQUIRE(fake_motor_hw::counter_count == 2);
+    CHECK(outputs[1].pwm_freq_hz == 20000); CHECK(counters[1].glitch_ns == 0);
+}
+
+TEST_CASE("Two actuators run at their own PWM frequencies") {
+    Manual manual;
+    core_os::KvStore store;
+    std::vector<core::persist::StoredInstance> layout(3);
+    const uint8_t type_ids[]{defs::kLoopTypeId, kPwm, kPwm};
+    for (size_t i = 0; i < layout.size(); ++i) {
+        layout[i].type_id = type_ids[i]; layout[i].instance = i == 2 ? 1 : 0; layout[i].loop = i == 0 ? 255 : 0;
+        std::snprintf(layout[i].label, sizeof(layout[i].label), "m%u", static_cast<unsigned>(i));
+    }
+    layout[0].pairs = {{1, 1000}, {2, 1}};
+    layout[1].pairs = {{pwm::kPwmPin, 4}, {pwm::kDirPin, 5}, {pwm::kPwmFreqHz, 5000}};
+    layout[2].pairs = {{pwm::kPwmPin, 6}, {pwm::kDirPin, 7}, {pwm::kPwmFreqHz, 100000}};
+    REQUIRE(core::persist::saveConfig(store, 1, layout, {}).ok());
+    core::Core c{core::CoreConfig{}};
+    const std::array<const core::ModuleType *, 1> types{mod_motor::kHardwareTypes[0]};
+    REQUIRE(c.init(types).ok()); REQUIRE(c.boot(core::prepareBoot(store)).ok());
+    REQUIRE(fake_motor_hw::output_count == 2);
+    CHECK(outputs[0].pwm_pin == 4); CHECK(outputs[0].pwm_freq_hz == 5000);
+    CHECK(outputs[1].pwm_pin == 6); CHECK(outputs[1].pwm_freq_hz == 100000);
+}
+
+TEST_CASE("Every PWM period is shorter than every loop period, as the reversal tick needs") {
+    const auto item = [](const defs::TypeDesc &type, uint16_t id) {
+        const auto it = std::find_if(type.items.begin(), type.items.end(), [&](const auto &i) { return i.id == id; });
+        REQUIRE(it != type.items.end());
+        return *it;
+    };
+    const defs::ItemDesc freq = item(pwm::kDesc, pwm::kPwmFreqHz), rate = item(defs::loop::kDesc, defs::loop::kRateHz);
+    REQUIRE(freq.has_min); REQUIRE(rate.has_max);
+    CHECK(core::periodUsFromHz(freq.min_bits) < core::periodUsFromHz(rate.max_bits));
 }
 
 TEST_CASE("Destroying the core leaves the output forced and released") {

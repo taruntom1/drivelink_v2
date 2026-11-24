@@ -785,6 +785,10 @@ The vdev does not register them.
   actuator, `pullup` on the encoder (user decision).
 - **PWM resolution.** The `MOTOR_HAL_TIMER_RESOLUTION_HZ` default is 10 MHz
   (400 steps at 25 kHz, 0.25% duty) instead of 1 MHz (2.5%).
+- **PWM frequency and glitch filter (runtime settings step 3).** Per-instance
+  params, `pwm_freq_hz` and `glitch_ns`, instead of Kconfig. Each motor owns an
+  MCPWM timer. The 5 kHz minimum keeps the PWM period below the shortest loop
+  period, which the reversal rule needs.
 
 ## F6 implementation decisions (2026-11-13)
 

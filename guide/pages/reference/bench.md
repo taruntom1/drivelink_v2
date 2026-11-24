@@ -14,7 +14,7 @@ Use this list when choosing parts for the PC bench or a later Pi robot. Start wi
 
 ## What else works
 
-- A substitute driver needs **PWM + DIR** inputs for sign-magnitude control at 3.3 V logic and must support the motor’s voltage and current. It must accept the released firmware’s 25 kHz PWM. For example, Cytron lists a 20 kHz maximum for the MDD10A. [Cytron specifications](https://www.cytron.io/p-10amp-5v-30v-dc-motor-driver-2-channels)
+- A substitute driver needs **PWM + DIR** inputs for sign-magnitude control at 3.3 V logic and must support the motor’s voltage and current. It must accept the PWM frequency: 25 kHz, unless you change `pwm_freq_hz` of its actuator (5 to 100 kHz). For example, Cytron lists a 20 kHz maximum for the MDD10A. [Cytron specifications](https://www.cytron.io/p-10amp-5v-30v-dc-motor-driver-2-channels)
 - Use an encoder with two quadrature channels. Keep ESP inputs at 3.3 V logic. If the encoder outputs 5 V, use suitable level translation. Open-drain outputs need pull-ups to a compatible rail. Check the datasheet before connecting anything.
 - Use free [GPIOs]({{base}}concepts/glossary/) that can perform the intended function. Keep the UART pins free for the USB-to-UART link, and avoid the board’s boot-strapping, USB, flash, PSRAM, and on-board LED pins. The ESP configuration permits up to six PWM actuator instances and four quadrature feedback instances, subject to available pins and device limits.
 

@@ -10,8 +10,8 @@ namespace {
 
 class IdfPwmDir final : public PwmDirOutput {
 public:
-    IdfPwmDir(uint8_t pwm_pin, uint8_t dir_pin)
-        : m_motor(static_cast<gpio_num_t>(pwm_pin), static_cast<gpio_num_t>(dir_pin),
+    IdfPwmDir(uint8_t pwm_pin, uint8_t dir_pin, uint32_t pwm_freq_hz)
+        : m_motor(static_cast<gpio_num_t>(pwm_pin), static_cast<gpio_num_t>(dir_pin), pwm_freq_hz,
                   motor_hal::Motor::Options{.start_forced = true}) {}
     core_os::Err initError() const { return m_motor.initError(); }
     core_os::Err write(float duty) override { return m_motor.write(duty); }
@@ -24,8 +24,8 @@ private:
 
 class IdfQuadrature final : public QuadratureCounter {
 public:
-    IdfQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup)
-        : m_encoder(static_cast<gpio_num_t>(pin_a), static_cast<gpio_num_t>(pin_b),
+    IdfQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup, uint16_t glitch_ns)
+        : m_encoder(static_cast<gpio_num_t>(pin_a), static_cast<gpio_num_t>(pin_b), glitch_ns,
                     rotary_encoder_hal::Encoder::Options{.pullup = pullup}) {}
     core_os::Err initError() const { return m_encoder.initError(); }
     core_os::Err read(int32_t &count) override { return m_encoder.readCount(count); }
@@ -36,17 +36,19 @@ private:
 
 } // namespace
 
-std::unique_ptr<PwmDirOutput> openPwmDir(uint8_t pwm_pin, uint8_t dir_pin, core_os::Err &err)
+std::unique_ptr<PwmDirOutput> openPwmDir(uint8_t pwm_pin, uint8_t dir_pin, uint32_t pwm_freq_hz,
+                                         core_os::Err &err)
 {
-    auto out = std::make_unique<IdfPwmDir>(pwm_pin, dir_pin);
+    auto out = std::make_unique<IdfPwmDir>(pwm_pin, dir_pin, pwm_freq_hz);
     err = out->initError();
     if (err != ESP_OK) { return nullptr; }
     return out;
 }
 
-std::unique_ptr<QuadratureCounter> openQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup, core_os::Err &err)
+std::unique_ptr<QuadratureCounter> openQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup, uint16_t glitch_ns,
+                                                  core_os::Err &err)
 {
-    auto counter = std::make_unique<IdfQuadrature>(pin_a, pin_b, pullup);
+    auto counter = std::make_unique<IdfQuadrature>(pin_a, pin_b, pullup, glitch_ns);
     err = counter->initError();
     if (err != ESP_OK) { return nullptr; }
     return counter;

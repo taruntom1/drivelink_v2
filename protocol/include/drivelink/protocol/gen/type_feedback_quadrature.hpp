@@ -29,6 +29,8 @@ inline constexpr uint16_t kGearRatio = 0x0005;
 inline constexpr uint16_t kVelocityCutoff = 0x0006;
 /// param invert: Reverse the count direction. A change flips the count's sign.
 inline constexpr uint16_t kInvert = 0x0007;
+/// param glitch_ns: Glitch filter on A and B: shorter pulses are ignored. 0 turns it off.
+inline constexpr uint16_t kGlitchNs = 0x0008;
 /// signal count
 inline constexpr uint16_t kCount = 0x0102;
 /// signal velocity
@@ -39,7 +41,7 @@ inline constexpr uint16_t kPosition = 0x0101;
 namespace detail {
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 10> kItems{{
+inline constexpr std::array<ItemDesc, 11> kItems{{
     ItemDesc{
         .id = 0x0001,
         .kind = ItemKind::Param,
@@ -173,6 +175,26 @@ inline constexpr std::array<ItemDesc, 10> kItems{{
         .default_bits = 0x00000000,
         .has_min = false,
         .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0008,
+        .kind = ItemKind::Param,
+        .type = ValueType::U16,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "glitch_ns",
+        .unit = "ns",
+        .description = "Glitch filter on A and B: shorter pulses are ignored. 0 turns it off.",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00002710,
+        .default_bits = 0x000003E8,
+        .has_min = true,
+        .has_max = true,
         .enum_values = {},
         .ref = nullptr,
         .runs_in = ActionPlacement::None,

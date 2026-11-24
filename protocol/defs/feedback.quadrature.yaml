@@ -9,6 +9,7 @@ items:
   - {id: 5, kind: param, name: gear_ratio, type: f32, min: 0.001, max: 10000, default: 1, flags: [reboot_required], description: "Motor revolutions per output revolution."}
   - {id: 6, kind: param, name: velocity_cutoff, type: f32, unit: Hz, min: 0, max: 5000, default: 30}
   - {id: 7, kind: param, name: invert, type: bool, flags: [locked_while_armed], default: false, description: "Reverse the count direction. A change flips the count's sign."}
+  - {id: 8, kind: param, name: glitch_ns, type: u16, unit: ns, min: 0, max: 10000, default: 1000, flags: [reboot_required], description: "Glitch filter on A and B: shorter pulses are ignored. 0 turns it off."}
   - {id: 258, kind: signal, name: count, type: i32}
   - {id: 256, kind: signal, name: velocity, type: f32, unit: rad/s}
   - {id: 257, kind: signal, name: position, type: f32, unit: rad}

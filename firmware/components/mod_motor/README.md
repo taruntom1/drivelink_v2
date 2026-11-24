@@ -1,6 +1,6 @@
 # Motor modules
 
-The motor module types, the pure motor interfaces ([`interfaces.hpp`](include/mod_motor/interfaces.hpp)) and the shared [velocity estimator](include/mod_motor/velocity_estimator.hpp). Runtime settings come from the type YAML; the PWM frequency, MCPWM timer resolution and PCNT glitch filter are Kconfig in [motor_hal](../motor_hal/README.md) and [rotary_encoder_hal](../rotary_encoder_hal/README.md).
+The motor module types, the pure motor interfaces ([`interfaces.hpp`](include/mod_motor/interfaces.hpp)) and the shared [velocity estimator](include/mod_motor/velocity_estimator.hpp). Runtime settings come from the type YAML; the MCPWM timer resolution and PCNT limits are Kconfig in [motor_hal](../motor_hal/README.md) and [rotary_encoder_hal](../rotary_encoder_hal/README.md).
 
 | Type | Generated reference | Definition | Registered by |
 |---|---|---|---|
@@ -21,14 +21,15 @@ The module logic ([`pwm_dir.cpp`](src/pwm_dir.cpp), [`quadrature.cpp`](src/quadr
 It has no duty input of its own; only a claimed controller port drives it. `duty_limit` is a hard cap after the controller. `applied_duty` is reported after the gate and cap, before `invert`. `invert` is locked while armed.
 
 - Each instance takes an **MCPWM operator of its own** (six on the ESP32-S3). An operator's two generators share one force register that the driver updates read-modify-write, so outputs forced and released from different tasks must not share it. `motor_hal` gives every motor its own operator.
+- Each instance also takes an **MCPWM timer of its own** for `pwm_freq_hz` (5 to 100 kHz, default 25 kHz, applied at the next boot). A higher frequency leaves fewer duty steps; see [motor_hal](../motor_hal/README.md#kconfig).
 - The output is **forced low from creation**, before the PWM actions are set, until `onArmTransition(true)`. That transition writes zero duty, releases the force and only then opens the atomic gate. DISARM and `emergencyStop()` force the hardware and close the gate.
 - Every stop first bumps an atomic stop epoch. The ARM release reads the epoch before and after and stops again if a monitor stop raced it, so a stale release never undoes a monitor stop. The monitor's force also repeats while disarmed.
 - Only the PWM pin is forced; DIR is left as it is. DIR is high for negative duty (before `invert`) and is written only with a nonzero compare value (`Motor::write`); a zero write leaves it.
-- **A reversal passes through one zero tick.** A nonzero duty is written only when the previous request had the same sign or was zero. The compare value applies at the next PWM period but DIR at once, so DIR never flips under a live compare value of the other sign, provided the loop period is longer than the PWM period (1 ms against 40 µs by default). A request that alternates sign every tick writes zero rather than a one-sided bias.
+- **A reversal passes through one zero tick.** A nonzero duty is written only when the previous request had the same sign or was zero. The compare value applies at the next PWM period but DIR at once, so DIR never flips under a live compare value of the other sign. That needs the zero write and the next one to be more than a PWM period apart. The `pwm_freq_hz` range guarantees a PWM period (at most 200 µs) below the shortest loop period (500 µs at 2 kHz), and a native test ties the two ranges together. A tick that starts late can still come closer than that to the next one: at both limits, if it is over 300 µs late, or 960 µs late with the default 25 kHz at 1 kHz. A request that alternates sign every tick writes zero rather than a one-sided bias.
 
 ### feedback.quadrature
 
-Each instance takes one PCNT unit (four on the ESP32-S3). `pullup` selects the PCNT driver's own pull-ups. Signal IDs match `feedback.mock`. The module never resets the count; arm transitions re-prime only the velocity estimator. Changing `invert`, which is locked while armed, flips the count's sign and re-primes the estimator. IDF 5.5 compensates an overflow interrupt still pending at a read.
+Each instance takes one PCNT unit (four on the ESP32-S3). `glitch_ns` (0 to 10000, default 1000, 0 turns it off; applied at the next boot) sets its glitch filter. `pullup` selects the PCNT driver's own pull-ups. Signal IDs match `feedback.mock`. The module never resets the count; arm transitions re-prime only the velocity estimator. Changing `invert`, which is locked while armed, flips the count's sign and re-primes the estimator. IDF 5.5 compensates an overflow interrupt still pending at a read.
 
 ### Failures
 
@@ -65,6 +66,6 @@ The PID kernel is allocation-free and nonlogging, with derivative on measurement
 
 ## Validation
 
-`test_motor_modules.cpp` covers control, six directed mode changes, receipts, ownership, delays, emergency force, count wrap and repeatable noise under the native real-time guard. `test_motor_hardware.cpp` drives the hardware types through the fake backend: forced from creation, the arm gate, cap, invert, the reversal tick and sign alternation, a monitor stop inside the ARM release, monitor stops concurrent with ticks, DriverFault and ReadFailed, start stages, destruction, count scaling, invert and wrap, and velocity and position control on a fake plant.
+`test_motor_modules.cpp` covers control, six directed mode changes, receipts, ownership, delays, emergency force, count wrap and repeatable noise under the native real-time guard. `test_motor_hardware.cpp` drives the hardware types through the fake backend: forced from creation, the arm gate, cap, invert, the reversal tick and sign alternation, a monitor stop inside the ARM release, monitor stops concurrent with ticks, DriverFault and ReadFailed, start stages, destruction, the PWM frequency and glitch filter from settings to driver, count scaling, invert and wrap, and velocity and position control on a fake plant.
 
 Host integration runs `host/test/motor_smoke.py` through the CLI on vdev. For bare-board runs, real-module pins and first-run safety, see the [motor controller smoke](../../../host/README.md#motor-controller-smoke-f5a-1) and the [bench instructions](../../../docs/bench.md#pins-for-real-modules).

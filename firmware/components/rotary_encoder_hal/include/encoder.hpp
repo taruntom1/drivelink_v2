@@ -21,7 +21,7 @@ struct EncoderImpl;
 /// VelocityEstimator, from counts sampled at the loop rate).
 ///
 /// Usage:
-///   rotary_encoder_hal::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5);
+///   rotary_encoder_hal::Encoder wheel(GPIO_NUM_4, GPIO_NUM_5, 1000);
 ///   int32_t pos = 0;
 ///   if (wheel.isValid() && wheel.readCount(pos) == ESP_OK) { ... }
 ///
@@ -30,16 +30,20 @@ public:
     /// Construct an encoder on the given quadrature signal pins.
     /// Allocates a PCNT unit, configures channels for quadrature decoding,
     /// and applies the glitch filter.
-    /// @param pin_a  GPIO number for encoder channel A (CLK)
-    /// @param pin_b  GPIO number for encoder channel B (DT)
-    Encoder(gpio_num_t pin_a, gpio_num_t pin_b);
+    /// @param pin_a      GPIO number for encoder channel A (CLK)
+    /// @param pin_b      GPIO number for encoder channel B (DT)
+    /// @param glitch_ns  Pulses shorter than this are ignored; 0 turns the
+    ///                   filter off. One step is an APB clock cycle (12.5 ns
+    ///                   at 80 MHz), the shortest filter; a width above 1023
+    ///                   steps fails with ESP_ERR_INVALID_ARG.
+    Encoder(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns);
 
     struct Options {
         /// Internal pull-ups on A and B. The PCNT driver enables them; false
         /// disables them again (push-pull encoders, external pull-ups).
         bool pullup = true;
     };
-    Encoder(gpio_num_t pin_a, gpio_num_t pin_b, const Options &options);
+    Encoder(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns, const Options &options);
 
     /// Destructor. Releases the PCNT unit back to the pool.
     ~Encoder();

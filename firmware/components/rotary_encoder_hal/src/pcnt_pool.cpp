@@ -2,11 +2,16 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "driver/pulse_cnt.h"
+#include <algorithm>
 
 static const char *const TAG = "pcnt_pool";
 
 namespace rotary_encoder_hal {
 namespace detail {
+
+/// The shortest filter: one APB clock cycle (12.5 ns at 80 MHz). The driver
+/// rounds a shorter one down to zero cycles.
+static constexpr uint32_t kMinGlitchNs = 13;
 
 int PcntPool::s_active_count = 0;
 
@@ -23,7 +28,7 @@ SemaphoreHandle_t PcntPool::poolMutex()
     return mutex;
 }
 
-esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
+esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns, PcntUnit &out)
 {
     const SemaphoreHandle_t mtx = poolMutex();
     xSemaphoreTake(mtx, portMAX_DELAY);
@@ -47,18 +52,18 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
         return ret;
     }
 
-    // Apply glitch filter if configured
-#if CONFIG_ENCODER_HAL_GLITCH_FILTER_NS > 0
-    pcnt_glitch_filter_config_t filter_cfg = {};
-    filter_cfg.max_glitch_ns = CONFIG_ENCODER_HAL_GLITCH_FILTER_NS;
-    ret = pcnt_unit_set_glitch_filter(out.unit, &filter_cfg);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set glitch filter: %s", esp_err_to_name(ret));
-        pcnt_del_unit(out.unit);
-        xSemaphoreGive(mtx);
-        return ret;
+    // Apply the glitch filter; a new unit starts with it off
+    if (glitch_ns > 0) {
+        pcnt_glitch_filter_config_t filter_cfg = {};
+        filter_cfg.max_glitch_ns = std::max(glitch_ns, kMinGlitchNs);
+        ret = pcnt_unit_set_glitch_filter(out.unit, &filter_cfg);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set glitch filter: %s", esp_err_to_name(ret));
+            pcnt_del_unit(out.unit);
+            xSemaphoreGive(mtx);
+            return ret;
+        }
     }
-#endif
 
     // Create Channel A: edge on pin_a, level from pin_b
     pcnt_chan_config_t chan_a_cfg = {};
@@ -199,8 +204,8 @@ esp_err_t PcntPool::allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out)
     }
 
     s_active_count++;
-    ESP_LOGI(TAG, "Allocated encoder: pin_a=%d pin_b=%d (%d/%d units in use)",
-             pin_a, pin_b, s_active_count, kMaxUnits);
+    ESP_LOGI(TAG, "Allocated encoder: pin_a=%d pin_b=%d glitch=%lu ns (%d/%d units in use)",
+             pin_a, pin_b, static_cast<unsigned long>(glitch_ns), s_active_count, kMaxUnits);
 
     xSemaphoreGive(mtx);
     return ESP_OK;

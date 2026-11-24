@@ -15,6 +15,7 @@ Type id `0x22`. Loops: realtime.
 | 0x0005 | `gear_ratio` | f32 |  | 0.00100000005 .. 10000 | 1 | reboot_required, persist | Motor revolutions per output revolution. |
 | 0x0006 | `velocity_cutoff` | f32 | Hz | 0 .. 5000 | 30 | persist |  |
 | 0x0007 | `invert` | bool |  |  | false | persist, locked_while_armed | Reverse the count direction. A change flips the count's sign. |
+| 0x0008 | `glitch_ns` | u16 | ns | 0 .. 10000 | 1000 | reboot_required, persist | Glitch filter on A and B: shorter pulses are ignored. 0 turns it off. |
 
 ## Signals
 
