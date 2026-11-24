@@ -35,6 +35,7 @@ Basic.ApplicationWindow {
     property bool reviewOpen: false
     property alias layoutDialogs: layoutDialogs
     readonly property var pendingChanges: connection.layout.pendingChanges || []
+    readonly property var deviceSettings: connection.deviceSettings || ({})
     property alias endpointField: connectPage.tcpField
     property alias statusBar: status
     property alias dialog: dialog
@@ -211,7 +212,8 @@ Basic.ApplicationWindow {
                 title: connection.safeMode ? qsTr("Device is in safe mode") : qsTr("Changes require a reboot")
                 message: connection.safeMode
                     ? qsTr("It booted after repeated crashes: no loop runs and ARM is unavailable. Params and the layout can still be edited.")
-                    : (shell.pendingChanges.length > 0 ? (shell.pendingChanges.length === 1 ? qsTr("1 staged change. ")
+                    : (shell.deviceSettings.savedThenDiscarded ? qsTr("Saved settings are waiting for a reboot. ") : "")
+                      + (shell.pendingChanges.length > 0 ? (shell.pendingChanges.length === 1 ? qsTr("1 staged change. ")
                                                          : qsTr("%1 staged changes. ").arg(shell.pendingChanges.length)) : "")
                       + (connection.unsaved ? qsTr("Save first, or the changes are lost at the reboot.") : "")
                 action1Text: !connection.safeMode && shell.pendingChanges.length > 0 ? qsTr("Review") : ""

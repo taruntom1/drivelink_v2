@@ -35,6 +35,16 @@ QString LocalConnection::layoutBlocked() const {
     return {};
 }
 
+QString LocalConnection::rebootBlocked() const {
+    const auto blocked=layoutBlocked();
+    return blocked.isEmpty()?exclusiveBlocked():blocked;
+}
+QString LocalConnection::liveParamBlocked() const {
+    auto blocked=commonBlock();
+    if(blocked.isEmpty() && m_expectReboot) {blocked=tr("The device is rebooting");}
+    return blocked;
+}
+
 void LocalConnection::refreshConfig() {
     auto c=m_context;if(!c) {return;}
     if(auto model=c->getModel()) {
@@ -54,18 +64,25 @@ void LocalConnection::rebuildLayout(bool metadata) {
         const auto keys=m_layoutTree.keys();
         if(!keys.isEmpty() && !keys.contains(m_selected)) {m_selected=keys.front();}
     }
-    if(metadata || armed!=m_paramsArmed) {m_paramsArmed=armed;updateParams();}
+    // The settings rows also follow the status flags (safe mode, pending reboot).
+    if(metadata || armed!=m_paramsArmed || safeMode()!=m_paramsSafe || pendingReboot()!=m_paramsReboot) {
+        m_paramsArmed=armed;m_paramsSafe=safeMode();m_paramsReboot=pendingReboot();updateParams();
+    }
 }
 void LocalConnection::updateParams() {
     m_params.reset(ready()?m_snapshot:nullptr,parseNodeKey(m_selected),m_paramsArmed,m_edits,
                    m_changedParams.value(deviceId()),m_paramFilter,m_paramFilterText);
+    m_systemParams.resetSystem(ready()?m_snapshot:nullptr,m_paramsArmed,m_edits,m_changedParams.value(deviceId()),
+                               m_paramsSafe,m_paramsReboot);
 }
 void LocalConnection::selectNode(const QString &key) {
     if(key==m_selected || !m_layoutTree.keys().contains(key)) {return;}
     m_selected=key;
-    // Kept refusals belong to the rows they were typed in.
+    // Kept refusals belong to the rows they were typed in; the settings card
+    // (system params, instance 0 of type 0) keeps its own.
+    const auto system=QString::number(defs::kSystemTypeId)+":0:";
     for(auto it=m_edits.begin();it!=m_edits.end();) {
-        if(it->state!="sending") {it=m_edits.erase(it);} else {++it;}
+        if(it->state!="sending" && !it.key().startsWith(system)) {it=m_edits.erase(it);} else {++it;}
     }
     // So do action outcomes; the one in flight keeps its row.
     for(auto it=m_actionResults.begin();it!=m_actionResults.end();) {
@@ -90,13 +107,10 @@ QVariantMap LocalConnection::layout() const {
     const auto counts=layoutCounts(s);
     // Layout ops are exclusive through an agent (its lease rule); reboot
     // params are shown with the same block, although the agent forwards them.
-    auto blocked=layoutBlocked();
-    if(blocked.isEmpty()) {blocked=exclusiveBlocked();}
+    const auto blocked=rebootBlocked();
     result["blocked"]=blocked;
     // Live params: only the common blocks (reboot params use `blocked`).
-    QString paramBlocked=commonBlock();
-    if(paramBlocked.isEmpty() && m_expectReboot) {paramBlocked=tr("The device is rebooting");}
-    result["paramBlocked"]=paramBlocked;
+    result["paramBlocked"]=liveParamBlocked();
     result["counts"]=QVariantMap{{"loops",counts.loops},{"loopLimit",counts.loopLimit},
                                  {"instances",counts.instances},{"instanceLimit",counts.instanceLimit}};
     result["addLoopBlocked"]=!blocked.isEmpty()?blocked:
@@ -105,8 +119,8 @@ QVariantMap LocalConnection::layout() const {
         counts.instanceLimit>0 && counts.instances>=counts.instanceLimit
             ?tr("%1 of %2 instances: remove an instance first").arg(counts.instances).arg(counts.instanceLimit):QString();
     QVariantList changes;
-    for(const auto &c:pendingChanges(s)) {
-        changes<<QVariantMap{{"kind",c.kind},{"key",c.key},{"subject",c.subject},{"from",c.from},{"to",c.to}};
+    for(const auto &c:pendingChanges(s,safeMode(),pendingReboot())) {
+        changes<<QVariantMap{{"kind",c.kind},{"key",c.key},{"subject",c.subject},{"from",c.from},{"to",c.to},{"note",c.note}};
     }
     result["pendingChanges"]=changes;
     result["selected"]=m_selected;
@@ -198,6 +212,30 @@ QVariantMap LocalConnection::layout() const {
     return result;
 }
 
+// The Device settings card (system params): the same blocks as Layout, plus
+// the two states a SAVE then DISCARD leaves: the device keeps its reboot flag
+// with nothing different in GET_PENDING (a), and what was discarded had been
+// saved (b), so the next boot still loads it.
+QVariantMap LocalConnection::deviceSettings() const {
+    QVariantMap result;
+    if(!ready() || !m_snapshot) {return result;}
+    const bool safe=safeMode();
+    const bool listed=!pendingChanges(*m_snapshot,safe,pendingReboot()).empty();
+    result["total"]=m_systemParams.total();
+    result["pending"]=m_systemParams.pendingCount();
+    result["unsavedCount"]=m_systemParams.unsavedCount();
+    result["unsaved"]=m_systemParams.unsavedCount()>0 && unsaved();
+    result["blocked"]=rebootBlocked();
+    result["paramBlocked"]=liveParamBlocked();
+    result["rebootNote"]=layoutBlocked().isEmpty() && !exclusiveBlocked().isEmpty()?tr("Needs the control lease"):QString();
+    result["safeMode"]=safe;
+    // Only after a SAVE: a value staged and set back, or one just staged whose
+    // pending value is not read yet, was never saved.
+    result["savedThenDiscarded"]=pendingReboot() && !listed && !safe && m_savedPending;
+    result["discardAfterSave"]=listed && !unsaved();
+    return result;
+}
+
 QVariantList LocalConnection::layoutCandidates(const QString &key) const {
     const auto ref=parseItemKey(key);
     if(!ready() || !m_snapshot || !ref) {return {};}
@@ -267,12 +305,14 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
     const auto key=itemKey(ref.type,ref.instance,ref.item);
     const auto *item=findItem(*m_snapshot,ref);
     const auto &d=item->descriptor;
-    const bool staged=flag(d,defs::ItemFlag::RebootRequired) || !configuredEntry(*m_snapshot,{ref.type,ref.instance});
-    QString blocked=commonBlock();
-    if(blocked.isEmpty() && m_expectReboot) {blocked=tr("The device is rebooting");}
+    // A system param has no instance: only its reboot flag stages it.
+    const bool system=ref.type==defs::kSystemTypeId;
+    const bool staged=flag(d,defs::ItemFlag::RebootRequired) || (!system && !configuredEntry(*m_snapshot,{ref.type,ref.instance}));
+    auto blocked=liveParamBlocked();
     // Reboot params are layout configuration: locked while armed like the
-    // layout ops (G7b), although the device would stage them.
-    if(blocked.isEmpty() && staged) {blocked=layoutBlocked();}
+    // layout ops (G7b), although the device would stage them, and held back
+    // for an observer of another client's lease (the card shows the reason).
+    if(blocked.isEmpty() && staged) {blocked=rebootBlocked();}
     if(blocked.isEmpty() && (armState()==1 || m_arming) && flag(d,defs::ItemFlag::LockedWhileArmed)) {
         blocked=tr("Locked while armed; disarm first");
     }
@@ -281,10 +321,14 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
         blocked=tr("The previous value is still being sent");
     }
     if(!blocked.isEmpty()) {m_edits[key]={"rejected",blocked,text};updateParams();emit changed();return;}
-    const auto *entry=anyEntry(*m_snapshot,{ref.type,ref.instance});
-    const auto subject=QString::fromStdString(entry->instance.label)+"."+QString::fromStdString(d.name);
+    // The values the edit starts from: the pending ones for a reboot param.
+    const auto *entry=system?nullptr:anyEntry(*m_snapshot,{ref.type,ref.instance});
+    const auto &values=system?(staged && m_snapshot->pending_system_params.contains(ref.item)?m_snapshot->pending_system_params
+                                                                                             :m_snapshot->system_params)
+                             :entry->params;
+    const auto subject=(system?QString("system"):QString::fromStdString(entry->instance.label))+"."+QString::fromStdString(d.name);
     QString before;
-    if(const auto it=entry->params.find(ref.item);it!=entry->params.end()) {
+    if(const auto it=values.find(ref.item);it!=values.end()) {
         before=d.isSource()?sourceText(*m_snapshot,valueBits(it->second)):isWiring(d)?wiringText(*m_snapshot,valueBits(it->second))
                           :formatValue(*item,valueBits(it->second));
     }
@@ -308,7 +352,7 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
     // this GUI commands goes to 0 and takes no command while the write is in
     // flight, and its queued values are discarded first; when the write ends,
     // whatever the outcome, its group sends a fresh frame with 0 for it.
-    const bool commanded=m_command.commands(ref.type,ref.instance);
+    const bool commanded=!system && m_command.commands(ref.type,ref.instance);
     if(commanded) {discardCommands(ref.type,ref.instance);m_command.beginWrite(ref.type,ref.instance);}
     try {
         Client(*session).async([ref,bits](Client &client) {
@@ -355,7 +399,7 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
 
 void LocalConnection::runLayoutOp(const QString &op,std::function<int(Client &)> work,std::function<QString(int)> done,
                                   std::optional<InstanceKey> removed) {
-    if(const auto blocked=layoutBlocked().isEmpty()?exclusiveBlocked():layoutBlocked();!blocked.isEmpty()) {
+    if(const auto blocked=rebootBlocked();!blocked.isEmpty()) {
         emit layoutResult(op,false,blocked);return;
     }
     auto c=m_context;auto session=c?c->getSession():nullptr;
@@ -493,7 +537,15 @@ void LocalConnection::discardPending() {
         if(self) {
             // Live changes stay; only the staged layout and reboot params went.
             for(const auto &line:self->m_stagedLines.take(id)) {self->m_changes[id].removeOne(line);}
-            self->m_edits.clear();
+            // Kept refusals go; a send still in flight keeps its row for its
+            // completion, and a live settings row has nothing staged to drop.
+            for(auto it=self->m_edits.begin();it!=self->m_edits.end();) {
+                const auto ref=parseItemKey(it.key());
+                const auto *item=ref && self->m_snapshot?findItem(*self->m_snapshot,*ref):nullptr;
+                const bool liveSetting=ref && ref->type==defs::kSystemTypeId && item && !flag(item->descriptor,defs::ItemFlag::RebootRequired);
+                if(it->state!="sending" && !liveSetting) {it=self->m_edits.erase(it);} else {++it;}
+            }
+            self->updateParams();
         }
         return tr("Pending changes discarded");
     });

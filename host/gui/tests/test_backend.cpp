@@ -1429,6 +1429,456 @@ private slots:
     // The Layout page's live half in the shell: the cards, a source row's
     // value and age, the inline action form (checked before sending) and a
     // module type's panel tab with its slot properties.
+    // Device settings without a device: rows from the descriptors (read-only,
+    // non-param and value-less items left out), grouping, pending, unsaved,
+    // locks, the safe-mode rule, the pending limits and the refusal texts.
+    void deviceSettingsLogic() {
+        using defs::ItemFlag;
+        auto s=std::make_shared<DeviceSnapshot>();
+        auto item=[](uint16_t id,const char *name,ItemKind kind,uint16_t flags) {
+            ModelItem i;i.descriptor.id=id;i.descriptor.name=name;i.descriptor.kind=kind;i.descriptor.value_type=ValueType::U16;
+            i.descriptor.flags=flags;return i;
+        };
+        const uint16_t reboot=uint16_t(ItemFlag::RebootRequired),locked=uint16_t(ItemFlag::LockedWhileArmed),readOnly=uint16_t(ItemFlag::ReadOnly);
+        auto &system=s->types[0];system.descriptor={0,0,"system"};
+        system.items[defs::system::kStatusRateHz]=item(defs::system::kStatusRateHz,"status.rate_hz",ItemKind::Param,0);
+        system.items[defs::system::kWatchdogMs]=item(defs::system::kWatchdogMs,"watchdog_ms",ItemKind::Param,locked);
+        system.items[defs::system::kLimitsLoops]=item(defs::system::kLimitsLoops,"limits.loops",ItemKind::Param,reboot);
+        system.items[defs::system::kLimitsInstances]=item(defs::system::kLimitsInstances,"limits.instances",ItemKind::Param,reboot);
+        system.items[defs::system::kDiagPollMs]=item(defs::system::kDiagPollMs,"diag.poll_ms",ItemKind::Param,0);
+        system.items[0x7F01]=item(0x7F01,"uptime_s",ItemKind::Param,readOnly);   // read-only: left out
+        system.items[0x7F02]=item(0x7F02,"orphan",ItemKind::Param,0);            // no value: left out
+        system.items[0x100]=item(0x100,"ticks",ItemKind::Signal,0);              // not a param
+        s->system_params={{defs::system::kStatusRateHz,uint16_t(10)},{defs::system::kWatchdogMs,uint16_t(200)},
+                          {defs::system::kLimitsLoops,uint16_t(4)},{defs::system::kLimitsInstances,uint16_t(16)},
+                          {defs::system::kDiagPollMs,uint16_t(20)},{0x7F01,uint16_t(5)}};
+        s->pending_system_params=s->system_params;
+        s->pending_system_params[defs::system::kLimitsLoops]=uint16_t(6);
+        ParamTable table;QAbstractItemModelTester tester(&table,QAbstractItemModelTester::FailureReportingMode::QtTest);
+        auto names=[&] {QStringList n;for(int i=0;i<table.rowCount();++i) {n<<table.data(table.index(i),ParamTable::Name).toString();}return n;};
+        auto find=[&](const char *name)->QModelIndex {
+            for(int i=0;i<table.rowCount();++i) {if(table.data(table.index(i),ParamTable::Name).toString()==name) {return table.index(i);}}
+            return {};
+        };
+        table.resetSystem(s,false,{},{},false,false);
+        // Ungrouped names first, then each prefix in order of appearance.
+        QCOMPARE(names(),(QStringList{"watchdog_ms","status.rate_hz","limits.loops","limits.instances","diag.poll_ms"}));
+        QCOMPARE(table.total(),5);
+        QVERIFY(!table.data(table.index(0),ParamTable::GroupStart).toBool());
+        QVERIFY(table.data(table.index(1),ParamTable::GroupStart).toBool());
+        QVERIFY(table.data(table.index(2),ParamTable::GroupStart).toBool());
+        QVERIFY(!table.data(table.index(3),ParamTable::GroupStart).toBool());
+        QVERIFY(table.data(table.index(4),ParamTable::GroupStart).toBool());
+        QCOMPARE(table.data(find("limits.loops"),ParamTable::Key).toString(),QString("0:0:16"));
+        // A staged limit: current value and pending value, never a live look.
+        auto loops=find("limits.loops");
+        QVERIFY(table.data(loops,ParamTable::IsPending).toBool());QVERIFY(table.data(loops,ParamTable::RebootRequired).toBool());
+        QCOMPARE(table.data(loops,ParamTable::ValueText).toString(),QString("4"));
+        QCOMPARE(table.data(loops,ParamTable::PendingText).toString(),QString("6"));
+        QCOMPARE(table.data(loops,ParamTable::ValueBits).toUInt(),6u);
+        QCOMPARE(table.pendingCount(),1);QCOMPARE(table.unsavedCount(),0);
+        QVERIFY(!table.data(find("limits.instances"),ParamTable::IsPending).toBool()); // equal values: plain
+        QVERIFY(!table.data(find("status.rate_hz"),ParamTable::IsPending).toBool());
+        // A live param is never pending, whatever GET_PENDING holds for it.
+        s->pending_system_params[defs::system::kStatusRateHz]=uint16_t(50);
+        table.resetSystem(s,false,{},{},false,false);
+        QVERIFY(!table.data(find("status.rate_hz"),ParamTable::IsPending).toBool());
+        QCOMPARE(table.data(find("status.rate_hz"),ParamTable::ValueText).toString(),QString("10"));
+        QCOMPARE(table.pendingCount(),1);
+        s->pending_system_params[defs::system::kStatusRateHz]=uint16_t(10);
+        // Unsaved and kept edits.
+        const QHash<QString,ParamEdit> edits{{"0:0:3",{"rejected","Enter a whole number from 0 to 65535","abc"}}};
+        table.resetSystem(s,false,edits,{"0:0:3"},false,false);
+        QVERIFY(table.data(find("status.rate_hz"),ParamTable::Unsaved).toBool());
+        QCOMPARE(table.data(find("status.rate_hz"),ParamTable::EditState).toString(),QString("rejected"));
+        QCOMPARE(table.unsavedCount(),1);QCOMPARE(table.changedCount(),2);
+        // Armed: the reboot rows and watchdog_ms lock; the live ones do not.
+        table.resetSystem(s,true,{},{},false,false);
+        for(const char *name:{"watchdog_ms","limits.loops","limits.instances"}) {QVERIFY(table.data(find(name),ParamTable::Locked).toBool());}
+        for(const char *name:{"status.rate_hz","diag.poll_ms"}) {QVERIFY(!table.data(find(name),ParamTable::Locked).toBool());}
+        // Safe mode: the saved value shows with a neutral note, nothing is pending.
+        table.resetSystem(s,false,{},{},true,false);
+        loops=find("limits.loops");
+        QVERIFY(!table.data(loops,ParamTable::IsPending).toBool());
+        QCOMPARE(table.data(loops,ParamTable::ValueText).toString(),QString("6"));
+        QCOMPARE(table.data(loops,ParamTable::SafeNote).toString(),QString("Safe mode runs 4 · 6 after a normal boot"));
+        QCOMPARE(table.pendingCount(),0);
+        QVERIFY(table.data(find("limits.instances"),ParamTable::SafeNote).toString().isEmpty());
+        // Once the device reports a pending reboot it cannot tell saved from staged: all pending.
+        table.resetSystem(s,false,{},{},true,true);
+        QVERIFY(table.data(find("limits.loops"),ParamTable::IsPending).toBool());QCOMPARE(table.pendingCount(),1);
+        QCOMPARE(table.data(find("limits.loops"),ParamTable::PendingText).toString(),QString("6"));
+        QCOMPARE(table.data(find("limits.loops"),ParamTable::SafeNote).toString(),QString("Safe mode runs 4 · 6 after a normal boot"));
+        // No snapshot, no rows.
+        table.resetSystem(nullptr,false,{},{},false,false);QCOMPARE(table.rowCount(),0);
+
+        // The banner and Discard lists: system differences by the two flags.
+        const auto subjects=[&](bool safe,bool reboot) {
+            QStringList list;for(const auto &c:pendingChanges(*s,safe,reboot)) {list<<c.subject+"|"+c.from+"|"+c.to+"|"+c.note;}return list;
+        };
+        QCOMPARE(subjects(false,false),(QStringList{"system.limits.loops|4|6|"}));
+        QCOMPARE(subjects(false,true),(QStringList{"system.limits.loops|4|6|"}));
+        QVERIFY(subjects(true,false).isEmpty());
+        QCOMPARE(subjects(true,true),(QStringList{"system.limits.loops|4|6|Safe mode runs 4 · 6 after a normal boot"}));
+        // Layout counts use the pending limits (running ones when absent).
+        QCOMPARE(layoutCounts(*s).loopLimit,6);QCOMPARE(layoutCounts(*s).instanceLimit,16);
+        s->pending_system_params.clear();
+        QCOMPARE(layoutCounts(*s).loopLimit,4);
+        // Refusals: Capacity on a system SET, NotEnoughMemory as the device words it.
+        const Error capacity(ErrorKind::Rejected,"capacity",uint8_t(defs::Result::NoMemory),uint8_t(defs::Detail::Capacity));
+        QCOMPARE(layoutRefusal(*s,capacity,Ref{0,0,defs::system::kLimitsLoops},1u),QString("The pending layout uses more than this"));
+        QCOMPARE(layoutRefusal(*s,capacity,Ref{112,0,1},1u),QString("The device has no capacity left for this"));
+        const Error memory(ErrorKind::Rejected,"memory",uint8_t(defs::Result::NoMemory),uint8_t(defs::Detail::NotEnoughMemory));
+        QCOMPARE(layoutRefusal(*s,memory,Ref{0,0,defs::system::kLimitsLoops},8u),QString("The device has not enough memory for this"));
+        // The parse problem a field shows.
+        QCOMPARE(parseValueText(system.items[defs::system::kStatusRateHz],"abc").problem,QString("Enter a whole number from 0 to 65535"));
+    }
+    // Device settings against vdev: live, staged, clamped, refused, armed,
+    // Save, Discard, the pending limits in Layout and the two flags after
+    // SAVE then DISCARD.
+    void deviceSettingsOperations() {
+        Fixture fixture;LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        QSignalSpy results(&c,&Connection::layoutResult);
+        auto last=[&](const QString &op) {
+            return waitFor([&]{return !results.isEmpty() && results.last().at(0).toString()==op && !c.configBusy();});
+        };
+        auto *model=c.systemParams();
+        auto row=[&](const QString &key)->QModelIndex {
+            for(int i=0;i<model->rowCount();++i) {if(model->index(i,0).data(ParamTable::Key).toString()==key) {return model->index(i,0);}}
+            return {};
+        };
+        auto role=[&](const char *key,int r) {return row(key).data(r);};
+        auto system=[&](uint16_t id,bool pending=false) {
+            const auto &map=pending?c.snapshot()->pending_system_params:c.snapshot()->system_params;return valueBits(map.at(id));
+        };
+        auto changes=[&] {
+            QStringList list;for(const auto &v:c.layout()["pendingChanges"].toList()) {list<<v.toMap()["subject"].toString();}return list;
+        };
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.armEnabled();}));
+        // Nothing hard-coded: the writable system params of the descriptors.
+        QCOMPARE(model->rowCount(),13);QCOMPARE(model->index(0,0).data(ParamTable::Name).toString(),QString("watchdog_ms"));
+        QCOMPARE(c.deviceSettings()["total"].toInt(),13);QVERIFY(c.deviceSettings()["blocked"].toString().isEmpty());
+        QVERIFY(!c.deviceSettings()["safeMode"].toBool());QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
+        // Live: applied at once, Unsaved until SAVE, never pending.
+        c.setParamText("0:0:3","20");
+        QVERIFY(waitFor([&]{return role("0:0:3",ParamTable::EditState)=="applied" && role("0:0:3",ParamTable::ValueText)=="20";}));
+        QVERIFY(role("0:0:3",ParamTable::Unsaved).toBool());QVERIFY(!role("0:0:3",ParamTable::IsPending).toBool());
+        QVERIFY(waitFor([&]{return c.unsaved() && c.deviceSettings()["unsaved"].toBool();})); // STATUS carries the flag
+        QCOMPARE(c.deviceSettings()["unsavedCount"].toInt(),1);
+        QCOMPARE(c.deviceSettings()["pending"].toInt(),0);
+        QVERIFY(c.unsavedChanges().join("|").contains("system.status.rate_hz"));
+        QVERIFY(changes().isEmpty());QVERIFY(!c.pendingReboot());
+        // Clamped: the device's value replaces the text; a parse problem sends nothing.
+        c.setParamText("0:0:3","1000");
+        QVERIFY(waitFor([&]{return role("0:0:3",ParamTable::EditState)=="clamped";}));
+        QCOMPARE(role("0:0:3",ParamTable::EditNote).toString(),QString("Clamped to 100"));
+        QVERIFY(waitFor([&]{return role("0:0:3",ParamTable::ValueText)=="100";}));
+        c.setParamText("0:0:3","abc");
+        QCOMPARE(role("0:0:3",ParamTable::EditState).toString(),QString("rejected"));
+        QCOMPARE(role("0:0:3",ParamTable::EditNote).toString(),QString("Enter a whole number from 0 to 65535"));
+        QTest::qWait(200);QCOMPARE(system(defs::system::kStatusRateHz),100u);
+        // A kept refusal stays when another node is selected (Layout's own go).
+        c.selectNode("5:1");QCOMPARE(role("0:0:3",ParamTable::EditState).toString(),QString("rejected"));
+        QVERIFY(!c.params()->index(0,0).data(ParamTable::Key).toString().startsWith("0:0:"));
+        c.setParamText("5:1:1","10");
+        QVERIFY(waitFor([&]{return c.params()->index(0,0).data(ParamTable::EditState).toString()=="applied";}));
+        QCOMPARE(role("0:0:3",ParamTable::EditState).toString(),QString("rejected"));
+        c.clearParamEdit("0:0:3");QVERIFY(role("0:0:3",ParamTable::EditState).toString().isEmpty());
+        // SAVE clears the Unsaved marks, system rows too.
+        c.save();QVERIFY(waitFor([&]{return !c.unsaved() && !c.configBusy();}));
+        QVERIFY(!role("0:0:3",ParamTable::Unsaved).toBool());QVERIFY(!c.deviceSettings()["unsaved"].toBool());
+        QCOMPARE(c.deviceSettings()["unsavedCount"].toInt(),0);
+        // Staging a limit: pending (not live, not Unsaved), the banner list, ARM blocked,
+        // and the Layout counts follow the pending limit while the Limits card keeps the running one.
+        const auto runningLoops=[&] {
+            for(const auto &v:c.limits()) {if(v.toMap()["name"]=="loops") {return v.toMap()["value"].toInt();}}
+            return -1;
+        };
+        QCOMPARE(runningLoops(),4);QCOMPARE(c.layout()["counts"].toMap()["loopLimit"].toInt(),4);
+        c.setParamText("0:0:16","6");
+        QVERIFY(waitFor([&]{return role("0:0:16",ParamTable::IsPending).toBool();}));
+        QCOMPARE(role("0:0:16",ParamTable::ValueText).toString(),QString("4"));
+        QCOMPARE(role("0:0:16",ParamTable::PendingText).toString(),QString("6"));
+        QVERIFY(role("0:0:16",ParamTable::EditState).toString().isEmpty());QVERIFY(!role("0:0:16",ParamTable::Unsaved).toBool());
+        QVERIFY(waitFor([&]{return c.pendingReboot() && !c.armEnabled();}));
+        QCOMPARE(c.deviceSettings()["pending"].toInt(),1);QVERIFY(!c.deviceSettings()["unsaved"].toBool());
+        QCOMPARE(changes(),(QStringList{"system.limits.loops"}));
+        QCOMPARE(c.layout()["counts"].toMap()["loopLimit"].toInt(),6);QCOMPARE(runningLoops(),4);
+        QCOMPARE(system(defs::system::kLimitsLoops),4u);QCOMPARE(system(defs::system::kLimitsLoops,true),6u);
+        // The pending limit lets Layout add loops the running one would refuse (5 of 6, not 5 of 4).
+        for(int i=0;i<3;++i) {c.addLoop(QString("extra%1").arg(i),{});QVERIFY(last("addLoop"));QVERIFY2(results.last().at(1).toBool(),qPrintable(results.last().at(2).toString()));}
+        QVERIFY(waitFor([&]{return c.layout()["counts"].toMap()["loops"].toInt()==5;}));
+        QVERIFY(c.layout()["addLoopBlocked"].toString().isEmpty());
+        // A limit below what the pending layout uses is refused, kept on its row, nothing staged.
+        c.setParamText("0:0:16","3");
+        QVERIFY(waitFor([&]{return role("0:0:16",ParamTable::EditState)=="rejected";}));
+        QCOMPARE(role("0:0:16",ParamTable::EditNote).toString(),QString("The pending layout uses more than this"));
+        QCOMPARE(system(defs::system::kLimitsLoops,true),6u);
+        c.clearParamEdit("0:0:16");
+        // Discard all restores the running limits and drops the staged loops.
+        c.discardPending();QVERIFY(last("discard"));QVERIFY(results.last().at(1).toBool());
+        QVERIFY(waitFor([&]{return !c.pendingReboot() && changes().isEmpty() && !role("0:0:16",ParamTable::IsPending).toBool();}));
+        QCOMPARE(c.layout()["counts"].toMap()["loopLimit"].toInt(),4);QCOMPARE(c.layout()["counts"].toMap()["loops"].toInt(),2);
+        QCOMPARE(system(defs::system::kLimitsLoops,true),4u);
+        // Staged and set back, never saved: the device keeps its reboot flag, but nothing saved waits.
+        c.setParamText("0:0:16","6");QVERIFY(waitFor([&]{return role("0:0:16",ParamTable::IsPending).toBool() && c.unsaved();}));
+        c.setParamText("0:0:16","4");
+        QVERIFY(waitFor([&]{return changes().isEmpty() && !role("0:0:16",ParamTable::IsPending).toBool();}));
+        QVERIFY(c.pendingReboot());QVERIFY(c.unsaved());QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
+        c.discardPending();QVERIFY(last("discard"));QVERIFY(waitFor([&]{return !c.pendingReboot();}));
+        // Save and reboot applies a staged limit; the row is plain afterwards.
+        c.setParamText("0:0:16","6");QVERIFY(waitFor([&]{return role("0:0:16",ParamTable::IsPending).toBool();}));
+        c.saveAndReboot();
+        QVERIFY(waitFor([&]{return c.ready() && !c.reconnecting() && c.rebootNotice()["visible"].toBool();},15000));
+        QVERIFY(waitFor([&]{return system(defs::system::kLimitsLoops)==6u && !role("0:0:16",ParamTable::IsPending).toBool();}));
+        QCOMPARE(runningLoops(),6);QCOMPARE(c.layout()["counts"].toMap()["loopLimit"].toInt(),6);
+        QVERIFY(changes().isEmpty());QVERIFY(!c.pendingReboot());c.dismissRebootNotice();
+        // Saved, then discarded: the device keeps its reboot flag with nothing listed.
+        // (b) before the discard the saved change is listed and nothing is unsaved.
+        c.setParamText("0:0:17","20");QVERIFY(waitFor([&]{return role("0:0:17",ParamTable::IsPending).toBool();}));
+        QVERIFY(c.deviceSettings()["unsaved"].toBool()==false);
+        c.save();QVERIFY(waitFor([&]{return !c.unsaved() && !c.configBusy();}));
+        QVERIFY(c.pendingReboot());QVERIFY(c.deviceSettings()["discardAfterSave"].toBool());
+        QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
+        c.discardPending();QVERIFY(last("discard"));
+        // (a) after it: the reboot flag stays, nothing is listed, nothing is pending.
+        QVERIFY(waitFor([&]{return changes().isEmpty() && !role("0:0:17",ParamTable::IsPending).toBool() && c.deviceSettings()["savedThenDiscarded"].toBool();}));
+        QVERIFY(c.pendingReboot());QVERIFY(!c.deviceSettings()["discardAfterSave"].toBool());
+        QCOMPARE(c.deviceSettings()["pending"].toInt(),0);QVERIFY(!c.armEnabled());
+        // Staging and discarding once more leaves the device's unsaved flag set; the saved settings still wait.
+        c.setParamText("0:0:16","7");QVERIFY(waitFor([&]{return role("0:0:16",ParamTable::IsPending).toBool() && c.unsaved();}));
+        QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
+        c.discardPending();QVERIFY(last("discard"));
+        QVERIFY(waitFor([&]{return changes().isEmpty() && c.deviceSettings()["savedThenDiscarded"].toBool();}));
+        QVERIFY(c.unsaved());
+        QVERIFY(c.actionBlocked()["reboot"].toString().isEmpty());QVERIFY(c.actionBlocked()["saveAndReboot"].toString().isEmpty());
+        // Save and reboot keeps the values shown: it saves the running 16 over the saved 20.
+        c.saveAndReboot();
+        QVERIFY(waitFor([&]{return c.ready() && !c.reconnecting() && c.rebootNotice()["visible"].toBool();},15000));
+        QVERIFY(waitFor([&]{return system(defs::system::kLimitsInstances)==16u && !c.pendingReboot();}));
+        c.dismissRebootNotice();
+        // Armed: the reboot rows and watchdog_ms lock with the reason; live rows stay editable.
+        QVERIFY(waitFor([&]{return c.armEnabled();},15000));
+        c.arm();QVERIFY(waitFor([&]{return c.armState()==1 && role("0:0:16",ParamTable::Locked).toBool();}));
+        QVERIFY(role("0:0:4",ParamTable::Locked).toBool());QVERIFY(!role("0:0:3",ParamTable::Locked).toBool());
+        QVERIFY(!role("0:0:33",ParamTable::Locked).toBool());
+        c.setParamText("0:0:16","7");QVERIFY(role("0:0:16",ParamTable::EditNote).toString().contains("armed"));
+        c.setParamText("0:0:4","900");QVERIFY(role("0:0:4",ParamTable::EditNote).toString().contains("armed"));
+        c.setParamText("0:0:33","30");
+        QVERIFY(waitFor([&]{return role("0:0:33",ParamTable::EditState)=="applied" && role("0:0:33",ParamTable::ValueText)=="30";}));
+        QTest::qWait(200);QCOMPARE(system(defs::system::kLimitsLoops,true),6u);QCOMPARE(c.armState(),1);
+        c.disarm();QVERIFY(waitFor([&]{return c.armState()==0 && !role("0:0:16",ParamTable::Locked).toBool();}));
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();}));
+        QCOMPARE(model->rowCount(),0);QVERIFY(c.deviceSettings().isEmpty());
+    }
+    // Opt-in on a device (the bare board or a vdev endpoint): changes a limit
+    // through the card's own field with the keyboard, saves and reboots, and
+    // restores the configuration the same way. Nothing arms.
+    void benchDeviceSettings() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        if(endpoint.isEmpty()) {QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT to run on a device");}
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();
+        LocalConnection c;QTemporaryDir dir;c.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;connect(&keys,&SafetyKeys::escapeRequested,&c,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&c);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(2300,1300);
+        c.connectTo(endpoint);
+        QVERIFY2(waitFor([&]{return c.ready() && c.snapshot()->status.has_value();},30000),qPrintable(c.lastError()["message"].toString()));
+        QVERIFY2(!c.unsaved() && !c.pendingReboot() && !c.safeMode() && c.armState()==0,"refusing to run with unsaved, pending, armed or safe-mode state");
+        qInfo("bench: device %s firmware %s",qPrintable(c.deviceId()),qPrintable(c.info()["firmware"].toString()));
+        const auto value=[&](bool pending) {
+            const auto &map=pending?c.snapshot()->pending_system_params:c.snapshot()->system_params;
+            return valueBits(map.at(defs::system::kLimitsLoops));
+        };
+        const auto original=value(false);const auto loops=uint32_t(c.layout()["counts"].toMap()["loops"].toInt());
+        const auto changed=original<8?original+1:original-1;
+        QVERIFY2(changed>=loops && loops>1,"needs a free limits.loops step and two loops");
+        // Looked up each time: the rows go with the snapshot at a reboot, and
+        // new ones are made when the device is back.
+        const auto rowItem=[&](const char *name)->QQuickItem * {
+            auto *row=visualChild(window->contentItem(),"setting_limits.loops");
+            return row && row->isVisible()?visualChild(row,name):nullptr;
+        };
+        const auto note=[&] {auto *item=rowItem("paramNote");return item?item->property("text").toString():QString();};
+        const auto type=[&](uint32_t v) {
+            if(!waitFor([&]{return rowItem("paramField")!=nullptr;})) {return false;}
+            QPointer<QQuickItem> field=rowItem("paramField");field->forceActiveFocus();
+            if(!waitFor([&]{return field && field->hasActiveFocus();})) {return false;}
+            QTest::keyClick(window,Qt::Key_A,Qt::ControlModifier);
+            for(const auto ch:QString::number(v)) {QTest::keyClick(window,ch.toLatin1());}
+            if(note()!="Not sent · Enter sends") {return false;}
+            QTest::keyClick(window,Qt::Key_Return);return true;
+        };
+        const auto apply=[&](uint32_t from,uint32_t to) {
+            if(!type(to)) {return false;}
+            if(!waitFor([&]{return note()==QString::fromUtf8("Current %1 → Pending %2 · after reboot").arg(from).arg(to);})) {return false;}
+            if(value(false)!=from || c.layout()["counts"].toMap()["loopLimit"].toUInt()!=to) {return false;}
+            if(!waitFor([&]{return c.pendingReboot() && c.unsaved();})) {return false;}
+            c.saveAndReboot();
+            if(!waitFor([&]{return c.ready() && !c.reconnecting() && c.rebootNotice()["visible"].toBool();},30000)) {return false;}
+            c.dismissRebootNotice();
+            return waitFor([&]{return value(false)==to && value(true)==to && !c.pendingReboot() && !c.unsaved();},10000);
+        };
+        // Below what the layout uses: refused by the device, nothing staged.
+        QVERIFY(type(loops-1));
+        QVERIFY(waitFor([&]{return note()=="The pending layout uses more than this";}));
+        QCOMPARE(value(true),original);QVERIFY(!c.pendingReboot());
+        QTest::keyClick(window,Qt::Key_Escape);
+        // Staged, discarded: the running value is back, nothing is pending.
+        QVERIFY(type(changed));QVERIFY(waitFor([&]{return value(true)==changed && c.pendingReboot();}));
+        c.discardPending();QVERIFY(waitFor([&]{return value(true)==original && !c.pendingReboot();}));
+        const bool done=apply(original,changed);
+        qInfo("bench: limits.loops %u to %u after Save and reboot: %s",original,changed,done?"applied":"FAILED");
+        // Restore whatever happened; report a failure only afterwards.
+        const bool back=value(false)==changed?apply(changed,original):value(false)==original;
+        qInfo("bench: limits.loops back at %u: %s",original,back?"yes":"NO");
+        QVERIFY(done);QVERIFY2(back,"restore limits.loops by hand");
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing() && !c.linked();},10000));
+    }
+    // Safe mode on vdev: the card reports it; the rows stay plain while the
+    // saved and running values agree.
+    void deviceSettingsInSafeMode() {
+        Fixture fixture(true);LocalConnection c;
+        c.connectTo(fixture.endpoint);QVERIFY(waitFor([&]{return c.ready() && c.safeMode();}));
+        QVERIFY(c.deviceSettings()["safeMode"].toBool());QCOMPARE(c.systemParams()->rowCount(),13);
+        QCOMPARE(c.deviceSettings()["pending"].toInt(),0);QVERIFY(!c.deviceSettings()["savedThenDiscarded"].toBool());
+        c.disconnectDevice();QVERIFY(waitFor([&]{return !c.closing();}));
+    }
+    // The Device settings card in the real shell: placement at both widths,
+    // badges, every row note, Esc, the armed locks, the saved-then-discarded
+    // notes (card, banner, Discard dialog) and the safe-mode note.
+    void deviceSettingsInShell() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();
+        Fixture fixture;LocalConnection connection;QTemporaryDir dir;connection.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;
+        connect(&keys,&SafetyKeys::escapeRequested,&connection,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(2300,1300);
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled();},15000));
+        auto shown=[&](const char *name)->QQuickItem * {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible()?item:nullptr;
+        };
+        auto text=[&](const char *name) {auto *item=shown(name);return item?item->property("text").toString():QString();};
+        auto note=[&](const char *name) {
+            auto *item=shown(name);auto *n=item?visualChild(item,"paramNote"):nullptr;return n?n->property("text").toString():QString("<none>");
+        };
+        auto at=[&](QQuickItem *item) {return item->mapToItem(shown("devicePage")->property("contentItem").value<QQuickItem *>(),QPointF(0,0));};
+        // Placement. Wide: two columns and two rows with Firmware and Limits to
+        // its right, below Loops; narrow: the full width.
+        QVERIFY(waitFor([&]{return shown("settingsCard") && shown("firmwareCard") && shown("limitsCard");}));
+        QTest::qWait(150);
+        auto *card=shown("settingsCard");auto *page=shown("devicePage");
+        QVERIFY(page->width()>=1800);
+        QVERIFY(at(card).y()>=at(shown("loopsCard")).y()+shown("loopsCard")->height());
+        QVERIFY(at(shown("firmwareCard")).x()>=at(card).x()+card->width());
+        QVERIFY(at(shown("firmwareCard")).y()<at(card).y()+card->height());
+        QVERIFY(at(shown("limitsCard")).y()>=at(shown("firmwareCard")).y()+shown("firmwareCard")->height());
+        QVERIFY(at(shown("limitsCard")).x()>=at(card).x()+card->width());
+        QVERIFY(card->width()>page->width()/2);
+        window->resize(1500,1000);
+        QVERIFY(waitFor([&]{return !(page->width()>=1800);}));QTest::qWait(150);
+        QVERIFY(std::abs(card->width()-(page->width()-48))<1.5);
+        QVERIFY(at(shown("firmwareCard")).y()>=at(card).y()+card->height());
+        // The title, caption and the plain state.
+        QCOMPARE(text("settingsCaption"),QString("Rows marked reboot take effect after Save and a reboot; the others apply at once."));
+        QVERIFY(!shown("settingsPendingBadge"));QVERIFY(!shown("settingsUnsavedBadge"));
+        QVERIFY(!shown("settingsSafeNote"));QVERIFY(!shown("settingsSavedNote"));
+        // Every writable row, ungrouped first, then the headings.
+        for(const char *name:{"setting_watchdog_ms","setting_status.rate_hz","setting_limits.loops","setting_limits.capture_kb","setting_diag.poll_ms"}) {
+            QVERIFY2(visualChild(window->contentItem(),name),name);
+        }
+        QVERIFY(visualChild(visualChild(window->contentItem(),"setting_limits.loops"),"paramNote")->property("text").toString().contains("1"));
+        // Live change: Applied, then the Unsaved note and badge.
+        connection.setParamText("0:0:3","20");
+        QVERIFY(waitFor([&]{return note("setting_status.rate_hz")=="Applied";}));
+        QVERIFY(waitFor([&]{return shown("settingsUnsavedBadge") && !shown("settingsPendingBadge");}));
+        QCOMPARE(shown("settingsUnsavedBadge")->property("text").toString(),QString("Unsaved"));
+        connection.clearParamEdit("0:0:3");
+        QVERIFY(waitFor([&]{return note("setting_status.rate_hz")=="Changed since the last save";}));
+        // Staged limit: current and pending values, the violet note and badge.
+        connection.setParamText("0:0:16","6");
+        QVERIFY(waitFor([&]{return note("setting_limits.loops")==QString::fromUtf8("Current 4 → Pending 6 · after reboot");}));
+        QVERIFY(waitFor([&]{return shown("settingsPendingBadge") && shown("settingsPendingBadge")->property("text").toString()=="1 pending";}));
+        QVERIFY(waitFor([&]{return shown("shellBanner") && shown("shellBanner")->property("title").toString()=="Changes require a reboot";}));
+        QVERIFY(shown("shellBanner")->property("message").toString().contains("1 staged change"));
+        // Edit: Not sent; Esc cancels it unsent; Enter sends.
+        QVERIFY(waitFor([&]{return note("setting_limits.loops").startsWith("Current 4");}));
+        auto *rate=visualChild(shown("setting_status.rate_hz"),"paramField");QVERIFY(rate);
+        rate->forceActiveFocus();QVERIFY(waitFor([&]{return rate->hasActiveFocus();}));
+        rate->setProperty("text","30");
+        QVERIFY(waitFor([&]{return note("setting_status.rate_hz")=="Not sent · Enter sends";}));
+        QTest::keyClick(window,Qt::Key_Escape);
+        QVERIFY(waitFor([&]{return rate->property("text").toString()=="20";}));
+        QTest::qWait(250);QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kStatusRateHz)),20u);
+        rate->setProperty("text","30");QTest::keyClick(window,Qt::Key_Return);
+        QVERIFY(waitFor([&]{return valueBits(connection.snapshot()->system_params.at(defs::system::kStatusRateHz))==30u && note("setting_status.rate_hz")=="Applied";}));
+        // A refused value is kept on its row with the device's words.
+        rate->setProperty("text","abc");QTest::keyClick(window,Qt::Key_Return);
+        QVERIFY(waitFor([&]{return note("setting_status.rate_hz")=="Enter a whole number from 0 to 65535";}));
+        connection.clearParamEdit("0:0:3");
+        // Tab leaves the field and goes on to a later row's field.
+        rate->forceActiveFocus();QTest::keyClick(window,Qt::Key_Tab);
+        QVERIFY(waitFor([&]{return !rate->hasActiveFocus();}));
+        // Armed: the reboot rows and watchdog_ms say so; the others stay editable.
+        connection.discardPending();
+        QVERIFY(waitFor([&]{return connection.armEnabled();}));
+        connection.arm();QVERIFY(waitFor([&]{return connection.armState()==1;}));
+        QVERIFY(waitFor([&]{return note("setting_limits.loops")=="Locked while armed";}));
+        QCOMPARE(note("setting_watchdog_ms"),QString("Locked while armed"));
+        QVERIFY(note("setting_status.rate_hz")!="Locked while armed");QVERIFY(note("setting_diag.poll_ms")!="Locked while armed");
+        auto *limitField=visualChild(shown("setting_limits.loops"),"paramField");QVERIFY(limitField);
+        QVERIFY(!limitField->parentItem()->isEnabled());
+        // DISARM is a click on the status bar: an open edit is cancelled, not sent.
+        auto *poll=visualChild(shown("setting_diag.poll_ms"),"paramField");QVERIFY(poll);
+        poll->forceActiveFocus();QVERIFY(waitFor([&]{return poll->hasActiveFocus();}));
+        poll->setProperty("text","77");
+        auto *disarm=window->findChild<QQuickItem *>("disarmButton");QVERIFY(disarm);
+        QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,disarm->mapToScene({disarm->width()/2,disarm->height()/2}).toPoint());
+        QVERIFY(waitFor([&]{return connection.armState()==0 && connection.armEnabled();}));
+        QTest::qWait(250);QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kDiagPollMs)),20u);
+        QVERIFY(waitFor([&]{return note("setting_limits.loops")!="Locked while armed";}));
+        // Saved, then discarded: the notes of both states.
+        connection.setParamText("0:0:17","20");
+        QVERIFY(waitFor([&]{return note("setting_limits.instances").startsWith("Current 16");}));
+        connection.save();QVERIFY(waitFor([&]{return !connection.unsaved() && !connection.configBusy();}));
+        QVERIFY(waitFor([&]{return connection.deviceSettings()["discardAfterSave"].toBool();}));
+        auto *dialog=window->findChild<QObject *>("discardDialog");QVERIFY(dialog);
+        auto *layoutDialogs=window->property("layoutDialogs").value<QObject *>();QVERIFY(layoutDialogs);
+        QMetaObject::invokeMethod(layoutDialogs,"openDiscard");
+        QVERIFY(waitFor([&]{return dialog->property("opened").toBool();}));
+        auto *content=dialog->property("contentItem").value<QQuickItem *>();QVERIFY(content);
+        auto *savedNote=visualChild(content,"discardSavedNote");QVERIFY(savedNote && savedNote->isVisible());
+        QCOMPARE(savedNote->property("text").toString(),QString("These changes were already saved. Discarding puts the values from the last boot back here, but the next boot still loads the saved ones. To keep the old values, use Save and reboot after discarding."));
+        QMetaObject::invokeMethod(dialog,"accept");
+        QVERIFY(waitFor([&]{return connection.deviceSettings()["savedThenDiscarded"].toBool();}));
+        QVERIFY(waitFor([&]{return shown("settingsSavedNote");}));
+        QCOMPARE(text("settingsSavedNote"),QString("A reboot is pending. The next boot loads the last saved settings, which can differ from the values shown. Save and reboot keeps the values shown."));
+        QVERIFY(waitFor([&]{return shown("shellBanner") && shown("shellBanner")->property("message").toString().startsWith("Saved settings are waiting for a reboot.");}));
+        QCOMPARE(shown("shellBanner")->property("action2Text").toString(),QString("Reboot"));
+        QVERIFY(shown("shellBanner")->property("action1Text").toString().isEmpty());
+        QVERIFY(shown("device_saveAndReboot")->isEnabled());QVERIFY(shown("device_reboot")->isEnabled());
+        QVERIFY(note("setting_limits.instances")!=QString::fromUtf8("Pending · after reboot"));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+        // Safe mode: the info note.
+        Fixture safe(true);
+        connection.connectTo(safe.endpoint);QVERIFY(waitFor([&]{return connection.ready() && connection.safeMode();},15000));
+        QVERIFY(waitFor([&]{return shown("settingsSafeNote");}));
+        QCOMPARE(text("settingsSafeNote"),QString("Safe mode: rows marked reboot run at their defaults. The saved values are kept and used after a normal boot."));
+        QVERIFY(!shown("settingsSavedNote"));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
     void layoutLiveInShell() {
         Q_INIT_RESOURCE(qmake_DriveLink_Shell);
         Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();

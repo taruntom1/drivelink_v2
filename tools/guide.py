@@ -38,6 +38,8 @@ FIGURES = {
                 'Connect to your controller with the DriveLink desktop app.'),
     'device': ('The Device page lists the controller status and firmware version.',
                'See the controller’s status and firmware version in the app.'),
+    'device-settings': ('Device settings lists the limits with a pending limits.loops change, Current 4 to Pending 6, after reboot.',
+                        'A staged capacity limit waits for Save and reboot. The Limits card still shows the running value.'),
     'layout-add-instance': ('The Add instance dialog lists module types and their compatible loops.',
                             'Choose a module type and the loop it will run on.'),
     'layout-review': ('The Layout review lists staged changes with their old and new values.',

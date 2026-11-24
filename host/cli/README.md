@@ -36,7 +36,43 @@ Default output is readable key/value text. With `--json`, stdout holds only `{"o
 
 No write is retried, except that `ota-upload` resends identical WRITE chunks at the same offset after STATUS confirms the acknowledged offset; it reconciles CONFIRM through STATUS and never repeats REBOOT. A write timeout has an unknown outcome. `cmd-run` and `testgen-run` still attempt DISARM when an ARM reply is lost.
 
-A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. System settings work the same way: the capacity limits `limits.*` (0:0:16 to 0:0:23) are pending, the diagnostic timing `diag.*` (0:0:32 to 0:0:34) is live. `get` shows what runs, `get-pending` what `save` writes. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
+A parameter write that needs a reboot succeeds with `pending_reboot: true`. Layout edits (`add`, `remove`, `label`) also stay pending; `instances pending` shows them. `save` then `reboot` applies additions, removals and reboot-required settings. `get` shows what runs, `get-pending` what `save` writes. `discard` drops pending edits; `revert` restores saved live values and the device name, not pending edits. `name [TEXT]` reads or renames the device and works while armed; `name ""` clears it. See [System](../../docs/protocol/core.md#system-family-1) for name limits and persistence.
+
+## Device settings
+
+The system params are the items of type 0, instance 0: `items 0` lists them with range, default and flags, and [the system type](../../docs/protocol/types/system.md) describes them. There is no separate settings command.
+
+| Reference | Param | A `set` applies |
+|---|---|---|
+| 0:0:3 | `status.rate_hz` | at once |
+| 0:0:4 | `watchdog_ms` | at once; refused while armed |
+| 0:0:16 to 0:0:23 | `limits.*` | after `save` and `reboot` |
+| 0:0:32 to 0:0:34 | `diag.*` | at once |
+
+```sh
+drivelink-cli --endpoint tcp://127.0.0.1:8765 get 0:0:16           # the limit that runs, 4
+drivelink-cli --endpoint tcp://127.0.0.1:8765 set 0:0:16=6         # staged: pending_reboot true
+drivelink-cli --endpoint tcp://127.0.0.1:8765 get-pending 0:0:16   # 6, what save writes
+drivelink-cli --endpoint tcp://127.0.0.1:8765 save
+drivelink-cli --endpoint tcp://127.0.0.1:8765 reboot
+drivelink-cli --endpoint tcp://127.0.0.1:8765 get 0:0:16           # 6
+```
+
+- A value outside the range is clamped; the reply holds the value that was taken.
+- A limit the pending layout already exceeds, or one that does not fit in RAM, is refused and nothing is staged.
+- While a setting is staged, `arm` is refused until the reboot (or `discard`, if nothing was saved).
+- A live value lasts until the next boot unless you `save`. `save` also writes every other unsaved change.
+- `discard` drops what is staged but does not undo a `save`: the next boot loads the saved values. To go back after a `save`, `set` the old value and `save` again.
+
+Through an agent, the same commands take `--device`. `set` needs no lease. `save` and `reboot` are exclusive operations, so they need `--lease` whenever another client holds the lease. `--lease` takes it from that client and disarms the device:
+
+```sh
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base set 0:0:16=6
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base --lease save
+drivelink-cli --endpoint tcp://127.0.0.1:47620 --device base --lease reboot
+```
+
+The token comes from `DRIVELINK_AGENT_TOKEN`; see [Through an agent](#through-an-agent).
 
 ## Layout and loops
 

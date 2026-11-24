@@ -103,6 +103,8 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Rebuilt G4 checks at y 14960: Instance detail `191:13815` (x 0), Pending changes `191:14162` (x 2120), both 1920×1080 Light. Old `89:7040` / `89:7326` are deleted, as are obsolete removal frames `89:5301` / `89:5729`.
 - Cover G7b row `190:19106`, state text `190:19110`. FigJam flow 5 `15:949`: first state `6:441`, Add `6:444` updated.
 
+**Device settings frames** (issue 105 step 4, 2026-11-24). Screens – Local `2:5`: header `264:24230`, notes `264:24231`, row labels `264:24232` to `264:24234`; rows at y 37480, 39480, 41480 and 43900. Live values `255:17195`, Staged `257:17873`, Unsaved `257:18790`, Armed `258:19882`, Refused `258:18326`, Safe mode `258:20608`, Saved then discarded `258:18937`, Discard dialog `259:18681`, Narrow `260:19078`, 1920×1080 Light check `261:19465`. Screens – Remote `2:6`: header `264:24235`, notes `264:24236`, label `264:24237`, Observer (ROS holds the lease) `263:5681` with its card `263:5811` and tooltip `263:6208`. No new tokens, styles or G2 components. G2 gaps: ParamRow has no "reboot and live, locked or rejected" variant (instance overrides used), and Normal's Note is 0 px wide.
+
 **G2 changes in G4:** Banner `37:359` booleans `Button 2`, `Button 3`; MenuItem `31:154` boolean `Show detail` and a Detail text; mapping rows `40:928` (Banner) and `40:820` (Menu / MenuItem) extended.
 
 **Cover:** G0 `2:20`, G1 `2:25`, G2 `2:30`, G3 `2:35`, G4 `2:40`, G5 `2:45`, G6 `2:50`, G7 `2:55`, G8 `2:60` (state texts).
@@ -154,11 +156,13 @@ Team `drivelink` (Education plan). The MCP seat is a View seat, but `use_figma` 
 - Overlay rectangles, dialogs, popups and tooltips appended to an auto-layout screen must be ABSOLUTE before positioning; otherwise the body can collapse and the dialog falls below the frame. Recenter INSTANCE dialogs as well as FRAME dialogs at 1080p.
 - For the RGBA scrim token, construct the fallback RGB and paint opacity from `resolveForConsumer()` and keep the binding. A generic grey fallback can render grey despite a black RGBA alias. Avoid reading `visible` after hiding a nested instance: its proxy can become invalid; compute the flag before setting it.
 - Compact G4: right column 460 px, wiring pickers fill their row, and full param refusal/pending notes sit below the editor. Compact Device table widths total 500 px; rate/Core need enough room to avoid ellipses. Compact Calibration: wrapped controls, file-card gap 8 and vertical padding 12, activity gap 8/padding 12. These checks supplement the earlier retained compact views.
+- Device settings traps: a nested Badge's Tone change resets its label; a lock icon swapped into the Pending ParamRow keeps the violet stroke (set it to color/text/secondary); ProgressBar tracks keep their old width when the instance is resized; `use_figma` node screenshots render on white; a cloned frame keeps its banners and absolute tooltips, so recompute its height; the StatusBar has no state with both pending and unsaved (set its Unsaved boolean).
 
 ## Session log
 
 | Date | Session | Work |
 |---|---|---|
+| 2026-11-24 | runtime settings step 4 | Device settings card: four user decisions, 13 frames, accepted by the user. |
 | 2026-11-14 | G7/G7b acceptance | User accepted G7b, then G7, including their G2 extensions. Both phases and Cover labels marked done. Next is G8 discussion; inherited G5 responsive issues and calibration/host contracts remain explicit handoff items |
 | 2026-11-14 | G7b build | User approved Parts A–G. Built 8 loop header states, SourcePicker, SourceRow and AddMenu with mappings/reviews; 17 new Layout frames; updated G4/G7 trees, local/remote Device tables and Monitor browsers; deleted 2 obsolete G4 states; rebuilt G4 checks; updated Cover/flow 5. Checked all new frames and 44 changed primary frames in full size and 1080p Light, inspected retained copies, fixed header heights/compact fields/overlays/pending ARM controls. G5 inherited fixed plot/toolbar issues remain open. G7b in review; G7 left in review |
 | 2026-11-14 | G7b planning | Recorded six user answers: leave G7 in review, one Add menu, detailed loop headers, delete obsolete invalid-layout frame, second real-time loop for wiring refusal, shipped fusion.mock. Read current core v8/loop/source contracts; inspected G7 and G4 structure/screenshots. Revised Parts A–G to 17 new Layout frames, two G4 deletions and shared-screen updates with size/theme checks. No Figma mutations. Awaiting scope approval before Part A |

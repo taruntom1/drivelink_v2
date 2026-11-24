@@ -32,6 +32,10 @@ Use the app’s status and diagnostics or the ROS log to identify the refusal. S
 | The GUI says another owner armed the device | Coordinate with the owner, stop motion, and disarm before trying to arm from this window. |
 | Command keepalives are still pending or blocked | Wait for the app to finish setting up its command groups. If the check stays blocked, read the detail on **Device** and close any unused client holding group slots. |
 
+## A loop or instance limit is reached
+
+If **Add** on **Layout** is unavailable and says something like **4 of 4 loops: remove a loop first**, the layout has used up a capacity limit. Raise the matching limit in [Device settings]({{base}}pc/settings/), then save and reboot. A limit below what the layout already uses is refused.
+
 ## A wheel or encoder runs backwards
 
 Disarm first. If a positive command turns the wheel backwards, check the motor mapping and the actuator’s `invert` parameter. If the wheel turns forward but its position or velocity is negative, check the encoder’s `invert` parameter. If feedback stays at zero, check the encoder’s power, signals, and joint mapping. Repeat the safe [first-spin check]({{base}}pc/first-spin/) after each change.

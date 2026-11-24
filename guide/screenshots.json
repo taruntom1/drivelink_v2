@@ -1,6 +1,7 @@
 [
   "connect",
   "device",
+  "device-settings",
   "layout-add-instance",
   "layout-review",
   "monitor-command-disarmed",

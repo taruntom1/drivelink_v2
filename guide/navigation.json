@@ -24,6 +24,7 @@
     {"title": "Connect and tour", "slug": "pc/connect", "source": "pc/connect.md"},
     {"title": "Wire the bench", "slug": "pc/wire", "source": "pc/wire.md"},
     {"title": "Build the layout", "slug": "pc/layout", "source": "pc/layout.md"},
+    {"title": "Device settings", "slug": "pc/settings", "source": "pc/settings.md"},
     {"title": "First spin", "slug": "pc/first-spin", "source": "pc/first-spin.md"},
     {"title": "Monitor", "slug": "pc/monitor", "source": "pc/monitor.md"},
     {"title": "Tune and identify", "slug": "pc/tune", "source": "pc/tune.md"},

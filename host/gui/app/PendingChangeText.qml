@@ -1,7 +1,8 @@
 import QtQuick
 import DriveLink.Style
 
-// One staged change: "subject  old → new" (adds and removes say so).
+// One staged change: "subject  old → new" (adds and removes say so). A change
+// with a note (safe mode) shows that instead.
 Row {
     id: row
     required property var modelData
@@ -17,7 +18,8 @@ Row {
     Text {
         width: row.width - x
         elide: Text.ElideRight
-        text: row.modelData.kind === "add" ? row.modelData.to
+        text: row.modelData.note ? row.modelData.note
+            : row.modelData.kind === "add" ? row.modelData.to
             : row.modelData.kind === "remove" ? row.modelData.from
             : (row.modelData.from ? row.modelData.from + " → " : "") + row.modelData.to
         font: Theme.fontBodyNumeric; color: Theme.statePending

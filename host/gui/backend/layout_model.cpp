@@ -48,8 +48,15 @@ QString displayValue(const DeviceSnapshot &s, const ModelItem &item, uint32_t bi
     if(isWiring(item.descriptor)) {return wiringText(s,bits);}
     return formatValue(item,bits);
 }
-uint32_t systemParam(const DeviceSnapshot &s, uint16_t id) {
-    const auto it=s.system_params.find(id);return it==s.system_params.end()?0:valueBits(it->second);
+std::optional<uint32_t> paramBitsOf(const std::map<uint16_t,Value> &params, uint16_t id) {
+    const auto it=params.find(id);
+    if(it==params.end()) {return std::nullopt;}
+    return valueBits(it->second);
+}
+// A limit as the device checks layout ops against it: the pending value, else
+// the running one.
+uint32_t limitParam(const DeviceSnapshot &s, uint16_t id) {
+    return paramBitsOf(s.pending_system_params,id).value_or(paramBitsOf(s.system_params,id).value_or(0));
 }
 bool loopRealtime(const ModelInstance &loop) {
     const auto bits=paramBits(&loop,loopdefs::kRealtime);return bits && *bits;
@@ -279,7 +286,7 @@ std::vector<Candidate> sourceCandidates(const DeviceSnapshot &s,InstanceKey cons
     return result;
 }
 
-std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
+std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s,bool safeMode,bool pendingReboot) {
     std::vector<PendingChange> result;
     // System settings: only reboot_required params can be pending.
     for(const auto &[id,v]:s.pending_system_params) {
@@ -287,9 +294,10 @@ std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
         const auto running=s.system_params.find(id);
         if(!item || running==s.system_params.end() || !flag(item->descriptor,defs::ItemFlag::RebootRequired)) {continue;}
         const auto from=valueBits(running->second),to=valueBits(v);
-        if(from==to) {continue;}
-        result.push_back({"param",itemKey(defs::kSystemTypeId,0,id),"system."+str(item->descriptor.name),
-                          formatValue(*item,from),formatValue(*item,to)});
+        if(from==to || (safeMode && !pendingReboot)) {continue;}
+        const auto fromText=formatValue(*item,from),toText=formatValue(*item,to);
+        result.push_back({"param",itemKey(defs::kSystemTypeId,0,id),"system."+str(item->descriptor.name),fromText,toText,
+                          safeMode?tr("Safe mode runs %1 · %2 after a normal boot").arg(fromText,toText):QString()});
     }
     std::set<InstanceKey> keys;
     for(const auto &[k,e]:s.configured) {keys.insert(k);}
@@ -301,12 +309,12 @@ std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
         const auto key=nodeKey(k.first,k.second);
         if(p && !c) {
             result.push_back({"add",key,label(*p),{},loop?tr("new loop"):
-                tr("%1 in %2").arg(typeName(s,k.first),loopName(s,p->instance.loop))});
+                tr("%1 in %2").arg(typeName(s,k.first),loopName(s,p->instance.loop)),{}});
         } else if(c && !p) {
-            result.push_back({"remove",key,label(*c),loop?tr("loop"):typeName(s,k.first),tr("removed")});
+            result.push_back({"remove",key,label(*c),loop?tr("loop"):typeName(s,k.first),tr("removed"),{}});
             continue;
         } else if(c->instance.label!=p->instance.label) {
-            result.push_back({"label",key,label(*p),label(*c),label(*p)});
+            result.push_back({"label",key,label(*p),label(*c),label(*p),{}});
         }
         if(!t) {continue;}
         for(const auto &[id,v]:p->params) {
@@ -318,7 +326,7 @@ std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
             if(before && *before==bits) {continue;}
             result.push_back({"param",itemKey(k.first,k.second,id),label(*p)+"."+str(it->second.descriptor.name),
                               before?(c?displayValue(s,it->second,*before):tr("default")):QString(),
-                              displayValue(s,it->second,bits)});
+                              displayValue(s,it->second,bits),{}});
         }
     }
     return result;
@@ -327,8 +335,8 @@ std::vector<PendingChange> pendingChanges(const DeviceSnapshot &s) {
 LayoutCounts layoutCounts(const DeviceSnapshot &s) {
     LayoutCounts n;
     for(const auto &[k,e]:s.pending) {if(k.first==defs::kLoopTypeId) {++n.loops;} else {++n.instances;}}
-    n.loopLimit=int(systemParam(s,defs::system::kLimitsLoops));
-    n.instanceLimit=int(systemParam(s,defs::system::kLimitsInstances));
+    n.loopLimit=int(limitParam(s,defs::system::kLimitsLoops));
+    n.instanceLimit=int(limitParam(s,defs::system::kLimitsInstances));
     return n;
 }
 
@@ -352,6 +360,10 @@ QString layoutRefusal(const DeviceSnapshot &s,const Error &e,std::optional<Ref> 
         if(D(e.detail)==D::GpioConflict && item && value) {
             const auto owner=gpioOwner(s,*item,*value);
             if(!owner.isEmpty()) {return tr("GPIO %1 is already used by %2").arg(*value).arg(owner);}
+        }
+        // A limit SET below what the pending layout uses.
+        if(D(e.detail)==D::Capacity && item && item->type==defs::kSystemTypeId) {
+            return tr("The pending layout uses more than this");
         }
         if(D(e.detail)==D::Referenced && removed) {
             const auto why=removeBlocker(s,*removed);
@@ -450,7 +462,7 @@ QHash<int,QByteArray> ParamTable::roleNames() const {
             {Unsaved,"unsaved"},{Locked,"locked"},{ReadOnly,"readOnly"},{RebootRequired,"rebootRequired"},
             {RangeText,"rangeText"},{Enums,"enums"},{ValueBits,"valueBits"},{EditState,"editState"},
             {EditNote,"editNote"},{EditText,"editText"},{Minimum,"minimum"},{Maximum,"maximum"},
-            {ValueType,"valueType"}};
+            {ValueType,"valueType"},{SafeNote,"safeNote"},{GroupStart,"groupStart"}};
 }
 QVariant ParamTable::data(const QModelIndex &i,int role) const {
     if(!i.isValid() || i.row()<0 || size_t(i.row())>=m_rows.size()) {return {};}
@@ -464,31 +476,47 @@ QVariant ParamTable::data(const QModelIndex &i,int role) const {
     case ValueBits:return QVariant::fromValue(r.bits);case EditState:return r.editState;
     case EditNote:return r.editNote;case EditText:return r.editText;
     case Minimum:return r.minimum;case Maximum:return r.maximum;case ValueType:return r.valueType;
+    case SafeNote:return r.safeNote;
+    // The first row of a named group: the card prints the heading there.
+    case GroupStart:return !r.group.isEmpty() && (i.row()==0 || m_rows[i.row()-1].group!=r.group);
     default:return {};
     }
 }
+ParamTable::Row ParamTable::describe(const ModelItem &item,const QString &key) {
+    const auto &d=item.descriptor;
+    Row r;r.key=key;r.name=str(d.name);
+    const auto dot=d.name.find('.');r.group=dot==std::string::npos?QString():str(d.name.substr(0,dot));
+    r.unit=str(d.unit);r.description=str(d.description);r.range=rangeText(item);
+    r.valueType=int(d.value_type);
+    r.editor=d.value_type==ValueType::Bool?"bool":d.value_type==ValueType::Enum?"enum":isGpio(d)?"gpio":"number";
+    for(const auto &e:item.enums) {r.enums<<QVariantMap{{"value",e.value},{"name",str(e.name)}};}
+    if(d.has_min) {r.minimum=formatValue(item,d.min_bits);}
+    if(d.has_max) {r.maximum=formatValue(item,d.max_bits);}
+    r.reboot=flag(d,defs::ItemFlag::RebootRequired);
+    r.readOnly=flag(d,defs::ItemFlag::ReadOnly);
+    return r;
+}
+// Rows grouped by name prefix: ungrouped names first (G4 "General"), then the
+// groups in order of first appearance.
+void ParamTable::groupRows(std::vector<Row> &rows) {
+    QStringList groups;
+    for(const auto &r:rows) {if(!groups.contains(r.group)) {groups<<r.group;}}
+    const auto rank=[&](const QString &g) {return g.isEmpty()?-1:int(groups.indexOf(g));};
+    std::stable_sort(rows.begin(),rows.end(),[&](const Row &a,const Row &b) {return rank(a.group)<rank(b.group);});
+}
 void ParamTable::reset(const std::shared_ptr<const DeviceSnapshot> &snapshot,std::optional<InstanceKey> node,bool armed,
                        const QHash<QString,ParamEdit> &edits,const QSet<QString> &changed,int filter,const QString &text) {
-    std::vector<Row> next;m_total=m_changed=m_pending=0;
+    std::vector<Row> next;m_total=m_changed=m_pending=m_unsaved=0;
     if(snapshot && node) {
         const auto &s=*snapshot;
         const auto *c=configuredEntry(s,*node);const auto *p=pendingEntry(s,*node);
         const auto *t=typeOf(s,node->first);
         if(t && (c || p)) {
-            std::vector<Row> rows;QStringList groups;
             for(const auto &[id,item]:t->items) {
                 const auto &d=item.descriptor;
                 if(d.kind!=ItemKind::Param || isWiring(d) || d.isSource()) {continue;}
-                Row r;r.key=itemKey(node->first,node->second,id);r.name=str(d.name);
-                const auto dot=d.name.find('.');r.group=dot==std::string::npos?QString():str(d.name.substr(0,dot));
-                r.unit=str(d.unit);r.description=str(d.description);r.range=rangeText(item);
-                r.valueType=int(d.value_type);
-                r.editor=d.value_type==ValueType::Bool?"bool":d.value_type==ValueType::Enum?"enum":isGpio(d)?"gpio":"number";
-                for(const auto &e:item.enums) {r.enums<<QVariantMap{{"value",e.value},{"name",str(e.name)}};}
-                if(d.has_min) {r.minimum=formatValue(item,d.min_bits);}
-                if(d.has_max) {r.maximum=formatValue(item,d.max_bits);}
-                r.reboot=flag(d,defs::ItemFlag::RebootRequired);
-                r.readOnly=flag(d,defs::ItemFlag::ReadOnly) || !p; // a removed instance is not edited
+                Row r=describe(item,itemKey(node->first,node->second,id));
+                r.readOnly=r.readOnly || !p; // a removed instance is not edited
                 r.locked=armed && flag(d,defs::ItemFlag::LockedWhileArmed);
                 const auto current=paramBits(c,id),staged=paramBits(p,id);
                 if(c) {
@@ -506,20 +534,57 @@ void ParamTable::reset(const std::shared_ptr<const DeviceSnapshot> &snapshot,std
                 }
                 ++m_total;
                 if(r.pending) {++m_pending;}
+                if(r.unsaved) {++m_unsaved;}
                 if(r.pending || r.unsaved) {++m_changed;}
                 if(filter==1 && !(r.pending || r.unsaved)) {continue;}
                 if(filter==2 && !r.pending) {continue;}
                 if(!text.isEmpty() && !r.name.contains(text,Qt::CaseInsensitive)) {continue;}
-                if(!groups.contains(r.group)) {groups<<r.group;}
-                rows.push_back(std::move(r));
+                next.push_back(std::move(r));
             }
-            // Rows grouped by name prefix: ungrouped names first (G4 "General"),
-            // then the groups in order of first appearance.
-            const auto rank=[&](const QString &g) {return g.isEmpty()?-1:int(groups.indexOf(g));};
-            std::stable_sort(rows.begin(),rows.end(),[&](const Row &a,const Row &b) {return rank(a.group)<rank(b.group);});
-            next=std::move(rows);
+            groupRows(next);
         }
     }
+    publish(std::move(next));
+}
+void ParamTable::resetSystem(const std::shared_ptr<const DeviceSnapshot> &snapshot,bool armed,const QHash<QString,ParamEdit> &edits,
+                             const QSet<QString> &changed,bool safeMode,bool pendingReboot) {
+    std::vector<Row> next;m_total=m_changed=m_pending=m_unsaved=0;
+    if(snapshot) {
+        const auto &s=*snapshot;
+        if(const auto *t=typeOf(s,defs::kSystemTypeId)) {
+            for(const auto &[id,item]:t->items) {
+                const auto &d=item.descriptor;
+                const auto running=paramBitsOf(s.system_params,id);
+                if(d.kind!=ItemKind::Param || flag(d,defs::ItemFlag::ReadOnly) || !running) {continue;}
+                Row r=describe(item,itemKey(defs::kSystemTypeId,0,id));
+                r.locked=armed && (r.reboot || flag(d,defs::ItemFlag::LockedWhileArmed));
+                // Only a reboot param has a pending value; a live one is the running one.
+                const auto saved=r.reboot?paramBitsOf(s.pending_system_params,id).value_or(*running):*running;
+                r.bits=*running;r.value=formatValue(item,*running);
+                if(saved!=*running) {
+                    const auto savedText=formatValue(item,saved);
+                    r.bits=saved;
+                    // Defaults run; the saved value comes back at a normal boot.
+                    if(safeMode) {r.safeNote=tr("Safe mode runs %1 · %2 after a normal boot").arg(r.value,savedText);}
+                    if(safeMode && !pendingReboot) {r.value=savedText;}
+                    else {r.pending=true;r.pendingValue=savedText;}
+                }
+                r.unsaved=changed.contains(r.key);
+                if(const auto it=edits.find(r.key);it!=edits.end()) {
+                    r.editState=it->state;r.editNote=it->note;r.editText=it->text;
+                }
+                ++m_total;
+                if(r.pending) {++m_pending;}
+                if(r.unsaved) {++m_unsaved;}
+                if(r.pending || r.unsaved) {++m_changed;}
+                next.push_back(std::move(r));
+            }
+            groupRows(next);
+        }
+    }
+    publish(std::move(next));
+}
+void ParamTable::publish(std::vector<Row> next) {
     // The same rows update in place, so an editor keeps its focus and text
     // while a value is sent and read back; other changes reset the model.
     const bool same=next.size()==m_rows.size() &&
