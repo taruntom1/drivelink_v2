@@ -823,7 +823,7 @@ Window { width: 800; height: 1200; visible: true
     void deviceSettingsThroughAgent() {
         AgentFixture f;Window a("gui-a"),b("gui-b");
         QVERIFY(a.open(f));QVERIFY(b.open(f));
-        QCOMPARE(a.c.systemParams()->rowCount(),13);QVERIFY(a.c.deviceSettings()["blocked"].toString().isEmpty());
+        QCOMPARE(a.c.systemParams()->rowCount(),16);QVERIFY(a.c.deviceSettings()["blocked"].toString().isEmpty());
         // No lease held: a live edit and a staged limit are sent at once.
         a.c.setParamText("0:0:3","20");
         QVERIFY(waitFor([&]{return a.role("0:0:3",ParamTable::EditState)=="applied" && a.system(defs::system::kStatusRateHz)==20u;}));
