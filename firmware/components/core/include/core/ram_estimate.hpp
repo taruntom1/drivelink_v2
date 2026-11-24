@@ -19,7 +19,8 @@ size_t estimateRam(const CoreConfig &config, std::span<const LayoutEntry> entrie
 /// minus the reserve.
 size_t ramLimit(const CoreConfig &config);
 
-/// What one module instance may allocate itself (its object, driver handles).
-inline constexpr size_t kModuleRamBytes = 2048;
+/// What one module instance may allocate itself: its object (up to 304 bytes
+/// today) and driver handles (the BNO055's I2C bus is the largest).
+inline constexpr size_t kModuleRamBytes = 1536;
 
 } // namespace core

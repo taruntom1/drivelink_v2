@@ -7,6 +7,7 @@
 #include "core/group_service.hpp"
 #include "core/loop.hpp"
 #include "core/pending_layout.hpp"
+#include "core/persistence.hpp"
 #include "core/testgen_service.hpp"
 #include "core_os/periodic_task.hpp"
 #include "drivelink/protocol/gen/type_loop.hpp"
@@ -22,9 +23,9 @@ constexpr size_t kLoopTask = 1024;
 /// One wired source: its triple buffer slot, binding, sink and vector slack,
 /// and a whole link of its own.
 constexpr size_t kSourceLink = 512;
-/// Copies of a layout entry that live at once while a pending session edits
-/// and saves: before, after, the layout being written.
-constexpr size_t kConfigCopies = 4;
+/// Copies of a pending entry that live at once while an op edits: the pending
+/// layout, the one before, and slack for the vectors' growth.
+constexpr size_t kConfigCopies = 3;
 
 /// The record of an instance of `type`, without its object.
 size_t recordBytes(const defs::TypeDesc &type)
@@ -72,11 +73,15 @@ size_t estimateRam(const CoreConfig &config, std::span<const LayoutEntry> entrie
             continue;
         }
         total += recordBytes(*e.desc);
-        total += kConfigCopies * (sizeof(PendingEntry) + (e.desc->items.size() * sizeof(ParamPair)) + (2U * kAlloc));
+        total += kConfigCopies * (sizeof(PendingEntry) + (e.desc->items.size() * sizeof(uint32_t)) + kAlloc);
+        total += sizeof(persist::StoredInstance) + (e.desc->items.size() * sizeof(ParamPair)) + kAlloc; // SAVE, boot
         if (e.type_id == defs::kLoopTypeId) {
             total += sizeof(Loop) + (c.max_instances * 2U * sizeof(void *)) + kLoopTask + stackBytes(e) + (4U * kAlloc);
         } else {
-            total += kModuleRamBytes + (e.desc->items.size() * Loop::inputBytes()) + kAlloc;
+            total += kModuleRamBytes + kAlloc;
+            for (const defs::ItemDesc &item : e.desc->items) {
+                total += (item.kind == defs::ItemKind::Input) ? Loop::inputBytes() : 0U;
+            }
         }
         for (const RefLink &link : sourceLinks(entries, i)) {
             (void)link;
