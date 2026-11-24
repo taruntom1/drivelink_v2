@@ -694,6 +694,17 @@ def load_system(path: Path, system_id: int) -> dict:
         fail(where, f"type_id must be the system type id 0x{system_id:02X}")
 
     items = load_items(f, SYSTEM_TYPE, doc["items"], SYSTEM_KINDS)
+    for item in items:
+        if item["retired"]:
+            continue
+        item_where = f"{f}: item 0x{item['id']:04X} {item['name']}"
+        if "reboot_required" in item["flags"] and "persist" not in item["flags"]:
+            fail(item_where, "a reboot_required system param must persist (its value would be lost at the reboot)")
+        # Layout validation covers layout entries only, and the system is none.
+        if "gpio" in item["flags"]:
+            fail(item_where, "'gpio' is not allowed on a system item (nothing checks its pin)")
+        if item.get("ref") is not None:
+            fail(item_where, "'ref' is not allowed on a system item (nothing checks its target)")
 
     return {
         "type": SYSTEM_TYPE,
