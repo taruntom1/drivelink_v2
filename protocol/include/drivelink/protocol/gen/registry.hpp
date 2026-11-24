@@ -18,7 +18,7 @@ inline constexpr uint8_t kSystemTypeId = 0x00;
 inline constexpr uint8_t kLoopTypeId = 0x05;
 
 /// CRC-32 over all definitions (registry, diag codes, module types); see docs/protocol/definitions.md.
-inline constexpr uint32_t kDescriptorHash = 0x04C97735;
+inline constexpr uint32_t kDescriptorHash = 0x46F1C56A;
 
 enum class Result : uint8_t {
     Ok = 0,
@@ -291,7 +291,7 @@ enum class HistoryKind : uint8_t {
     Offline = 5,
 };
 
-inline constexpr size_t kDescriptorMinPayload = 150;
+inline constexpr size_t kDescriptorMinPayload = 180;
 namespace msg {
 /// command, host to ESP. Core command (family, op). Not used until F3.
 inline constexpr uint8_t kCoreCommand = 0x01;

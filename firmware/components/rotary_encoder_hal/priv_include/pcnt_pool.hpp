@@ -27,11 +27,12 @@ public:
     /// Performs the full setup sequence: create unit, glitch filter,
     /// create both channels with quadrature actions, add watch points,
     /// enable accumulator, enable unit, clear count, start unit.
-    /// @param pin_a  GPIO for encoder channel A
-    /// @param pin_b  GPIO for encoder channel B
-    /// @param out    Filled with allocated handles on success
+    /// @param pin_a      GPIO for encoder channel A
+    /// @param pin_b      GPIO for encoder channel B
+    /// @param glitch_ns  Glitch filter width; 0 leaves the filter off
+    /// @param out        Filled with allocated handles on success
     /// @return ESP_OK on success, ESP_ERR_NOT_FOUND if all 4 units are in use
-    static esp_err_t allocate(gpio_num_t pin_a, gpio_num_t pin_b, PcntUnit &out);
+    static esp_err_t allocate(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns, PcntUnit &out);
 
     /// Release a PCNT unit. Performs the full teardown sequence:
     /// stop unit, disable unit, remove watch points, delete channels, delete unit.

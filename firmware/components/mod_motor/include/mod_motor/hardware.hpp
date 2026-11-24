@@ -10,8 +10,9 @@
 /// rotary_encoder_hal, and the native tests link a fake. Nothing here logs.
 namespace mod_motor::hw {
 
-/// One PWM+DIR motor output. It is created forced low on an MCPWM operator of
-/// its own, so a force or release never touches another output's register.
+/// One PWM+DIR motor output. It is created forced low on an MCPWM operator and
+/// timer of its own, so a force or release never touches another output's
+/// register and outputs may run at different PWM frequencies.
 /// Its destructor forces the PWM output low and frees the channel, which
 /// disconnects the pin (it then floats; DIR stays driven).
 class PwmDirOutput {
@@ -37,8 +38,11 @@ public:
 
 /// Setup time only (they allocate). On failure: nullptr, and `err` is the
 /// driver error (on the device an esp_err_t; ESP_ERR_NOT_FOUND when the
-/// MCPWM operators or PCNT units are used up).
-std::unique_ptr<PwmDirOutput> openPwmDir(uint8_t pwm_pin, uint8_t dir_pin, core_os::Err &err);
-std::unique_ptr<QuadratureCounter> openQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup, core_os::Err &err);
+/// MCPWM operators or PCNT units are used up). `glitch_ns` 0 turns the filter
+/// off.
+std::unique_ptr<PwmDirOutput> openPwmDir(uint8_t pwm_pin, uint8_t dir_pin, uint32_t pwm_freq_hz,
+                                         core_os::Err &err);
+std::unique_ptr<QuadratureCounter> openQuadrature(uint8_t pin_a, uint8_t pin_b, bool pullup, uint16_t glitch_ns,
+                                                  core_os::Err &err);
 
 } // namespace mod_motor::hw

@@ -17,7 +17,7 @@ You need the app connected to a disarmed board and your [wiring notes]({{base}}p
 
 ## Set pins and limits
 
-1. Select **left_pwm** and open **Params**. Set `pwm_pin` to 4 and `dir_pin` to 5 for the reference wiring. Set `duty_limit` to 0.2 or lower for the first run. Press Enter after typing each value. Check that each pin shows its pending value and the duty limit shows the cap you set.
+1. Select **left_pwm** and open **Params**. Set `pwm_pin` to 4 and `dir_pin` to 5 for the reference wiring. Set `duty_limit` to 0.2 or lower for the first run. Keep `pwm_freq_hz` at 25000 unless your driver’s datasheet gives a lower maximum PWM frequency. Press Enter after typing each value. Check that each pin shows its pending value and the duty limit shows the cap you set.
 2. Select **left_enc**. Set `pin_a` to 6 and `pin_b` to 7 for the reference wiring. Set `counts_per_rev` to the counts per motor revolution **after 4× quadrature decoding**. If the datasheet gives complete A-channel cycles per motor revolution, multiply by four. If it already counts all four edges, enter its count directly. Set `gear_ratio` to the number of motor turns per output turn. Compare the pending values with the exact motor and encoder data.
 3. Select **left_drive**. In **Wiring**, choose **left_pwm** as the actuator and **left_enc** as the feedback. Set `mode` to `open_loop` and `duty_limit` to 0.2 or lower. You should see the correct wiring targets and both duty limits should be set before any power is applied to the motors.
 4. For a second motor, repeat with `right_pwm`, `right_enc`, and `right_drive` and the second channel from the pin table. Check each controller’s wiring targets against its wheel label.

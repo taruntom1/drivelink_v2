@@ -8,7 +8,7 @@ static const char *const TAG = "mcpwm_pool";
 namespace motor_hal {
 namespace detail {
 
-McpwmPool::GroupState McpwmPool::s_groups[kNumGroups] = {};
+int McpwmPool::s_users[kNumGroups] = {};
 
 SemaphoreHandle_t McpwmPool::poolMutex()
 {
@@ -23,235 +23,180 @@ SemaphoreHandle_t McpwmPool::poolMutex()
     return mutex;
 }
 
-bool McpwmPool::findFreeOperator(int &group_id, int &oper_index)
+esp_err_t McpwmPool::createTimer(McpwmChannel &ch)
 {
-    for (int g = 0; g < kNumGroups; g++) {
-        for (int o = 0; o < kOpersPerGroup; o++) {
-            if (!s_groups[g].opers[o].in_use) {
-                group_id = g;
-                oper_index = o;
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-esp_err_t McpwmPool::ensureTimer(int group_id)
-{
-    GroupState &g = s_groups[group_id];
-    if (g.timer != nullptr) {
-        return ESP_OK;
-    }
-
-    uint32_t period = CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ / CONFIG_MOTOR_HAL_PWM_FREQ_HZ;
-
     mcpwm_timer_config_t timer_cfg = {};
-    timer_cfg.group_id = group_id;
+    timer_cfg.group_id = ch.group_id;
     timer_cfg.clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT;
     timer_cfg.resolution_hz = CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ;
     timer_cfg.count_mode = MCPWM_TIMER_COUNT_MODE_UP;
-    timer_cfg.period_ticks = period;
+    timer_cfg.period_ticks = ch.period_ticks;
 
-    esp_err_t ret = mcpwm_new_timer(&timer_cfg, &g.timer);
+    mcpwm_timer_handle_t timer = nullptr;
+    esp_err_t ret = mcpwm_new_timer(&timer_cfg, &timer);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create timer for group %d: %s", group_id, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create timer in group %d: %s", ch.group_id, esp_err_to_name(ret));
         return ret;
     }
 
-    ret = mcpwm_timer_enable(g.timer);
+    ret = mcpwm_timer_enable(timer);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to enable timer for group %d: %s", group_id, esp_err_to_name(ret));
-        mcpwm_del_timer(g.timer);
-        g.timer = nullptr;
+        ESP_LOGE(TAG, "Failed to enable timer in group %d: %s", ch.group_id, esp_err_to_name(ret));
+        mcpwm_del_timer(timer);
         return ret;
     }
 
-    ret = mcpwm_timer_start_stop(g.timer, MCPWM_TIMER_START_NO_STOP);
+    ret = mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start timer for group %d: %s", group_id, esp_err_to_name(ret));
-        mcpwm_timer_disable(g.timer);
-        mcpwm_del_timer(g.timer);
-        g.timer = nullptr;
+        ESP_LOGE(TAG, "Failed to start timer in group %d: %s", ch.group_id, esp_err_to_name(ret));
+        mcpwm_timer_disable(timer);
+        mcpwm_del_timer(timer);
         return ret;
     }
 
-    g.timer_enabled = true;
-    ESP_LOGI(TAG, "Created timer: group=%d resolution=%d Hz period=%lu ticks",
-             group_id, CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ, (unsigned long)period);
+    ch.timer = timer;
     return ESP_OK;
 }
 
-esp_err_t McpwmPool::ensureOperator(int group_id, int oper_index)
+esp_err_t McpwmPool::create(int pwm_gpio, bool start_forced, McpwmChannel &ch)
 {
-    GroupState &g = s_groups[group_id];
-    OperatorState &op = g.opers[oper_index];
-
-    if (op.handle != nullptr) {
-        return ESP_OK;
+    esp_err_t ret = createTimer(ch);
+    if (ret != ESP_OK) {
+        return ret;
     }
 
     mcpwm_operator_config_t oper_cfg = {};
-    oper_cfg.group_id = group_id;
-
-    esp_err_t ret = mcpwm_new_operator(&oper_cfg, &op.handle);
+    oper_cfg.group_id = ch.group_id;
+    ret = mcpwm_new_operator(&oper_cfg, &ch.oper);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create operator: group=%d idx=%d: %s",
-                 group_id, oper_index, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create operator in group %d: %s", ch.group_id, esp_err_to_name(ret));
         return ret;
     }
 
-    ret = mcpwm_operator_connect_timer(op.handle, g.timer);
+    ret = mcpwm_operator_connect_timer(ch.oper, ch.timer);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to connect operator to timer: %s", esp_err_to_name(ret));
-        mcpwm_del_operator(op.handle);
-        op.handle = nullptr;
         return ret;
     }
 
-    ESP_LOGI(TAG, "Created operator: group=%d idx=%d", group_id, oper_index);
-    return ESP_OK;
-}
-
-esp_err_t McpwmPool::allocate(int pwm_gpio, McpwmChannel &out, bool start_forced)
-{
-    const SemaphoreHandle_t mtx = poolMutex();
-    xSemaphoreTake(mtx, portMAX_DELAY);
-
-    int gid, oidx;
-    if (!findFreeOperator(gid, oidx)) {
-        xSemaphoreGive(mtx);
-        ESP_LOGE(TAG, "No free MCPWM operator (max %d motors)", kNumGroups * kOpersPerGroup);
-        return ESP_ERR_NOT_FOUND;
-    }
-
-    esp_err_t ret = ensureTimer(gid);
-    if (ret != ESP_OK) {
-        xSemaphoreGive(mtx);
-        return ret;
-    }
-
-    ret = ensureOperator(gid, oidx);
-    if (ret != ESP_OK) {
-        xSemaphoreGive(mtx);
-        return ret;
-    }
-
-    // Create comparator
     mcpwm_comparator_config_t cmp_cfg = {};
     cmp_cfg.flags.update_cmp_on_tez = true;
-
-    mcpwm_cmpr_handle_t cmpr = nullptr;
-    ret = mcpwm_new_comparator(s_groups[gid].opers[oidx].handle, &cmp_cfg, &cmpr);
+    ret = mcpwm_new_comparator(ch.oper, &cmp_cfg, &ch.comparator);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create comparator: %s", esp_err_to_name(ret));
-        xSemaphoreGive(mtx);
         return ret;
     }
 
-    mcpwm_comparator_set_compare_value(cmpr, 0);
+    ret = mcpwm_comparator_set_compare_value(ch.comparator, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set the compare value: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    // Create generator
     mcpwm_generator_config_t gen_cfg = {};
     gen_cfg.gen_gpio_num = pwm_gpio;
-
-    mcpwm_gen_handle_t gen = nullptr;
-    ret = mcpwm_new_generator(s_groups[gid].opers[oidx].handle, &gen_cfg, &gen);
+    ret = mcpwm_new_generator(ch.oper, &gen_cfg, &ch.generator);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create generator: %s", esp_err_to_name(ret));
-        mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(mtx);
         return ret;
     }
 
     if (start_forced) {
-        ret = mcpwm_generator_set_force_level(gen, 0, true);
+        ret = mcpwm_generator_set_force_level(ch.generator, 0, true);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to force generator low: %s", esp_err_to_name(ret));
-            mcpwm_del_generator(gen);
-            mcpwm_del_comparator(cmpr);
-            xSemaphoreGive(mtx);
             return ret;
         }
     }
 
     // Set PWM actions: HIGH on timer empty, LOW on comparator match
-    ret = mcpwm_generator_set_action_on_timer_event(gen,
+    ret = mcpwm_generator_set_action_on_timer_event(ch.generator,
               MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
                                            MCPWM_TIMER_EVENT_EMPTY,
                                            MCPWM_GEN_ACTION_HIGH));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set timer action: %s", esp_err_to_name(ret));
-        mcpwm_del_generator(gen);
-        mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(mtx);
         return ret;
     }
 
-    ret = mcpwm_generator_set_action_on_compare_event(gen,
+    ret = mcpwm_generator_set_action_on_compare_event(ch.generator,
               MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP,
-                                             cmpr,
+                                             ch.comparator,
                                              MCPWM_GEN_ACTION_LOW));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set compare action: %s", esp_err_to_name(ret));
-        mcpwm_del_generator(gen);
-        mcpwm_del_comparator(cmpr);
-        xSemaphoreGive(mtx);
-        return ret;
     }
-
-    // Update bookkeeping
-    uint32_t period = CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ / CONFIG_MOTOR_HAL_PWM_FREQ_HZ;
-    s_groups[gid].opers[oidx].in_use = true;
-    s_groups[gid].total_users++;
-
-    out.group_id = gid;
-    out.oper_index = oidx;
-    out.timer = s_groups[gid].timer;
-    out.oper = s_groups[gid].opers[oidx].handle;
-    out.comparator = cmpr;
-    out.generator = gen;
-    out.period_ticks = period;
-
-    ESP_LOGI(TAG, "Allocated motor: group=%d oper=%d gpio=%d", gid, oidx, pwm_gpio);
-
-    xSemaphoreGive(mtx);
-    return ESP_OK;
+    return ret;
 }
 
-esp_err_t McpwmPool::deallocate(const McpwmChannel &ch)
+void McpwmPool::destroy(McpwmChannel &ch)
+{
+    if (ch.generator != nullptr) {
+        // Force the output low before the generator releases the pin
+        mcpwm_generator_set_force_level(ch.generator, 0, true);
+        mcpwm_del_generator(ch.generator);
+    }
+    if (ch.comparator != nullptr) {
+        mcpwm_del_comparator(ch.comparator);
+    }
+    if (ch.oper != nullptr) {
+        mcpwm_del_operator(ch.oper);
+    }
+    if (ch.timer != nullptr) {
+        mcpwm_timer_start_stop(ch.timer, MCPWM_TIMER_STOP_EMPTY);
+        mcpwm_timer_disable(ch.timer);
+        mcpwm_del_timer(ch.timer);
+    }
+    ch = {};
+}
+
+esp_err_t McpwmPool::allocate(int pwm_gpio, uint32_t pwm_freq_hz, McpwmChannel &out, bool start_forced)
+{
+    if (pwm_freq_hz == 0 || pwm_freq_hz > CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ) {
+        ESP_LOGE(TAG, "PWM frequency %lu Hz is out of range", static_cast<unsigned long>(pwm_freq_hz));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const SemaphoreHandle_t mtx = poolMutex();
+    xSemaphoreTake(mtx, portMAX_DELAY);
+
+    McpwmChannel ch;
+    while (ch.group_id < kNumGroups && s_users[ch.group_id] == kMotorsPerGroup) {
+        ++ch.group_id;
+    }
+    if (ch.group_id == kNumGroups) {
+        xSemaphoreGive(mtx);
+        ESP_LOGE(TAG, "No free MCPWM operator (max %d motors)", kNumGroups * kMotorsPerGroup);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    ch.period_ticks = (CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ + pwm_freq_hz / 2) / pwm_freq_hz;
+    const esp_err_t ret = create(pwm_gpio, start_forced, ch);
+    if (ret == ESP_OK) {
+        ++s_users[ch.group_id];
+        out = ch;
+        ESP_LOGI(TAG, "Allocated motor: group=%d gpio=%d %lu Hz, %lu duty steps", ch.group_id, pwm_gpio,
+                 static_cast<unsigned long>(CONFIG_MOTOR_HAL_TIMER_RESOLUTION_HZ / ch.period_ticks),
+                 static_cast<unsigned long>(ch.period_ticks));
+    } else {
+        destroy(ch);
+    }
+
+    xSemaphoreGive(mtx);
+    return ret;
+}
+
+void McpwmPool::deallocate(McpwmChannel &ch)
 {
     const SemaphoreHandle_t mtx = poolMutex();
     xSemaphoreTake(mtx, portMAX_DELAY);
 
-    // Force generator output low before deleting
-    mcpwm_generator_set_force_level(ch.generator, 0, true);
-
-    mcpwm_del_generator(ch.generator);
-    mcpwm_del_comparator(ch.comparator);
-
-    GroupState &g = s_groups[ch.group_id];
-    OperatorState &op = g.opers[ch.oper_index];
-    mcpwm_del_operator(op.handle);
-    op.handle = nullptr;
-    op.in_use = false;
-    ESP_LOGI(TAG, "Deleted operator: group=%d idx=%d", ch.group_id, ch.oper_index);
-
-    g.total_users--;
-
-    if (g.total_users == 0 && g.timer != nullptr) {
-        mcpwm_timer_start_stop(g.timer, MCPWM_TIMER_STOP_EMPTY);
-        mcpwm_timer_disable(g.timer);
-        mcpwm_del_timer(g.timer);
-        g.timer = nullptr;
-        g.timer_enabled = false;
-        ESP_LOGI(TAG, "Deleted timer for group %d", ch.group_id);
-    }
-
-    ESP_LOGI(TAG, "Deallocated motor: group=%d oper=%d", ch.group_id, ch.oper_index);
+    const int group_id = ch.group_id;
+    destroy(ch);
+    --s_users[group_id];
+    ESP_LOGI(TAG, "Deallocated motor: group=%d", group_id);
 
     xSemaphoreGive(mtx);
-    return ESP_OK;
 }
 
 } // namespace detail

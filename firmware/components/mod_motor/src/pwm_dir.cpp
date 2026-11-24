@@ -31,6 +31,7 @@ public:
         m_instance = ctx.instanceId();
         const bool bound = ctx.bindParam(d::kPwmPin, &m_pwm_pin) && ctx.bindParam(d::kDirPin, &m_dir_pin) &&
             ctx.bindParam(d::kInvert, &m_invert) && ctx.bindParam(d::kDutyLimit, &m_limit) &&
+            ctx.bindParam(d::kPwmFreqHz, &m_pwm_freq_hz) &&
             ctx.bindSignal(d::kAppliedDuty, &m_applied) && ctx.bindSignal(d::kForced, &m_forced);
         if (!bound) { return false; }
         if (m_pwm_pin == defs::kNoGpio || m_dir_pin == defs::kNoGpio) {
@@ -40,7 +41,7 @@ public:
         // The hardware is taken last: an instance that failed after taking it
         // would hold an output that the monitor's actuator list never stops.
         core_os::Err err = core_os::kOk;
-        m_out = hw::openPwmDir(m_pwm_pin, m_dir_pin, err);
+        m_out = hw::openPwmDir(m_pwm_pin, m_dir_pin, m_pwm_freq_hz, err);
         if (!m_out) {
             ctx.fail(kStartStageDriver, err != core_os::kOk ? err : -1);
             return false;
@@ -56,7 +57,8 @@ public:
         // same sign or was zero, so the previous write was zero or of the same
         // sign. The compare value takes effect at the next PWM period but DIR
         // at once (and a zero write leaves DIR), so DIR never flips under a
-        // live compare value of the other sign. A reversal costs one zero
+        // live compare value of the other sign: pwm_freq_hz keeps the PWM
+        // period below the shortest loop period. A reversal costs one zero
         // tick; a request alternating sign every tick writes zero.
         const float requested = duty;
         if ((duty > 0 && m_prev_request < 0) || (duty < 0 && m_prev_request > 0)) { duty = 0; }
@@ -138,6 +140,7 @@ private:
     std::atomic<uint32_t> m_stop_epoch{0};     // bumped by every stop
     uint8_t m_instance = 255;
     uint8_t m_pwm_pin = defs::kNoGpio, m_dir_pin = defs::kNoGpio;
+    uint32_t m_pwm_freq_hz = 0;
     bool m_invert = false;
     bool m_forced = true;                      // signal; loop-owned
     float m_limit = 1, m_applied = 0, m_prev_request = 0;

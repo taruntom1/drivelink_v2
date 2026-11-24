@@ -15,6 +15,7 @@ namespace fake_motor_hw {
 
 struct Output {
     uint8_t pwm_pin = 0, dir_pin = 0;
+    uint32_t pwm_freq_hz = 0;
     std::atomic<bool> open{false};
     std::atomic<bool> forced{false};
     std::atomic<float> duty{0};          // last successful write
@@ -31,6 +32,7 @@ struct Output {
 struct Counter {
     uint8_t pin_a = 0, pin_b = 0;
     bool pullup = false;
+    uint16_t glitch_ns = 0;
     std::atomic<bool> open{false};
     std::atomic<int32_t> count{0};
     std::atomic<bool> fail_read{false};

@@ -1,19 +1,12 @@
 menu "Motor HAL Configuration"
 
-    config MOTOR_HAL_PWM_FREQ_HZ
-        int "PWM frequency in Hz"
-        default 25000
-        range 1000 100000
-        help
-            The PWM switching frequency for motor control.
-            25 kHz is above audible range and typical for DC motor drivers.
-
     config MOTOR_HAL_TIMER_RESOLUTION_HZ
         int "MCPWM timer resolution in Hz"
         default 10000000
-        range 100000 80000000
+        range 1000000 80000000
         help
-            The resolution of the MCPWM timer clock in Hz.
+            The resolution of the MCPWM timer clocks in Hz. Every motor's timer
+            uses it; the PWM frequency is a setting of each motor.
             Higher resolution gives finer duty cycle granularity.
             With 10 MHz and 25 kHz, period = 400 ticks (0.25% granularity),
             the default. With 1 MHz it is 40 ticks (2.5%), too coarse for

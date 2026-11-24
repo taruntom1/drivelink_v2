@@ -8,7 +8,9 @@ only. Two forms:
   --no-motor     bare bench board, nothing attached: the modules start on real
                  pins, the hardware force follows arm, disarm and the watchdog,
                  the duty cap holds and the count stays still. --pool-check
-                 also proves the MCPWM operator and PCNT unit limits.
+                 also proves the MCPWM operator and PCNT unit limits, with a
+                 PWM frequency per motor. --freq-check arms and drives six
+                 actuators, each at its own PWM frequency.
   (default)      a real motor and encoder. First-run procedure, every time:
                  wheels off the ground, a current-limited supply, a low duty
                  cap (--duty-cap, default 0.2) and a hand on the power switch.
@@ -47,6 +49,9 @@ PID, MOCK_ACT, MOCK_FB, PWM_DIR, QUAD = 0x20, 112, 113, 0x21, 0x22
 # (0, 3, 45, 46), the example IMU's I2C (8, 9), possible RGB LEDs (38, 48),
 # USB (19, 20), PSRAM (26-37) and the protocol UART (43, 44).
 POOL_PINS = [1, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 39, 40, 41, 42, 47]
+# One per MCPWM operator: the ends of the range, frequencies the default timer
+# divides exactly and one it rounds (33 kHz).
+PWM_FREQS = [5000, 10000, 20000, 33000, 50000, 100000]
 
 
 def retryable_rejection(command, result):
@@ -149,13 +154,13 @@ def set_rates(cli, info, loop_rate):
     cli('set', *rates, '0:0:4=1000')
 
 
-class Stream:
-    """Command group 0 drives the controller; subscription 0 samples it."""
+class Groups:
+    """Command group 0 writes `inputs`; subscription 0 samples `signals`."""
 
-    def __init__(self, cli, pid, extra, loop_rate, trace):
+    def __init__(self, cli, inputs, signals, loop_rate, trace):
         self.cli, self.counter, self.trace = cli, 0, trace
-        cli('cmd-config', 0, 0, f'{pid}:514', f'{pid}:512', f'{pid}:513')
-        cli('sub-config', 0, 0, max(1, loop_rate // 50), *(f'{pid}:{i}' for i in range(256, 261)), *extra)
+        cli('cmd-config', 0, 0, *inputs)
+        cli('sub-config', 0, 0, max(1, loop_rate // 50), *signals)
 
     def command(self, values=None):
         self.cli('cmd-send', 0, self.counter & 65535, *(values or [])); self.counter += 1
@@ -190,6 +195,14 @@ class Stream:
             time.sleep(.05)
         assert status['arm_state'] == 0 and status['last_disarm_reason'] == 2, {
             'count': len(observed), 'last_frames': observed[-3:]}
+
+
+class Stream(Groups):
+    """Groups of one controller: its three setpoints, and its signals plus `extra`."""
+
+    def __init__(self, cli, pid, extra, loop_rate, trace):
+        super().__init__(cli, [f'{pid}:514', f'{pid}:512', f'{pid}:513'],
+                         [*(f'{pid}:{i}' for i in range(256, 261)), *extra], loop_rate, trace)
 
 
 def loop0_overruns(status):
@@ -346,6 +359,10 @@ def setup_real(cli, a, created):
         f'{pid}:1={(PWM_DIR << 8) | motor}', f'{pid}:2={(QUAD << 8) | encoder}',
         f'{pid}:17={a.duty_cap}', f'{pid}:18={a.velocity_limit}',
         f'{pid}:32={a.vel_kp}', f'{pid}:33={a.vel_ki}', f'{pid}:48={a.pos_kp}', f'{pid}:49={a.pos_ki}')
+    if getattr(a, 'pwm_freq', None) is not None:  # testgen_smoke.py has no such options
+        cli('set', f'{PWM_DIR}:{motor}:5={a.pwm_freq}')
+    if getattr(a, 'glitch_ns', None) is not None:
+        cli('set', f'{QUAD}:{encoder}:8={a.glitch_ns}')
     return motor, encoder, pid
 
 
@@ -402,6 +419,8 @@ def run_real(cli_path, endpoint, a):
         restore(cli, created, original, refs, settings)
     if a.pool_check:
         pool_check(cli, a)
+    if a.freq_check:
+        freq_check(cli, a, trace)
     if a.report:
         Path(a.report).write_text(json.dumps({'pass': True, 'endpoint': endpoint, 'trace': trace}, indent=2))
 
@@ -462,6 +481,8 @@ def pool_check(cli, a):
                 instance = cli('add', type_, f'{label}{n}', 0)['instance']
                 created.append((type_, instance))
                 cli('set', f'{type_}:{instance}:{first_param}={next(free)}', f'{type_}:{instance}:{first_param + 1}={next(free)}')
+                if type_ == PWM_DIR:
+                    cli('set', f'{type_}:{instance}:5={PWM_FREQS[n % len(PWM_FREQS)]}')
             cli.reboot()
             states = [x['state'] for x in cli('instances') if x['type'] == type_]
             assert sorted(states) == [0] * (count - 1) + [1], (type_, states)
@@ -475,6 +496,66 @@ def pool_check(cli, a):
                 time.sleep(a.stack_wait)  # the start-failure path is the deepest boot on main's stack
         finally:
             restore(cli, created, original, refs, settings)
+
+
+def freq_check(cli, a, trace):
+    """Six actuators, each at its own PWM frequency, start, run and stop.
+
+    Each has a controller in open loop; they share one encoder, whose value open
+    loop does not use. The signals show each actuator's gate and duty, not its
+    pin: the frequency itself needs a scope or a counter on the pin.
+    """
+    info, original, refs, settings = preflight(cli)
+    created = []
+    try:
+        free = iter(pin for pin in POOL_PINS if pin not in (a.enc_a, a.enc_b))
+        encoder = cli('add', QUAD, 'freq_enc', 0)['instance']
+        created.append((QUAD, encoder))
+        cli('set', f'{QUAD}:{encoder}:1={a.enc_a}', f'{QUAD}:{encoder}:2={a.enc_b}')
+        motors, pids = [], []
+        for n, freq in enumerate(PWM_FREQS):
+            motors.append(cli('add', PWM_DIR, f'freq_act{n}', 0)['instance'])
+            created.append((PWM_DIR, motors[-1]))
+            m = f'{PWM_DIR}:{motors[-1]}'
+            cli('set', f'{m}:1={next(free)}', f'{m}:2={next(free)}', f'{m}:4={a.duty_cap}', f'{m}:5={freq}')
+        for n, motor in enumerate(motors):
+            pids.append(cli('add', PID, f'freq_pid{n}', 0)['instance'])
+            created.append((PID, pids[-1]))
+            p = f'{PID}:{pids[-1]}'
+            cli('set', f'{p}:1={(PWM_DIR << 8) | motor}', f'{p}:2={(QUAD << 8) | encoder}', f'{p}:17={a.duty_cap}')
+        freq_refs = [f'{PWM_DIR}:{m}:5' for m in motors]
+        assert cli('get-pending', *freq_refs)['typed_values'] == PWM_FREQS
+        set_rates(cli, info, a.loop_rate)
+        cli.reboot()
+        states = {(x['type'], x['instance']): x['state'] for x in cli('instances')}
+        assert all(states[c] == 0 for c in created), ('modules failed to start; see COM4', states)
+        assert cli('get', *freq_refs)['typed_values'] == PWM_FREQS
+        io = Groups(cli, [f'{PID}:{p}:514' for p in pids],
+                    [f'{PWM_DIR}:{m}:{signal}' for m in motors for signal in (256, 257)], a.loop_rate, trace)
+
+        def check(sample, duties, forced):
+            assert all(abs(sample[2 * n] - duty) < 1e-5 for n, duty in enumerate(duties)), ('duty', duties, sample)
+            assert all(sample[2 * n + 1] is forced for n in range(len(duties))), ('forced', forced, sample)
+
+        zero = [0.0] * len(motors)
+        duties = [a.duty_cap * (n + 1) / len(motors) * (-1) ** n for n in range(len(motors))]
+        check(io.sample(), zero, True)
+        cli('arm')
+        for values in (duties, [-d for d in duties], zero, duties):
+            check(io.drive(values, 1)[-1], values, False)
+        cli('disarm')
+        check(io.sample(), zero, True)
+        cli('arm'); io.command()
+        check(io.sample(), zero, False)  # re-arm holds zero until a fresh command
+        check(io.drive(duties, 1)[-1], duties, False)
+        io.wait_watchdog()
+        check(io.sample(), zero, True)
+        print(f'PASS PWM frequencies {PWM_FREQS} Hz: six actuators start, run, reverse, and stop on disarm and '
+              f'on the watchdog; {loop0_overruns(cli("status"))} overruns')
+        if a.stack_wait:
+            time.sleep(a.stack_wait)
+    finally:
+        restore(cli, created, original, refs, settings)
 
 
 def main():
@@ -492,6 +573,10 @@ def main():
     real = ap.add_argument_group('real modules (--modules real)')
     real.add_argument('--no-motor', action='store_true', help='bare bench board, nothing attached')
     real.add_argument('--pool-check', action='store_true', help='with --no-motor: MCPWM/PCNT pool limits')
+    real.add_argument('--freq-check', action='store_true',
+                      help='with --no-motor: six actuators at six PWM frequencies start, run and stop')
+    real.add_argument('--pwm-freq', type=int, help='PWM frequency in Hz, 5000-100000 (default: the device default)')
+    real.add_argument('--glitch-ns', type=int, help='encoder glitch filter in ns, 0-10000 (default: the device default)')
     real.add_argument('--confirm-first-run', action='store_true',
                       help='wheels off the ground, current-limited supply, low duty cap, hand on the power switch')
     real.add_argument('--pwm-pin', type=int)
@@ -528,8 +613,8 @@ def main():
         ap.error('--pwm-pin, --dir-pin, --enc-a and --enc-b are required')
     if not 0 < args.duty_cap <= 1 or not 0 < args.probe_duty <= args.duty_cap:
         ap.error('need 0 < --probe-duty <= --duty-cap <= 1')
-    if args.pool_check and not args.no_motor:
-        ap.error('--pool-check is a bare-board check: add --no-motor')
+    if (args.pool_check or args.freq_check) and not args.no_motor:
+        ap.error('--pool-check and --freq-check are bare-board checks: add --no-motor')
     if not args.no_motor and not args.confirm_first_run:
         ap.error('a motor run needs --confirm-first-run: wheels off the ground, a current-limited supply, '
                  'a low duty cap and a hand on the power switch')

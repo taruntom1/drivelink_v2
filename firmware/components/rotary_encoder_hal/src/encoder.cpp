@@ -17,12 +17,12 @@ struct EncoderImpl {
 
 } // namespace detail
 
-Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b)
-    : Encoder(pin_a, pin_b, Options{})
+Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns)
+    : Encoder(pin_a, pin_b, glitch_ns, Options{})
 {
 }
 
-Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b, const Options &options)
+Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b, uint32_t glitch_ns, const Options &options)
     : m_impl(new detail::EncoderImpl{})
 {
     m_impl->valid = false;
@@ -34,7 +34,7 @@ Encoder::Encoder(gpio_num_t pin_a, gpio_num_t pin_b, const Options &options)
     }
 
     // Allocate PCNT unit with quadrature decoding
-    esp_err_t ret = detail::PcntPool::allocate(pin_a, pin_b, m_impl->pcnt);
+    esp_err_t ret = detail::PcntPool::allocate(pin_a, pin_b, glitch_ns, m_impl->pcnt);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to allocate PCNT unit for pins %d/%d: %s",
                  pin_a, pin_b, esp_err_to_name(ret));

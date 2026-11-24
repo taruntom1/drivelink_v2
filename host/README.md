@@ -55,13 +55,13 @@ python host/test/motor_smoke.py --cli host/superbuild/build/windows-mingw/cli/dr
 
 Replace the endpoint with the vdev TCP URL to exercise the identical controller. The script checks SAVE/reload, velocity and position tracking, mode freshness, watchdog stop and re-arm, then restores layout and settings. `--report` writes sample traces and `--stack-wait 35` holds the mock layout for console stack sampling.
 
-`--modules real` uses `actuator.pwm_dir` and `feedback.quadrature` over serial only (the vdev has no pins), with `--pwm-pin`, `--dir-pin`, `--enc-a`, `--enc-b`, scaling (`--cpr`, `--gear`), polarity (`--invert-motor`, `--invert-encoder`, `--no-pullup`), `--duty-cap` (default 0.2) and tuning, target and tolerance options. On the bare bench board:
+`--modules real` uses `actuator.pwm_dir` and `feedback.quadrature` over serial only (the vdev has no pins), with `--pwm-pin`, `--dir-pin`, `--enc-a`, `--enc-b`, scaling (`--cpr`, `--gear`), polarity (`--invert-motor`, `--invert-encoder`, `--no-pullup`), `--duty-cap` (default 0.2), `--pwm-freq`, `--glitch-ns` and tuning, target and tolerance options. On the bare bench board:
 
 ```powershell
-python host/test/motor_smoke.py --cli host/superbuild/build/windows-mingw/cli/drivelink-cli.exe --modules real --no-motor --pool-check --pwm-pin 4 --dir-pin 5 --enc-a 6 --enc-b 7
+python host/test/motor_smoke.py --cli host/superbuild/build/windows-mingw/cli/drivelink-cli.exe --modules real --no-motor --pool-check --freq-check --pwm-pin 4 --dir-pin 5 --enc-a 6 --enc-b 7
 ```
 
-checks start on real pins, the hardware force through arm, disarm and the watchdog, the duty cap and a still count, then that a 5th encoder and a 7th actuator fail start and ARM is refused. Without `--no-motor` it runs a motor and needs `--confirm-first-run` (wheels off the ground, a current-limited supply, a low duty cap, a hand on the power switch). It checks the encoder polarity in open loop before any closed loop.
+checks start on real pins, the hardware force through arm, disarm and the watchdog, the duty cap and a still count, then that a 5th encoder and a 7th actuator (each at its own PWM frequency) fail start and ARM is refused, then that six actuators at six PWM frequencies run, reverse and stop. Without `--no-motor` it runs a motor and needs `--confirm-first-run` (wheels off the ground, a current-limited supply, a low duty cap, a hand on the power switch). It checks the encoder polarity in open loop before any closed loop.
 
 `--stall` (with any form; `--stall-ms` 500-4000, default 2000) stalls the control loop while it drives. It requires Fault/LoopStalled before the stall can have ended (judged from device data: the loop has not yet counted the stall's overruns), zero duty (and `forced` with real modules) after it, and ACK_FAULT and re-arm. Those signals come from the loop, so only a motor's encoder shows the monitor's force during the stall; the native tests prove the force without a tick. It needs a `CONFIG_CORE_BENCH_CRASH=y` firmware (flash the normal one afterwards) or a vdev started with `--allow-crash`, and refuses before any change otherwise. Host integration runs the mock form on a vdev with `--allow-crash`.
 
