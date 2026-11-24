@@ -13,7 +13,7 @@ Get files for the same release from [Downloads]({{base}}downloads/) or the [sign
 
 | Limit | Reference |
 | --- | --- |
-| 4 device loops in the default firmware, including the two factory loops | Check available loops in [Layout]({{base}}pc/layout/). |
+| 4 device loops by default, including the two factory loops. You can raise the limit to 8. | Change it in [Device settings]({{base}}pc/settings/) and check the count in [Layout]({{base}}pc/layout/). |
 | Up to 6 PWM + DIR instances and 4 quadrature feedback instances | Check the [reference build]({{base}}reference/bench/) for usable pins and electrical limits. |
 | Agent up to 8 devices and one controller client per device | See [agent settings]({{base}}reference/agent/) and [sharing control]({{base}}pi/control/). |
 | Firmware UART at 921,600 baud | See [Pi UART wiring]({{base}}pi/wire/). |

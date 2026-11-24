@@ -229,9 +229,9 @@ QVariantMap LocalConnection::deviceSettings() const {
     result["paramBlocked"]=liveParamBlocked();
     result["rebootNote"]=layoutBlocked().isEmpty() && !exclusiveBlocked().isEmpty()?tr("Needs the control lease"):QString();
     result["safeMode"]=safe;
-    // Unsaved too: a value staged and set back, or one just staged whose
+    // Only after a SAVE: a value staged and set back, or one just staged whose
     // pending value is not read yet, was never saved.
-    result["savedThenDiscarded"]=pendingReboot() && !listed && !safe && !unsaved();
+    result["savedThenDiscarded"]=pendingReboot() && !listed && !safe && m_savedPending;
     result["discardAfterSave"]=listed && !unsaved();
     return result;
 }

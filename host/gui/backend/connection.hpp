@@ -548,7 +548,7 @@ private:
     ParamTable m_params,m_systemParams;
     QString m_selected,m_paramFilterText;
     int m_paramFilter=0;
-    bool m_paramsArmed=false,m_layoutReady=false,m_paramsSafe=false,m_paramsReboot=false;
+    bool m_paramsArmed=false,m_layoutReady=false,m_paramsSafe=false,m_paramsReboot=false,m_savedPending=false;
     // Per item key: sending, applied, clamped, rejected, uncertain.
     QHash<QString,ParamEdit> m_edits;
     // Params this GUI changed since the last SAVE, per device id.

@@ -29,4 +29,4 @@ You need the app connected to a disarmed board and your [wiring notes]({{base}}p
 
 {{figure:layout-review}}
 
-See [Saving and reverting]({{base}}concepts/saving/) if you need to undo a change. When the active layout matches the wiring, go to [First spin]({{base}}pc/first-spin/).
+If **Add** says **4 of 4 loops: remove a loop first** (or the same for instances), raise that limit in [Device settings]({{base}}pc/settings/). See [Saving and reverting]({{base}}concepts/saving/) if you need to undo a change. When the active layout matches the wiring, go to [First spin]({{base}}pc/first-spin/).
