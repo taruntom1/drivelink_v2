@@ -72,6 +72,9 @@ KvStore::~KvStore() = default;
 Err KvStore::get(const char *ns, const char *key, void *buf, size_t &len)
 {
     recordRealtimeViolation();
+    if (m_state.on_read != nullptr) {
+        m_state.on_read(m_state.on_read_ctx);
+    }
     if (!validName(ns) || !validName(key)) {
         return kNativeError;
     }
@@ -197,6 +200,12 @@ void clearFaults(KvStore &store)
     s.power_loss_after = -1;
     s.fail_after = -1;
     s.tear_after = -1;
+}
+
+void setReadObserver(KvStore &store, void (*fn)(void *ctx), void *ctx)
+{
+    store.backendState().on_read = fn;
+    store.backendState().on_read_ctx = ctx;
 }
 
 uint32_t writeCount(KvStore &store)

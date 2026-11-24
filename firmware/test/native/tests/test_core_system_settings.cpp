@@ -35,16 +35,35 @@ constexpr uint8_t kSys = drivelink::protocol::defs::kSystemTypeId;
 /// `test.max_instances`, u16, 1..64, default 16: sizes CoreConfig::max_instances.
 constexpr uint16_t kSetting = 0x7F00;
 constexpr uint32_t kDefault = 16;
+/// `test.enabled`, bool, default true, and `test.gain`, f32, default 2: settings
+/// whose saved bits can be invalid for the type.
+constexpr uint16_t kFlag = 0x7F01;
+constexpr uint16_t kGain = 0x7F02;
 
 const defs::TypeDesc &testSystemType()
 {
     static const std::vector<defs::ItemDesc> items = [] {
         std::vector<defs::ItemDesc> all(sys::kDesc.items.begin(), sys::kDesc.items.end());
+        const auto flags = defs::flagBits(defs::ItemFlag::RebootRequired, defs::ItemFlag::Persist);
+        defs::ItemDesc other{};
+        other.kind = defs::ItemKind::Param;
+        other.flags = flags;
+        other.unit = other.description = "";
+        other.id = kFlag;
+        other.type = defs::ValueType::Bool;
+        other.name = "test.enabled";
+        other.default_bits = 1;
+        all.push_back(other);
+        other.id = kGain;
+        other.type = defs::ValueType::F32;
+        other.name = "test.gain";
+        other.default_bits = f(2.0f);
+        all.push_back(other);
         defs::ItemDesc item{};
         item.id = kSetting;
         item.kind = defs::ItemKind::Param;
         item.type = defs::ValueType::U16;
-        item.flags = defs::flagBits(defs::ItemFlag::RebootRequired, defs::ItemFlag::Persist);
+        item.flags = flags;
         item.name = "test.max_instances";
         item.unit = item.description = "";
         item.min_bits = 1;
@@ -170,6 +189,155 @@ TEST_CASE("System settings: an unsaved value is gone after a reboot, a saved one
     CHECK(running(*reboot(store)) == 20);
 }
 
+TEST_CASE("System settings: FACTORY_RESET drops the saved setting; a staged one needs a SAVE to survive it")
+{
+    for (const bool save_again : {false, true}) {
+        CAPTURE(save_again);
+        reset();
+        core_os::KvStore store;
+        writeLayout(store, {}, 1, {{kSetting, 8}});
+        auto c = reboot(store);
+        CHECK(stage(*c, 20).accepted());
+        REQUIRE(c->factoryReset().ok());
+        CHECK(running(*c) == 8);
+        CHECK(pending(*c) == 20); // as the pending layout: until the reboot
+        CHECK(c->pendingReboot());
+        if (save_again) {
+            REQUIRE(c->save().ok());
+        } else {
+            REQUIRE(c->discardPending().ok());
+            CHECK(pending(*c) == 8);
+        }
+        c.reset();
+        c = reboot(store);
+        CHECK(c->configLoadedFromNvs() == save_again);
+        CHECK(running(*c) == (save_again ? 20 : kDefault));
+        CHECK(pending(*c) == running(*c));
+        CHECK_FALSE(c->pendingReboot());
+    }
+}
+
+TEST_CASE("System settings: a batch with module params is staged whole or not at all")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, {{act::kTypeId, 0, 0, "a"}, {act::kTypeId, 1, 0, "b"}}, 1, {{kSetting, 8}});
+    auto c = reboot(store);
+    const core::Ref pin = ref(act::kTypeId, 0, act::kPin);
+    const auto pinPending = [&] {
+        uint32_t v = 0;
+        REQUIRE(c->getPending({&pin, 1}, {&v, 1}).ok());
+        return v;
+    };
+    std::array<uint32_t, 3> applied{};
+    const auto batch = [&](uint32_t setting, uint32_t pin_value) {
+        const std::array<core::SetEntry, 3> entries{entry(kSys, 0, kFlag, 0), entry(kSys, 0, kSetting, setting),
+                                                    entry(act::kTypeId, 0, act::kPin, pin_value)};
+        return c->params().set(entries, applied);
+    };
+
+    // A pin the policy refuses: the settings beside it are not staged either.
+    core::Status st = batch(20, 13);
+    CHECK(st.detail == Detail::GpioNotAllowed);
+    CHECK(st.index == 2);
+    CHECK(pending(*c, kFlag) == 1);
+    CHECK(pending(*c) == 8);
+    CHECK(pinPending() == defs::kNoGpio);
+    CHECK_FALSE(c->pendingReboot());
+    CHECK_FALSE(c->nvsDirty());
+
+    // Both valid: both are staged.
+    CHECK(batch(20, 5).accepted());
+    CHECK(pending(*c, kFlag) == 0);
+    CHECK(pending(*c) == 20);
+    CHECK(pinPending() == 5);
+
+    // A setting too low for the layout: an active copy keeps what it had.
+    const std::array<core::SetEntry, 3> low{entry(kSys, 0, kFlag, 1), entry(kSys, 0, kSetting, 1),
+                                            entry(act::kTypeId, 0, act::kPin, 6)};
+    CHECK(c->params().set(low, applied).detail == Detail::Capacity);
+    CHECK(pending(*c, kFlag) == 0);
+    CHECK(pending(*c) == 20);
+    CHECK(pinPending() == 5);
+
+    REQUIRE(c->save().ok());
+    c.reset();
+    c = reboot(store);
+    CHECK(running(*c) == 20);
+    CHECK(getParam(*c, kSys, 0, kFlag) == 0);
+    CHECK(getParam(*c, act::kTypeId, 0, act::kPin) == 5);
+}
+
+TEST_CASE("System settings: an invalid saved value loads as the default, an out-of-range one clamped")
+{
+    struct Case {
+        uint32_t saved, loaded; // 0x10000 is no u16
+    };
+    for (const Case &k : {Case{9999, 64}, Case{0, 1}, Case{0x10000, kDefault}}) {
+        CAPTURE(k.saved);
+        reset();
+        core_os::KvStore store;
+        writeLayout(store, {}, 1, {{kSetting, k.saved}, {kFlag, 7}, {kGain, 0x7FC00000}, {0x7E00, 5}});
+        auto c = reboot(store);
+        CHECK(c->configLoadedFromNvs());
+        CHECK(running(*c) == k.loaded);
+        CHECK(pending(*c) == k.loaded);
+        CHECK(getParam(*c, kSys, 0, sys::kLimitsInstances) == k.loaded);
+        CHECK(getParam(*c, kSys, 0, kFlag) == 1); // 7 is no bool
+        CHECK(pending(*c, kFlag) == 1);
+        CHECK(getParam(*c, kSys, 0, kGain) == f(2.0f)); // a NaN
+        CHECK(pending(*c, kGain) == f(2.0f));
+        CHECK_FALSE(c->pendingReboot()); // nothing is staged by the repair
+        REQUIRE(c->save().ok());
+        for (const core::ParamPair &p : core::persist::loadConfig(store).system) {
+            CHECK(p.id != 0x7E00); // an item that is gone
+            CHECK((p.id != kSetting || p.value == k.loaded));
+        }
+    }
+}
+
+TEST_CASE("System settings: a torn generation falls back to the setting of the one before it")
+{
+    for (const auto mode : {core_os::native::Tear::Truncate, core_os::native::Tear::Corrupt}) {
+        CAPTURE(static_cast<int>(mode));
+        reset();
+        core_os::KvStore store;
+        writeLayout(store, {{fx::kTypeId, 0, 0, "a"}}, 1, {{kSetting, 8}});
+        {
+            auto c = reboot(store);
+            CHECK(stage(*c, 24).accepted());
+            // Three instance blobs (two loops, the module), then the system's:
+            // it is torn, and the layout blob after it commits the generation.
+            core_os::native::tearWriteAfter(store, 3, mode);
+            REQUIRE(c->save().ok());
+            core_os::native::clearFaults(store);
+        }
+        auto c = reboot(store);
+        CHECK(c->configLoadedFromNvs());
+        CHECK(running(*c) == 8);
+        CHECK(pending(*c) == 8);
+        CHECK(getParam(*c, kSys, 0, sys::kLimitsInstances) == 8);
+        CHECK(c->findRecord(fx::kTypeId, 0) != nullptr);
+        CHECK_FALSE(c->pendingReboot());
+
+        // The next SAVE goes past the torn generation and holds.
+        CHECK(stage(*c, 30).accepted());
+        REQUIRE(c->save().ok());
+        c.reset();
+        c = reboot(store);
+        CHECK(running(*c) == 30);
+
+        // Both generations unusable: the default.
+        core_os::native::removeKey(store, "t00i00", core::persist::kParamKeys[0]);
+        core_os::native::removeKey(store, "t00i00", core::persist::kParamKeys[1]);
+        c.reset();
+        c = reboot(store);
+        CHECK_FALSE(c->configLoadedFromNvs());
+        CHECK(running(*c) == kDefault);
+        CHECK(pending(*c) == kDefault);
+    }
+}
+
 TEST_CASE("System settings: REVERT restores live params and keeps the staged setting")
 {
     reset();
@@ -250,6 +418,34 @@ TEST_CASE("System settings: a power loss during SAVE leaves the old setting or t
             CHECK((!committed || write >= 6)); // two loops, two modules, the system, the layout
         }
         CHECK(committed);
+    }
+}
+
+TEST_CASE("System settings: the crash counter goes up before the first NVS read")
+{
+    reset();
+    core_os::KvStore store;
+    writeLayout(store, {}, 1, {{kSetting, 60}});
+    core_os::native::setResetWasCrash(true);
+    struct Seen {
+        uint32_t reads = 0, first = 0;
+    } seen;
+    core_os::native::setReadObserver(
+        store,
+        [](void *ctx) {
+            auto *s = static_cast<Seen *>(ctx);
+            if (s->reads++ == 0) {
+                s->first = core_os::loadCrashCount();
+            }
+        },
+        &seen);
+    for (uint32_t boot = 1; boot <= 3; ++boot) {
+        CAPTURE(boot);
+        seen = {};
+        const core::BootPlan plan = core::prepareBoot(store);
+        CHECK(seen.reads > 0);
+        CHECK(seen.first == boot);
+        CHECK(plan.safe.safe_mode == (boot == 3));
     }
 }
 

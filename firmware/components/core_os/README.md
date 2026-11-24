@@ -34,5 +34,5 @@ Use the [atomic capability check](include/core_os/atomics.hpp) for shared words.
 ## Native test controls
 
 - [Scheduling and allocation](backend/native/include/core_os/native_task.hpp) supports manual loop and monitor advancement, requested-affinity observation, and injected task-start, timer-restart and capture-allocation failures. Change scheduling mode or the start observer only while owners are stopped.
-- [KV faults](backend/native/include/core_os/native_kv.hpp) distinguish permanent write failure, a single failed write, and a truncated or corrupted blob whose write reports success. [Boot controls](backend/native/include/core_os/native_boot.hpp) provide reset and reboot observations.
+- [KV faults](backend/native/include/core_os/native_kv.hpp) distinguish permanent write failure, a single failed write, and a truncated or corrupted blob whose write reports success. A read observer sees the state at each `get`. [Boot controls](backend/native/include/core_os/native_boot.hpp) provide reset and reboot observations.
 - [OTA faults](backend/native/include/core_os/native_ota.hpp) can fail before an operation or after durable boot selection. Use the latter to exercise recovery when the caller receives an error after the commit.
