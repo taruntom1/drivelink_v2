@@ -2,7 +2,7 @@
 
 Plan for [issue 105](https://github.com/taruntom1/drivelink_v2/issues/105): change at
 run time, through the CLI, GUI and agent, what now needs a Kconfig edit and a
-rebuild. Five PRs, one per step, in order. State: **planned**.
+rebuild. Five PRs, one per step, in order. State: **step 1 done**; steps 2 to 5 planned.
 
 ## Why it fits the current design
 
