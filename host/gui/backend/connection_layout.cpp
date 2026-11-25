@@ -6,6 +6,7 @@
 #include "connection_internal.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
 #include <drivelink/protocol/gen/type_loop.hpp>
+#include <drivelink/protocol/gen/type_system.hpp>
 #include <QFile>
 #include <QPointer>
 #include <QUrl>
@@ -233,6 +234,7 @@ QVariantMap LocalConnection::deviceSettings() const {
     // pending value is not read yet, was never saved.
     result["savedThenDiscarded"]=pendingReboot() && !listed && !safe && m_savedPending;
     result["discardAfterSave"]=listed && !unsaved();
+    result["linkTrialActive"]=linkTrialActive();
     return result;
 }
 
@@ -315,6 +317,9 @@ void LocalConnection::sendParam(const Ref &ref,uint32_t bits,const QString &text
     if(blocked.isEmpty() && staged) {blocked=rebootBlocked();}
     if(blocked.isEmpty() && (armState()==1 || m_arming) && flag(d,defs::ItemFlag::LockedWhileArmed)) {
         blocked=tr("Locked while armed; disarm first");
+    }
+    if(blocked.isEmpty() && system && ref.item>=defs::system::kLinkBaud && ref.item<=defs::system::kLinkRxPin && linkTrialActive()) {
+        blocked=tr("Confirm or wait for the active link trial to finish");
     }
     if(blocked.isEmpty() && flag(d,defs::ItemFlag::ReadOnly)) {blocked=tr("This value is read-only");}
     if(const auto it=m_edits.find(key);blocked.isEmpty() && it!=m_edits.end() && it->state=="sending") {

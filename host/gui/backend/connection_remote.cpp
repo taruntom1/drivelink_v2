@@ -324,7 +324,7 @@ void LocalConnection::connectAgent(const QString &address,const QString &token,c
     if(!problem.isEmpty()) {m_agentFailure={{"state","other"},{"text",problem}};emit changed();return;}
     m_agent=AgentTarget{address.trimmed(),endpoint,token,device,rememberToken};
     m_agentFailure.clear();
-    open(endpoint,921600);
+    open(endpoint,0,0);
 }
 
 void LocalConnection::forgetAgent(const QString &address) {

@@ -10,6 +10,7 @@
 #include "remote_model.hpp"
 #include "style.hpp"
 #include <drivelink/protocol/gen/registry.hpp>
+#include <drivelink/protocol/link.hpp>
 #include <QElapsedTimer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -102,7 +103,8 @@ struct AgentFixture {
     QProcess agent;
     QString address;
     const QString token=QStringLiteral("gui-remote-token");
-    explicit AgentFixture(const QStringList &extra={}) {
+    explicit AgentFixture(const QStringList &extra={},bool pty=false,int linkTrialMs=0)
+        : vdev(false,pty,false,linkTrialMs) {
         agent.start(QString::fromUtf8(AGENT_PATH),QStringList{"--port","0","--token",token,"--device","base="+vdev.endpoint}+extra);
         if(!agent.waitForStarted(10000) || !agent.waitForReadyRead(10000)) {throw std::runtime_error("agent did not start");}
         const auto line=QString::fromUtf8(agent.readLine()).trimmed();
@@ -892,6 +894,70 @@ Window { width: 800; height: 1200; visible: true
         a.c.retry();
         QVERIFY(waitFor([&]{return !a.c.loading() && a.c.agentFailure()["state"].toString()=="offline";},15000));
         a.c.disconnectDevice();QVERIFY(waitFor([&]{return !a.c.remote();}));
+    }
+    // Step 5b: serial link trial through drivelink-agent on a real PTY:
+    // auto-baud confirm, unmoved-wire pin revert, and first-connect active
+    // trial where only the lease holder can confirm.
+    void linkTrialThroughAgent() {
+        AgentFixture f({"--retry-ms","400"},true,6000);
+        Window a("gui-a");
+        QVERIFY(a.open(f));
+        // Baud change through agent: agent reconnects with auto-baud and confirms.
+        a.c.setParamValue("0:0:48",*protocol::linkBaudValue(115200));
+        QVERIFY(waitFor([&]{return a.c.linkTrial()["staged"].toBool();}));
+        a.c.saveAndReboot();
+        QVERIFY(waitFor([&]{return a.c.linkTrial()["waiting"].toBool() && a.c.linkTrial()["throughAgent"].toBool();},10000));
+        QVERIFY(waitFor([&]{return a.c.ready() && a.c.linkTrial()["outcome"].toString()=="confirmed" && !a.c.linkTrial()["active"].toBool();},25000));
+        QCOMPARE(protocol::linkBaudRate(a.system(defs::system::kLinkBaud)),115200u);
+        // Pin change without moving PTY wires: reverts after 4 s and GUI reports Reverted.
+        a.c.dismissLinkOutcome();
+        a.c.setParamText("0:0:49","17");
+        a.c.setParamText("0:0:50","18");
+        QVERIFY(waitFor([&]{return a.c.linkTrial()["pinsChanged"].toBool();}));
+        a.c.saveAndReboot();
+        QVERIFY(waitFor([&]{return a.c.ready() && a.c.linkTrial()["outcome"].toString()=="reverted";},30000));
+        QCOMPARE(a.system(defs::system::kLinkTxPin),43u);
+        QCOMPARE(a.system(defs::system::kLinkRxPin),44u);
+        a.c.disconnectDevice();QVERIFY(waitFor([&]{return !a.c.linked() && !a.c.closing();}));
+        // Active trial on agent's first connect: agent does not auto-confirm;
+        // observer cannot confirm while another client holds the lease, holder can.
+        test::Fixture ptyVdev(false,true,false,10000);
+        {
+            SessionOptions opts;opts.baud=kBaudAuto;
+            Session s(ptyVdev.endpoint.toStdString(),opts);Client c(s);c.info();
+            const std::array<Ref,1> refs{{{0,0,defs::system::kLinkBaud}}};
+            const std::array<uint32_t,1> vals{{*protocol::linkBaudValue(230400)}};
+            c.set(refs,vals);c.system(5);c.system(8);
+        }
+        QTest::qWait(250);
+        QProcess agent;
+        const QString token=QStringLiteral("gui-trial-token");
+        agent.start(QString::fromUtf8(AGENT_PATH),QStringList{"--port","0","--token",token,"--device","base="+ptyVdev.endpoint});
+        QVERIFY(agent.waitForStarted(10000) && agent.waitForReadyRead(10000));
+        const auto line=QString::fromUtf8(agent.readLine()).trimmed();
+        QVERIFY(line.startsWith("READY tcp://"));
+        const auto addr=line.mid(12);
+        QVERIFY(waitFor([&]{
+            try {const auto d=listAgentDevices("tcp://"+addr.toStdString(),token.toStdString());return !d.empty() && d.front().online;}
+            catch(const Error &) {return false;}
+        },15000));
+        Window obs("gui-obs"),holder("gui-holder");
+        obs.c.connectAgent(addr,token,"base",false);
+        holder.c.connectAgent(addr,token,"base",false);
+        QVERIFY(waitFor([&]{return obs.c.ready() && holder.c.ready();},15000));
+        QVERIFY(obs.c.linkTrial()["active"].toBool());
+        QVERIFY(holder.c.linkTrial()["active"].toBool());
+        QVERIFY(!holder.c.armEnabled());
+        holder.c.takeLease();
+        QVERIFY(waitFor([&]{return holder.c.lease()["mine"].toBool() && obs.c.lease()["holderName"]=="gui-holder";},15000));
+        QVERIFY(obs.c.linkTrial()["confirmBlocked"].toString().contains("gui-holder"));
+        QVERIFY(holder.c.linkTrial()["confirmBlocked"].toString().isEmpty());
+        holder.c.confirmLink();
+        QVERIFY(waitFor([&]{return !holder.c.linkTrial()["active"].toBool() && holder.c.linkTrial()["outcome"].toString()=="confirmed";},15000));
+        QCOMPARE(protocol::linkBaudRate(holder.system(defs::system::kLinkBaud)),230400u);
+        obs.c.disconnectDevice();holder.c.disconnectDevice();
+        QVERIFY(waitFor([&]{return !obs.c.linked() && !holder.c.linked();},10000));
+        agent.kill();agent.waitForFinished(10000);
     }
 #endif
 };

@@ -12,6 +12,7 @@ Flickable {
     required property var backend
     signal renameRequested()
     signal factoryResetRequested()
+    signal rebootRequested(bool saveFirst)
     signal faultsRequested()
     signal loopRequested(int loopId)
     signal updateRequested()
@@ -76,6 +77,11 @@ Flickable {
             }
             InfoRow { label: qsTr("Device id"); value: page.formatId(page.backend.deviceId); mono: true }
             InfoRow { label: qsTr("Endpoint"); value: page.backend.endpoint; mono: true }
+            InfoRow {
+                visible: !page.backend.remote && page.backend.endpoint.startsWith("serial://") && page.backend.baud > 0
+                label: qsTr("Link rate")
+                value: qsTr("%1 baud").arg(page.backend.baud)
+            }
             InfoRow { label: qsTr("Firmware"); value: page.backend.info.firmware || "" }
             InfoRow { label: qsTr("Build id"); value: page.backend.info.buildId || ""; mono: true }
             InfoRow { label: qsTr("Core protocol"); value: "v" + (page.backend.info.protocol || "") }
@@ -344,6 +350,8 @@ Flickable {
                             onClicked: {
                                 const key = parent.modelData.key
                                 if (key === "factoryReset") page.factoryResetRequested()
+                                else if (key === "reboot") page.rebootRequested(false)
+                                else if (key === "saveAndReboot") page.rebootRequested(true)
                                 else page.backend[key]()
                             }
                         }

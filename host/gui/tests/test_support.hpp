@@ -41,11 +41,12 @@ struct Fixture {
     QString endpoint;
     QByteArray output;
     uint64_t sequence=0;
-    explicit Fixture(bool safe=false,bool pty=false,bool bench=false) {
+    explicit Fixture(bool safe=false,bool pty=false,bool bench=false,int linkTrialMs=0) {
         QStringList args={"--port","0","--state",directory.path()+"/state","--scenario-file",directory.path()+"/control"};
         if(safe) {args<<"--safe-mode";}
         if(pty) {args<<"--pty";}
         if(bench) {args<<"--allow-crash";} // BENCH_STALL
+        if(linkTrialMs>0) {args<<"--link-trial-ms"<<QString::number(linkTrialMs);}
         process.start(QString::fromUtf8(VDEV_PATH),args);
         if(!process.waitForStarted(10000) || !process.waitForReadyRead(10000)) {throw std::runtime_error("vdev did not start");}
         endpoint=QString::fromUtf8(process.readLine()).trimmed().mid(6);

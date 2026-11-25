@@ -10,6 +10,7 @@
 #include <drivelink/protocol/gen/registry.hpp>
 #include <drivelink/protocol/gen/type_loop.hpp>
 #include <drivelink/protocol/gen/type_system.hpp>
+#include <drivelink/protocol/link.hpp>
 #include <QAbstractItemModelTester>
 #include <QDir>
 #include <QFile>
@@ -2046,6 +2047,185 @@ private slots:
         QTest::keyRelease(window,Qt::Key_Escape);
         QCOMPARE(escapes.count(),beforeLostRelease+2);
         connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
+    // Step 5b: Connect baud picker (Auto + 8 rates), staged link warning,
+    // non-modal link-reboot dialog, confirmed outcome, active trial banner
+    // (blocking ARM/OTA/link edits) + Confirm link button, and NotReachable
+    // recovery overlay.
+    void linkTrialUiLocal() {
+        Q_INIT_RESOURCE(qmake_DriveLink_Shell);
+        Q_INIT_RESOURCE(drivelink_gui_shell_raw_qml_0);registerShellTypes();
+        Fixture fixture(false,false,false,5000);
+        LocalConnection connection;QTemporaryDir dir;connection.setSettingsPath(dir.filePath("gui.ini"));
+        SafetyKeys keys;
+        connect(&keys,&SafetyKeys::escapeRequested,&connection,&Connection::disarm);
+        QQmlApplicationEngine engine;QVERIFY(installStyle(engine));
+        engine.rootContext()->setContextProperty("connection",&connection);
+        engine.rootContext()->setContextProperty("safetyKeys",&keys);
+        engine.loadFromModule("DriveLink.Shell","Shell");QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().front());QVERIFY(window);
+        window->resize(1600,1000);
+        auto shown=[&](const char *name)->QQuickItem * {
+            auto *item=visualChild(window->contentItem(),name);
+            return item && item->isVisible()?item:nullptr;
+        };
+        // Connect page: Auto (0) is the default, followed by all 8 firmware rates.
+        auto *connectPage=shown("connectPage");QVERIFY(connectPage);
+        const auto bauds=connectPage->property("baudOptions").toList();
+        QCOMPARE(bauds.size(),9);
+        QCOMPARE(bauds.first().toMap()["label"].toString(),QString("Auto"));
+        QCOMPARE(bauds.first().toMap()["value"].toInt(),0);
+        QCOMPARE(bauds.last().toMap()["value"].toInt(),3000000);
+        auto *baudBox=connectPage->property("baudBox").value<QObject *>();QVERIFY(baudBox);
+        QCOMPARE(baudBox->property("currentIndex").toInt(),0);
+        // Connect to vdev (default baud 0 = Auto).
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.armEnabled();},15000));
+        QVERIFY(waitFor([&]{return shown("settingsCard")!=nullptr;}));
+        QVERIFY(!shown("settingsLinkWarningNote"));
+        QVERIFY(!shown("settingsLinkTrialBanner"));
+        QVERIFY(!shown("settingsLinkOutcomeBanner"));
+        // Stage a baud change: inline warning note appears (30 s trial).
+        connection.setParamValue("0:0:48",*protocol::linkBaudValue(115200));
+        QVERIFY(waitFor([&]{return connection.linkTrial()["staged"].toBool() && shown("settingsLinkWarningNote")!=nullptr;}));
+        QCOMPARE(connection.linkTrial()["trialSeconds"].toInt(),30);
+        QVERIFY(!connection.linkTrial()["pinsChanged"].toBool());
+        // Link reboot dialog opens above the scrim with the 30 s text.
+        QVERIFY(QMetaObject::invokeMethod(window,"requestReboot",Q_ARG(QVariant,true)));
+        auto *dlg=window->findChild<QObject *>("linkRebootDialog");QVERIFY(dlg);
+        QVERIFY(waitFor([&]{return dlg->property("opened").toBool();}));
+        QVERIFY(dlg->property("text").toString().contains("30 s trial"));
+        QVERIFY(!dlg->property("text").toString().contains("move the UART wires"));
+        QMetaObject::invokeMethod(dlg,"reject");
+        QVERIFY(waitFor([&]{return !dlg->property("opened").toBool();}));
+        // Stage a pin change too: warning & dialog switch to 120 s + wire move.
+        connection.setParamText("0:0:49","17");
+        connection.setParamText("0:0:50","18");
+        QVERIFY(waitFor([&]{return connection.linkTrial()["pinsChanged"].toBool();}));
+        QCOMPARE(connection.linkTrial()["trialSeconds"].toInt(),120);
+        QVERIFY(QMetaObject::invokeMethod(window,"requestReboot",Q_ARG(QVariant,true)));
+        QVERIFY(waitFor([&]{return dlg->property("opened").toBool();}));
+        QVERIFY(dlg->property("text").toString().contains("120 s trial"));
+        QVERIFY(dlg->property("text").toString().contains("TX 17 / RX 18"));
+        // Accept: saves, reboots, reconnects and confirms the trial.
+        QMetaObject::invokeMethod(dlg,"accept");
+        QVERIFY(waitFor([&]{return connection.linkTrial()["outcome"].toString()=="confirmed" && shown("settingsLinkOutcomeBanner")!=nullptr;},20000));
+        QVERIFY(waitFor([&]{return connection.armEnabled();},15000));
+        QCOMPARE(protocol::linkBaudRate(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkBaud))),115200u);
+        QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkTxPin)),17u);
+        QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkRxPin)),18u);
+        // Dismiss outcome banner.
+        connection.dismissLinkOutcome();
+        QVERIFY(waitFor([&]{return !shown("settingsLinkOutcomeBanner");}));
+        // Active trial banner: externally put vdev into a trial and connect fresh.
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.linked() && !connection.closing();}));
+        {
+            Session s(fixture.endpoint.toStdString());Client c(s);c.info();
+            const std::array<Ref,1> refs{{{0,0,defs::system::kLinkBaud}}};
+            const std::array<uint32_t,1> vals{{*protocol::linkBaudValue(921600)}};
+            c.set(refs,vals);c.system(5);c.system(8);
+        }
+        QTest::qWait(250);
+        connection.connectTo(fixture.endpoint);
+        QVERIFY(waitFor([&]{return connection.ready() && connection.linkTrial()["active"].toBool();},15000));
+        QVERIFY(waitFor([&]{return shown("settingsLinkTrialBanner")!=nullptr && shown("confirmLinkButton")!=nullptr;}));
+        QVERIFY(!connection.armEnabled());
+        QVERIFY(connection.armBlockedReason().contains("trial"));
+        QVERIFY(!connection.actionBlocked()["update"].toString().isEmpty());
+        QVERIFY(connection.deviceSettings()["linkTrialActive"].toBool());
+        // Click Confirm link: confirms and clears the active trial.
+        connection.confirmLink();
+        QVERIFY(waitFor([&]{return !connection.linkTrial()["active"].toBool() && connection.linkTrial()["outcome"].toString()=="confirmed";},15000));
+        QVERIFY(waitFor([&]{return connection.armEnabled();},15000));
+        // NotReachable recovery overlay: stage baud change, tighten wait window, kill vdev after reboot.
+        connection.setLinkWaitWindow(1200);
+        connection.setParamValue("0:0:48",*protocol::linkBaudValue(460800));
+        QVERIFY(waitFor([&]{return connection.linkTrial()["staged"].toBool();}));
+        connection.saveAndReboot();
+        QVERIFY(waitFor([&]{return connection.reconnecting();},10000));
+        fixture.process.kill();fixture.process.waitForFinished(10000);
+        QVERIFY(waitFor([&]{return connection.linkLost() && connection.linkTrial()["notReachable"].toBool();},15000));
+        QVERIFY(waitFor([&]{return shown("linkLostOverlay")!=nullptr && shown("linkRecoveryHint")!=nullptr;}));
+        QVERIFY(shown("linkRecoveryHint")->property("text").toString().contains("esptool"));
+        QCOMPARE(shown("retryButton")->property("text").toString(),QString("Retry (Auto baud)"));
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
+#ifndef Q_OS_WIN
+    // Step 5b (Linux PTY): auto-detect connect, baud trial confirm, and
+    // unmoved-wire pin trial revert over a real PTY.
+    void linkTrialPty() {
+        Fixture fixture(false,true,false,3500);
+        LocalConnection connection;QTemporaryDir dir;connection.setSettingsPath(dir.filePath("gui.ini"));
+        // Auto-detect on connect (baud = 0).
+        connection.connectTo(fixture.endpoint,0);
+        QVERIFY(waitFor([&]{return connection.ready() && connection.armEnabled();},15000));
+        QCOMPARE(connection.baud(),921600);
+        // Baud change -> auto-detect new rate -> Confirmed.
+        connection.setParamValue("0:0:48",*protocol::linkBaudValue(115200));
+        QVERIFY(waitFor([&]{return connection.linkTrial()["staged"].toBool();}));
+        connection.saveAndReboot();
+        QVERIFY(waitFor([&]{return connection.ready() && connection.linkTrial()["outcome"].toString()=="confirmed" && connection.armEnabled();},20000));
+        QCOMPARE(connection.baud(),115200);
+        QCOMPARE(protocol::linkBaudRate(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkBaud))),115200u);
+        // Pin change without moving simulated wires -> reverts after 3.5 s -> Reverted.
+        connection.dismissLinkOutcome();
+        connection.setParamText("0:0:49","17");
+        connection.setParamText("0:0:50","18");
+        QVERIFY(waitFor([&]{return connection.linkTrial()["pinsChanged"].toBool();}));
+        connection.saveAndReboot();
+        QVERIFY(waitFor([&]{return connection.ready() && connection.linkTrial()["outcome"].toString()=="reverted";},25000));
+        QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkTxPin)),43u);
+        QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkRxPin)),44u);
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();}));
+    }
+#endif
+    // Physical bench check (Step 5b): GUI auto-detect connect, baud trial +
+    // confirm, and restore on a real serial board. Opt-in via env vars so
+    // normal bench runs never change serial settings.
+    void benchLinkTrial() {
+        const auto endpoint=qEnvironmentVariable("DRIVELINK_GUI_BENCH_ENDPOINT");
+        if(endpoint.isEmpty() || qEnvironmentVariable("DRIVELINK_GUI_BENCH_LINK_TRIAL")!="1") {
+            QSKIP("set DRIVELINK_GUI_BENCH_ENDPOINT and DRIVELINK_GUI_BENCH_LINK_TRIAL=1 to run");
+        }
+        LocalConnection connection;QTemporaryDir dir;connection.setSettingsPath(dir.filePath("gui.ini"));
+        connection.connectTo(endpoint,0);
+        QVERIFY2(waitFor([&]{return connection.ready() && connection.armEnabled();},20000),qPrintable(connection.lastError()["text"].toString()));
+        const int origBaud=connection.baud();
+        QVERIFY(origBaud>0);
+        // Trial 2000000 baud -> confirm.
+        const uint32_t targetBaud=origBaud==2000000?460800u:2000000u;
+        connection.setParamValue("0:0:48",*protocol::linkBaudValue(targetBaud));
+        QVERIFY(waitFor([&]{return connection.linkTrial()["staged"].toBool();},10000));
+        connection.saveAndReboot();
+        QVERIFY2(waitFor([&]{return connection.ready() && connection.linkTrial()["outcome"].toString()=="confirmed" && connection.armEnabled();},35000),
+                 qPrintable(connection.lastError()["text"].toString()));
+        QCOMPARE(uint32_t(connection.baud()),targetBaud);
+        QCOMPARE(protocol::linkBaudRate(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkBaud))),targetBaud);
+        // Restore original baud (921600) -> confirm.
+        connection.dismissLinkOutcome();
+        connection.setParamValue("0:0:48",*protocol::linkBaudValue(uint32_t(origBaud)));
+        QVERIFY(waitFor([&]{return connection.linkTrial()["staged"].toBool();},10000));
+        connection.saveAndReboot();
+        QVERIFY2(waitFor([&]{return connection.ready() && connection.linkTrial()["outcome"].toString()=="confirmed" && connection.armEnabled();},35000),
+                 qPrintable(connection.lastError()["text"].toString()));
+        QCOMPARE(connection.baud(),origBaud);
+        QCOMPARE(protocol::linkBaudRate(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkBaud))),uint32_t(origBaud));
+        // Optional bad-pin revert test (requires explicit user permission!).
+        const auto badPins=qEnvironmentVariable("DRIVELINK_GUI_BENCH_BAD_PINS");
+        if(!badPins.isEmpty()) {
+            const auto parts=badPins.split(',');
+            QCOMPARE(parts.size(),2);
+            connection.dismissLinkOutcome();
+            connection.setParamText("0:0:49",parts[0]);
+            connection.setParamText("0:0:50",parts[1]);
+            QVERIFY(waitFor([&]{return connection.linkTrial()["pinsChanged"].toBool();},10000));
+            connection.saveAndReboot();
+            QVERIFY2(waitFor([&]{return connection.ready() && connection.linkTrial()["outcome"].toString()=="reverted" && connection.armEnabled();},150000),
+                     qPrintable(connection.lastError()["text"].toString()));
+            QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkTxPin)),43u);
+            QCOMPARE(valueBits(connection.snapshot()->system_params.at(defs::system::kLinkRxPin)),44u);
+        }
+        connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();},10000));
     }
 };
 QTEST_MAIN(BackendTests)

@@ -12,7 +12,17 @@ Item {
     property int tab: 0
     property string selectedPort
     property var ports: []
-    readonly property var bauds: [921600, 460800, 230400, 115200]
+    readonly property var baudOptions: [
+        {label: qsTr("Auto"), value: 0},
+        {label: "115200", value: 115200},
+        {label: "230400", value: 230400},
+        {label: "460800", value: 460800},
+        {label: "921600", value: 921600},
+        {label: "1000000", value: 1000000},
+        {label: "1500000", value: 1500000},
+        {label: "2000000", value: 2000000},
+        {label: "3000000", value: 3000000}
+    ]
     property alias tcpField: tcp
     property alias baudBox: baud
 
@@ -22,12 +32,14 @@ Item {
             selectedPort = ports.length > 0 ? ports[0].endpoint : ""
     }
     function connectSelected() {
-        if (tab === 0 && selectedPort.length > 0) backend.connectTo(selectedPort, bauds[baud.currentIndex])
+        if (tab === 0 && selectedPort.length > 0) backend.connectTo(selectedPort, baudOptions[baud.currentIndex].value)
         else if (tab === 1) backend.connectTo(tcp.text)
     }
     function connectRecent(row) {
-        const index = bauds.indexOf(row.baud)
-        backend.connectTo(row.endpoint, index >= 0 ? row.baud : 921600)
+        if (row.endpoint && row.endpoint.startsWith("serial://"))
+            backend.connectTo(row.endpoint, 0, row.baud > 0 ? row.baud : 0)
+        else
+            backend.connectTo(row.endpoint)
     }
     function formatId(id) { return id.length === 12 ? id.match(/../g).join(":") : id }
 
@@ -211,7 +223,8 @@ Item {
                         id: baud
                         objectName: "baud"
                         width: 160
-                        model: page.bauds
+                        model: page.baudOptions
+                        textRole: "label"
                     }
                 }
                 Column {

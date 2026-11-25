@@ -51,6 +51,8 @@ QString LocalConnection::firmwareActionBlocked() const {
 }
 QString LocalConnection::updateBlocked() const {
     if(const auto why=firmwareActionBlocked();!why.isEmpty()) {return why;}
+    if(linkTrialActive()) {return tr("Serial link is on trial: confirm it or wait for it to revert");}
+    if(linkChangeStaged()) {return tr("Save and reboot to apply the pending link change first");}
     if(m_otaStatus->pending_confirm) {return tr("Confirm or roll back the running build first");}
     if(m_otaStatus->state!=0) {return tr("Abort the unfinished update first");}
     return {};
