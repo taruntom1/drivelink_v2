@@ -211,8 +211,8 @@ class ConfigTest(unittest.TestCase):
             for key in ('preLaunchTask', 'postDebugTask'):
                 if key in configuration:
                     self.assertIn(configuration[key], tasks)
-        for task in tasks.values():
-            jtag.arguments(task['args'][1:])
+        for label in ('JTAG server', 'JTAG stop'):  # test_dev.py checks the arguments of every task
+            self.assertIn('/tools/jtag.py', tasks[label]['args'][0])
         ends = tasks['JTAG server']['problemMatcher']['background']['endsPattern']
         self.assertTrue(re.match(ends, 'READY: GDB') and re.match(ends, 'ERROR: x'))
         begins = tasks['JTAG server']['problemMatcher']['background']['beginsPattern']

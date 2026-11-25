@@ -94,6 +94,37 @@ python smoke_protocol_firmware.py --port COM3                      # needs the m
 - **A compiler crash in an IDF file.** Cold builds on this machine used to stop with `internal compiler error: Segmentation fault` (`during RTL pass: ira`) in IDF's `esp_lcd_panel_rgb.c`. The firmware no longer compiles that file. If another IDF file crashes the compiler, run the build again and Ninja resumes. `tools/validate.py` retries once and says so in the result.
 - **A new pure source file** must also be added to `firmware/test/native/CMakeLists.txt` (see [test rules](../firmware/test/CLAUDE.md)).
 
+## VS Code tasks (`tools/dev.py`)
+
+The committed `.vscode/tasks.json` covers the everyday commands (Terminal, Run
+Task). Ctrl+Shift+B lists the build tasks and "Run Test Task" the test tasks.
+Compiler errors go to the Problems panel. Open the repository root as the folder.
+
+| Area | Tasks |
+|---|---|
+| Firmware | `Firmware build`, `Firmware flash`, `Firmware flash debug`, `Firmware monitor`, `Firmware menuconfig`, `Firmware size`, `Firmware fullclean` |
+| [JTAG](#jtag-debugging-toolsjtagpy) | `JTAG server`, `JTAG stop`, `JTAG info`, `JTAG backtraces`, `JTAG tasks`, `JTAG decode panic` |
+| Host | `Host configure`, `Host build`, `Host tests`, `Host tests (filter)`, `GUI on vdev`, `GUI on board`, `GUI`, `vdev`, `vdev reset state`, `CLI info on board`, `CLI status on board` |
+| Checks | `Native tests`, `Validate quick`, `Validate full`, `Validate one check` |
+| Generated files | `Generate definitions`, `Generate GUI theme`, `Generate notices`, `Generate check` |
+| User guide | `Guide setup`, `Guide build`, `Guide serve` |
+| Packages | `Package firmware`, `Package Windows installer` (Windows only), `Package deb` |
+
+- **Ports are asked**, with this bench's as the default (COM3 protocol and flash,
+  COM4 console). For the flash tasks the prompt is also the confirmation: Escape
+  cancels. They run `tools/bench_fw.py`; `Firmware flash debug` needs `Firmware
+  flash` afterwards ([guarded bench builds](#guarded-bench-builds)).
+- **`tools/dev.py`** runs what has no tool of its own, from any shell:
+  `python tools/dev.py --help`. It sets up ESP-IDF, Qt and the guide venv with
+  `validate.py`'s code. On Linux, export ESP-IDF first and start VS Code from that shell.
+- **`GUI on vdev`** builds both programs, starts a vdev on port 8765 and stops it
+  when the GUI closes. The vdev's state and that GUI's settings are kept in
+  `build/dev/`. Only one vdev may run at a time, as two would share the state.
+- **`Firmware monitor`** does not reset the board when it opens (`--no-reset`). It
+  holds the console port; close it as [bench.md](bench.md#serial-traps) describes.
+- A new task also goes into the table above; `gen` checks it
+  (`tools/tests/test_dev.py`).
+
 ## Build and preview the user guide
 
 From the repository root on Ubuntu:
