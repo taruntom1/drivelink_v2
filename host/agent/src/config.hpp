@@ -3,6 +3,7 @@
 // override it (host/agent/README.md). Pure: no I/O except reading the files
 // named by loadConfig/--token-file. Errors throw ConfigError with a message
 // that names the key or flag.
+#include "drivelink/session.hpp"
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -21,9 +22,9 @@ struct ConfigError : std::runtime_error
 
 struct DeviceConfig
 {
-    std::string alias;     // 1..32 of [a-z0-9_-], starts with a letter, never 12 hex digits
-    std::string endpoint;  // serial://<path> or tcp://<numeric-ip>:<port>
-    unsigned baud = 921600; // serial only; 9600..4000000
+    std::string alias;               // 1..32 of [a-z0-9_-], starts with a letter, never 12 hex digits
+    std::string endpoint;            // serial://<path> or tcp://<numeric-ip>:<port>
+    unsigned baud = kBaudAuto;       // serial only; kBaudAuto (0, "auto") or 9600..4000000
 };
 
 struct AgentConfig

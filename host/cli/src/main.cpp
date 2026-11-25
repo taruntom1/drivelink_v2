@@ -1,4 +1,5 @@
 #include "format.hpp"
+#include "drivelink/link.hpp"
 #include "drivelink/ota.hpp"
 #include "drivelink/protocol/defs.hpp"
 #include "drivelink/protocol/ota_image.hpp"
@@ -32,7 +33,7 @@ struct InterruptScope {
     ~InterruptScope() { std::signal(SIGINT, previous); }
 };
 constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|serial://COM3 [--json]
-  [--baud 921600] [--timeout-ms 1500] COMMAND [ARGS]
+  [--baud auto|RATE] [--timeout-ms 1500] COMMAND [ARGS]
   [--device ALIAS|ID12 --token TOKEN [--client-name NAME]]   (through drivelink-agent)
   [--lease]                    Through an agent: take the control lease first (needs --device)
   agent-devices                Through an agent: list its devices and lease holders (needs --token, no --device)
@@ -48,7 +49,7 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
   name [TEXT]                  Read or rename device (empty TEXT clears)
   get REF... | get-pending REF... | set REF=VALUE...
   action REF [ARG...] [--blob HEX]
-  save | revert | factory-reset | reboot | exit-safe-mode
+  save | revert | factory-reset | reboot | exit-safe-mode | link-confirm
   arm | disarm | ack-fault
   status [COUNT] | events [COUNT] | diag-info | diag-entries | diag-clear
   groups | sub-config GROUP LOOP DIVIDER [REF...] | cmd-config GROUP LOOP [REF...]
@@ -69,6 +70,7 @@ constexpr const char *kHelp = R"(drivelink-cli --endpoint tcp://127.0.0.1:8765|s
     Use zero for unused frequencies. REPEAT=0 runs until stopped/disarmed.
     testgen-run arms, feeds keepalives, runs the test, and disarms on exit.
 REF is TYPE:INSTANCE:ITEM; IDs accept decimal or 0xHEX.
+--baud defaults to auto (finds the serial rate; give a number for a fixed rate).
 Values use device descriptors: true/false, integers, floats, enum names.
 Writes are never retried, except ota-upload resending identical chunks after STATUS.
 A write timeout has an unknown outcome.
@@ -131,7 +133,23 @@ void emit(const Json &j, bool json)
         readable(j);
     }
 }
-Json run(Client &client, Session &session, const std::vector<std::string> &args, bool json)
+struct CliContext
+{
+    std::string endpoint, device;
+};
+const char *linkConfirmationName(LinkConfirmation c)
+{
+    switch (c)
+    {
+    case LinkConfirmation::Confirmed: return "confirmed";
+    case LinkConfirmation::Unconfirmed: return "unconfirmed";
+    case LinkConfirmation::NoTrial: return "no_trial";
+    case LinkConfirmation::Reverted: return "reverted";
+    case LinkConfirmation::WrongDevice: return "wrong_device";
+    }
+    return "unknown";
+}
+Json run(Client &client, Session &session, const std::vector<std::string> &args, bool json, const CliContext &ctx)
 {
     const auto &cmd = args[0];
     auto count = [&](size_t n)
@@ -222,8 +240,66 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
         count(0);
         return toJson(client.discard());
     }
+    if (cmd == "link-confirm")
+    {
+        count(0);
+        const auto info = client.info();
+        const auto confirmation = confirmLinkTrial(client, info.device_id);
+        Json out{{"confirmed", confirmation == LinkConfirmation::Confirmed},
+                 {"outcome", linkConfirmationName(confirmation)},
+                 {"baud", session.baud()}};
+        try
+        {
+            const auto state = linkState(client);
+            out["link_trial_ms"] = state.info.link_trial_ms;
+            out["running"] = {{"baud", state.running.baud}, {"tx_pin", state.running.tx_pin}, {"rx_pin", state.running.rx_pin}};
+        }
+        catch (const Error &)
+        {
+        }
+        return out;
+    }
+    if (cmd == "reboot")
+    {
+        count(0);
+        std::optional<LinkExpectation> expected;
+        try
+        {
+            const auto state = linkState(client);
+            if (state.changed()) { expected = expectLinkTrial(state); }
+        }
+        catch (const Error &)
+        {
+        }
+        auto out = toJson(client.system(8));
+        if (expected)
+        {
+            const bool pins_changed = !expected->trial.samePins(expected->confirmed);
+            const unsigned seconds = pins_changed ? 120 : 30;
+            std::string confirm_cmd = "drivelink-cli --endpoint " + ctx.endpoint;
+            if (!ctx.device.empty()) { confirm_cmd += " --device " + ctx.device + " --lease"; }
+            confirm_cmd += " link-confirm";
+            out["link_trial_pending"] = true;
+            out["link_trial_s"] = seconds;
+            out["trial_baud"] = expected->trial.baud;
+            out["trial_tx_pin"] = expected->trial.tx_pin;
+            out["trial_rx_pin"] = expected->trial.rx_pin;
+            out["confirm_command"] = confirm_cmd;
+            if (!json)
+            {
+                readable(out);
+                std::cout << "Link trial pending (" << expected->trial.baud << " baud, TX "
+                          << unsigned(expected->trial.tx_pin) << ", RX " << unsigned(expected->trial.rx_pin)
+                          << "); reverts after " << seconds << " s unless confirmed"
+                          << (pins_changed ? " (move UART wires to the new pins first)" : "") << ".\n"
+                          << "Confirm with: " << confirm_cmd << '\n';
+                return nullptr;
+            }
+        }
+        return out;
+    }
     const std::map<std::string, uint8_t> ops{{"arm", 2}, {"disarm", 3}, {"ack-fault", 4}, {"save", 5}, {"revert", 6}, {"factory-reset", 7},
-                                             {"reboot", 8}, {"exit-safe-mode", 9}, {"bench-crash", 254}};
+                                             {"exit-safe-mode", 9}, {"bench-crash", 254}};
     if (auto it = ops.find(cmd); it != ops.end())
     {
         count(0);
@@ -757,6 +833,7 @@ int main(int argc, char **argv)
         std::string endpoint, token, device, client_name = "drivelink-cli";
         bool have_token = false, lease = false;
         SessionOptions options;
+        options.baud = kBaudAuto;
         // Short CLI commands own their explicit time measurement; background
         // pings would alter recorded/replayed wire conversations.
         options.periodic_time=false;
@@ -782,7 +859,8 @@ int main(int argc, char **argv)
             }
             else if (args.empty() && arg == "--baud")
             {
-                options.baud = parseUnsigned(value(), 4000000);
+                const auto v = value();
+                options.baud = v == "auto" ? kBaudAuto : parseUnsigned(v, 4000000);
             }
             else if (args.empty() && arg == "--token")
             {
@@ -917,7 +995,7 @@ int main(int argc, char **argv)
             }
             return 0;
         }
-        auto result = run(client, session, args, json);
+        auto result = run(client, session, args, json, CliContext{endpoint, device});
         if (!result.is_null())
         {
             emit(result, json);

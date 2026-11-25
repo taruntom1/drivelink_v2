@@ -40,8 +40,9 @@ class Client:
         device_id=p[offset:offset+6].hex();offset+=6
         n=p[offset];offset+=1
         name=p[offset:offset+n].decode("utf-8");offset+=n
+        link_trial_ms,=struct.unpack_from("<I",p,offset);offset+=4
         assert len(device_id)==12 and n<=16 and offset==len(p)
-        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops,device_id=device_id,name=name)
+        return dict(hash=hash_,limit=limit,count=count,flags=flags,loops=loops,device_id=device_id,name=name,link_trial_ms=link_trial_ms)
     def connect(self):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:

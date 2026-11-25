@@ -3,6 +3,7 @@
 #include "drivelink/command.hpp"
 #include "drivelink/protocol/core_codec.hpp"
 #include "drivelink/protocol/framing.hpp"
+#include "drivelink/protocol/link.hpp"
 #include "drivelink/protocol/scanner.hpp"
 #include "drivelink/protocol/time_codec.hpp"
 #include <bitset>
@@ -25,8 +26,25 @@ namespace p = protocol;
 namespace msg = protocol::defs::msg;
 namespace {
 std::atomic<uint64_t> next_clock_generation{1};
+constexpr unsigned kDefaultBaud=921600;
+// How long a GET_INFO may take at one rate while the rate is searched.
+constexpr std::chrono::milliseconds kDetectWait{200};
 thread_local std::shared_ptr<detail::Cancellation> service_context;
 
+// Asio 1.30.2 has no 1500000 baud on Linux. Everything else is its own option.
+struct BaudRate {
+    unsigned rate;
+    template<class Storage> asio::error_code store(Storage &storage,asio::error_code &ec) const { // termios or DCB
+#if !defined(_WIN32) && defined(B1500000)
+        if(rate==1500000) {
+            if(::cfsetspeed(&storage,B1500000)<0) {ec=asio::error_code(errno,asio::error::get_system_category());}
+            else {ec=asio::error_code();}
+            return ec;
+        }
+#endif
+        return asio::serial_port::baud_rate(rate).store(storage,ec);
+    }
+};
 // A shared state lets a default-dispatch callback destroy its Session without
 // leaving the executor's run loop referring to the destroyed owner.
 class Executor {
@@ -240,6 +258,7 @@ struct Session::Impl
     std::array<uint64_t,256> retired_at{};
     std::optional<agent::HelloAccepted> hello;
     unsigned sequence=0;
+    unsigned baud=0; // of an open serial port
     struct Write { std::shared_ptr<Bytes> bytes;std::shared_ptr<Pending> request;bool stream=false;bool ping=false;std::weak_ptr<CommandGroup> command={};bool managed=false;uint64_t command_generation=0; };
     std::deque<Write> writes;
     struct Ping {
@@ -277,7 +296,8 @@ struct Session::Impl
     Impl(const std::string &endpoint,SessionOptions opts) : options(std::move(opts)) {
         if(options.timeout.count()<=0 || options.timeout>std::chrono::seconds(60) ||
            options.read_retries>5 || !options.event_capacity || options.event_capacity>65536 ||
-           !options.request_capacity || options.request_capacity>128) {
+           !options.request_capacity || options.request_capacity>128 ||
+           (options.baud==kBaudAuto && (options.detect_timeout.count()<=0 || options.detect_timeout>std::chrono::seconds(60)))) {
             throw Error(ErrorKind::Usage,"invalid session limits");
         }
         asio::error_code ec;
@@ -320,7 +340,8 @@ struct Session::Impl
 #endif
             if (!ec)
             {
-                serial.set_option(asio::serial_port::baud_rate(options.baud), ec);
+                baud = options.baud == kBaudAuto ? kDefaultBaud : options.baud;
+                serial.set_option(BaudRate{baud}, ec);
             }
             if (!ec)
             {
@@ -382,12 +403,87 @@ struct Session::Impl
             throw failure;
         }
 
+        const bool detected=!use_tcp && options.baud==kBaudAuto;
+        if(detected) {detectBaud();}
         work.emplace(asio::make_work_guard(io));
         read();
-        // Frames that arrived with the agent's Hello response are already buffered.
-        if(hello) { asio::post(io,[this]{ p::Scanner::Frame f;while(scanner.next(f)) {receive(f);} }); }
+        // Frames that arrived with the agent's Hello response, or with the
+        // answer that gave the rate away, are already buffered.
+        if(hello || detected) { asio::post(io,[this]{ p::Scanner::Frame f;while(scanner.next(f)) {receive(f);} }); }
         if(options.periodic_time) { schedulePing(std::chrono::milliseconds(100)); }
         thread=std::thread([this]{io.run();});
+    }
+    // Before the I/O thread starts: find the rate the device answers GET_INFO
+    // at. The port stays open and only its rate changes, because opening a port
+    // can reset the board.
+    void detectBaud() {
+        std::vector<unsigned> rates;
+        auto add=[&](unsigned rate) {if(rate && std::find(rates.begin(),rates.end(),rate)==rates.end()) {rates.push_back(rate);}};
+        add(options.last_baud);add(kDefaultBaud);
+        for(const auto rate:p::kLinkBaudRates) {add(rate);}
+        // Every attempt has a sequence ID of its own, so an answer to an earlier
+        // one proves nothing. Start anywhere: an earlier session's answers may
+        // still be on their way.
+        sequence=static_cast<unsigned>(monotonicUs()%256);
+        const auto deadline=std::chrono::steady_clock::now()+options.detect_timeout;
+        for(;;) {
+            bool any=false;
+            for(const auto rate:rates) {
+                const auto left=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
+                if(left.count()<=0) {throw Error(ErrorKind::Timeout,"no device answered at any baud rate");}
+                asio::error_code ec;
+                serial.set_option(BaudRate{rate},ec);
+                if(ec) {continue;} // the adapter does not have this rate
+                any=true;
+                if(answersAt(static_cast<uint8_t>(sequence++%256),std::min(left,kDetectWait))) {baud=rate;return;}
+            }
+            if(!any) {throw Error(ErrorKind::Connection,"the serial port refused every baud rate");}
+        }
+    }
+    // One GET_INFO at the port's rate; true when its answer came. The answer of
+    // a device with another core version counts too: the rate is right.
+    bool answersAt(uint8_t seq,std::chrono::milliseconds wait) {
+        // The adapter may still hold bytes of the rate before.
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+#ifdef _WIN32
+        ::PurgeComm(serial.native_handle(),PURGE_RXCLEAR|PURGE_TXCLEAR);
+#else
+        ::tcflush(serial.native_handle(),TCIOFLUSH);
+#endif
+        scanner=p::Scanner(p::kMaxPayload);
+        const std::array<uint8_t,4> request{p::core_wire::kVersion,seq,static_cast<uint8_t>(p::defs::Family::System),
+                                            static_cast<uint8_t>(p::defs::SystemOp::GetInfo)};
+        Bytes frame(p::frameSize(request.size()));
+        p::encodeFrame(frame.data(),frame.size(),msg::kCoreCommand,request.data(),request.size());
+        bool found=false,expired=false;asio::error_code failed;
+        auto cancel=[&] {asio::error_code ignored;serial.cancel(ignored);};
+        asio::steady_timer timer(io,wait);
+        timer.async_wait([&](auto ec) {if(!ec) {expired=true;cancel();}});
+        asio::async_write(serial,asio::buffer(frame),[&](auto ec,size_t) {if(ec && !expired && !found) {failed=ec;}});
+        std::function<void()> next=[&] {
+            serial.async_read_some(asio::buffer(input),[&](auto ec,size_t n) {
+                if(ec) {if(!expired && !found) {failed=ec;}return;}
+                for(size_t offset=0;offset<n;) {
+                    size_t space=0;auto *dst=scanner.writable(space);const auto count=std::min(space,n-offset);
+                    if(!count) {failed=asio::error::no_buffer_space;return;}
+                    std::copy_n(input.data()+offset,count,dst);scanner.commit(count);offset+=count;
+                    p::Scanner::Frame f;
+                    while(!found && scanner.next(f)) {
+                        if(f.msg_type!=msg::kCoreResponse || f.len<2 || f.payload[1]!=seq) {continue;}
+                        found=f.payload[0]!=p::core_wire::kVersion ||
+                            (f.len>=6 && f.payload[2]==request[2] && f.payload[3]==request[3]);
+                    }
+                }
+                if(!found && !expired && !failed) {next();}
+            });
+        };
+        next();
+        io.restart();
+        while(!found && !expired && !failed && io.run_one()) {}
+        timer.cancel();cancel();
+        io.run();io.restart();
+        if(failed) {throw Error(ErrorKind::Connection,"serial port: "+failed.message());}
+        return found;
     }
     void dispatch(Task task) {
         auto dispatcher=options.dispatcher;
@@ -846,6 +942,7 @@ void Session::close() {
     std::lock_guard closing(d.close_mutex);if(d.thread.joinable()) {d.thread.join();}
     d.cv.notify_all();
 }
+unsigned Session::baud() const {return m_impl->baud;}
 Reply Session::request(uint8_t family,uint8_t op,std::span<const uint8_t> body) {
     ClockModel clock;uint64_t reply_generation=0;
     auto data=m_impl->exchange(family==1 && op==3?msg::kDisarm:msg::kCoreCommand,family,op,body,&clock,&reply_generation);

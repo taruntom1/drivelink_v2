@@ -1,4 +1,4 @@
-# OTA (core v11, family 0x09)
+# OTA (core v12, family 0x09)
 
 OTA uses ordinary core requests/replies, with the core version/sequence/family/
 op header and result/detail. Integers are little-endian. There is no separate
@@ -26,7 +26,9 @@ BEGIN starts the inactive slot with IDF sequential erasure. The SHA is over
 every byte of the application .bin, including its appended checksum/hash.
 Repeating BEGIN with the identical size/hash in Receiving returns the existing
 offset without erasing data; a different active transfer returns Busy/OtaActive.
-BEGIN refuses pending confirmation and active capture/testgen. No uploaded
+BEGIN refuses pending confirmation and active capture/testgen, a
+[link trial](core.md#link-settings-and-trial) (Busy/LinkTrialActive) and a staged
+or saved link change (Busy/RebootPending). No uploaded
 bytes or handles survive a reset; begin again after reconnect.
 
 WRITE at next_offset appends bytes and advances progress only after success.
@@ -58,7 +60,7 @@ acceptance, not proof of commit or reboot. Query STATUS after an uncertain
 outcome; never automatically repeat REBOOT. Other reset paths, including
 EXIT_SAFE_MODE, do not commit a prepared image; a physical reset before commit
 keeps the confirmed baseline. The new app boots pending confirmation.
-The host reconnects, checks GET_INFO/core v11, the running slot, and the full
+The host reconnects, checks GET_INFO/core v12, the running slot, and the full
 ELF hash against its uploaded app descriptor, then sends CONFIRM. Firmware
 never confirms itself at startup. The next reset without confirmation rolls
 back; there is no confirmation timeout. CONFIRM is idempotent on an already

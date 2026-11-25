@@ -42,9 +42,17 @@ struct AgentHello
     std::string token, device, client_name = "drivelink";
     uint8_t kind = 0;
 };
+// SessionOptions::baud: find the rate of the device on a serial endpoint.
+inline constexpr unsigned kBaudAuto = 0;
 struct SessionOptions
 {
+    // serial:// only. A fixed rate is the only one tried, and opening sends
+    // nothing. kBaudAuto sends GET_INFO at one rate after another (last_baud,
+    // 921600, then the other rates a device can have) until a device answers,
+    // round after round for detect_timeout; with no answer it throws Timeout.
     unsigned baud = 921600;
+    unsigned last_baud = 0; // kBaudAuto: the rate to try first, 0 for none
+    std::chrono::milliseconds detect_timeout{5000};
     std::chrono::milliseconds timeout{1500};
     unsigned read_retries = 2;
     size_t event_capacity = 128;
@@ -112,6 +120,8 @@ class Session
                                  std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
     ClockModel clockModel() const;
     uint64_t generation() const;
+    // The rate of a serial endpoint, found or fixed; 0 for tcp.
+    unsigned baud() const;
     uint16_t maxPayload() const;
     using EventHandler = std::function<void(const Frame &)>;
     // Independent bounded observer queue; does not consume nextEvent().

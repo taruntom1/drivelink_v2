@@ -78,6 +78,7 @@ struct ModelPeer
             body.insert(body.end(), {0, 8, 0, 2, 0x44, 0x4c, 0, 0, 1});
             const auto name=std::to_string(revision.load());body.push_back(static_cast<uint8_t>(name.size()));
             body.insert(body.end(),name.begin(),name.end()); // safe mode, no running loops
+            u32(body, 0); // no link trial
         }
         else if (family == 3)
         {

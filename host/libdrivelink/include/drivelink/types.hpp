@@ -134,6 +134,8 @@ struct DeviceInfo
     uint8_t running_instances = 0;
     uint8_t flags = 0;
     std::vector<LoopInfo> loops;
+    // What is left of a link trial; 0 without one (drivelink/link.hpp).
+    uint32_t link_trial_ms = 0;
 };
 struct OperationResult
 {

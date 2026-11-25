@@ -1,4 +1,4 @@
-# Core protocol v11 (issue 105)
+# Core protocol v12 (issue 105)
 
 F4b adds arming, faults, the independent safety monitor and runtime limits.
 F4c adds source params and their generated value/age signals. F7a (v6) adds
@@ -8,13 +8,14 @@ F9 (v8) adds OTA, its status/identity query and the OTA ARM gate.
 H1c (v9) adds factory device identity and a live, persisted device name.
 H2e-1 (v10) widens the item descriptor flags to u16 and adds the `Tune` flag.
 Issue 105 (v11) adds pending system settings and reserves LINK_CONFIRM and
-three details. Firmware, host library, CLI, agent, GUI, ROS and vdev use v11
+three details; v12 adds the link settings, LINK_CONFIRM and the trial time in
+GET_INFO. Firmware, host library, CLI, agent, GUI, ROS and vdev use v12
 together; older peers are incompatible. Diagnostic framing remains v3 and time remains v1. NVS layout
 format 3 includes the name; LP format 2 loads with an empty name.
 F8 adds the independent [time protocol v1](time.md) on 0x02/0x42; core stays v7.
 
 Commands use registry MSG_TYPE `core_command` (0x01); responses use
-`core_response` (0x41). All integers are little-endian. Version is 11.
+`core_response` (0x41). All integers are little-endian. Version is 12.
 Request: `version u8 | seq u8 | family u8 | op u8 | body`.
 Response: `version u8 | seq u8 | family u8 | op u8 | result u8 | detail u8 | body`.
 A malformed header uses family/op 0xFF; seq is echoed if parsed with a valid
@@ -68,7 +69,7 @@ Requests have empty bodies except SET_NAME and the bench stall below. GET_INFO (
 descriptor_hash u32 | capture_capacity u32 | max_payload u16 |
 running_instances u8 | flags u8 | loop_count u8`, followed by
 `loop_id u8 | name string | rate_hz u32 | loop_flags u8` per running loop,
-then `device_id[6] | name_len u8 | name bytes`. The id is the read-only factory
+then `device_id[6] | name_len u8 | name bytes | link_trial_ms u32`. The id is the read-only factory
 MAC in native byte order, not a little-endian integer. The name is 0..16 UTF-8
 bytes without a terminator, empty by default; display the id when unnamed.
 CLI JSON formats the id as 12 lowercase hex digits. Names need not be unique.
@@ -78,6 +79,8 @@ can have gaps and is not its position in this list. Safe mode has zero running l
 The build id is the first 8 ELF SHA-256 bytes as 16 hex characters.
 Flags: pending_reboot 1, layout_invalid 2, config_loaded_from_nvs 4,
 safe_mode 8. Capture capacity is the largest capture ring in bytes (see Capture).
+`link_trial_ms` is what is left of a [link trial](#link-settings-and-trial),
+rounded up: 0 only when none runs.
 
 SAVE (5), REVERT (6), FACTORY_RESET (7), REBOOT (8), EXIT_SAFE_MODE (9)
 wrap the core operations. Reset, reboot and exit safe mode reply, wait for
@@ -95,10 +98,8 @@ configuration in the same A/B layout commit; REVERT restores it after its
 parameter batches succeed. NoSavedConfig leaves it unchanged. FACTORY_RESET
 clears it. Identity remains readable in safe mode.
 
-LINK_CONFIRM (11) is reserved for the link trial of
-[runtime settings](../../plans/runtime-settings.md): empty body, answered
-InvalidArgument/Unsupported. So are the details LinkTrialActive (59) and
-NoLinkTrial (60); no device sends them yet. Details 54 to 58 are the agent's.
+LINK_CONFIRM (11) ends a [link trial](#link-settings-and-trial): empty body,
+empty success body. Details 54 to 58 are the agent's.
 
 ## Layout (family 2)
 
@@ -225,6 +226,51 @@ boot sizes the device from them. Defaults and ranges are in
 - A layout entry past its limit (an older layout, saved with larger built-in
   limits) is listed as Invalid and kept by SAVE. In safe mode the default limits
   run, and the layout is checked against the saved ones; every entry is listed.
+
+### Link settings and trial
+
+`link.baud` (0x0030, an enum of 115200, 230400, 460800, 921600, 1000000, 1500000,
+2000000 and 3000000 baud; default 921600), `link.tx_pin` (0x0031, default 43) and
+`link.rx_pin` (0x0032, default 44) are `reboot_required` settings of the serial
+link to the host. The device keeps them apart from the rest of the configuration:
+one **confirmed** link, and one saved **trial**.
+
+- SET checks the three together: TX equal to RX, or a pin that an instance uses,
+  is InvalidArgument/`GpioConflict`; a pin outside the board's policy is
+  `GpioNotAllowed`. Pins are never clamped. No module can claim the running,
+  staged, confirmed or saved link pins, nor GPIO 43 and 44 (`GpioNotAllowed`):
+  the ROM prints on 43 at every reset.
+- SAVE writes a changed link as the trial, last of all. SAVE of the confirmed
+  link drops a saved trial. FACTORY_RESET drops it too, and keeps the confirmed
+  link: it never cuts a device off.
+- The next normal boot runs the trial **once**. It is marked as used before the
+  UART opens, so a crash, a power loss, or the end of the time comes back on the
+  confirmed link. In safe mode, and on an OTA image that is not confirmed, the
+  boot runs the confirmed link and leaves a saved trial for a later boot.
+- A trial lasts 30 s when only the rate changed, 120 s when a pin did.
+  GET_INFO's `link_trial_ms` shows it. GET is the trial's link and GET_PENDING the
+  confirmed one, which the next boot runs; the `pending_reboot` flag is not set by
+  it. Before the reboot the flag is set, so a host can tell "not rebooted yet"
+  from "reverted".
+- **LINK_CONFIRM** stores the running link as the confirmed one and answers after
+  the write. Without a trial, after its time, or a second time it is
+  InvalidArgument/`NoLinkTrial` (60). A failed write is Fault/`StorageFailed`: the
+  trial goes on, and LINK_CONFIRM may be sent again. Confirm only after GET_INFO
+  showed the expected device id; settle a lost reply by reading GET_INFO and GET,
+  not by sending it again.
+- At the end of its time the device DISARMs, reports `core.LinkReverted` and
+  reboots half a second later. GET_INFO shows at least 1 ms until then.
+- During a trial ARM, OTA BEGIN and a SET of any link setting are
+  Busy/`LinkTrialActive` (59). OTA BEGIN is Busy/`RebootPending` while a link change
+  is staged or saved. SET of a link setting is Busy/`OtaPendingConfirm` on an OTA
+  image that is not confirmed.
+- A UART that fails to open on a trial falls back to the confirmed link at once,
+  and from there to the factory one (921600 baud on 43/44) for that boot.
+  `core.LinkReverted` reports each step; nothing is stored.
+
+A host that does not know the rate sends GET_INFO at one rate after another; the
+device answers at its own only. Firmware older than v12 ignores the stored link
+and comes up at 921600 baud on 43/44.
 
 ### Diagnostic timing
 
@@ -541,7 +587,7 @@ DependencyMissing; unrelated loops and the config link stay available.
 ARM (system op 2), DISARM (3), ACK_FAULT (4) have empty bodies and empty
 successful responses. States in status are Disarmed 0, Armed 1, Fault 2.
 ARM requires a running, valid layout with no failed instances or pending
-reboot, no safe mode, no active `blocks_arm`/`disarms` code, no fault latch,
+reboot, no link trial, no safe mode, no active `blocks_arm`/`disarms` code, no fault latch,
 and at least one currently configured command group. An empty group counts.
 Repeated ARM while already Armed succeeds without extending watchdog grace.
 

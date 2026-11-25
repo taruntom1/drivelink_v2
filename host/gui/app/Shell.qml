@@ -22,7 +22,7 @@ Basic.ApplicationWindow {
     // The page under the status bar is blocked by a dialog or an overlay;
     // DISARM in the status bar stays live above every one of them.
     readonly property bool overlayOpen: linkLostOverlay.visible || reconnectOverlay.visible || noticeOverlay.visible || otaDialog.visible
-    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || disconnectDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || leaseDialogs.anyOpen || overlayOpen
+    readonly property bool modalOpen: dialog.visible || renameDialog.visible || resetDialog.visible || linkRebootDialog.visible || disconnectDialog.visible || layoutDialogs.anyOpen || layoutPage.panelDialogOpen || leaseDialogs.anyOpen || overlayOpen
     // Remote mode (H3b-1): the lease as the status bar and banners show it.
     readonly property var lease: connection.lease || ({})
     readonly property bool remote: connection.remote
@@ -58,9 +58,18 @@ Basic.ApplicationWindow {
     // Opens the firmware image picker (G3 "Choose image…").
     function chooseFirmware() { if (connection.firmware.updateBlocked === "") imagePicker.open() }
 
+    function requestReboot(saveFirst) {
+        if ((connection.linkTrial || {}).staged === true) {
+            linkRebootDialog.saveFirst = saveFirst
+            linkRebootDialog.open()
+            return
+        }
+        if (saveFirst) connection.saveAndReboot()
+        else connection.reboot()
+    }
     function cancelOverlay() {
         drawerOpen = false; armPopoverOpen = false; reviewOpen = false
-        dialog.reject(); renameDialog.reject(); resetDialog.reject(); disconnectDialog.reject(); layoutDialogs.cancel(); leaseDialogs.closeAll()
+        dialog.reject(); renameDialog.reject(); resetDialog.reject(); linkRebootDialog.reject(); disconnectDialog.reject(); layoutDialogs.cancel(); leaseDialogs.closeAll()
         // Esc closes the image choice; a running update is never aborted by Esc.
         if (otaDialog.choosing) otaDialog.cancel()
     }
@@ -128,7 +137,9 @@ Basic.ApplicationWindow {
         deviceId: shell.backend.deviceId
         link: shell.remote ? DLDeviceChip.Agent : DLDeviceChip.Serial
         connection: shell.remote ? qsTr("%1 · %2").arg((shell.backend.agent || {}).address || "").arg((shell.backend.agent || {}).device || "")
-                                 : shell.backend.endpoint
+                                 : (shell.backend.endpoint.startsWith("serial://") && shell.backend.baud > 0
+                                    ? shell.backend.endpoint.slice(9) + " · " + shell.backend.baud
+                                    : shell.backend.endpoint)
         // G6: the lease chip beside the device identity; it leads to Device > Clients and lease.
         leaseVisible: shell.remote
         leaseVariant: shell.lease.chip !== undefined ? shell.lease.chip : DLLeaseChip.Available
@@ -224,8 +235,8 @@ Basic.ApplicationWindow {
                     if (index === 0) { shell.reviewOpen = !shell.reviewOpen; return }
                     if (index === 2) { shell.reviewOpen = false; layoutDialogs.openDiscard(); return }
                     if (connection.safeMode) connection.exitSafeMode()
-                    else if (connection.unsaved) connection.saveAndReboot()
-                    else connection.reboot()
+                    else if (connection.unsaved) shell.requestReboot(true)
+                    else shell.requestReboot(false)
                 }
             }
             // G6: lease revoked (until acknowledged), else ROS driving.
@@ -286,6 +297,7 @@ Basic.ApplicationWindow {
                     backend: shell.backend
                     onRenameRequested: renameDialog.open()
                     onFactoryResetRequested: resetDialog.open()
+                    onRebootRequested: function(saveFirst) { shell.requestReboot(saveFirst) }
                     onFaultsRequested: shell.drawerOpen = true
                     // A loop is an instance of the built-in loop type (0x05).
                     onLoopRequested: function(loopId) { shell.layoutLoop = loopId; connection.selectNode("5:" + loopId); shell.page = 1 }
@@ -438,29 +450,59 @@ Basic.ApplicationWindow {
             visible: shell.modalOpen
             MouseArea {anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: function(wheel) {wheel.accepted = true}}
         }
-        // Flow 11: link lost over the last known state, with Retry/Disconnect.
+        // Flow 11: link lost over the last known state, with Retry/Disconnect
+        // (or the Not reachable recovery overlay after a link-change trial).
         Card {
             id: linkLostOverlay
             objectName: "linkLostOverlay"
             anchors.centerIn: parent
-            width: 520
+            width: 560
+            readonly property var trial: connection.linkTrial || ({})
+            readonly property bool linkFailed: trial.notReachable === true
             visible: connection.linkLost && !connection.linked && !connection.loading && !connection.reconnecting && !otaDialog.visible
-            title: qsTr("Link lost")
+            title: linkFailed ? qsTr("Device not reachable after link change") : qsTr("Link lost")
             Text {
                 width: parent.width; wrapMode: Text.Wrap
-                text: qsTr("%1 stopped answering on %2. The device disarms itself when its command watchdog expires; nothing is sent until you reconnect.")
-                    .arg(connection.deviceName || connection.deviceId || qsTr("The device")).arg(connection.endpoint)
+                text: linkLostOverlay.linkFailed
+                    ? qsTr("No device answered on %1 or %2 before the trial window ended.").arg(linkLostOverlay.trial.notReachableNew || "").arg(linkLostOverlay.trial.notReachableOld || "")
+                    : qsTr("%1 stopped answering on %2. The device disarms itself when its command watchdog expires; nothing is sent until you reconnect.")
+                        .arg(connection.deviceName || connection.deviceId || qsTr("The device")).arg(connection.endpoint)
                 font: Theme.fontBodyDefault; color: Theme.textSecondary
+            }
+            InfoRow {
+                visible: linkLostOverlay.linkFailed
+                label: qsTr("Previous link")
+                value: linkLostOverlay.trial.notReachableOld || ""
+            }
+            InfoRow {
+                visible: linkLostOverlay.linkFailed
+                label: qsTr("Attempted link")
+                value: linkLostOverlay.trial.notReachableNew || ""
+            }
+            Text {
+                objectName: "linkRecoveryHint"
+                width: parent.width; wrapMode: Text.Wrap
+                visible: linkLostOverlay.linkFailed
+                text: (linkLostOverlay.trial.notReachablePins
+                       ? qsTr("Check the UART wiring or move the wires back to the previous pins. ") : "")
+                    + qsTr("Press Reset or power-cycle the board so an unconfirmed trial reverts. If the confirmed link is unreachable, erase the NVS partition over USB with esptool (clears all saved settings) so the board returns to 921600 on TX 43 / RX 44.")
+                font: Theme.fontCaption; color: Theme.textSecondary
             }
             Text {
                 width: parent.width; wrapMode: Text.Wrap
-                visible: text.length > 0
+                visible: text.length > 0 && !linkLostOverlay.linkFailed
                 text: connection.lastError.text || ""
                 font: Theme.fontCaption; color: Theme.stateFault
             }
             Row {
                 spacing: Theme.space8
-                DLButton { objectName: "retryButton"; kind: DLButton.Primary; text: qsTr("Retry"); iconName: "refresh-cw"; onClicked: connection.retry() }
+                DLButton {
+                    objectName: "retryButton"
+                    kind: DLButton.Primary
+                    text: linkLostOverlay.linkFailed ? qsTr("Retry (Auto baud)") : qsTr("Retry")
+                    iconName: "refresh-cw"
+                    onClicked: connection.retry()
+                }
                 DLButton { objectName: "lostDisconnect"; text: qsTr("Disconnect"); onClicked: connection.disconnectDevice() }
             }
         }
@@ -468,16 +510,71 @@ Basic.ApplicationWindow {
             id: reconnectOverlay
             objectName: "reconnectOverlay"
             anchors.centerIn: parent
-            width: 520
+            width: 560
+            readonly property var trial: connection.linkTrial || ({})
+            readonly property bool linkWait: trial.waiting === true
             visible: connection.reconnecting && !otaDialog.visible
-            title: qsTr("Device is rebooting")
+            title: linkWait
+                ? (trial.throughAgent ? qsTr("Reconnecting through agent (link trial)") : qsTr("Reconnecting (link trial)"))
+                : qsTr("Device is rebooting")
+            actions: DLBadge {
+                objectName: "reconnectTrialCountdown"
+                visible: reconnectOverlay.linkWait
+                text: qsTr("%1 s left").arg(Math.ceil(Math.max(0, reconnectOverlay.trial.remainingMs || 0) / 1000))
+                tone: DLBadge.Armed
+            }
+            DLProgressBar {
+                visible: reconnectOverlay.linkWait
+                width: parent.width
+                value: reconnectOverlay.trial.progress || 0
+            }
+            InfoRow {
+                visible: reconnectOverlay.linkWait
+                label: qsTr("Previous link")
+                value: reconnectOverlay.trial.oldText || ""
+            }
+            InfoRow {
+                visible: reconnectOverlay.linkWait
+                label: qsTr("Trial link")
+                value: reconnectOverlay.trial.newText || ""
+            }
+            Rectangle {
+                objectName: "moveWiresCallout"
+                visible: reconnectOverlay.linkWait && reconnectOverlay.trial.pinsChanged === true
+                width: parent.width
+                height: moveWiresText.implicitHeight + 2 * Theme.space12
+                radius: Theme.radiusMd
+                color: Theme.stateArmedSubtle
+                Rectangle { width: 3; height: parent.height; color: Theme.stateArmed }
+                DLIcon {
+                    x: Theme.space12 + 3; y: Theme.space12
+                    name: "triangle-alert"; size: Theme.sizeIconMd; color: Theme.stateArmed
+                }
+                Text {
+                    id: moveWiresText
+                    x: Theme.space12 + 3 + Theme.sizeIconMd + Theme.space8; y: Theme.space12
+                    width: parent.width - x - Theme.space12
+                    wrapMode: Text.Wrap
+                    text: qsTr("Move the UART wires to TX %1 / RX %2 now so DriveLink can confirm the trial before it reverts.")
+                        .arg(reconnectOverlay.trial.nextTx || 0).arg(reconnectOverlay.trial.nextRx || 0)
+                    font: Theme.fontBodyDefault; color: Theme.textPrimary
+                }
+            }
             DLCheckItem {
                 width: parent.width
                 status: DLCheckItem.Active
-                label: qsTr("Reconnecting to %1").arg(connection.endpoint)
-                detail: qsTr("The reboot request is not repeated; only the link is reopened.")
+                label: reconnectOverlay.linkWait
+                    ? (reconnectOverlay.trial.throughAgent
+                       ? qsTr("Waiting for %1 to reconnect").arg(reconnectOverlay.trial.agentAddress || qsTr("the agent"))
+                       : qsTr("Auto-detecting serial link on %1").arg(connection.endpoint))
+                    : qsTr("Reconnecting to %1").arg(connection.endpoint)
+                detail: reconnectOverlay.linkWait
+                    ? (reconnectOverlay.trial.throughAgent
+                       ? qsTr("The agent reconnects with auto-baud and confirms the trial once the same device answers.")
+                       : qsTr("Trying the new rate first; the board reverts automatically if the trial expires."))
+                    : qsTr("The reboot request is not repeated; only the link is reopened.")
             }
-            DLButton { text: qsTr("Stop and disconnect"); onClicked: connection.disconnectDevice() }
+            DLButton { objectName: "stopReconnectButton"; text: qsTr("Stop and disconnect"); onClicked: connection.disconnectDevice() }
         }
         // Flow 11: device rebooted and model reloaded, with what was lost.
         Card {
@@ -584,6 +681,34 @@ Basic.ApplicationWindow {
             acceptEnabled: confirmed
             onAboutToShow: confirmed = false
             onAccepted: connection.factoryReset()
+        }
+        DLDialog {
+            id: linkRebootDialog
+            objectName: "linkRebootDialog"
+            parent: body
+            property bool saveFirst: true
+            readonly property var trial: connection.linkTrial || ({})
+            title: saveFirst ? qsTr("Save and reboot into new serial link?") : qsTr("Reboot into new serial link?")
+            text: {
+                const from = trial.runningText || ""
+                const to = trial.nextText || ""
+                const secs = trial.trialSeconds || 30
+                let msg = qsTr("The serial link will change from %1 to %2 on a %3 s trial. If DriveLink cannot confirm the new link in time, the board automatically reverts to %1.")
+                    .arg(from).arg(to).arg(secs)
+                if (trial.pinsChanged === true) {
+                    msg += "\n\n" + qsTr("Pins changed: move the UART wires from TX %1 / RX %2 to TX %3 / RX %4 right after the reboot.")
+                        .arg(trial.runningTx || 0).arg(trial.runningRx || 0).arg(trial.nextTx || 0).arg(trial.nextRx || 0)
+                }
+                if (!saveFirst && connection.unsaved) {
+                    msg += "\n\n" + qsTr("Note: unsaved staged changes are dropped by a plain Reboot unless saved first.")
+                }
+                return msg
+            }
+            acceptText: saveFirst ? qsTr("Save and reboot") : qsTr("Reboot")
+            onAccepted: {
+                if (saveFirst) connection.saveAndReboot()
+                else connection.reboot()
+            }
         }
         DLDialog {
             id: disconnectDialog

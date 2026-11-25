@@ -9,6 +9,7 @@ Core owns the device layout, module lifecycle, configuration transactions and lo
 | Lifecycle and module binding | [Core facade](include/core/core.hpp), [instance context](include/core/instance.hpp), [boot stages](include/core/boot.hpp), [boot](src/core.cpp), [wiring order](src/wiring_order.cpp) |
 | Capacity limits and the RAM check | [System settings](../../../protocol/defs/system.yaml), [CoreConfig](include/core/core_config.hpp), [estimate](src/ram_estimate.cpp) |
 | Platform configuration | [Kconfig](Kconfig) (the config task), [IDF translation and GPIO policy](src/idf/core_config_idf.cpp) |
+| Serial link settings and trial | [Records and boot decision](include/core/link_settings.hpp), [trial](include/core/link_service.hpp) |
 | Pending layout and parameters | [Layout validation](src/layout_validation.cpp), [pending copy](src/pending_layout.cpp), [parameter service](src/param_service.cpp) |
 | Persistent state | [Blob codec](src/config_blob.cpp), [generation selection and commit](src/persistence.cpp) |
 | Command ingress | [CoreLink UART adapter](src/idf/core_link.cpp), [command service](src/command_service.cpp) |
@@ -18,9 +19,9 @@ Core owns the device layout, module lifecycle, configuration transactions and lo
 
 ## Boot and module lifetime
 
-`bringUp()` runs the boot for main and vdev, in three stages:
+`bringUp()` runs the boot for vdev in three stages. main takes the first one apart, because it needs the link before its UART and NVS after the crash counter:
 
-- `prepareBoot()` decides safe mode and stores the new crash counter, then loads the newest complete generation from NVS, once. Nothing that a saved setting sizes exists yet, so a setting that crashes the boot still reaches safe mode.
+- `prepareBoot()` decides safe mode and stores the new crash counter (`countBoot()`), then loads the newest complete generation from NVS, once, and decides the [link](#serial-link) (`loadBoot()`). Nothing that a saved setting sizes exists yet, so a setting that crashes the boot still reaches safe mode.
 - `bootConfig()` applies the saved `reboot_required` system settings to the base `CoreConfig`. In safe mode it applies their defaults.
 - Construct Core with that config, then `init()` and `boot(plan)`.
 
@@ -63,7 +64,15 @@ The `limits.*` settings are such settings (`configureLimits()`). Each edit also 
 
 SAVE writes instance and system blobs to the alternate generation slot, then writes the layout blob as its commit record. Only then clean up removed namespaces. Load requires a valid layout and matching generation for every required blob, including the system. Fall back to the other complete slot before factory defaults. Ignore retired and nonpersistent items, default missing or invalid values, and clamp valid numeric values to current limits. Layout format 3 stores the device name in the commit record. Format 2 loads with an empty name.
 
-REVERT reapplies saved live values through the parameter service in single-domain batches and restores the name after those batches succeed. The config caller owns the writable name. CoreLink injects the immutable device identity from the factory MAC, and native callers supply a stable ID. Factory reset erases configuration namespaces and leaves reboot to the caller.
+REVERT reapplies saved live values through the parameter service in single-domain batches and restores the name after those batches succeed. The config caller owns the writable name. CoreLink injects the immutable device identity from the factory MAC, and native callers supply a stable ID. Factory reset erases configuration namespaces, drops a saved link trial and leaves reboot to the caller.
+
+## Serial link
+
+The [link settings](../../../docs/protocol/core.md#link-settings-and-trial) are system settings whose values live in their own NVS namespace, `link`, not in the generations: `conf_a`/`conf_b` hold the confirmed link by its own generation, and `trial` one record with its state (none, armed, used). A configuration erase leaves the namespace alone. Every write is a single blob and the order makes each power loss safe: SAVE arms the trial after the layout commit, `bootLink()` marks it used before it returns, and LINK_CONFIRM writes the other confirmed slot, reads it back and only then closes the trial record.
+
+- `loadBoot()` yields `BootPlan::link`. The caller opens its transport on `link.running` and calls `fallBackLink()` after a failure until one opens. The pin checks of the pending layout and the running GPIO policy use the running, staged, confirmed and saved pins.
+- `LinkService` holds the running link and the trial's deadline (`CoreConfig::link_trial`). The caller polls `Core::serviceLink()` from the config task: the first call after the deadline disarms and reports, and one half a second later returns true, which means reboot now. `trialActive()` is an atomic that the ARM gate reads.
+- main's `guardLinkTrial` reboots a trial that nothing else ends.
 
 ## Command groups, subscriptions and receipts
 

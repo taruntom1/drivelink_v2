@@ -15,7 +15,7 @@ The packaged agent reads `/etc/drivelink/agent.json` at startup. Edit it while t
 | `devices` | Empty list, up to 8 devices | Each entry names an `alias`, `endpoint`, and optional `baud`. The list has to fit the agent’s 1,024-byte device reply. |
 | `devices[].alias` | 1–32 characters | Start with a lowercase letter, then use lowercase letters, digits, underscores, or hyphens. A 12-digit hexadecimal string is reserved for a device ID. |
 | `devices[].endpoint` | `serial:///dev/ttyAMA0` for the reference Pi | Path to the protocol port. A virtual device can use `tcp://IP:PORT`. |
-| `devices[].baud` | `921600` | Serial link speed for the supplied firmware. |
+| `devices[].baud` | `"auto"` (or `9600`–`4000000`) | Serial link speed. `"auto"` detects the board’s rate, remembers it across reconnects, and confirms serial link trials when the same device ID reconnects. |
 | `name` | Host name | Name shown in discovery. Use 1–63 bytes of UTF-8 with no period. |
 | `advertise` | `true` | Advertise non-loopback addresses using multicast DNS (mDNS), a local discovery protocol. |
 | `hello_timeout_ms` | `5000` | Time allowed for a client’s first request. |

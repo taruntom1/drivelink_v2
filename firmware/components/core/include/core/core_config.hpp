@@ -5,6 +5,7 @@
 #include <span>
 
 #include "core/gpio_policy.hpp"
+#include "core/link_service.hpp"
 #include "drivelink/protocol/defs.hpp"
 #include "drivelink/protocol/gen/type_system.hpp"
 
@@ -50,9 +51,12 @@ struct CoreConfig {
     /// record table holds at least these, whatever the limits are.
     size_t saved_entries = 0;
     RamBudget ram;
-    /// The pins a `gpio` param may name: bit n allows GPIO n. On the device
-    /// it is the ESP32-S3 policy minus the uart_comm TX/RX pins.
-    uint64_t gpio_allowed_mask = gpio_policy::kEsp32s3Allowed;
+    /// The pins a `gpio` param may name: bit n allows GPIO n. The boot takes
+    /// the link's pins out: running, confirmed and saved.
+    uint64_t gpio_allowed_mask = gpio_policy::kEsp32s3ModulePins;
+    /// The pins the serial link may use.
+    uint64_t link_pin_mask = gpio_policy::kEsp32s3Allowed;
+    LinkTrialTimes link_trial;
     /// How long after a normal boot the crash counter is cleared (safe mode).
     uint32_t crash_clear_delay_us = 30000000;
     /// The system type's descriptor (type id 0x00). Only test setups replace
@@ -66,7 +70,8 @@ struct CoreConfig {
 /// `config` with every field clamped to what the core supports.
 CoreConfig normalizedConfig(CoreConfig config);
 
-/// `base` with the system settings in `values` applied (`configure_system`).
+/// `base` with the system settings in `values` applied (`configure_system`),
+/// and the link pins they name closed to modules.
 CoreConfig withSystemSettings(CoreConfig base, std::span<const uint32_t> values);
 
 /// The config from Kconfig. Defined in `src/idf/core_config_idf.cpp`, which

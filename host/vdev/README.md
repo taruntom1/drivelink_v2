@@ -5,7 +5,7 @@ A virtual device that runs the firmware [core](../../firmware/components/core/RE
 ## Run
 
 ```sh
-drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting]
+drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting] [--link-trial-ms N]
 ```
 
 | Option | Effect |
@@ -18,6 +18,7 @@ drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] [--device-id 
 | `--fail-writes-after N` | Fails persistent KV writes after N successful operations, for save and recovery tests |
 | `--scenario-file PATH`, `--safe-mode` | GUI test controls; see [Scenario controls](#scenario-controls) |
 | `--test-setting` | Adds one test-only `reboot_required` system param, `test.setting` (0:0:32512, u16, 1..100, default 10), for the pending-settings tests |
+| `--link-trial-ms N` | Length of every [link trial](../../docs/protocol/core.md#link-settings-and-trial) instead of 30 s and 120 s |
 
 None of these options affect hardware firmware.
 
@@ -25,13 +26,16 @@ None of these options affect hardware firmware.
 
 - The real core services, generated mock definitions and loop threads, including the factory layout, safe mode, arming, heartbeat and command monitor, mock emergency force, capture, the per-loop test generator and core events. There is no host-specific module table.
 - `mod_mock` modules: `actuator.mock` and `feedback.mock` with plant parameters (deadband, saturation, optional one-tick delay, seeded encoder noise), `imu.mock` on the shared IMU state and calibration codec, `fusion.mock`, and the real `controller.cascade_pid`. vdev does not register `imu.bno055` or any pin-based module.
-- Core v11, time v1, status and diag v3. CPU load reports 255 (unavailable). Diagnostics use fixed 254-slot identities and a bounded record queue; control loops never allocate them.
+- The link settings, the trial, its timeout and LINK_CONFIRM, stored in the state directory like on a device.
+- Core v12, time v1, status and diag v3. CPU load reports 255 (unavailable). Diagnostics use fixed 254-slot identities and a bounded record queue; control loops never allocate them.
 - Time requests use the shared codecs, take RX time at dispatch, and patch TX time and CRC when their queued write begins. Malformed time requests are dropped and counted. See the [time contract](../../docs/protocol/time.md).
 - Native real-time guard violations in loop, controller and mock ticks are counted and reported on stderr. Safe mode starts no loop threads.
 
 ## Transport
 
 One client owns the device at a time; extra TCP connections are closed. A PTY keeps its slave open across CLI invocations and reboots.
+
+A PTY carries bytes whatever its rate is, and has no pins. vdev therefore drops every byte in both directions while the client's termios rate is not the running `link.baud`, or the running pins are not the ones the simulated wires are on (43/44 at start; the scenario `wires` moves them). Over TCP the link settings work and change nothing about the traffic.
 
 Command, diag and time replies have a two-second drain deadline from enqueue. A failed TCP drain closes the connection and cancels a pending reboot. A failed PTY drain drops queued replies and effects but keeps the master, so a new client can reconnect. Idle PTY streams may wait for a reader; their queues stay bounded and newer status samples replace pending ones. Slow streams use latest-wins queueing; stream coalescing compares the channel, so one group never replaces another group or the status stream.
 
@@ -54,8 +58,11 @@ These are native test controls, not wire operations; without the options below v
 | `drop-arm-reply N` | Suppress the Nth following ARM reply after applying the real operation, once (maximum 32) |
 | `drop-reboot N` | Ignore the next N SYSTEM REBOOT requests: neither applied nor answered (maximum 32) |
 | `drop-action-reply N` | Suppress the Nth following ACTION RUN reply after the action ran, once (maximum 32) |
+| `drop-confirm N` | Ignore the next N LINK_CONFIRM requests: neither applied nor answered (maximum 32) |
+| `drop-confirm-reply N` | Suppress the Nth following LINK_CONFIRM reply after applying it, once (maximum 32) |
+| `wires TX RX` | Move the simulated wires of a PTY to these GPIOs |
 | `loop-stall LOOP MS` | Stall one tick of a running loop for 1..10000 ms (the bench stall, without its wire gate), so its sources age |
-| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM, REBOOT and ACTION RUN request counts, configured command group IDs/loops/widths |
+| `stats` | Write `PATH.stats`: received prefix/value command-frame counts, fast DISARM, REBOOT, ACTION RUN and LINK_CONFIRM request counts, configured command group IDs/loops/widths |
 
 The `stats` counters let GUI tests prove they sent no input value frames and did not adopt another owner's groups. The GUI scenario runner `host/gui/tests/scenarios.py` creates isolated temporary state and control files and never sends these injections to a supplied physical endpoint; see [GUI screenshots and backend checks](../gui/README.md).
 
@@ -81,4 +88,4 @@ Native scheduling jitters more than a board. Use slower loop rates for desktop a
 
 ## Limits
 
-vdev cannot establish ESP image execution, eFuse compatibility, flash timing or power-loss behavior, and a native BenchStall exercises the monitor but not the Task WDT panic reset. Those checks need the bare board; see the [bench instructions](../../docs/bench.md).
+vdev cannot make a UART fail to open on a link. It cannot establish ESP image execution, eFuse compatibility, flash timing or power-loss behavior, and a native BenchStall exercises the monitor but not the Task WDT panic reset. Those checks need the bare board; see the [bench instructions](../../docs/bench.md).

@@ -4,6 +4,7 @@
 #include <drivelink/protocol/core_codec.hpp>
 #include <drivelink/protocol/gen/type_loop.hpp>
 #include <drivelink/protocol/gen/type_system.hpp>
+#include <drivelink/protocol/link.hpp>
 #include <QCoreApplication>
 #include <QFile>
 #include <QSaveFile>
@@ -18,6 +19,28 @@
 namespace drivelink::gui {
 namespace {
 namespace defs=protocol::defs;
+QString formatLink(const LinkSettings &l) {
+    return QStringLiteral("%1 baud · TX %2 / RX %3").arg(l.baud).arg(l.tx_pin).arg(l.rx_pin);
+}
+std::optional<LinkSettings> readLink(const std::map<uint16_t,Value> &params) {
+    const auto b=params.find(defs::system::kLinkBaud);
+    const auto tx=params.find(defs::system::kLinkTxPin);
+    const auto rx=params.find(defs::system::kLinkRxPin);
+    if(b==params.end() || tx==params.end() || rx==params.end()) {return std::nullopt;}
+    const auto rate=protocol::linkBaudRate(valueBits(b->second));
+    const auto txv=valueBits(tx->second),rxv=valueBits(rx->second);
+    if(!rate || txv>255 || rxv>255) {return std::nullopt;}
+    return LinkSettings{rate,uint8_t(txv),uint8_t(rxv)};
+}
+std::optional<LinkState> snapshotLink(const DeviceSnapshot &s) {
+    const auto running=readLink(s.system_params);
+    if(!running) {return std::nullopt;}
+    LinkState state;
+    state.info=s.info;
+    state.running=*running;
+    state.next=readLink(s.pending_system_params).value_or(*running);
+    return state;
+}
 }
 
 LocalConnection::LocalConnection(QObject *parent):Connection(parent),
@@ -68,8 +91,9 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
         }
         // A reboot that never came (refused drain, lost reply) ends the
         // expectation, so a later loss is again an unrequested one.
-        if(m_expectReboot && !m_reconnecting && m_rebootElapsed.isValid() && m_rebootElapsed.elapsed()>m_reconnectWindowMs) {
-            clearRebootExpectation();
+        const int waitLimit=m_linkExpectation?(m_linkWaitOverrideMs>0?m_linkWaitOverrideMs:m_linkWaitMs):m_reconnectWindowMs;
+        if(m_expectReboot && !m_reconnecting && m_rebootElapsed.isValid() && m_rebootElapsed.elapsed()>waitLimit) {
+            clearRebootExpectation();m_linkExpectation.reset();
             if(m_ota && (m_ota->phase==OtaJob::Phase::Rebooting || m_ota->phase==OtaJob::Phase::Reconnecting)) {
                 otaStop(OtaJob::Phase::Failed,m_ota->rollback?tr("The device did not reboot; the reboot was not repeated and the build stays unconfirmed.")
                     :tr("The device did not reboot; the reboot was not repeated. The prepared image is still waiting: abort it in the Firmware card."));
@@ -78,17 +102,20 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
         }
         // While a requested reboot is under way on a link that stays open,
         // wait for Boot instead of reopening the port (opening a tty can
-        // pulse an ESP auto-reset line on Linux).
-        // Only after the REBOOT reply (or its uncertain outcome) and while
-        // disarmed; any other silence is a link loss after 3 s.
+        // pulse an ESP auto-reset line on Linux). For a link-settings change
+        // on a direct serial port, close promptly on silence so auto-detect
+        // can probe the new baud rate or pins.
+        const bool linkSerialWait=m_expectReboot && m_linkExpectation && !m_agent && m_endpoint.startsWith(QLatin1String("serial://"));
         const bool awaitingBoot=m_expectReboot && m_rebootElapsed.isValid() && armState()==0;
-        const qint64 silence=awaitingBoot?m_reconnectWindowMs:3000;
+        const qint64 silence=linkSerialWait?1500:(awaitingBoot?waitLimit:3000);
         if(m_context && m_snapshot && !m_loading && m_seen.isValid() && m_seen.elapsed()>silence) {
             if(!m_expectReboot) {report(Error(ErrorKind::Connection,"Device stopped sending status"));}
             finishClose(true);return;
         }
         if(++m_pollTick%3==0) {pollLoopStats();}
         if(m_pollTick%2==0) {pollLive();}
+        // Live countdown tick for an active link trial or a link-trial wait.
+        if(m_pollTick%5==0 && (linkTrialActive() || m_linkExpectation.has_value())) {emit changed();}
         if(m_agent && m_context) {
             pollAgentEvents();
             // The client list has no event: read it every 2 s while Device shows it.
@@ -131,7 +158,7 @@ QString LocalConnection::reason() const {
 }
 bool LocalConnection::armEnabled() const {
     return ready() && (!m_agent || m_lease.mine()) && m_groupsReady && !m_setupPending && !m_arming && !m_armPending && !m_disarmPending && !m_waitingDisarm && !m_expectReboot &&
-        !(m_ota && m_ota->active()) &&
+        !(m_ota && m_ota->active()) && !linkTrialActive() &&
         (!m_observingArmed || m_explicitDisarmAcknowledged) &&
         !safeMode() && m_snapshot->status && armState()==0 && !(m_snapshot->status->flags&2) &&
         !(m_snapshot->status->flags&4);
@@ -140,6 +167,7 @@ QString LocalConnection::armBlockedReason() const {
     if(!ready()) {return tr("Wait for current device metadata and status");}
     if(m_agent && !m_lease.mine()) {return tr("ARM needs the control lease");}
     if(safeMode()) {return tr("Device is in safe mode");}
+    if(linkTrialActive()) {return tr("Serial link is on trial: confirm it or wait for it to revert");}
     if(m_expectReboot) {return tr("The device is rebooting");}
     if(m_ota && m_ota->active()) {return tr("A firmware update is in progress");}
     if(m_observingArmed && !m_explicitDisarmAcknowledged) {return tr("Press DISARM before taking command ownership");}
@@ -160,21 +188,34 @@ void LocalConnection::report(const Error &e) {
     if(!m_reconnecting) {emit notification(m_error["text"].toString(),2);}
     emit changed();
 }
-void LocalConnection::connectTo(const QString &endpoint,int baud) {
-    if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<=0) {return;}
+void LocalConnection::connectTo(const QString &endpoint,int baud,int lastBaud) {
+    if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<0) {return;}
     // A direct connection (serial, or TCP to vdev): no agent.
     m_agent.reset();m_lease.clear();m_agentFailure.clear();
-    open(endpoint,baud);
+    open(endpoint,baud,lastBaud);
 }
-void LocalConnection::open(const QString &endpoint,int baud) {
-    if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<=0) {return;}
+void LocalConnection::open(const QString &endpoint,int baud,int lastBaud) {
+    if(m_context || m_closing || endpoint.trimmed().isEmpty() || baud<0) {return;}
     // A new connection by the user ends any reboot follow-up of the last one.
     if(!m_reconnecting && !m_afterLoss) {
-        clearRebootExpectation();m_previous.reset();m_notice.clear();m_staleSubs.clear();
+        clearRebootExpectation();clearLinkTrialState();m_previous.reset();m_notice.clear();m_staleSubs.clear();
         if(m_ota && m_ota->terminal()) {m_ota.reset();}
     }
     ++m_connectionSerial;m_otaStatus.reset();m_otaStatusPending=false;m_otaStatusFailed=false;
-    auto c=std::make_shared<Context>();m_context=c;m_endpoint=endpoint.trimmed();m_baud=baud;m_loading=true;m_linkLost=false;
+    auto c=std::make_shared<Context>();m_context=c;m_endpoint=endpoint.trimmed();
+    m_requestedBaud=baud;
+    if(lastBaud>0) {m_lastBaud=lastBaud;}
+    else if(baud>0) {m_lastBaud=baud;}
+    else if(m_lastBaud<=0 && m_endpoint.startsWith(QLatin1String("serial://"))) {
+        m_lastBaud=m_recent.onEndpoint(m_endpoint).value(QStringLiteral("baud")).toInt();
+    }
+    m_baud=baud>0?baud:m_lastBaud;
+    const int hintBaud=m_linkExpectation && !m_agent && m_endpoint.startsWith(QLatin1String("serial://"))
+        ?int(m_linkExpectation->trial.baud):m_lastBaud;
+    const int openBaud=m_linkExpectation && !m_agent && m_endpoint.startsWith(QLatin1String("serial://"))
+        ?int(kBaudAuto):baud;
+    const bool reconnecting=m_reconnecting;
+    m_loading=true;m_linkLost=false;m_linkNotReachable=false;
     m_error.clear();m_mismatch.clear();m_blocked.clear();m_subsNote.clear();m_snapshot.reset();m_statusCounter.reset();
     m_setupAttempted=false;m_subsAttempted=false;m_recorded=false;m_diag.reset();m_loadStep=0;
     m_observingArmed=false;m_explicitDisarmAcknowledged=false;
@@ -194,12 +235,15 @@ void LocalConnection::open(const QString &endpoint,int baud) {
     const auto queue=m_dispatch;const QPointer<LocalConnection> self(this);const auto address=m_endpoint.toStdString();
     // Start after this GUI turn. Safety requests during opening are retained
     // until publication, including an Esc immediately after Connect.
-    QTimer::singleShot(0,this,[this,c,queue,self,address,baud,hello] {
+    QTimer::singleShot(0,this,[this,c,queue,self,address,openBaud,hintBaud,reconnecting,hello] {
     if(!current(c)) {return;}
-    m_opener=std::thread([c,queue,self,address,baud,hello] {
+    m_opener=std::thread([c,queue,self,address,openBaud,hintBaud,reconnecting,hello] {
         try {
             SessionOptions options;options.dispatcher=[queue](Task task){post(queue,std::move(task));};
-            options.baud=unsigned(baud);
+            options.baud=unsigned(openBaud);
+            options.last_baud=unsigned(std::max(0,hintBaud));
+            // Keep auto-detect bounded short in a reconnect loop (blocks ctor).
+            options.detect_timeout=reconnecting?std::chrono::milliseconds(2000):std::chrono::milliseconds(5000);
             std::string target=address;
             if(hello) {
                 // Through drivelink-agent: a typed host name resolves here,
@@ -209,6 +253,7 @@ void LocalConnection::open(const QString &endpoint,int baud) {
                 options.agent=*hello;
             }
             auto session=std::make_shared<Session>(target,options);
+            const int detectedBaud=int(session->baud());
             // Discovery can outlast an already-armed owner's watchdog. Keep
             // the early status history independently of DeviceModel, which
             // installs its observer only after its initial metadata load.
@@ -232,8 +277,9 @@ void LocalConnection::open(const QString &endpoint,int baud) {
             const auto accepted=session->agentHello();
             {std::lock_guard lock(c->mutex);c->session=session;}
             if(c->retired) {session->close();return;}
-            post(queue,[self,c,accepted] {
+            post(queue,[self,c,accepted,detectedBaud] {
                 if(!self || !self->current(c)) {return;}
+                if(detectedBaud>0) {self->m_baud=detectedBaud;self->m_lastBaud=detectedBaud;}
                 if(accepted) {
                     // An observer first (G6): the holder named by the Hello's
                     // device record; Lease events update it from here on.
@@ -273,7 +319,7 @@ void LocalConnection::open(const QString &endpoint,int baud) {
             Error error=typed?*typed:Error(ErrorKind::Connection,e.what());
             post(queue,[self,c,error] {
                 if(!self || !self->current(c)) {return;}
-                if(self->m_agent) {
+                if(self->m_agent && !self->m_reconnecting) {
                     // The Agent tab shows why: unreachable, versions, token, device.
                     self->m_agentFailure=gui::agentFailure(error);
                 } else if(error.peer_version) {
@@ -353,7 +399,8 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
         if(m_agent) {
             m_recentAgents.remember(m_agent->address,m_agent->device,deviceId(),deviceName(),m_agent->token,m_agent->rememberToken);
         } else {
-            m_recent.remember(deviceId(),deviceName(),m_endpoint,m_baud,QString::fromStdString(m_snapshot->info.firmware_version));
+            const int savedBaud=m_baud>0?m_baud:(m_lastBaud>0?m_lastBaud:921600);
+            m_recent.remember(deviceId(),deviceName(),m_endpoint,savedBaud,QString::fromStdString(m_snapshot->info.firmware_version));
         }
         emit recentDevicesChanged();
         if(first && (m_reconnecting || m_afterLoss)) {
@@ -376,6 +423,18 @@ void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEve
             const bool provenSameBoot=same && m_diag && m_previous->uptimeUs && m_diag->uptime_us>=*m_previous->uptimeUs;
             if(!provenSameBoot) {m_staleSubs.clear();m_staleId.clear();}
             m_reconnecting=false;m_afterLoss=false;m_previous.reset();
+        }
+    }
+    if(ready() && m_snapshot) {
+        if(m_snapshot->info.link_trial_ms!=m_linkTrialBaseMs || m_snapshot->generation!=m_linkTrialGen) {
+            m_linkTrialBaseMs=m_snapshot->info.link_trial_ms;
+            m_linkTrialGen=m_snapshot->generation;
+            if(m_linkTrialBaseMs>0) {m_linkTrialElapsed.restart();}
+            else {m_linkTrialElapsed.invalidate();}
+        }
+        if(m_linkExpectation && !m_linkSettlePending &&
+           (m_connectionSerial!=m_linkRebootSerial || m_snapshot->generation!=m_linkRebootGeneration)) {
+            settlePendingLinkTrial();
         }
     }
     if(!m_groupsReady && !m_setupPending && !c->owns() &&
@@ -804,7 +863,7 @@ void LocalConnection::disconnectDevice() {
     // Give plant identification time to stop the step and write back its mode.
     if(m_tune.identifying() || m_closing) {return;}
     // Disconnect also ends a lost link's overlay and any reboot follow-up.
-    m_reconnecting=false;m_afterLoss=false;clearRebootExpectation();
+    m_reconnecting=false;m_afterLoss=false;clearRebootExpectation();clearLinkTrialState();
     if(!m_context) {
         // Between reconnect attempts after an update's reboot: no link to
         // close, but the update must not wait for one any more.
@@ -828,11 +887,14 @@ void LocalConnection::disconnectDevice() {
 }
 void LocalConnection::retry() {
     if(m_context || m_closing || m_endpoint.isEmpty()) {return;}
-    m_afterLoss=true;open(m_endpoint,m_baud);
+    const int baud=m_linkNotReachable?int(kBaudAuto):m_requestedBaud;
+    m_linkNotReachable=false;
+    m_afterLoss=true;open(m_endpoint,baud,m_lastBaud);
 }
 void LocalConnection::reconnectAfterReboot() {
     if(!m_reconnecting || m_context || m_closing) {return;}
-    open(m_endpoint,m_baud);
+    const int baud=m_linkExpectation && !m_agent?int(kBaudAuto):m_requestedBaud;
+    open(m_endpoint,baud,m_lastBaud);
 }
 void LocalConnection::clearAndClose() {
     auto c=m_context;auto session=c->getSession();const QPointer<LocalConnection> self(this);
@@ -880,6 +942,7 @@ void LocalConnection::finishClose(bool lost) {
     m_loading=false;m_closing=false;m_groupsReady=false;m_setupPending=false;m_arming=false;m_armReplied=false;m_ownArm=false;
     m_armPending=false;m_disarmPending=false;m_disarmAgain=false;m_ackPending=false;m_waitingDisarm=false;
     m_disarmWhenOpened=false;m_subsPending=false;m_configAction.clear();m_loadStep=0;
+    m_linkConfirmBusy=false;m_linkSettlePending=false;
     resetLive();m_livePending=false;m_actionRunning.clear();m_actionResults.clear();
     // A lost link keeps Monitor's plot set, as Layout keeps its selection.
     resetMonitorGroups();m_monitorPending=false;
@@ -929,12 +992,22 @@ void LocalConnection::finishClose(bool lost) {
     if(c && m_reconnecting) {
         // A reconnect attempt after a requested reboot failed: retry within
         // the window. Only the link is reopened; REBOOT is never repeated.
-        if(m_reconnectElapsed.elapsed()<m_reconnectWindowMs) {
+        const int window=m_linkExpectation?(m_linkWaitOverrideMs>0?m_linkWaitOverrideMs:m_linkWaitMs):m_reconnectWindowMs;
+        const qint64 elapsed=m_linkExpectation && m_linkWaitElapsed.isValid()?m_linkWaitElapsed.elapsed():m_reconnectElapsed.elapsed();
+        if(elapsed<window) {
             QTimer::singleShot(500,this,[this] {reconnectAfterReboot();});
         } else {
+            const bool wasLink=m_linkExpectation.has_value();
+            if(wasLink) {
+                m_linkNotReachable=true;
+                m_linkNotReachableOld=formatLink(m_linkExpectation->confirmed);
+                m_linkNotReachableNew=formatLink(m_linkExpectation->trial);
+                m_linkNotReachablePins=!m_linkExpectation->trial.samePins(m_linkExpectation->confirmed);
+                m_linkExpectation.reset();
+            }
             m_reconnecting=false;clearRebootExpectation();m_linkLost=true;
             otaInterrupted(tr("The device did not reconnect after its reboot."));
-            report(Error(ErrorKind::Connection,"The device did not reconnect after its reboot"));
+            report(Error(ErrorKind::Connection,wasLink?linkOutcomeText(LinkOutcome::NotReachable):"The device did not reconnect after its reboot"));
         }
     } else if(c && lost && m_expectReboot) {
         m_reconnecting=true;m_linkLost=false;m_reconnectElapsed.start();
@@ -1087,6 +1160,9 @@ QVariantList LocalConnection::armChecks() const {
     checks<<check(tr("No fault latched"),(flags&1)?"fail":"pass",(flags&1)?tr("Acknowledge the fault"):QString());
     checks<<check(tr("No active condition blocks arming"),(flags&2)?"fail":"pass",(flags&2)?tr("See the faults drawer"):QString());
     checks<<check(tr("No reboot pending"),(flags&4)?"fail":"pass",(flags&4)?tr("Save and reboot, or Discard all on Layout"):QString());
+    if(linkTrialActive()) {
+        checks<<check(tr("No serial link trial active"),"fail",tr("Confirm the serial link on the Device page, or wait for it to revert"));
+    }
     if(m_agent) {
         checks<<check(tr("This window holds the control lease"),m_lease.mine()?"pass":"fail",
                       m_lease.mine()?QString():tr("Take the lease on the Device page (Clients and lease)"));
@@ -1148,7 +1224,21 @@ void LocalConnection::runOp(Op op,const QString &name) {
     m_configAction=action;
     // Intent precedes sending: a link that drops after a reboot reply leads
     // to a reconnect, never to a repeated REBOOT.
-    if(reboots) {m_expectReboot=true;m_rebootCause=tr(causes[int(op)]);}
+    if(reboots) {
+        m_expectReboot=true;m_rebootCause=tr(causes[int(op)]);
+        m_linkExpectation.reset();m_linkOutcome.clear();m_linkNotReachable=false;
+        if((op==Op::SaveAndReboot || (op==Op::Reboot && (!unsaved() || m_savedPending))) && m_snapshot) {
+            if(const auto ls=snapshotLink(*m_snapshot);ls && ls->changed()) {
+                if(auto exp=expectLinkTrial(*ls)) {
+                    m_linkExpectation=*exp;
+                    m_linkWaitMs=int(exp->window().count());
+                    m_linkWaitElapsed.restart();
+                    m_linkRebootSerial=m_connectionSerial;
+                    m_linkRebootGeneration=m_snapshot->generation;
+                }
+            }
+        }
+    }
     emit changed();
     using defs::SystemOp;
     try {
@@ -1179,7 +1269,7 @@ void LocalConnection::runOp(Op op,const QString &name) {
                     !(op==Op::SaveAndReboot && e.op==uint8_t(SystemOp::Save));
                 // SAVE succeeded when only the REBOOT of Save and reboot failed.
                 if(op==Op::SaveAndReboot && e.op==uint8_t(SystemOp::Reboot)) {self->forgetChanges(id);self->m_savedBeforeReboot=true;}
-                if(reboots && !rebootSent) {self->clearRebootExpectation();}
+                if(reboots && !rebootSent) {self->clearRebootExpectation();self->m_linkExpectation.reset();}
                 if(rebootSent) {self->m_rebootElapsed.start();}
                 self->report(e);
                 if(rebootSent) {
@@ -1210,7 +1300,20 @@ void LocalConnection::runOp(Op op,const QString &name) {
                 self->forgetChanges(id);self->m_savedBeforeReboot=true;[[fallthrough]];
             default:
                 self->m_rebootElapsed.start();
-                emit self->notification(tr("The device is rebooting"),0);break;
+                if(self->m_linkExpectation) {self->m_linkWaitElapsed.restart();}
+                emit self->notification(tr("The device is rebooting"),0);
+                // Direct serial baud change: the open session is still on the
+                // old rate, so close it after a short grace and probe the new one.
+                if(self->m_linkExpectation && !self->m_agent && self->m_endpoint.startsWith(QLatin1String("serial://")) &&
+                   self->m_linkExpectation->trial.baud!=self->m_linkExpectation->confirmed.baud) {
+                    const auto serial=self->m_connectionSerial;
+                    QTimer::singleShot(250,self,[self,serial] {
+                        if(self && self->m_connectionSerial==serial && self->m_expectReboot && self->m_linkExpectation) {
+                            self->finishClose(true);
+                        }
+                    });
+                }
+                break;
             }
             // SAVE and REVERT clear the Unsaved marks of the param rows.
             self->updateParams();
@@ -1218,8 +1321,260 @@ void LocalConnection::runOp(Op op,const QString &name) {
         });
     } catch(const Error &e) {
         m_configAction.clear();
-        if(reboots) {clearRebootExpectation();}
+        if(reboots) {clearRebootExpectation();m_linkExpectation.reset();}
         report(e);
+    }
+}
+bool LocalConnection::linkTrialActive() const {
+    return ready() && m_snapshot && m_snapshot->info.link_trial_ms!=0 &&
+        m_snapshot->generation!=m_linkSettledGen;
+}
+bool LocalConnection::linkChangeStaged() const {
+    if(!ready() || !m_snapshot) {return false;}
+    const auto ls=snapshotLink(*m_snapshot);
+    return ls && ls->changed();
+}
+void LocalConnection::clearLinkTrialState() {
+    m_linkExpectation.reset();m_linkOutcome.clear();m_linkConfirmBusy=false;m_linkSettlePending=false;
+    m_linkNotReachable=false;m_linkNotReachableOld.clear();m_linkNotReachableNew.clear();m_linkNotReachablePins=false;
+    m_linkWaitMs=0;m_linkWaitElapsed.invalidate();m_linkTrialElapsed.invalidate();m_linkTrialBaseMs=0;m_linkTrialGen=0;m_linkSettledGen=0;
+}
+void LocalConnection::dismissLinkOutcome() {
+    if(m_linkOutcome.isEmpty()) {return;}
+    m_linkOutcome.clear();emit changed();
+}
+QVariantMap LocalConnection::linkTrial() const {
+    QVariantMap out;
+    const auto ls=ready() && m_snapshot?snapshotLink(*m_snapshot):std::nullopt;
+    const bool waiting=m_linkExpectation.has_value();
+    const bool active=linkTrialActive() && !waiting;
+    const bool staged=!waiting && ls && ls->changed();
+    out["staged"]=staged;
+    out["waiting"]=waiting;
+    out["active"]=active;
+    out["confirmBusy"]=m_linkConfirmBusy;
+    out["throughAgent"]=m_agent.has_value();
+    out["agentAddress"]=m_agent?m_agent->address:QString();
+    out["notReachable"]=m_linkNotReachable;
+    out["notReachableOld"]=m_linkNotReachableOld;
+    out["notReachableNew"]=m_linkNotReachableNew;
+    out["notReachablePins"]=m_linkNotReachablePins;
+    if(!m_linkOutcome.isEmpty()) {
+        out["outcome"]=m_linkOutcome.value(QStringLiteral("outcome"));
+        out["outcomeText"]=m_linkOutcome.value(QStringLiteral("text"));
+        out["outcomeDetail"]=m_linkOutcome.value(QStringLiteral("detail"));
+    }
+    if(staged) {
+        const bool pins=!ls->next.samePins(ls->running);
+        out["pinsChanged"]=pins;
+        out["trialSeconds"]=pins?120:30;
+        out["runningText"]=formatLink(ls->running);
+        out["nextText"]=formatLink(ls->next);
+        out["runningBaud"]=int(ls->running.baud);
+        out["nextBaud"]=int(ls->next.baud);
+        out["runningTx"]=int(ls->running.tx_pin);
+        out["runningRx"]=int(ls->running.rx_pin);
+        out["nextTx"]=int(ls->next.tx_pin);
+        out["nextRx"]=int(ls->next.rx_pin);
+    } else if(waiting) {
+        const bool pins=!m_linkExpectation->trial.samePins(m_linkExpectation->confirmed);
+        const int window=m_linkWaitOverrideMs>0?m_linkWaitOverrideMs:m_linkWaitMs;
+        const int elapsed=m_linkWaitElapsed.isValid()?int(m_linkWaitElapsed.elapsed()):0;
+        const int remaining=std::max(0,window-elapsed);
+        out["pinsChanged"]=pins;
+        out["trialSeconds"]=pins?120:30;
+        out["windowMs"]=window;
+        out["remainingMs"]=remaining;
+        out["progress"]=window>0?std::clamp(double(window-remaining)/double(window),0.0,1.0):0.0;
+        out["oldText"]=formatLink(m_linkExpectation->confirmed);
+        out["newText"]=formatLink(m_linkExpectation->trial);
+        out["runningTx"]=int(m_linkExpectation->confirmed.tx_pin);
+        out["runningRx"]=int(m_linkExpectation->confirmed.rx_pin);
+        out["nextTx"]=int(m_linkExpectation->trial.tx_pin);
+        out["nextRx"]=int(m_linkExpectation->trial.rx_pin);
+    } else if(active && ls) {
+        const bool pins=!ls->running.samePins(ls->next);
+        const int elapsed=m_linkTrialElapsed.isValid()?int(m_linkTrialElapsed.elapsed()):0;
+        const int remaining=std::max(0,int(m_linkTrialBaseMs)-elapsed);
+        out["pinsChanged"]=pins;
+        out["remainingMs"]=remaining;
+        out["runningText"]=formatLink(ls->running);
+        out["confirmedText"]=formatLink(ls->next);
+        out["runningBaud"]=int(ls->running.baud);
+        out["confirmBlocked"]=m_linkConfirmBusy?tr("Confirming link…"):exclusiveBlocked();
+    }
+    return out;
+}
+void LocalConnection::settlePendingLinkTrial() {
+    if(!m_linkExpectation || m_linkSettlePending || !ready()) {return;}
+    auto c=m_context;auto session=c?c->getSession():nullptr;
+    if(!session) {return;}
+    const auto expected=*m_linkExpectation;
+    // Locally or when we hold (or nobody holds) the lease, settle confirms automatically.
+    const bool confirm=!m_agent || m_lease.mine() || m_lease.holder().id==0;
+    m_linkSettlePending=true;emit changed();
+    const QPointer<LocalConnection> self(this);
+    const auto serial=m_connectionSerial;
+    try {
+        Client(*session).async([expected,confirm](Client &client) {
+            return settleLinkTrial(client,expected,confirm);
+        },[self,c,expected,confirm,serial](std::expected<LinkTrialResult,Error> result) {
+            if(!self || !self->current(c) || self->m_connectionSerial!=serial) {return;}
+            self->m_linkSettlePending=false;
+            if(!self->m_linkExpectation) {emit self->changed();return;}
+            const int window=self->m_linkWaitOverrideMs>0?self->m_linkWaitOverrideMs:self->m_linkWaitMs;
+            const bool withinWindow=!self->m_linkWaitElapsed.isValid() || self->m_linkWaitElapsed.elapsed()<window;
+            auto reload=[&] {
+                if(auto model=c->getModel()) {try {model->reloadAsync();} catch(const Error &) {}}
+            };
+            if(!result) {
+                const auto &e=result.error();
+                if((e.kind==ErrorKind::Timeout || e.kind==ErrorKind::Connection || e.boot_changed) && withinWindow) {
+                    QTimer::singleShot(500,self,[self,serial] {
+                        if(self && self->m_connectionSerial==serial && self->m_linkExpectation) {self->settlePendingLinkTrial();}
+                    });
+                    emit self->changed();return;
+                }
+                self->m_linkExpectation.reset();
+                self->report(e);
+                reload();emit self->changed();return;
+            }
+            const auto &r=*result;
+            if(r.baud>0) {self->m_baud=int(r.baud);self->m_lastBaud=int(r.baud);}
+            switch(r.outcome) {
+            case LinkOutcome::Confirmed: {
+                const auto running=formatLink(r.state?r.state->running:expected.trial);
+                self->m_linkExpectation.reset();self->m_notice.clear();
+                if(self->m_snapshot) {self->m_linkSettledGen=self->m_snapshot->generation;}
+                self->m_linkOutcome={{"outcome",QStringLiteral("confirmed")},
+                    {"text",tr("Serial link confirmed")},
+                    {"detail",tr("Now running %1. Previous link was %2.").arg(running,formatLink(expected.confirmed))}};
+                emit self->notification(tr("Serial link confirmed (%1)").arg(running),1);
+                reload();
+                break;
+            }
+            case LinkOutcome::Reverted: {
+                const auto running=formatLink(r.state?r.state->running:expected.confirmed);
+                self->m_linkExpectation.reset();self->m_notice.clear();
+                self->m_linkOutcome={{"outcome",QStringLiteral("reverted")},
+                    {"text",tr("Serial link reverted")},
+                    {"detail",tr("Restored %1 (the trial of %2 was not confirmed in time).").arg(running,formatLink(expected.trial))}};
+                emit self->notification(tr("Serial link reverted to %1").arg(running),2);
+                reload();
+                break;
+            }
+            case LinkOutcome::Deferred:
+                self->m_linkExpectation.reset();self->m_notice.clear();
+                self->m_linkOutcome={{"outcome",QStringLiteral("deferred")},
+                    {"text",tr("Link change deferred (safe mode)")},
+                    {"detail",QString::fromStdString(linkOutcomeText(LinkOutcome::Deferred))}};
+                reload();
+                break;
+            case LinkOutcome::WrongDevice:
+                self->m_linkExpectation.reset();
+                self->m_linkOutcome={{"outcome",QStringLiteral("wrong_device")},
+                    {"text",tr("Different device answered")},
+                    {"detail",QString::fromStdString(linkOutcomeText(LinkOutcome::WrongDevice))}};
+                break;
+            case LinkOutcome::OtherLink:
+                self->m_linkExpectation.reset();
+                self->m_linkOutcome={{"outcome",QStringLiteral("other_link")},
+                    {"text",tr("Link settings changed")},
+                    {"detail",QString::fromStdString(linkOutcomeText(LinkOutcome::OtherLink))}};
+                reload();
+                break;
+            case LinkOutcome::NotRebooted:
+                if(self->m_linkWaitElapsed.isValid() && self->m_linkWaitElapsed.elapsed()<10000) {
+                    QTimer::singleShot(500,self,[self,serial] {
+                        if(self && self->m_connectionSerial==serial && self->m_linkExpectation) {self->settlePendingLinkTrial();}
+                    });
+                } else {
+                    self->m_linkExpectation.reset();
+                    self->m_linkOutcome={{"outcome",QStringLiteral("not_rebooted")},
+                        {"text",tr("Device did not reboot into the new link")},
+                        {"detail",QString::fromStdString(linkOutcomeText(LinkOutcome::NotRebooted))}};
+                }
+                break;
+            case LinkOutcome::Unconfirmed:
+                if(!confirm) {
+                    self->m_linkExpectation.reset();
+                    reload();
+                } else if(withinWindow) {
+                    // Lost confirm request, or expired trial waiting ~0.5 s to reboot and revert.
+                    QTimer::singleShot(500,self,[self,serial] {
+                        if(self && self->m_connectionSerial==serial && self->m_linkExpectation) {self->settlePendingLinkTrial();}
+                    });
+                } else {
+                    self->m_linkExpectation.reset();
+                    reload();
+                }
+                break;
+            case LinkOutcome::NotReachable:
+                self->m_linkExpectation.reset();
+                break;
+            }
+            emit self->changed();
+        });
+    } catch(const Error &e) {
+        m_linkSettlePending=false;m_linkExpectation.reset();report(e);emit changed();
+    }
+}
+void LocalConnection::confirmLink() {
+    if(!linkTrialActive() || m_linkConfirmBusy) {return;}
+    if(const auto why=exclusiveBlocked();!why.isEmpty()) {
+        report(Error(ErrorKind::Usage,why.toStdString()));return;
+    }
+    auto c=m_context;auto session=c?c->getSession():nullptr;
+    if(!session || !m_snapshot) {return;}
+    const auto id=m_snapshot->info.device_id;
+    const auto before=snapshotLink(*m_snapshot);
+    m_linkConfirmBusy=true;emit changed();
+    const QPointer<LocalConnection> self(this);
+    try {
+        Client(*session).async([id](Client &client) {
+            return confirmLinkTrial(client,id);
+        },[self,c,before](std::expected<LinkConfirmation,Error> result) {
+            if(!self || !self->current(c)) {return;}
+            self->m_linkConfirmBusy=false;
+            auto reload=[&] {
+                if(auto model=c->getModel()) {try {model->reloadAsync();} catch(const Error &) {}}
+            };
+            if(!result) {
+                self->report(result.error());
+                if(result.error().outcome_unknown) {reload();}
+                emit self->changed();return;
+            }
+            switch(*result) {
+            case LinkConfirmation::Confirmed:
+                if(self->m_snapshot) {self->m_linkSettledGen=self->m_snapshot->generation;}
+                self->m_linkOutcome={{"outcome",QStringLiteral("confirmed")},
+                    {"text",tr("Serial link confirmed")},
+                    {"detail",before?tr("Confirmed %1.").arg(formatLink(before->running)):tr("The running link settings are now saved.")}};
+                emit self->notification(tr("Serial link confirmed"),1);
+                reload();
+                break;
+            case LinkConfirmation::Reverted:
+                self->m_linkOutcome={{"outcome",QStringLiteral("reverted")},
+                    {"text",tr("Serial link reverted")},
+                    {"detail",before?tr("Restored %1.").arg(formatLink(before->next)):tr("The trial ended and reverted to the previous link.")}};
+                emit self->notification(tr("Serial link reverted"),2);
+                reload();
+                break;
+            case LinkConfirmation::NoTrial:
+                emit self->notification(tr("No active link trial to confirm; refreshing state"),0);
+                reload();
+                break;
+            case LinkConfirmation::Unconfirmed:
+                emit self->notification(tr("No reply confirmed the link; press Confirm link again"),2);
+                break;
+            case LinkConfirmation::WrongDevice:
+                self->report(Error(ErrorKind::Protocol,linkOutcomeText(LinkOutcome::WrongDevice)));
+                break;
+            }
+            emit self->changed();
+        });
+    } catch(const Error &e) {
+        m_linkConfirmBusy=false;report(e);emit changed();
     }
 }
 QVariantList LocalConnection::serialPorts() {

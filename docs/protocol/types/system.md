@@ -23,6 +23,9 @@ Device-wide settings owned by the core.
 | 0x0020 | `diag.counter_period_ms` | u16 | ms | 100 .. 60000 | 1000 | persist | How often changed counters are sent |
 | 0x0021 | `diag.poll_ms` | u16 | ms | 10 .. 1000 | 20 | persist | How long a record waits for the reporter, at most |
 | 0x0022 | `diag.stack_log_s` | u16 | s | 0 .. 3600 | 30 | persist | Console stack log period, 0 = off; needs a build with console text |
+| 0x0030 | `link.baud` | enum (baud_115200=0, baud_230400=1, baud_460800=2, baud_921600=3, baud_1000000=4, baud_1500000=5, baud_2000000=6, baud_3000000=7) |  |  | baud_921600 | reboot_required, persist | Serial link rate; a change reverts after 30 s unless a host confirms it |
+| 0x0031 | `link.tx_pin` | u8 |  |  | 43 | reboot_required, persist | Serial link TX pin; a pin change reverts after 120 s unless a host confirms it |
+| 0x0032 | `link.rx_pin` | u8 |  |  | 44 | reboot_required, persist | Serial link RX pin; a pin change reverts after 120 s unless a host confirms it |
 
 ## Retired ids
 

@@ -15,8 +15,6 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_UART_ISR_IN_IRAM=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=5632
 CONFIG_UART_COMM_PORT_NUM=0
-CONFIG_UART_COMM_TX_PIN=43
-CONFIG_UART_COMM_RX_PIN=44
 # PSRAM (F7a): octal, 80 MHz, caps-alloc only, so nothing lands there unless
 # asked (the capture ring). A board without PSRAM boots with a 32 KB ring.
 CONFIG_SPIRAM=y

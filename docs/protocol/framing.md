@@ -6,8 +6,8 @@ The C++ implementation is `protocol/` (`framing.hpp`, `crc.hpp`, `scanner.hpp`),
 
 ## Physical link
 
-- UART, 8N1, no flow control, **921600 baud** by default (`CONFIG_UART_COMM_BAUD_RATE`). The rate is fixed at compile time. Both ends must use the same value.
-- On the board: UART0, TX GPIO43, RX GPIO44. The console runs on USB-Serial-JTAG, so logs never mix with frames.
+- UART, 8N1, no flow control, **921600 baud** by default. The rate and the pins are [device settings](core.md#link-settings-and-trial) that a host changes with a trial. Both ends must use the same rate; a host can find it by trying.
+- On the board: UART0, TX GPIO43, RX GPIO44 by default. The console runs on USB-Serial-JTAG, so logs never mix with frames.
 
 ## Frame
 

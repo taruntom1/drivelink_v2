@@ -3,6 +3,7 @@
 #include "drivelink/protocol/gen/diag_codes.hpp"
 #include <algorithm>
 #include <cstring>
+#include "core_os/clock.hpp"
 
 namespace core {
 size_t fastDisarm(Core &core, std::span<const uint8_t> request, std::span<uint8_t> response) {
@@ -237,6 +238,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
             }
             w.appendBytes(m_info.device_id.data(), m_info.device_id.size());
             (void)drivelink::protocol::writeDeviceName(w, m_core.name());
+            w.appendU32Le(m_core.linkTrialRemainingMs(core_os::nowUs()));
             return {};
         case defs::SystemOp::BenchCrash:
             if(!m_info.bench_crash) { return bad(Detail::Unsupported); }
@@ -257,7 +259,7 @@ Status CommandService::dispatch(cw::Header h,wire::Reader &r,wire::Writer &w)
         case defs::SystemOp::Reboot:
             if(m_core.params().armed()) { return Status::fail(Result::Armed,Detail::LockedWhileArmed); }
             m_after=AfterReply::CommitAndReboot;return {};
-        case defs::SystemOp::LinkConfirm: // reserved: there is no link trial yet
+        case defs::SystemOp::LinkConfirm:return m_core.confirmLink(core_os::nowUs());
         default:return bad(Detail::Unsupported);
         }
     }

@@ -6,6 +6,7 @@ Start with what you see in the app, agent, or ROS terminal. Keep motor power off
 
 - **No serial port.** Try a known data cable in the board’s USB-to-UART connector. The native USB connector carries the firmware console. Close anything already using the port. In Ubuntu, check your serial permissions in [Connect and tour]({{base}}pc/connect/). On the Pi, see the [UART checks](#the-pi-uart-does-not-work).
 - **Protocol mismatch.** Compare the app, firmware, and agent releases. Use a matched set from [Downloads]({{base}}downloads/). When the GUI can still connect for an update, follow [Update firmware]({{base}}pc/update/). For a first flash or incompatible firmware, follow [Flash in the browser]({{base}}flash/) and read the erase warning.
+- **Unreachable after a serial link change.** Press **Reset** or power-cycle the board once so any unconfirmed baud or pin trial reverts to the previous link, then connect with **Baud** set to **Auto**. If a confirmed link is unreachable, erase the NVS partition over USB with `esptool` to return to **921600** on **GPIO 43/44** (warning: erasing NVS clears all saved settings, layout, and device name). Firmware older than core v12 ignores stored link settings and always starts at **921600** on **GPIO 43/44**.
 
 ## Arm is refused
 
@@ -22,6 +23,7 @@ Use the app’s status and diagnostics or the ROS log to identify the refusal. S
 | Safe mode (`SafeMode`) | Check the boot diagnostics and saved layout. Follow [Arming and faults]({{base}}concepts/safety/) to correct the cause before leaving safe mode. |
 | Invalid layout (`LayoutInvalid`) | Fix the reported layout problem in **Layout**. Review the loop, pins, and connections before saving and rebooting. |
 | Reboot required (`RebootPending`) | Review pending edits, save them, and reboot while disarmed. Reconnect and confirm the active layout. |
+| Serial link trial active (`LinkTrialActive`) | Open **Device → Device settings** and select **Confirm link**, or wait for the trial timer to revert to the previous link. |
 | Firmware update active (`OtaActive`) | Finish or cancel the update using the app. Wait until the update reports its outcome. |
 | Firmware update awaits confirmation (`OtaPendingConfirm`) | Check the [firmware update]({{base}}pc/update/) status and resolve the update before trying to arm. |
 | Instance failed to start (`StartFailed`) | Find the failed instance in **Layout**. Check the device diagnostic, its configured pins, and its dependencies. |
@@ -47,7 +49,7 @@ Open **Device** and note the diagnostic source and code. Look it up in [Diagnost
 ## The Pi UART does not work
 
 - Compare the port listing with [Pi setup]({{base}}pi/prepare/). Choose `/dev/ttyAMA0` for GPIO 14 and 15. The Pi 5’s `/dev/ttyAMA10` is the separate debug connector.
-- Check that the serial login service and console leave the UART free. In `/etc/drivelink/agent.json`, check the selected endpoint and the 921,600 baud rate.
+- Check that the serial login service and console leave the UART free. In `/etc/drivelink/agent.json`, check the selected endpoint and leave `"baud": "auto"` (or match the board’s confirmed baud rate).
 - With power off, check that TX goes to RX in both directions and the boards share ground. Check that the Pi and the USB bridge cannot drive the ESP’s RX pin together. See [Pi wiring]({{base}}pi/wire/). After restarting the agent, recheck the device list and service journal.
 
 ## Agent discovery and connection

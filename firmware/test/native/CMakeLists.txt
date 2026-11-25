@@ -65,6 +65,8 @@ set(CORE_SOURCES
     ${COMPONENTS_DIR}/core/src/param_service.cpp
     ${COMPONENTS_DIR}/core/src/pending_layout.cpp
     ${COMPONENTS_DIR}/core/src/boot.cpp
+    ${COMPONENTS_DIR}/core/src/link_service.cpp
+    ${COMPONENTS_DIR}/core/src/link_settings.cpp
     ${COMPONENTS_DIR}/core/src/persistence.cpp
     ${COMPONENTS_DIR}/core/src/ram_estimate.cpp
     ${COMPONENTS_DIR}/core/src/registry.cpp
@@ -116,8 +118,10 @@ set(TEST_SOURCES
     ${PROTOCOL_DIR}/test/test_time_codec.cpp
     ${PROTOCOL_DIR}/test/test_sha256.cpp
     ${PROTOCOL_DIR}/test/test_defs.cpp
+    ${PROTOCOL_DIR}/test/test_link.cpp
     tests/test_core_commands.cpp
     tests/test_core_ota.cpp
+    tests/test_core_link.cpp
     tests/test_core_groups.cpp
     tests/test_core_capture.cpp
     tests/test_core_testgen.cpp

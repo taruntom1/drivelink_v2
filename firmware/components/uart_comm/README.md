@@ -6,7 +6,7 @@ The UART transport between the host and the core: the IDF UART driver, an RX tas
 
 | Call | Contract |
 |---|---|
-| `UartComm(config)`, `isValid()` | Installs the driver and starts both tasks. Check `isValid()`; calls on an invalid object that return `esp_err_t` give `ESP_ERR_INVALID_STATE`. The destructor stops both tasks and releases the driver. |
+| `UartComm(config)`, `isValid()` | Installs the driver and starts both tasks. The caller gives the pins and the rate (`UartCommConfig` has no default for them, and a config without them is invalid): the firmware's come from the [link settings](../../../docs/protocol/core.md#link-settings-and-trial). Check `isValid()`; calls on an invalid object that return `esp_err_t` give `ESP_ERR_INVALID_STATE`. The destructor stops both tasks and releases the driver. |
 | `registerCallback(type, cb, registration)` | Routes one MSG_TYPE to a callback on the RX task; those frames never reach `receive()`. Resets an active `registration` first. A second callback for a type is `ESP_ERR_INVALID_STATE`; an empty callback is `ESP_ERR_INVALID_ARG`. |
 | `CallbackRegistration` | Move-only. `reset()` or destruction unregisters and waits for a running invocation, so captured objects can be destroyed right after. A `reset()` from inside that callback does not wait. Release every registration before destroying the `UartComm`. |
 | `receive(frame, timeout)` | Next frame whose type has no callback, from a bounded queue, or `ESP_ERR_TIMEOUT`. A full queue drops the new frame with a warning. |
@@ -20,8 +20,8 @@ Callbacks run on the RX task with the callback lock held. They must not block or
 
 ## Kconfig
 
-"UART Comm Configuration" in [Kconfig](Kconfig) sets the port, pins, baud, payload limit, buffers, queue depths, task stacks and priorities, and RX timeout. Its port and pin defaults are UART1 on GPIO17 (TX) and GPIO18 (RX); the project's [sdkconfig.defaults](../../sdkconfig.defaults) selects UART0 on GPIO43 and GPIO44, the [bench link](../../../docs/bench.md#the-board). `UART_COMM_MAX_PAYLOAD` (default 1024) sizes `RxFrame`, so a frame is about 1 KB. Keep `UART_COMM_TX_BUF_SIZE` above one full frame, or large writes block the TX task.
+"UART Comm Configuration" in [Kconfig](Kconfig) sets the port, payload limit, buffers, queue depths, task stacks and priorities, and RX timeout. Its port default is UART1; the project's [sdkconfig.defaults](../../sdkconfig.defaults) selects UART0, the [bench link](../../../docs/bench.md#the-board). `UART_COMM_MAX_PAYLOAD` (default 1024) sizes `RxFrame`, so a frame is about 1 KB. Keep `UART_COMM_TX_BUF_SIZE` above one full frame, or large writes block the TX task.
 
 ## Tests
 
-Hardware-in-the-loop tests are in `firmware/test/uart_comm/`; see the [test rules](../../test/CLAUDE.md).
+Hardware-in-the-loop tests are in `firmware/test/uart_comm/`, whose app sets its own pins and rate; see the [test rules](../../test/CLAUDE.md).

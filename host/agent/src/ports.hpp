@@ -29,8 +29,8 @@ std::string usbKind(std::string_view vendor, std::string_view product);
 // serial, "esp-uart" for serial0, "esp-ttyama0"; "-2", "-3"... when taken).
 std::string aliasFor(std::string_view path, const std::set<std::string> &taken);
 
-// The device line: {"alias": ..., "endpoint": "serial://<path>", "baud": 921600}.
-std::string deviceLine(const std::string &alias, const std::string &path, unsigned baud = 921600);
+// The device line: {"alias": ..., "endpoint": "serial://<path>", "baud": "auto"} (or a fixed rate when nonzero).
+std::string deviceLine(const std::string &alias, const std::string &path, unsigned baud = 0);
 
 // The whole --list-ports text for `ports` (a comment line per port, then its device line).
 std::string portListing(const std::vector<PortInfo> &ports);

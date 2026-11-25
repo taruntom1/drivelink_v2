@@ -24,7 +24,7 @@ WRONG_STATE = 46
 def run(cli_path, endpoint, loop_rate=1000, expect_psram=False, stack_wait=0):
     cli = Device(cli_path, endpoint)
     info, original, refs, settings = preflight(cli)
-    serial = endpoint.startswith('serial://')
+    serial = endpoint.startswith('serial://') and not info['firmware_version'].endswith('-vdev')
     capacity = info['capture_capacity']
     assert capacity >= 32768, info
     if expect_psram:

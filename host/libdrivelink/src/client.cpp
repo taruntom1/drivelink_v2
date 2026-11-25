@@ -152,6 +152,7 @@ try
     std::array<char, protocol::kDeviceNameBytes + 1> name{};
     if (!r.ok() || !protocol::readDeviceName(r, name)) { malformed(); }
     j.name = name.data();
+    j.link_trial_ms = r.readU32Le();
     exact(r);
     m_session.setMaxPayload(cap);
     return j;

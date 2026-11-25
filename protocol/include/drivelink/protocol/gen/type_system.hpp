@@ -42,13 +42,29 @@ inline constexpr uint16_t kDiagCounterPeriodMs = 0x0020;
 inline constexpr uint16_t kDiagPollMs = 0x0021;
 /// param diag.stack_log_s: Console stack log period, 0 = off; needs a build with console text
 inline constexpr uint16_t kDiagStackLogS = 0x0022;
+/// param link.baud: Serial link rate; a change reverts after 30 s unless a host confirms it
+inline constexpr uint16_t kLinkBaud = 0x0030;
+/// param link.tx_pin: Serial link TX pin; a pin change reverts after 120 s unless a host confirms it
+inline constexpr uint16_t kLinkTxPin = 0x0031;
+/// param link.rx_pin: Serial link RX pin; a pin change reverts after 120 s unless a host confirms it
+inline constexpr uint16_t kLinkRxPin = 0x0032;
 
 // Retired ids, never reused: 0x0001 control.rate_hz, 0x0002 sensor.rate_hz
 
 namespace detail {
+inline constexpr std::array<EnumValue, 8> kValues0030{{
+    {"baud_115200", 0},
+    {"baud_230400", 1},
+    {"baud_460800", 2},
+    {"baud_921600", 3},
+    {"baud_1000000", 4},
+    {"baud_1500000", 5},
+    {"baud_2000000", 6},
+    {"baud_3000000", 7},
+}};
 } // namespace detail
 
-inline constexpr std::array<ItemDesc, 13> kItems{{
+inline constexpr std::array<ItemDesc, 16> kItems{{
     ItemDesc{
         .id = 0x0003,
         .kind = ItemKind::Param,
@@ -302,6 +318,66 @@ inline constexpr std::array<ItemDesc, 13> kItems{{
         .default_bits = 0x0000001E,
         .has_min = true,
         .has_max = true,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0030,
+        .kind = ItemKind::Param,
+        .type = ValueType::Enum,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "link.baud",
+        .unit = "",
+        .description = "Serial link rate; a change reverts after 30 s unless a host confirms it",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x00000003,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = detail::kValues0030,
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0031,
+        .kind = ItemKind::Param,
+        .type = ValueType::U8,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "link.tx_pin",
+        .unit = "",
+        .description = "Serial link TX pin; a pin change reverts after 120 s unless a host confirms it",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x0000002B,
+        .has_min = false,
+        .has_max = false,
+        .enum_values = {},
+        .ref = nullptr,
+        .runs_in = ActionPlacement::None,
+        .args = {},
+        .results = {},
+        .blob = BlobDir::None,
+    },
+    ItemDesc{
+        .id = 0x0032,
+        .kind = ItemKind::Param,
+        .type = ValueType::U8,
+        .flags = flagBits(ItemFlag::RebootRequired, ItemFlag::Persist),
+        .name = "link.rx_pin",
+        .unit = "",
+        .description = "Serial link RX pin; a pin change reverts after 120 s unless a host confirms it",
+        .min_bits = 0x00000000,
+        .max_bits = 0x00000000,
+        .default_bits = 0x0000002C,
+        .has_min = false,
+        .has_max = false,
         .enum_values = {},
         .ref = nullptr,
         .runs_in = ActionPlacement::None,

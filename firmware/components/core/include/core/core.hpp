@@ -18,6 +18,7 @@
 #include "core/group_service.hpp"
 #include "core/instance.hpp"
 #include "core/instance_table.hpp"
+#include "core/link_service.hpp"
 #include "core/loop.hpp"
 #include "core/module_type.hpp"
 #include "core/param_service.hpp"
@@ -120,7 +121,8 @@ public:
     /// Write a new generation: the pending layout if there is one, else the
     /// configured records (every record, running or not), with every
     /// `persist` param, and the system params (the `reboot_required` ones from
-    /// the pending copy). Refused while armed (`Armed`).
+    /// the pending copy). The link settings go to their own records, last: a
+    /// changed link becomes a trial. Refused while armed (`Armed`).
     /// A write failure answers `Fault` / `StorageFailed` and leaves the
     /// previous generation intact.
     Status save();
@@ -134,13 +136,30 @@ public:
     /// holds none. A failed batch stops it; the batches before it stay.
     Status revert();
 
-    /// Erase every core namespace (the layout and every instance). Refused
-    /// while armed. The reboot is the caller's job.
+    /// Erase every core namespace (the layout and every instance). The
+    /// confirmed link stays; a saved link change that no boot has tried is
+    /// dropped. Refused while armed. The reboot is the caller's job.
     Status factoryReset();
 
     /// Clear the crash counter, so the next boot is a normal one. The reboot
     /// is the caller's job.
     Status exitSafeMode();
+
+    // -- the link trial (config task) ---------------------------------------------
+
+    /// LINK_CONFIRM: keep the link this boot is trying.
+    Status confirmLink(int64_t now_us);
+    /// What is left of the trial, 0 without one (GET_INFO).
+    uint32_t linkTrialRemainingMs(int64_t now_us) const { return m_link.trialRemainingMs(now_us); }
+    /// Any task.
+    bool linkTrialActive() const { return m_link.trialActive(); }
+    /// The next boot's link is another than the confirmed one: staged or saved.
+    bool linkChangePending() const;
+    /// Call it regularly. At the trial's end it disarms and reports
+    /// `core.LinkReverted`; a moment later it returns true: reboot now.
+    bool serviceLink(int64_t now_us);
+    const LinkService &link() const { return m_link; }
+
     Status runAction(Ref ref, const ActionArgs &args, ActionOut &out);
     Status arm();
     void disarm(DisarmReason reason = DisarmReason::Explicit) { m_arm.disarm(reason); }
@@ -212,6 +231,9 @@ private:
     detail::InstanceRecord &systemRecord() const { return m_table.at(0); }
     Status layoutOpAllowed() const;
     void initializeLimits(detail::InstanceRecord &record);
+    /// A link setting may be staged now (the pending copy's gate).
+    static Status linkChangeAllowed(void *ctx);
+    LinkSettings pendingLink() const;
 
     const CoreConfig m_config;
     ArmState m_arm;
@@ -228,6 +250,7 @@ private:
     OtaService m_ota;
     SourceService m_sources;
     PendingLayout m_pending;
+    LinkService m_link;
     core_os::OneShotTimer m_crash_clear;
     core_os::PeriodicTimer m_monitor;
     std::atomic<uint32_t> m_watchdog_us{200000};

@@ -104,6 +104,11 @@ struct CoreLink::Impl {
             }
         }
         const auto now=core_os::nowUs();
+        if(core.serviceLink(now)) {
+            // Unconfirmed link trial: the report has left or never will.
+            ESP_LOGE(TAG,"link trial not confirmed; rebooting to the confirmed link");
+            (void)uart.waitTxIdle(1000);core_os::reboot();
+        }
         if(now<next_status) { return; }
         const Ref rate{0,0,3};uint32_t hz=10;
         core.params().get({&rate,1},{&hz,1});

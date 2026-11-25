@@ -413,6 +413,11 @@ lock cycle. This is stress coverage, not a forced scheduling interleaving.
 it also checks Boot invalidation/reload, restoring the original idle groups.
 See host/README.md for its preconditions and native scheduling distinction.
 
+`host-link` runs the link trial and the baud auto-detection of `libdrivelink`
+(`link_probe`) against vdev: over TCP, and on Linux also over a PTY, where vdev drops
+the traffic of every other rate and of moved wires. `link_probe` also drives the
+[link-trial bench procedure](bench.md#link-trial).
+
 For a focused Linux GNU ThreadSanitizer run, use a separate build directory:
 
 ```sh

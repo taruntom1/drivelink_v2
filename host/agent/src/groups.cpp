@@ -37,7 +37,7 @@ Route classify(uint8_t msg_type, uint8_t family, uint8_t op)
         case defs::SystemOp::Reboot:
         case defs::SystemOp::ExitSafeMode:
         case defs::SystemOp::SetName:
-        case defs::SystemOp::LinkConfirm: // reserved: the device answers Unsupported
+        case defs::SystemOp::LinkConfirm: // confirms a running link trial
         case defs::SystemOp::BenchStall: // test builds only; they stall a loop or crash
         case defs::SystemOp::BenchCrash: return Route::Exclusive;
         default: return Route::Forward; // GET_INFO, ACK_FAULT, unknown

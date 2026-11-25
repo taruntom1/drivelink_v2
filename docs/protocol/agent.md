@@ -45,7 +45,7 @@ is outside the TCP protocol and left the version at 3.
 
 All three MSG_TYPEs are agent-only ([registry.md](registry.md)); the agent
 never forwards them to a device. Version byte `3` is the agent protocol
-version, independent of core (10), time (1) and diag (3). Strings are
+version, independent of core (12), time (1) and diag (3). Strings are
 `length u8 | bytes` (no terminator); integers are little-endian; `f64` is an
 IEEE 754 binary64, little-endian.
 
@@ -230,7 +230,7 @@ agent's system clock when it recorded the entry.
 
   | Family | Ops |
   |---|---|
-  | System | SAVE, REVERT, FACTORY_RESET, REBOOT, EXIT_SAFE_MODE, SET_NAME, LINK_CONFIRM (reserved), BenchStall and BenchCrash (test builds only) |
+  | System | SAVE, REVERT, FACTORY_RESET, REBOOT, EXIT_SAFE_MODE, SET_NAME, LINK_CONFIRM, BenchStall and BenchCrash (test builds only) |
   | Layout | ADD_INSTANCE, REMOVE_INSTANCE, SET_LABEL, DISCARD_PENDING |
   | Capture | CONFIG, ARM, ABORT, TRIGGER |
   | Testgen | START, STOP |
@@ -338,11 +338,17 @@ Group ids are device resources; the agent gives each client its own view.
 ## Device lifecycle
 
 - The agent opens each configured device and retries a failed or lost one every
-  2 s, without affecting the others.
+  2 s, without affecting the others. Serial devices default to `"baud": "auto"`,
+  trying the last known rate first and then the firmware rates; once open, the
+  agent remembers the detected rate as its next hint.
 - On every open, before it accepts clients for that device, the agent reads
   GET_INFO (a core version other than its own keeps the device offline, with a
   log line), sends DISARM, and clears every configured subscription and command
-  group, so nothing left by an earlier owner keeps streaming or commanding.
+  group, so nothing left by an earlier owner keeps streaming or commanding. If
+  this device was already online before and reconnects with the same `device_id`
+  and `link_trial_ms > 0`, the agent confirms the trial (`LINK_CONFIRM`) before
+  re-exposing the device; a first connect does not auto-confirm (clients may
+  confirm it through the exclusive `LINK_CONFIRM` op).
 - When the link fails, the device goes offline: its connections get a Closing
   event (DeviceOffline) and are closed; the lobby shows it offline. History
   records Online and Offline.

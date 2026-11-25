@@ -50,7 +50,7 @@ int main(int argc,char **argv) {
     QGuiApplication app(argc,argv);app.setApplicationName("DriveLink");
     QCommandLineParser parser;parser.addHelpOption();
     parser.addOption({"endpoint","Connect to a serial or TCP endpoint.","url"});
-    parser.addOption({"baud","Serial baud rate (default 921600).","rate","921600"});
+    parser.addOption({"baud","Serial baud rate: auto (default) or a fixed rate.","rate","auto"});
     // Remote mode (H3b-1): connect through drivelink-agent as an observer.
     parser.addOption({"agent","Connect through drivelink-agent at host[:port] (port 47620 by default).","address"});
     parser.addOption({"token","The agent's token (default: DRIVELINK_AGENT_TOKEN).","token"});
@@ -117,9 +117,12 @@ int main(int argc,char **argv) {
     if((screen=="lease-release" || screen=="revoked") && !takeLease) {std::fprintf(stderr,"--screen %s needs --take-lease\n",qPrintable(screen));return 2;}
     if(liveEditScreen && !liveEditText.contains(QLatin1Char('='))) {std::fprintf(stderr,"--screen live-edit needs --live-edit KEY=VALUE\n");return 2;}
     if(!pages.contains(screen) && !states.contains(screen)) {std::fprintf(stderr,"Unknown screen\n");return 2;}
-    bool numeric=false;const int baud=parser.value("baud").toInt(&numeric);
+    const QString baudText=parser.value("baud").trimmed();
+    bool numeric=false;
+    const bool isAuto=baudText.compare(QLatin1String("auto"),Qt::CaseInsensitive)==0;
+    const int baud=isAuto?0:baudText.toInt(&numeric);
     const int settle=parser.value("settle").toInt();
-    if(!numeric || baud<=0 || settle<0) {std::fprintf(stderr,"Invalid --baud or --settle\n");return 2;}
+    if((!isAuto && (!numeric || baud<0 || baud>4000000)) || settle<0) {std::fprintf(stderr,"Invalid --baud or --settle\n");return 2;}
     drivelink::gui::LocalConnection connection;
     if(parser.isSet("settings")) {connection.setSettingsPath(parser.value("settings"));}
     drivelink::gui::AppSettings appSettings(connection.settingsPath());

@@ -2,7 +2,8 @@
 
 Plan for [issue 105](https://github.com/taruntom1/drivelink_v2/issues/105): change at
 run time, through the CLI, GUI and agent, what now needs a Kconfig edit and a
-rebuild. Five PRs, one per step, in order. State: **steps 1 to 4 done**; step 5 planned.
+rebuild. Five PRs, one per step, in order. State: **steps 1 to 5 done** (step 5a
+and 5b complete on `claude/runtime-settings-5`, PR #120).
 
 ## Why it fits the current design
 
@@ -32,7 +33,7 @@ things are missing:
 | Safe mode, FACTORY_RESET | Both keep the confirmed link |
 | GUI | A settings card on the Device page (Figma first) |
 | CLI | Numeric references only; no `settings` command |
-| Wire | Core v10 to v11 once, in step 1, with LINK_CONFIRM and its details reserved |
+| Wire | Core v10 to v11 in step 1, with LINK_CONFIRM and its details reserved; v12 in step 5 (GET_INFO's trial time, decided 2026-11-25) |
 
 ## What moves
 
@@ -43,7 +44,7 @@ things are missing:
 | `DIAG_COUNTER_PERIOD_MS`, `DIAG_REPORTER_POLL_MS`, `DRIVELINK_STACK_LOG_PERIOD_S` | new `diag.*` system params | live | 2 |
 | `MOTOR_HAL_PWM_FREQ_HZ` | `actuator.pwm_dir` `pwm_freq_hz` | reboot | 3 |
 | `ENCODER_HAL_GLITCH_FILTER_NS` | `feedback.quadrature` `glitch_ns` | reboot | 3 |
-| `UART_COMM_BAUD_RATE`, `UART_COMM_TX_PIN`, `UART_COMM_RX_PIN` | `link.baud`, `link.tx_pin`, `link.rx_pin` | reboot, trial | 5 |
+| `UART_COMM_BAUD_RATE`, `UART_COMM_TX_PIN`, `UART_COMM_RX_PIN` | `link.baud`, `link.tx_pin`, `link.rx_pin` | reboot, trial | 5a |
 
 **Stays in Kconfig:** `UART_COMM_PORT_NUM`; `UART_COMM_MAX_PAYLOAD` (sizes static
 memory); all task stacks and priorities, queue depths and buffer sizes; the MCPWM
@@ -150,6 +151,32 @@ limit works by hand on vdev and on the bare board.
 
 Riskiest step: an error here can cut off a device.
 
+Two parts, two sessions, **one branch (`claude/runtime-settings-5`) and one PR**:
+
+| Part | Covers | Starts from |
+|---|---|---|
+| [5a](#step-5a-firmware-and-host-library) | Definitions, wire, firmware, UART test app, vdev, `libdrivelink` | `main` after step 4 |
+| [5b](#step-5b-agent-cli-gui-and-docs) | Agent, CLI, GUI, ROS audit, guide, end-to-end and bench runs | the last commit of 5a |
+
+- **In order.** 5b uses the 5a API and starts only when 5a's "Done when" holds. Both
+  work on the same branch; 5b never starts a second branch or PR.
+- **The boundary.** 5a edits no file under `host/agent`, `host/cli`, `host/gui`,
+  `host/ros` or `guide/`, except where a build or an existing test would break (a
+  generated header, `cli-golden.json`, a test that asserts LINK_CONFIRM is
+  unsupported). 5b changes `firmware/`, `protocol/`, `host/vdev` and
+  `host/libdrivelink` only to fix a fault it finds, in its own commit with a test.
+- **Auto-detect is opt-in in 5a.** A caller that sets nothing still opens at 921600,
+  so the agent, CLI, GUI and ROS plugin build unmodified and behave as before. 5b
+  switches each of them to auto. Between the two parts only the 5a tests confirm a
+  trial, so one started with the CLI just reverts.
+- **The PR** is opened as a draft at the end of 5a, so that CI runs (Linux, PTY), and
+  says that 5b is left. It is not merged until 5b marks it ready. Each part adds its
+  local checks to the PR text.
+- **Handoff.** 5a ends by filling in [Handoff from 5a](#handoff-from-5a). 5b reads it
+  first.
+
+### Step 5a: firmware and host library
+
 - **Params.** `link.baud` is an enum: 115200, 230400, 460800, 921600 (default),
   1000000, 1500000, 2000000, 3000000. `link.tx_pin` and `link.rx_pin` default to
   43 and 44. Refused: TX equal to RX, a pin outside the GPIO policy, a pin any
@@ -168,26 +195,113 @@ Riskiest step: an error here can cut off a device.
   DISARMs, reports a diag code and reboots. A link change is refused while an OTA
   image is unconfirmed, and OTA BEGIN is refused during a trial. GET_INFO reports the
   trial and its remaining time.
+- **Wire.** LINK_CONFIRM and its details are reserved in v11. GET_INFO gets
+  `link_trial_ms` at its end, so core is v12 (user decision, see the handoff).
+  Update `docs/protocol/` and the Python HIL reference in the same change.
+- **Kconfig.** Remove the three `UART_COMM_*` options. The UART test app sets its own
+  pins and baud.
+- **vdev.** Link settings, trial, timeout and LINK_CONFIRM through the shared core
+  code. A PTY passes bytes whatever the rate, so vdev over a PTY must drop or garble
+  traffic while the host's termios rate is not the running rate; otherwise the
+  auto-detect tests prove nothing. A shorter trial time for tests is a vdev option.
 - **Host library.** Open with `baud = auto`: last known rate, 921600, then the others,
   bounded, sending only GET_INFO. A fixed baud tries only that one. A reboot
   expectation covers the trial. LINK_CONFIRM goes out once, only after the device id
-  matches; a lost reply is resolved by reading GET_INFO, never re-sent blindly.
+  matches; a lost reply is resolved by reading GET_INFO, never re-sent blindly. The
+  rate found, the trial state and the outcome (confirmed, reverted, not reachable)
+  are typed results, so that 5b only presents them.
+- **Docs.** Component and library READMEs, `docs/protocol/`, `firmware-architecture.md`
+  and the link-trial bench procedure in `docs/bench.md`.
+
+**Done when** native tests cover power loss at every write, timeout, crash, UART failure
+and late confirm; library tests against vdev over a PTY show auto-detect, confirm,
+revert and a lost LINK_CONFIRM reply; the agent, CLI, GUI and ROS builds and tests pass
+without feature changes; and on the bare board (CH343), through a library or HIL test,
+one baud trial passes, an unconfirmed one reverts and a bad pin reverts. Ask before
+changing pins; restore the link settings.
+
+### Step 5b: agent, CLI, GUI and docs
+
 - **Agent.** `baud` accepts `"auto"` (new default). It confirms a trial after
   reconnecting to the same device id and keeps the rate it found. LINK_CONFIRM from
-  clients is an exclusive operation.
+  clients is an exclusive operation (`groups.cpp` lists it as reserved).
 - **CLI.** `--baud auto` default, and `link-confirm`. `reboot` stays a plain reboot:
   it prints that a trial is pending and the command to confirm it.
-- **GUI.** The card warns before the reboot, shows the countdown and the outcome
-  (confirmed, reverted, not reachable), and says to move the wires on a pin change.
+- **GUI.** Figma first (`gui-design-step`), accepted by the user before any GUI code.
+  Connect offers auto and the fixed rates. The card warns before the reboot, shows the
+  countdown and the outcome (confirmed, reverted, not reachable), and says to move the
+  wires on a pin change. Local and through the agent.
+- **ROS.** Check the plugin and bringup for a hard-coded baud and for their behavior
+  while a trial refuses ARM.
 - **Recovery.** Document erasing the NVS partition over USB with esptool, which clears
   all settings. Also document that firmware older than this step ignores the link
   settings and comes up at 921600 on 43/44.
+- **Docs.** CLI, agent and GUI READMEs, `docs/protocol/agent.md`, and the guide's
+  connect, agent and Device settings pages.
 
-**Done when** native tests cover power loss at every write, timeout, crash, UART failure
-and late confirm; vdev over a PTY shows auto-detect, confirm and revert through the CLI,
-GUI and agent; and on the bare board (CH343) every rate the adapter supports passes a
-baud trial, an unconfirmed one reverts, and a bad pin reverts. A real pin change and the
-Pi UART become deferred rows.
+**Done when** vdev over a PTY shows auto-detect, confirm and revert through the CLI, GUI
+and agent; GUI tests cover each state locally and through the agent; and on the bare
+board (CH343), through these clients, every rate the adapter supports passes a baud
+trial, an unconfirmed one reverts, and a bad pin reverts. A real pin change and the Pi
+UART become deferred rows in [host-status.md](host-status.md). Then the PR is marked
+ready with both parts' checks, and this plan says step 5 is done.
+
+### Handoff from 5a
+
+**Last commit.** The branch tip when the PR was opened; its code is `a5a29c9`: `0da0e50` (firmware)
+and `c6eb24e` (vdev, library), and the board runs `c6eb24e`.
+
+**User decisions (2026-11-25).**
+
+1. Core v12: GET_INFO appends `link_trial_ms u32` (rounded up; 0 only without a trial).
+2. OTA BEGIN is refused in a trial (`LinkTrialActive`) and while a link change is
+   staged or saved (`RebootPending`). A boot on an unconfirmed image, and in safe mode,
+   runs the confirmed link and leaves the saved trial for a later boot.
+3. FACTORY_RESET drops a saved, untried trial and keeps the confirmed link.
+4. The UART opens on the trial, else the confirmed link, else the factory one, reported
+   with `core.LinkReverted`; nothing is stored.
+
+**Wire.** [core.md](../docs/protocol/core.md#link-settings-and-trial) has the settings
+(0x0030 to 0x0032), the trial and every refusal.
+
+**Library for 5b** (`drivelink/link.hpp`, `drivelink/session.hpp`):
+
+| 5b needs | Call |
+|---|---|
+| Open at an unknown rate | `SessionOptions::baud = kBaudAuto` (0), `last_baud` (hint), `detect_timeout` (5 s: about three rounds of eight rates, 200 ms each). Nothing answered: `Error` of kind `Timeout`. `Session::baud()` is the rate found: store it as the hint |
+| Show the link and a trial's countdown | `linkState(client)`: `running`, `next` (the confirmed link in a trial), `trial()`, `changed()`, `info.link_trial_ms` (also in `Client::info()`) |
+| Before the REBOOT | `expectLinkTrial(state)`: device id, both links, `window()` (45 s or 135 s) |
+| CLI, or a wait of its own | `followLinkTrial(endpoint, options, expectation, {confirm, window}, cancelled)` |
+| GUI and agent, on their own connection | `settleLinkTrial(client, expectation, confirm)` after each reconnect |
+| A trial nobody expected (`link-confirm`, an agent that reconnects) | `confirmLinkTrial(client, device_id)`: Confirmed, Unconfirmed (lost, may be sent again), NoTrial, Reverted, WrongDevice |
+| Outcomes | `LinkOutcome`: Confirmed, Unconfirmed, Reverted, NotRebooted, Deferred (safe mode), WrongDevice, OtherLink, NotReachable; `linkOutcomeText()` |
+
+`link_probe` (host tests) is a small caller of all of it. vdev: `--link-trial-ms`, the
+scenarios `drop-confirm`, `drop-confirm-reply` and `wires TX RX`, and on a PTY no traffic
+at another rate or on moved wires.
+
+**What ran.** Native tests (17 link cases: every write lost, timeout, crash, UART failure,
+late confirm). `host-link` (new): auto-detect, all eight rates, confirm, revert, lost
+request and reply, crash, moved wires; TCP on Windows and Linux, PTY on Linux. Local
+checks and board runs are in the PR and in [hardware-log.md](hardware-log.md): every rate,
+an unconfirmed trial, a bad pin and a reset in a trial, from Windows and from WSL.
+
+**Beyond the plan.** Every rate already ran on the board through the library; 5b repeats
+it through its clients. The 1500000 rate needed a serial option of our own on Linux (Asio
+1.30.2 does not know it).
+
+**For 5b.**
+
+- `kBaudAuto` is 0, so `--baud 0` of the CLI already auto-detects (undocumented).
+- Opening with `kBaudAuto` blocks for up to `detect_timeout` in the constructor and cannot
+  be cancelled: keep it off the UI thread and short in a reconnect loop.
+- A device in a trial that expired reports at least 1 ms until it reboots, and answers
+  LINK_CONFIRM with NoLinkTrial: wait for the revert.
+- `host/agent/src/groups.cpp` still comments LINK_CONFIRM as reserved.
+- The CLI's `info` does not show `link_trial_ms` yet. The Device settings card shows the
+  three link rows like any other setting, without a warning or a trial.
+- Not done here, as planned: the guide, the recovery text, and the deferred rows for a
+  real pin change and the Pi UART.
 
 ## For every step
 
@@ -195,10 +309,10 @@ Pi UART become deferred rows.
   generated files, READMEs and
   `docs/protocol/` in the same PR; `cli-golden.json` follows the descriptor hash.
 - Delete `firmware/sdkconfig` and `firmware/test/uart_comm/sdkconfig` after a Kconfig
-  removal. The UART test app sets its own pins and baud from step 5.
+  removal. The UART test app sets its own pins and baud from step 5a.
 - Board runs go in [hardware-log.md](hardware-log.md).
 - Steps 2, 3 and 4 may be reordered after step 1; step 4 is most useful after step 2.
-  Step 5 needs 1 and 4.
+  Step 5 needs 1 and 4; 5b needs 5a.
 
 ## Not in this issue
 

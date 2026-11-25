@@ -232,6 +232,12 @@ UartComm::UartComm(const UartCommConfig& config)
     m_impl->parser = nullptr;
     m_impl->valid = false;
 
+    if (config.tx_pin < 0 || config.rx_pin < 0 || config.baud_rate <= 0) {
+        ESP_LOGE(TAG, "No pins or rate for UART port %d (tx=%d rx=%d baud=%d)",
+                 m_impl->port, config.tx_pin, config.rx_pin, config.baud_rate);
+        return;
+    }
+
     // Configure UART parameters
     uart_config_t uart_cfg = {};
     uart_cfg.baud_rate = config.baud_rate;

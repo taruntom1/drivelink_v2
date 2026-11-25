@@ -9,6 +9,7 @@
 #include "remote_model.hpp"
 #include "tune_view.hpp"
 #include <drivelink/buffers.hpp>
+#include <drivelink/link.hpp>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QTimer>
@@ -74,6 +75,10 @@ class Connection : public QObject {
     // rebootNote, safeMode, savedThenDiscarded, discardAfterSave}.
     Q_PROPERTY(QAbstractItemModel* systemParams READ systemParams CONSTANT)
     Q_PROPERTY(QVariantMap deviceSettings READ deviceSettings NOTIFY changed)
+    // Link settings trial (issue 105 step 5b): staged warning, reboot wait
+    // countdown, active trial banner with confirm action, and outcomes
+    // (confirmed, reverted, not_reachable, deferred, wrong_device, other_link).
+    Q_PROPERTY(QVariantMap linkTrial READ linkTrial NOTIFY changed)
     Q_PROPERTY(QVariantMap layout READ layout NOTIFY changed)
     // The selected node's live data (its own signal, about 5 Hz): {note,
     // telemetry, hidden, signals[], statistics{}, sources{key: state}}.
@@ -164,6 +169,7 @@ public:
     virtual QAbstractItemModel *params()=0;
     virtual QAbstractItemModel *systemParams()=0;
     virtual QVariantMap deviceSettings() const=0;
+    virtual QVariantMap linkTrial() const=0;
     virtual QVariantMap layout() const=0;
     virtual QVariantMap live() const=0;
     virtual QAbstractItemModel *actions()=0;
@@ -243,9 +249,11 @@ public:
     Q_INVOKABLE virtual void removeNode(const QString &key)=0;
     Q_INVOKABLE virtual void setNodeLabel(const QString &key,const QString &label)=0;
     Q_INVOKABLE virtual void discardPending()=0;
-    Q_INVOKABLE virtual void connectTo(const QString &endpoint,int baud=921600)=0;
+    Q_INVOKABLE virtual void connectTo(const QString &endpoint,int baud=0,int lastBaud=0)=0;
     Q_INVOKABLE virtual void retry()=0;
     Q_INVOKABLE virtual void disconnectDevice()=0;
+    Q_INVOKABLE virtual void confirmLink()=0;
+    Q_INVOKABLE virtual void dismissLinkOutcome()=0;
     Q_INVOKABLE virtual void arm()=0;
     Q_INVOKABLE virtual void disarm()=0;
     Q_INVOKABLE virtual void acknowledge()=0;
@@ -347,6 +355,7 @@ public:
     QAbstractItemModel *params() override {return &m_params;}
     QAbstractItemModel *systemParams() override {return &m_systemParams;}
     QVariantMap deviceSettings() const override;
+    QVariantMap linkTrial() const override;
     QVariantMap layout() const override;
     QVariantMap live() const override;
     QAbstractItemModel *actions() override {return &m_actions;}
@@ -428,9 +437,11 @@ public:
     QString rebootBlocked() const;
     QString liveParamBlocked() const;
     QString selectedNode() const {return m_selected;}
-    void connectTo(const QString &,int baud=921600) override;
+    void connectTo(const QString &,int baud=0,int lastBaud=0) override;
     void retry() override;
     void disconnectDevice() override;
+    void confirmLink() override;
+    void dismissLinkOutcome() override;
     void arm() override;
     void disarm() override;
     void acknowledge() override;
@@ -465,6 +476,8 @@ public:
     }
     // The reconnect window after a requested reboot (default 30 s).
     void setReconnectWindow(int ms) {m_reconnectWindowMs=ms;}
+    // Test override for the link-trial reconnect window (0 = use expectation window).
+    void setLinkWaitWindow(int ms) {m_linkWaitOverrideMs=ms;}
     std::shared_ptr<const DeviceSnapshot> snapshot() const {return m_snapshot;}
     // Tests/next screens can select descriptor rows without adding module rules.
     void selectRows(DescriptorRows &,uint8_t type,uint8_t instance,bool pending=false) const;
@@ -516,7 +529,7 @@ private:
     // operator (G6); true when it was held.
     bool holdLiveEdit(const QString &key,const QString &what,std::function<void()> send,std::function<void()> cancel);
     void dropLiveEdit();
-    void open(const QString &endpoint,int baud);
+    void open(const QString &endpoint,int baud,int lastBaud=0);
     void pollAgentEvents();
     void agentEvent(const Frame &frame);
     void leaseGained();
@@ -702,7 +715,20 @@ private:
     QVariantMap m_error,m_mismatch,m_notice;
     // Changes this GUI made since the last SAVE, per device id.
     QHash<QString,QStringList> m_changes;
-    int m_baud=921600,m_loadStep=0,m_reconnectWindowMs=30000,m_pollTick=0;
+    int m_baud=921600,m_requestedBaud=0,m_lastBaud=0,m_loadStep=0,m_reconnectWindowMs=30000,m_pollTick=0;
+    // Link settings trial state (issue 105 step 5b).
+    std::optional<LinkExpectation> m_linkExpectation;
+    QVariantMap m_linkOutcome;
+    QElapsedTimer m_linkWaitElapsed,m_linkTrialElapsed;
+    uint32_t m_linkTrialBaseMs=0;
+    uint64_t m_linkTrialGen=0,m_linkSettledGen=0,m_linkRebootSerial=0,m_linkRebootGeneration=0;
+    int m_linkWaitMs=0,m_linkWaitOverrideMs=0;
+    bool m_linkConfirmBusy=false,m_linkSettlePending=false,m_linkNotReachable=false,m_linkNotReachablePins=false;
+    QString m_linkNotReachableOld,m_linkNotReachableNew;
+    bool linkTrialActive() const;
+    bool linkChangeStaged() const;
+    void settlePendingLinkTrial();
+    void clearLinkTrialState();
     bool m_loading=false,m_closing=false,m_groupsReady=false,m_setupPending=false;
     bool m_arming=false,m_armPending=false,m_disarmPending=false,m_disarmAgain=false;
     // The ARM reply arrived (accepted): the next status settles "arming".

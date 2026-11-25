@@ -27,6 +27,12 @@ Ota::~Ota() {
         }
     }
 }
+bool otaImageUnconfirmed() {
+    const auto *running=esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (!running || esp_ota_get_state_partition(running,&state)!=ESP_OK) { return true; }
+    return state!=ESP_OTA_IMG_VALID && state!=ESP_OTA_IMG_UNDEFINED;
+}
 Err Ota::info(OtaBootInfo &out) {
     const auto *running=esp_ota_get_running_partition();
     const auto *selected=esp_ota_get_boot_partition();

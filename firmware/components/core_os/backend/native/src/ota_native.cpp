@@ -13,6 +13,7 @@ namespace {
 std::filesystem::path directory;
 drivelink::protocol::Sha256Digest baseline_elf{};
 std::string baseline_version;
+bool unconfirmed_for_test=false;
 constexpr size_t kMetaBytes=4+4+2*(32+33)+32;
 }
 struct Ota::Impl {
@@ -24,6 +25,32 @@ struct Ota::Impl {
     std::filesystem::path path;
     std::string fail;
     bool failed(const char *name) { if (fail==name) { fail.clear();return true; }return false; }
+    void load() {
+        constexpr uint8_t baseline[]{'n','a','t','i','v','e'};
+        slots[0].elf=p::sha256(baseline);std::copy_n("0.1.0-vdev",11,slots[0].version.data());
+        if (!baseline_version.empty()) {
+            slots[0].elf=baseline_elf;
+            slots[0].version.fill(0);
+            std::copy_n(baseline_version.data(),std::min<size_t>(32,baseline_version.size()),slots[0].version.data());
+        }
+        if (directory.empty()) { return; }
+        path=directory/"ota.bin";
+        std::error_code ec;const bool exists=std::filesystem::exists(path,ec);
+        if (ec) { valid=false;return; }
+        if (!exists) { return; }
+        std::ifstream f(path,std::ios::binary);
+        std::array<uint8_t,kMetaBytes> bytes{};
+        if (!f.read(reinterpret_cast<char *>(bytes.data()),bytes.size()) || f.peek()!=EOF) { valid=false;return; }
+        const auto digest=p::sha256(std::span(bytes).first(kMetaBytes-32));
+        p::wire::Reader r(bytes.data(),bytes.size());
+        if (r.readU32Le()!=0x3141544f || !std::equal(digest.begin(),digest.end(),bytes.end()-32)) { valid=false;return; }
+        running=r.readU8();selected=r.readU8();previous=r.readU8();const auto was_pending=r.readU8();
+        if (running>1 || selected>1 || previous>1 || was_pending>1) { valid=false;return; }pending=was_pending;
+        for (auto &slot:slots) {
+            for (auto &b:slot.elf) { b=r.readU8(); }
+            for (auto &b:slot.version) { b=static_cast<char>(r.readU8()); }slot.version[32]=0;
+        }
+    }
     bool save() {
         if (path.empty()) { return true; }
         std::array<uint8_t,kMetaBytes> bytes{};
@@ -45,34 +72,15 @@ struct Ota::Impl {
     }
 };
 Ota::Ota() : m_impl(std::make_unique<Impl>()) {
-    auto &d=*m_impl;
-    constexpr uint8_t baseline[]{'n','a','t','i','v','e'};
-    d.slots[0].elf=p::sha256(baseline);std::copy_n("0.1.0-vdev",11,d.slots[0].version.data());
-    if (!baseline_version.empty()) {
-        d.slots[0].elf=baseline_elf;
-        d.slots[0].version.fill(0);
-        std::copy_n(baseline_version.data(),std::min<size_t>(32,baseline_version.size()),d.slots[0].version.data());
-    }
-    if (!directory.empty()) {
-        d.path=directory/"ota.bin";
-        std::error_code ec;const bool exists=std::filesystem::exists(d.path,ec);
-        if (ec) { d.valid=false;return; }
-        if (exists) {
-            std::ifstream f(d.path,std::ios::binary);
-            std::array<uint8_t,kMetaBytes> bytes{};
-            if (!f.read(reinterpret_cast<char *>(bytes.data()),bytes.size()) || f.peek()!=EOF) { d.valid=false;return; }
-            const auto digest=p::sha256(std::span(bytes).first(kMetaBytes-32));
-            p::wire::Reader r(bytes.data(),bytes.size());
-            if (r.readU32Le()!=0x3141544f || !std::equal(digest.begin(),digest.end(),bytes.end()-32)) { d.valid=false;return; }
-            d.running=r.readU8();d.selected=r.readU8();d.previous=r.readU8();const auto pending=r.readU8();
-            if (d.running>1 || d.selected>1 || d.previous>1 || pending>1) { d.valid=false;return; }d.pending=pending;
-            for (auto &slot:d.slots) {
-                for (auto &b:slot.elf) { b=r.readU8(); }
-                for (auto &b:slot.version) { b=static_cast<char>(r.readU8()); }slot.version[32]=0;
-            }
-        }
-    }
-    d.boot();
+    m_impl->load();
+    if (m_impl->valid) { m_impl->boot(); }
+}
+bool otaImageUnconfirmed() {
+    // What the Ota built by this boot will find: a selected slot that has not run
+    // yet. A pending one rolls back first. The metadata is not touched here.
+    Ota::Impl d;
+    d.load();
+    return unconfirmed_for_test || !d.valid || (!d.pending && d.selected!=d.running);
 }
 Ota::~Ota() = default;
 Err Ota::info(OtaBootInfo &out) {
@@ -118,5 +126,6 @@ void setOtaDirectory(const std::filesystem::path &path) { directory=path; }
 void setOtaBaseline(const drivelink::protocol::Sha256Digest &elf,const char *version) { baseline_elf=elf;baseline_version=version; }
 void failOtaOperation(Ota &ota,const char *operation) { ota.m_impl->fail=operation; }
 void rebootOta(Ota &ota) { ota.m_impl->boot(); }
+void setOtaImageUnconfirmed(bool unconfirmed) { unconfirmed_for_test=unconfirmed; }
 }
 }

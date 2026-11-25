@@ -167,6 +167,6 @@ TEST_CASE("SET_NAME validates the entire request before applying and GET_INFO ex
     const std::array<uint8_t,4> request{v,1,1,1};
     const auto n = service.handle(request, f.out);
     REQUIRE(n >= 13); CHECK(f.out[4] == 0);
-    CHECK(std::equal(info.device_id.begin(), info.device_id.end(), f.out.begin() + n - 7));
+    CHECK(std::equal(info.device_id.begin(), info.device_id.end(), f.out.begin() + n - 11));
     CHECK(f.out[n-1] == 0);
 }

@@ -123,6 +123,7 @@ CoreConfig withSystemSettings(CoreConfig base, std::span<const uint32_t> values)
     if (base.configure_system != nullptr) {
         base.configure_system(base, values);
     }
+    base.gpio_allowed_mask &= ~linkFrom(*base.system_type, values).pinMask();
     return base;
 }
 
@@ -141,6 +142,7 @@ Core::Core(const CoreConfig &config)
 {
     m_params.setPendingLayout(&m_pending);
     m_params.useArmWord(&m_arm.word);
+    m_pending.setLinkGate(&Core::linkChangeAllowed, this);
     m_actuators = std::make_unique<Instance *[]>(m_config.max_instances);
     std::unique_ptr<detail::InstanceRecord> record =
         makeRecord(systemType(), drivelink::protocol::defs::kSystemTypeId, 0, kNoLoop, "system", nullptr);
@@ -290,13 +292,14 @@ Status Core::boot(BootPlan plan)
     persist::LoadedConfig &cfg = plan.config;
     m_newest_gen = cfg.newest_gen;
     detail::InstanceRecord &system = systemRecord();
+    m_link.initialize(*m_store, plan.link, m_config.link_trial, core_os::nowUs());
+    m_pending.setSavedSystem(savedSystemValues(plan, *system.desc));
+    std::ranges::copy(runningSystemValues(plan, *system.desc), system.shadow.get());
+    initializeLimits(system);
     if (cfg.complete) {
         m_config_loaded = true;
         m_complete_gen = cfg.gen;
         m_name = cfg.name;
-        m_pending.setSavedSystem(savedSystemValues(plan, *system.desc));
-        std::ranges::copy(runningSystemValues(plan, *system.desc), system.shadow.get());
-        initializeLimits(system);
     } else if (cfg.found_any) {
         core_os::reportDiag(diag_codes::core::kConfigLoadFailed, 0, cfg.newest_gen, cfg.cause);
     }
@@ -655,8 +658,9 @@ Status Core::save()
         }
     }
     const detail::InstanceRecord &system = systemRecord();
-    const std::vector<ParamPair> system_pairs =
+    std::vector<ParamPair> system_pairs =
         persist::persistPairs(*system.desc, [this](size_t k) { return m_pending.systemValue(k); });
+    std::erase_if(system_pairs, [](const ParamPair &p) { return isLinkItem(p.id); }); // they have their own records
 
     // Newer than anything in NVS, and never in the slot of the complete
     // generation: after an incomplete newer one (a torn earlier SAVE),
@@ -665,7 +669,7 @@ Status Core::save()
     if (m_complete_gen != 0U && (gen & 1U) == (m_complete_gen & 1U)) {
         ++gen;
     }
-    const Status st = persist::saveConfig(*m_store, gen, items, system_pairs, name());
+    Status st = persist::saveConfig(*m_store, gen, items, system_pairs, name());
     if (!st.ok()) {
         // Some blobs of `gen` may be written: the next SAVE goes past it.
         m_newest_gen = gen;
@@ -673,6 +677,12 @@ Status Core::save()
     }
     m_newest_gen = gen;
     m_complete_gen = gen;
+    // Last, when the configuration that goes with it is committed.
+    st = m_link.save(pendingLink());
+    if (!st.ok()) {
+        m_saved_differs = m_pending.active();
+        return st;
+    }
     m_params.setNvsDirty(false);
     m_saved_differs = m_pending.active();
     return Status::success();
@@ -744,7 +754,10 @@ Status Core::factoryReset()
     if (m_params.armed()) {
         return Status::fail(Result::Armed, Detail::None);
     }
-    const Status st = persist::eraseAll(*m_store);
+    Status st = m_link.dropSaved();
+    if (st.ok()) {
+        st = persist::eraseAll(*m_store);
+    }
     if (st.ok()) {
         m_newest_gen = 0;
         m_complete_gen = 0;
@@ -757,6 +770,57 @@ Status Core::exitSafeMode()
 {
     core_os::storeCrashCount(0);
     return Status::success();
+}
+
+// -- the link trial ---------------------------------------------------------------
+
+Status Core::linkChangeAllowed(void *ctx)
+{
+    const auto *self = static_cast<const Core *>(ctx);
+    if (self->m_link.trialActive()) {
+        return Status::fail(Result::Busy, Detail::LinkTrialActive);
+    }
+    if (self->m_ota.pending()) {
+        return Status::fail(Result::Busy, Detail::OtaPendingConfirm);
+    }
+    return Status::success();
+}
+
+LinkSettings Core::pendingLink() const
+{
+    const defs::TypeDesc &type = *systemRecord().desc;
+    std::vector<uint32_t> values(type.items.size());
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = m_pending.systemValue(i);
+    }
+    return linkFrom(type, values);
+}
+
+bool Core::linkChangePending() const
+{
+    return !m_link.trialActive() && (m_link.saved() || !(pendingLink() == m_link.confirmed()));
+}
+
+Status Core::confirmLink(int64_t now_us)
+{
+    const Status st = m_link.confirm(now_us);
+    if (st.ok()) {
+        m_pending.setSavedLink(m_link.next());
+    }
+    return st;
+}
+
+bool Core::serviceLink(int64_t now_us)
+{
+    switch (m_link.service(now_us)) {
+        case LinkService::Event::Expired:
+            m_arm.disarm(DisarmReason::Shutdown);
+            core_os::reportDiag(diag_codes::core::kLinkReverted, 0, m_link.running().diagArg(), kLinkRevertTimeout);
+            return false;
+        case LinkService::Event::Reboot: return true;
+        case LinkService::Event::None: break;
+    }
+    return false;
 }
 
 // -- state -----------------------------------------------------------------------

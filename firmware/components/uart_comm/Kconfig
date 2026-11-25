@@ -8,29 +8,6 @@ menu "UART Comm Configuration"
             Which UART peripheral to use (0, 1, or 2).
             UART 0 is typically used for console logging.
 
-    config UART_COMM_TX_PIN
-        int "UART TX GPIO pin"
-        default 17
-        range 0 48
-        help
-            GPIO number for the UART transmit pin.
-
-    config UART_COMM_RX_PIN
-        int "UART RX GPIO pin"
-        default 18
-        range 0 48
-        help
-            GPIO number for the UART receive pin.
-
-    config UART_COMM_BAUD_RATE
-        int "Baud rate (fixed at compile time)"
-        default 921600
-        range 9600 3000000
-        help
-            UART baud rate, fixed at compile time.
-            Both ends of the link must be configured to the same value.
-            The protocol default is 921600 (docs/protocol/framing.md).
-
     config UART_COMM_MAX_PAYLOAD
         int "Maximum payload size in bytes"
         default 1024

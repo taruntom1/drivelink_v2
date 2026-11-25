@@ -217,6 +217,7 @@ struct Peer : std::enable_shared_from_this<Peer>
     void finishDrain();
     void armDeadline();
     void recoverPty();
+    bool linkPasses() const;
 };
 struct Server
 {
@@ -243,7 +244,12 @@ struct Server
     unsigned slow_ms=0;
     unsigned drop_config_reply=0;
     unsigned drop_disarm=0,drop_arm_reply=0,drop_reboot=0,drop_action_reply=0;
-    uint64_t disarm_requests=0,reboot_requests=0,action_requests=0;
+    unsigned drop_confirm=0,drop_confirm_reply=0;
+    uint64_t disarm_requests=0,reboot_requests=0,action_requests=0,confirm_requests=0;
+    // --link-trial-ms: one length for every trial.
+    uint32_t link_trial_ms=0;
+    // The pins the simulated wires are on (the scenario "wires" moves them).
+    unsigned wire_tx=core::factoryLink().tx_pin,wire_rx=core::factoryLink().rx_pin;
     bool link_stalled=false;
     uint64_t prefix_commands=0,value_commands=0;
     std::array<char,17> ota_build_id{};
@@ -274,7 +280,7 @@ struct Server
                 (void)ctx; (void)code; (void)n; (void)inst;
             });
         core::CoreConfig config;
-        config.gpio_allowed_mask &= ~((1ULL << 43) | (1ULL << 44));
+        if (link_trial_ms) { config.link_trial = {link_trial_ms, link_trial_ms}; }
         if (test_setting) { config.system_type = &testSystemType(); }
         static const std::array<const core::ModuleType *, 5> types{
             mod_mock::kTypes[0], mod_mock::kTypes[1], mod_mock::kTypes[2], mod_mock::kTypes[3], mod_motor::kTypes[0]};
@@ -292,6 +298,7 @@ struct Server
             *core, core::DeviceInfo{ota_version.c_str(), ota_build_id.data(), 1024, crash_enabled, p::kOtaWindow, device_id});
         counter = 0;
         next_status = 0;
+        scenario_poll = 0; // the boot clock restarted
         if (peer && !peer->closed)
         {
             dp::BootEvent event{0, static_cast<uint8_t>(core_os::resetWasCrash() ? 1 : 0),
@@ -354,7 +361,17 @@ struct Server
             const bool run=frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::Action) &&
                 frame.payload[3]==static_cast<uint8_t>(p::defs::ActionOp::Run);
             if(run && !scenario_file.empty()) {++action_requests;}
+            const bool confirm=!scenario_file.empty() && frame.len>=4 &&
+                frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
+                frame.payload[3]==static_cast<uint8_t>(p::defs::SystemOp::LinkConfirm);
+            if(confirm) {
+                ++confirm_requests;
+                // A lost LINK_CONFIRM: neither applied nor answered.
+                if(drop_confirm) {--drop_confirm;return;}
+            }
             const auto n = commands->handle({frame.payload, frame.len}, reply);
+            // A trial that was confirmed, with its reply lost.
+            if(confirm && drop_confirm_reply && --drop_confirm_reply==0) {(void)commands->takeAfterReply();return;}
             // An action that ran, with its reply lost.
             if(run && drop_action_reply && --drop_action_reply==0) {(void)commands->takeAfterReply();return;}
             if(drop_arm_reply && frame.len>=4 && frame.payload[2]==static_cast<uint8_t>(p::defs::Family::System) &&
@@ -474,12 +491,16 @@ struct Server
         }
         else if(action=="drop-action-reply") {unsigned n=0;if(command>>n && n<=32) {drop_action_reply=n;}}
         else if(action=="drop-reboot") {unsigned n=0;if(command>>n && n<=32) {drop_reboot=n;}}
+        else if(action=="drop-confirm") {unsigned n=0;if(command>>n && n<=32) {drop_confirm=n;}}
+        else if(action=="drop-confirm-reply") {unsigned n=0;if(command>>n && n<=32) {drop_confirm_reply=n;}}
+        else if(action=="wires") {unsigned tx=0,rx=0;if(command>>tx>>rx && tx<64 && rx<64) {wire_tx=tx;wire_rx=rx;}}
         else if(action=="stats") {
             std::ofstream output(scenario_file.string()+".stats",std::ios::trunc);
             output<<"prefix "<<prefix_commands<<"\nvalues "<<value_commands<<'\n';
             output<<"disarms "<<disarm_requests<<'\n';
             output<<"reboots "<<reboot_requests<<'\n';
             output<<"actions "<<action_requests<<'\n';
+            output<<"confirms "<<confirm_requests<<'\n';
             for(size_t i=0;i<core->groups().capacity(core::GroupKind::Command);++i) {
                 const auto &g=*core->groups().info(core::GroupKind::Command,uint8_t(i));
                 if(g.configured) {output<<"group "<<i<<' '<<unsigned(g.loop)<<' '<<unsigned(g.count)<<'\n';}
@@ -487,7 +508,7 @@ struct Server
         }
         else if(action=="reboot") {
             if(peer) {peer->recoverPty();}
-            boot();scenario_poll=0;
+            boot();
         }
         std::cout<<"SCENARIO "<<sequence<<' '<<action<<std::endl;
     }
@@ -498,6 +519,12 @@ struct Server
             return;
         }
         scenario();
+        // The end of a trial nobody confirmed (firmware: core_link.cpp).
+        if (core->serviceLink(core_os::nowUs()))
+        {
+            if (peer) { peer->recoverPty(); }
+            boot();
+        }
         if (!core_os::native::bootFileHealthy())
         {
             throw std::runtime_error("crash state persistence failed");
@@ -802,6 +829,34 @@ void Peer::recoverPty()
 #endif
     close();
 }
+// A PTY passes bytes whatever the rate and has no pins. Pass them only while
+// the host's rate is the running one and the simulated wires are on the running
+// pins; TCP always passes.
+bool Peer::linkPasses() const
+{
+#ifndef _WIN32
+    if (pty)
+    {
+        static constexpr std::pair<speed_t, uint32_t> kRates[] = {
+            {B115200, 115200},   {B230400, 230400},   {B460800, 460800},   {B921600, 921600},
+            {B1000000, 1000000}, {B1500000, 1500000}, {B2000000, 2000000}, {B3000000, 3000000}};
+        const auto &link = server.core->link().running();
+        if (link.tx_pin != server.wire_tx || link.rx_pin != server.wire_rx)
+        {
+            return false;
+        }
+        termios mode{};
+        if (tcgetattr(slave, &mode) != 0)
+        {
+            return false;
+        }
+        const auto speed = cfgetospeed(&mode);
+        return std::any_of(std::begin(kRates), std::end(kRates), [&](const auto &rate)
+                           { return rate.first == speed && rate.second == link.rate(); });
+    }
+#endif
+    return true;
+}
 void Peer::armDeadline()
 {
     write_deadline.cancel();
@@ -896,6 +951,12 @@ void Peer::write()
 #ifndef _WIN32
     if (pty)
     {
+        if (!linkPasses())
+        {
+            // Sent, but nobody can read it.
+            asio::post(server.io, [handler, n = item.bytes->size()]() mutable { handler(asio::error_code{}, n); });
+            return;
+        }
         asio::async_write(*pty, asio::buffer(*item.bytes), progress, handler);
         return;
     }
@@ -917,7 +978,7 @@ void Peer::read()
             self->close();
             return;
         }
-        size_t offset = 0;
+        size_t offset = self->linkPasses() ? 0 : n;
         while (offset < n && !self->closed)
         {
             size_t space = 0;
@@ -979,6 +1040,7 @@ int main(int argc, char **argv)
         p::DeviceId device_id{0x02, 0x44, 0x4C, 0, 0, 1};
         bool pty = false, bench = false;
         bool safe_mode=false, test_setting = false;
+        uint32_t link_trial_ms = 0;
         std::filesystem::path scenario_file;
         int64_t fail_after = -1;
         for (int i = 1; i < argc; ++i)
@@ -1017,6 +1079,7 @@ int main(int argc, char **argv)
             else if(arg=="--scenario-file") {scenario_file=value();}
             else if(arg=="--safe-mode") {safe_mode=true;}
             else if(arg=="--test-setting") {test_setting=true;}
+            else if(arg=="--link-trial-ms") {link_trial_ms=drivelink::parseUnsigned(value(),120000);}
             else if (arg == "--fail-writes-after")
             {
                 fail_after = drivelink::parseUnsigned(value());
@@ -1024,7 +1087,8 @@ int main(int argc, char **argv)
             else if (arg == "--help")
             {
                 std::cout << "drivelink-vdev [--state DIR] [--port PORT | --pty] [--allow-crash] "
-                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting]\n";
+                             "[--device-id HEX12] [--fail-writes-after N] [--scenario-file PATH] [--safe-mode] [--test-setting] "
+                             "[--link-trial-ms N]\n";
                 return 0;
             }
             else
@@ -1045,6 +1109,7 @@ int main(int argc, char **argv)
         Server s(bench);
         s.scenario_file=scenario_file;
         s.test_setting=test_setting;
+        s.link_trial_ms=link_trial_ms;
         s.device_id = device_id;
         if (core_os::native::openFileStore(s.store, state / "kv") != 0 ||
             core_os::native::openBootFile(state / "boot.state") != 0)

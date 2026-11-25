@@ -125,7 +125,9 @@ std::string refusal(uint8_t result, uint8_t detail)
     case defs::Detail::FaultActive: d = "FaultActive (a fault condition is still active)"; break;
     case defs::Detail::MonitorUnavailable: d = "MonitorUnavailable"; break;
     case defs::Detail::RebootPending: d = "RebootPending"; break;
-    case defs::Detail::LinkTrialActive: d = "LinkTrialActive"; break;
+    case defs::Detail::LinkTrialActive:
+        d = "LinkTrialActive (confirm the serial link trial or wait for it to revert)";
+        break;
     case defs::Detail::OtaActive: d = "OtaActive"; break;
     case defs::Detail::OtaPendingConfirm: d = "OtaPendingConfirm"; break;
     case defs::Detail::WrongState: d = "WrongState"; break;

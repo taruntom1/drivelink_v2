@@ -30,3 +30,16 @@ items:
   - {id: 0x0020, kind: param, name: diag.counter_period_ms, type: u16, unit: ms, min: 100, max: 60000, default: 1000, description: "How often changed counters are sent"}
   - {id: 0x0021, kind: param, name: diag.poll_ms, type: u16, unit: ms, min: 10, max: 1000, default: 20, description: "How long a record waits for the reporter, at most"}
   - {id: 0x0022, kind: param, name: diag.stack_log_s, type: u16, unit: s, min: 0, max: 3600, default: 30, description: "Console stack log period, 0 = off; needs a build with console text"}
+  # The serial link: stored apart from the configuration and changed through a
+  # trial (docs/protocol/core.md). The link.baud values index kLinkBaudRates
+  # (drivelink/protocol/link.hpp).
+  - id: 0x0030
+    kind: param
+    name: link.baud
+    type: enum
+    values: {baud_115200: 0, baud_230400: 1, baud_460800: 2, baud_921600: 3, baud_1000000: 4, baud_1500000: 5, baud_2000000: 6, baud_3000000: 7}
+    default: baud_921600
+    flags: [reboot_required]
+    description: "Serial link rate; a change reverts after 30 s unless a host confirms it"
+  - {id: 0x0031, kind: param, name: link.tx_pin, type: u8, default: 43, flags: [reboot_required], description: "Serial link TX pin; a pin change reverts after 120 s unless a host confirms it"}
+  - {id: 0x0032, kind: param, name: link.rx_pin, type: u8, default: 44, flags: [reboot_required], description: "Serial link RX pin; a pin change reverts after 120 s unless a host confirms it"}

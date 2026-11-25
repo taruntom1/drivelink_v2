@@ -5,6 +5,7 @@
 #include "lease.hpp"
 #include "drivelink/agent.hpp"
 #include "drivelink/client.hpp"
+#include "drivelink/link.hpp"
 #include "drivelink/session.hpp"
 #include "drivelink/time.hpp"
 #include "drivelink/protocol/core_codec.hpp"
@@ -41,6 +42,9 @@ constexpr unsigned kClientInflight = 32;         // forwarded requests per clien
 constexpr auto kCloseDeadline = std::chrono::milliseconds(1000); // flush time for a Closing event
 constexpr size_t kMaxListPages = 64;
 constexpr auto kClockPeriod = std::chrono::milliseconds(500); // how often a changed clock model is sent
+constexpr auto kDetectTimeout = std::chrono::milliseconds(2500); // > 1 full round of 8 baud rates, short enough for reconnect/shutdown
+constexpr auto kRebootSilence = std::chrono::milliseconds(2000); // serial: reconnect if no Boot arrives after REBOOT
+constexpr auto kLivenessSilence = std::chrono::milliseconds(3000); // probe if no frames/replies arrive for this long
 constexpr size_t kMaxEventBody = p::kMaxPayload - 2;           // agent_event: version | event | body
 constexpr uint8_t kCoreVersion = p::core_wire::kVersion;
 
@@ -149,11 +153,12 @@ struct Device
     uint64_t map_generation = 0; // bumps on every GroupMap reset
     std::array<uint8_t, 6> device_id{};
     std::string name;
+    unsigned last_baud = 0; // last serial rate found, passed as SessionOptions::last_baud hint
     uint16_t max_payload = p::kMaxPayload;
     GroupMap groups;
     std::array<std::set<uint8_t>, 2> clearing; // per Kind: slots with an agent CLEAR in flight
     std::set<std::shared_ptr<Connection>> clients;
-    asio::steady_timer retry, maintenance, clock_timer;
+    asio::steady_timer retry, maintenance, clock_timer, reboot_timer, liveness_timer;
     std::thread connector;
     std::string last_failure;
     uint64_t dropped = 0;
@@ -183,7 +188,8 @@ struct Device
     ClockModel clock_sent;
 
     Device(Agent::Impl &a, DeviceConfig c)
-        : agent(a), config(std::move(c)), retry(a.io), maintenance(a.io), clock_timer(a.io), history(a.config.history_size) {}
+        : agent(a), config(std::move(c)), retry(a.io), maintenance(a.io), clock_timer(a.io), reboot_timer(a.io),
+          liveness_timer(a.io), history(a.config.history_size) {}
     ~Device() { if (connector.joinable()) { connector.join(); } }
     void open();
     void connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList list, uint64_t observer_id, std::shared_ptr<bool> lost);
@@ -193,7 +199,9 @@ struct Device
     void frame(const Frame &f);
     void boot();
     void refreshPools();
-    void refreshIdentity();
+    void refreshIdentity(bool after_boot = false);
+    void touchLiveness();
+    void watchReboot();
     void cleanDirty();
     void scheduleMaintenance();
     // Forwarding: completions run on the agent thread.
@@ -545,14 +553,19 @@ void Device::open()
     if (connector.joinable()) { connector.join(); }
     SessionOptions options;
     options.baud = config.baud;
+    options.last_baud = last_baud;
+    options.detect_timeout = kDetectTimeout;
     options.timeout = agent.config.request_timeout;
     options.request_capacity = 128;
     options.event_capacity = 4096;
     options.observe_streams = true;
     options.retire_quarantine = std::max(std::chrono::milliseconds(30000), 10 * agent.config.request_timeout);
     options.dispatcher = [io = &agent.io](Task task) { asio::post(*io, std::move(task)); };
+    const auto expected_id = device_id;
+    const bool had_device = std::any_of(expected_id.begin(), expected_id.end(), [](uint8_t b) { return b != 0; });
+    const std::string alias = config.alias;
     // Opening and setup use the synchronous API, off the agent thread.
-    connector = std::thread([this, options, endpoint = config.endpoint, io = &agent.io]() mutable {
+    connector = std::thread([this, options, endpoint = config.endpoint, expected_id, had_device, alias, io = &agent.io]() mutable {
         try
         {
             auto session = std::make_shared<Session>(endpoint, options);
@@ -565,6 +578,36 @@ void Device::open()
             drivelink::Client client(*session);
             auto info = client.info(); // checks the core version
             client.disarm();
+            if (had_device && info.device_id == expected_id && info.link_trial_ms != 0)
+            {
+                auto conf = confirmLinkTrial(client, expected_id);
+                if (conf == LinkConfirmation::Unconfirmed) { conf = confirmLinkTrial(client, expected_id); }
+                if (conf == LinkConfirmation::Confirmed)
+                {
+                    const auto rate = session->baud();
+                    log("device " + alias + ": confirmed link trial" +
+                        (rate ? " at " + std::to_string(rate) + " baud" : std::string{}));
+                    info = client.info();
+                }
+                else if (conf == LinkConfirmation::Reverted)
+                {
+                    log("device " + alias + ": link trial reverted");
+                    info = client.info();
+                }
+                else if (conf == LinkConfirmation::NoTrial)
+                {
+                    info = client.info();
+                    if (info.link_trial_ms != 0)
+                    {
+                        // Expired trial still waiting ~0.5 s to reboot and revert.
+                        throw Error(ErrorKind::Timeout, "link trial expired; waiting for revert");
+                    }
+                }
+                else if (conf == LinkConfirmation::Unconfirmed)
+                {
+                    throw Error(ErrorKind::Timeout, "link confirmation was not received; retrying");
+                }
+            }
             auto list = client.groups();
             for (const auto &g : list.groups)
             {
@@ -591,6 +634,7 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
     disarm_next.clear();
     if (agent.stopping) { s->close(); return; }
     session = std::move(s);
+    if (const auto rate = session->baud()) { last_baud = rate; }
     online = true;
     ++link;
     last_failure.clear();
@@ -609,10 +653,12 @@ void Device::connected(std::shared_ptr<Session> s, DeviceInfo info, GroupList li
     arm.reset();
     clock_sent = {};
     log("device " + config.alias + " online: " + formatDeviceId(device_id) + (name.empty() ? "" : " \"" + name + "\"") +
+        (session->baud() ? ", " + std::to_string(session->baud()) + " baud" : std::string{}) +
         ", " + std::to_string(groups.subs()) + " subscription and " + std::to_string(groups.cmds()) + " command groups");
     record(defs::HistoryKind::Online, Bytes(device_id.begin(), device_id.end()));
     scheduleMaintenance();
     scheduleClock();
+    touchLiveness();
     if (*lost) { linkLost(); }
 }
 
@@ -633,6 +679,8 @@ void Device::offline(const std::string &why)
     log("device " + config.alias + " offline: " + why);
     maintenance.cancel();
     clock_timer.cancel();
+    reboot_timer.cancel();
+    liveness_timer.cancel();
     record(defs::HistoryKind::Offline, {});
     auto members = std::move(clients);
     clients.clear();
@@ -662,6 +710,7 @@ void Device::offline(const std::string &why)
 void Device::frame(const Frame &f)
 {
     if (f.type == 0) { linkLost(); return; }
+    touchLiveness();
     const bool booted = f.generation != generation;
     if (booted) { generation = f.generation; boot(); }
     if (f.type == msg::kStatusStream)
@@ -746,12 +795,13 @@ void Device::boot()
 {
     // The device lost every group: all slots are free again.
     log("device " + config.alias + " rebooted");
+    reboot_timer.cancel();
     groups.reset(groups.subs(), groups.cmds());
     ++map_generation;
     for (auto &set : clearing) { set.clear(); }
     arm.reset();
     refreshPools();
-    refreshIdentity();
+    refreshIdentity(true);
     clock_sent = {}; // frame() sends the new model after the Boot event
 }
 
@@ -788,13 +838,30 @@ void Device::refreshPools()
     catch (const Error &) { log("device " + config.alias + ": busy after the reboot; keeping the old group limits"); }
 }
 
-void Device::refreshIdentity()
+void Device::refreshIdentity(bool after_boot)
 {
     if (!session) { return; }
     auto *raw = session.get();
+    const auto expected_id = device_id;
+    const bool had_device = std::any_of(expected_id.begin(), expected_id.end(), [](uint8_t b) { return b != 0; });
+    const std::string alias = config.alias;
     try
     {
-        session->async<DeviceInfo>([raw] { return drivelink::Client(*raw).info(); },
+        session->async<DeviceInfo>([raw, after_boot, had_device, expected_id, alias] {
+            drivelink::Client client(*raw);
+            auto info = client.info();
+            if (after_boot && had_device && info.device_id == expected_id && info.link_trial_ms != 0)
+            {
+                auto conf = confirmLinkTrial(client, expected_id);
+                if (conf == LinkConfirmation::Unconfirmed) { conf = confirmLinkTrial(client, expected_id); }
+                if (conf == LinkConfirmation::Confirmed)
+                {
+                    log("device " + alias + ": confirmed link trial after reboot");
+                    info = client.info();
+                }
+            }
+            return info;
+        },
             [this, link_id = link](std::expected<DeviceInfo, Error> info) {
                 if (link != link_id || !online || !info) { return; }
                 device_id = info->device_id;
@@ -802,6 +869,37 @@ void Device::refreshIdentity()
             });
     }
     catch (const Error &) { /* busy: the next Boot or rename refreshes it */ }
+}
+
+void Device::touchLiveness()
+{
+    if (!online) { return; }
+    liveness_timer.expires_after(kLivenessSilence);
+    liveness_timer.async_wait([this, link_id = link](auto ec) {
+        if (ec || link != link_id || !online || !session) { return; }
+        try
+        {
+            session->asyncTimePing([this, link_id](std::expected<TimeSample, Error> r) {
+                if (link != link_id || !online) { return; }
+                if (!r) { offline("device stopped answering"); }
+                else { touchLiveness(); }
+            });
+        }
+        catch (const Error &)
+        {
+            offline("device stopped answering");
+        }
+    });
+}
+
+void Device::watchReboot()
+{
+    if (!online || !config.endpoint.starts_with("serial://")) { return; }
+    reboot_timer.expires_after(kRebootSilence);
+    reboot_timer.async_wait([this, link_id = link](auto ec) {
+        if (ec || link != link_id || !online) { return; }
+        offline("device did not answer after reboot");
+    });
 }
 
 void Device::scheduleMaintenance()
@@ -899,11 +997,18 @@ bool Device::forwardCore(const std::shared_ptr<Connection> &c, uint8_t seq, uint
             [this, weak = std::weak_ptr<Connection>(c), seq, family, op, after = std::move(after), link_id = link](std::expected<Reply, Error> reply) {
                 if (link != link_id) { return; }
                 if (after) { after(); }
-                if (reply && accepted(reply->result) && family == static_cast<uint8_t>(defs::Family::System) &&
-                    (op == static_cast<uint8_t>(defs::SystemOp::SetName) || op == static_cast<uint8_t>(defs::SystemOp::Revert) ||
-                     op == static_cast<uint8_t>(defs::SystemOp::FactoryReset)))
+                if (reply) { touchLiveness(); }
+                if (reply && accepted(reply->result) && family == static_cast<uint8_t>(defs::Family::System))
                 {
-                    refreshIdentity();
+                    if (op == static_cast<uint8_t>(defs::SystemOp::SetName) || op == static_cast<uint8_t>(defs::SystemOp::Revert) ||
+                        op == static_cast<uint8_t>(defs::SystemOp::FactoryReset))
+                    {
+                        refreshIdentity();
+                    }
+                    else if (op == static_cast<uint8_t>(defs::SystemOp::Reboot))
+                    {
+                        watchReboot();
+                    }
                 }
                 auto client = weak.lock();
                 if (!client) { return; }
@@ -1522,6 +1627,9 @@ void Agent::Impl::shutdown()
     {
         d->retry.cancel();
         d->maintenance.cancel();
+        d->clock_timer.cancel();
+        d->reboot_timer.cancel();
+        d->liveness_timer.cancel();
         if (d->online && d->session)
         {
             // Best effort: nothing should stay armed once its clients are gone.

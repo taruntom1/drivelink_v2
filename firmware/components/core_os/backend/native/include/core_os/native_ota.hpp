@@ -12,4 +12,6 @@ void setOtaBaseline(const drivelink::protocol::Sha256Digest &elf,const char *ver
 // select_after reports failure after durable selection, modeling uncertainty.
 void failOtaOperation(Ota &ota, const char *operation);
 void rebootOta(Ota &ota);
+// What otaImageUnconfirmed() answers at least until it is called with false.
+void setOtaImageUnconfirmed(bool unconfirmed);
 }
