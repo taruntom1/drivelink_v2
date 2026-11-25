@@ -2227,6 +2227,35 @@ private slots:
         }
         connection.disconnectDevice();QVERIFY(waitFor([&]{return !connection.closing();},10000));
     }
+
+    // Issue #130: LocalConnection worker QThreads (opener, agent lister, mDNS
+    // browser) and libdrivelink Session std::threads (io, services, callbacks)
+    // must exit cleanly without Qt6Core.dll FLS access violations on Windows MinGW.
+    void workerThreadExitNoFaults() {
+        QtCoreFaultGuard guard;
+        Fixture fixture;
+        {
+            QTemporaryDir dir;
+            LocalConnection c;
+            c.setSettingsPath(dir.filePath("gui.ini"));
+            c.connectTo(fixture.endpoint);
+            QVERIFY2(waitFor([&]{return c.ready() && c.armEnabled();},15000),
+                     qPrintable(c.lastError()["text"].toString()));
+            c.rename(QStringLiteral("worker-check"));
+            QVERIFY(waitFor([&]{return c.deviceName()==QStringLiteral("worker-check") && !c.configBusy();},5000));
+            c.disconnectDevice();
+            QVERIFY(waitFor([&]{return !c.linked() && !c.closing();},10000));
+
+            // Exercise the remote lobby lister and mDNS browser QThread workers.
+            c.listAgent(QStringLiteral("127.0.0.1:1"),QStringLiteral("tok"));
+            QVERIFY(waitFor([&]{return c.agentListing().value("state").toString()==QStringLiteral("failed");},10000));
+            c.startAgentBrowse();
+            QVERIFY(waitFor([&]{return c.agentBrowse().value("state").toString()==QStringLiteral("idle");},5000));
+            c.stopAgentBrowse();
+        }
+        QCoreApplication::processEvents();
+        QCOMPARE(guard.faults(),0);
+    }
 };
 QTEST_MAIN(BackendTests)
 #include "test_backend.moc"

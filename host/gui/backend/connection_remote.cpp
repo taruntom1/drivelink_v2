@@ -286,13 +286,13 @@ void LocalConnection::refreshAgentList() {
 }
 
 void LocalConnection::startList(bool quiet) {
-    if(m_lister.joinable()) {m_lister.join();} // ended: m_listBusy was false
+    if(m_lister) {m_lister->wait();m_lister.reset();} // ended: m_listBusy was false
     const auto serial=++m_listSerial;
     m_listBusy=true;m_listQueued=false;
     const QString address=m_listTarget.first,token=m_listTarget.second,endpoint=agentEndpoint(address);
     const auto queue=m_dispatch;const QPointer<LocalConnection> self(this);
     const auto ep=endpoint.toStdString(),tok=token.toStdString(),name=m_clientName.toStdString();
-    m_lister=std::thread([queue,self,serial,quiet,address,ep,tok,name] {
+    m_lister.reset(QThread::create([queue,self,serial,quiet,address,ep,tok,name] {
         QVariantMap listing{{"address",address}};
         try {
             const auto devices=listAgentDevices(resolveTcpEndpoint(ep),tok,std::chrono::milliseconds(3000),name,
@@ -311,7 +311,8 @@ void LocalConnection::startList(bool quiet) {
             if(quiet && self->m_listing.value("state")!=QLatin1String("ok")) {return;}
             self->m_listing=listing;emit self->changed();
         });
-    });
+    }));
+    m_lister->start();
 }
 
 void LocalConnection::connectAgent(const QString &address,const QString &token,const QString &device,bool rememberToken) {
@@ -386,16 +387,17 @@ void LocalConnection::browseRound() {
         QTimer::singleShot(300,this,[land,found=*m_fakeAgents] {land(found);});
         return;
     }
-    if(m_browser.joinable()) {m_browser.join();} // finished: m_browserDone is set
+    if(m_browser) {m_browser->wait();m_browser.reset();} // finished: m_browserDone is set
     const auto queue=m_dispatch;
     m_browserDone=std::make_shared<std::atomic<bool>>(false);
-    m_browser=std::thread([queue,land,done=m_browserDone] {
+    m_browser.reset(QThread::create([queue,land,done=m_browserDone] {
         std::vector<discovery::FoundAgent> found;
         try {found=discovery::browseAgents(std::chrono::milliseconds(1000));}
         catch(const std::exception &) {} // a network failure is an empty round
         post(queue,[land,found=std::move(found)] {land(found);});
         done->store(true);
-    });
+    }));
+    m_browser->start();
 }
 
 } // namespace drivelink::gui

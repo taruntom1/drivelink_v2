@@ -1676,6 +1676,38 @@ private slots:
         c.disarm();QVERIFY(waitFor([&]{return c.armState()==0;},5000));
         qInfo("bench: identified, stopped, mode written back, input at 0 and disarmed");
     }
+
+    // Issue #130: background autosave (QSaveFile) and plant-identification fit
+    // workers run on QThread::create so Windows MinGW thread exit never faults
+    // in Qt6Core.dll (destroy_current_thread_data).
+    void workerThreadExitNoFaults() {
+        QtCoreFaultGuard guard;
+        {
+            QTemporaryDir dir;
+            TuneView view;
+            view.setRecoveryFolder(dir.filePath("recovery"));
+            const auto snap=std::make_shared<DeviceSnapshot>(identifySample(1));
+            view.setSnapshot(snap,QStringLiteral("dev-worker"));
+            const auto runSetup=view.runSetup();
+            QVERIFY(runSetup.has_value());
+            view.addRun(stepRun(*snap,0.1),*runSetup);
+            const auto recovery=dir.filePath("recovery/dev-worker.tune.json");
+            // Wait for the 1 s autosave timer to write on the QThread worker.
+            QVERIFY(waitFor([&]{return QFile::exists(recovery);},5000));
+            QTest::qWait(150);QCoreApplication::processEvents();
+
+            auto &iv=view.identifyView();
+            iv.setShown(true);
+            const auto idSetup=iv.setup();
+            QVERIFY(idSetup.has_value());
+            iv.addResult(snap,identifyRun(*snap,0,0.3,1),*idSetup);
+            // Completion arrives via QThread::finished without calling waitFit().
+            QVERIFY(waitFor([&]{return iv.result()["available"].toBool() && !iv.result()["fitting"].toBool();},5000));
+            QTest::qWait(100);QCoreApplication::processEvents();
+        }
+        QCoreApplication::processEvents();
+        QCOMPARE(guard.faults(),0);
+    }
 };
 
 QTEST_MAIN(TuneTests)

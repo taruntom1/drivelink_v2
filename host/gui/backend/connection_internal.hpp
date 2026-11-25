@@ -18,6 +18,11 @@ struct GuiDispatch {
 namespace detail {
 // Each queued functor retains its target until consumed, including after close.
 // Session bounds outstanding requests and event deliveries before this queue.
+// Safe from libdrivelink's std::thread executors (callbacks and OTA progress on
+// services): Qt::QueuedConnection reads only receiver's QThreadData and never
+// adopts the calling thread (QThreadData::current(true)), avoiding Windows MinGW
+// QAdoptedThread FLS teardown crashes. Keep non-QThread callables free of
+// QObject construction and other thread-adopting Qt APIs.
 inline void post(const std::shared_ptr<GuiDispatch> &queue,Task task) {
     ++queue->pending;
     QMetaObject::invokeMethod(queue->receiver,[queue,task=std::move(task)]() mutable {

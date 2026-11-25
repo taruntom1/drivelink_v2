@@ -261,17 +261,19 @@ void LocalConnection::runAction(const QString &key,const QStringList &args,const
     }
     const auto &d=item->descriptor;
     const auto parsed=parseActionArgs(d,args);
-    QByteArray blob;
-    if(d.blob_direction==BlobDir::In || d.blob_direction==BlobDir::Both) {blob=*parseHexBlob(blobHex).bytes;}
+    std::vector<uint8_t> blob;
+    if(d.blob_direction==BlobDir::In || d.blob_direction==BlobDir::Both) {
+        const auto bytes=*parseHexBlob(blobHex).bytes;
+        blob.assign(bytes.begin(),bytes.end());
+    }
     auto c=m_context;auto session=c?c->getSession():nullptr;
     if(!session) {return;}
     const QPointer<LocalConnection> self(this);
     const auto generation=m_snapshot->generation;const auto descriptor=d;const auto target=*ref;
     m_actionRunning=key;m_actionResults[key]={{"state","running"},{"text",tr("Running…")}};emit changed();
     try {
-        Client(*session).async([target,bits=parsed.bits,blob](Client &client) {
-            const std::vector<uint8_t> bytes(blob.begin(),blob.end());
-            return client.action(target,bits,bytes);
+        Client(*session).async([target,bits=parsed.bits,blob=std::move(blob)](Client &client) {
+            return client.action(target,bits,blob);
         },[self,c,key,generation,descriptor](std::expected<ActionResult,Error> result) {
             if(!self || !self->current(c)) {return;}
             self->m_actionRunning.clear();

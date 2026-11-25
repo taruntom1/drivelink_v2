@@ -31,6 +31,7 @@ struct MonitorSetup {
     std::vector<GroupSetup> groups;
     GroupList list;
     std::string note;
+    std::optional<Error> error;
 };
 QString signature(uint64_t generation,const std::vector<MonitorPlan> &plans) {
     QString text=QString::number(generation);
@@ -117,7 +118,7 @@ void LocalConnection::syncMonitor() {
                 catch(const Error &e) {
                     // Anything but a definite refusal keeps the record so close reconciles it.
                     if(e.kind==ErrorKind::Cancelled || e.kind==ErrorKind::Connection) {throw;}
-                    result.note=errorText(e).toStdString();
+                    result.note.clear();result.error=e;
                 }
             }
             if(cleared) {groups=client.groups();}
@@ -137,7 +138,7 @@ void LocalConnection::syncMonitor() {
                     const auto free=std::find_if(groups.groups.begin(),groups.groups.end(),[&](const Group &g) {
                         return g.kind==GroupKind::Subscription && !g.configured && !taken.contains(g.id);
                     });
-                    if(free==groups.groups.end()) {result.note="No free subscription slot";continue;}
+                    if(free==groups.groups.end()) {result.error.reset();result.note="No free subscription slot";continue;}
                     id=free->id;
                 }
                 taken.insert(id);
@@ -174,7 +175,7 @@ void LocalConnection::syncMonitor() {
                 } catch(const Error &e) {
                     // One loop's refusal leaves only that loop without plots.
                     if(e.kind==ErrorKind::Cancelled || e.kind==ErrorKind::Connection) {throw;}
-                    result.note=errorText(e).toStdString();
+                    result.note.clear();result.error=e;
                 }
             }
             result.list=client.groups();
@@ -208,7 +209,7 @@ void LocalConnection::syncMonitor() {
                     next.push_back(std::move(group));
                 }
                 self->m_monitorGroups=std::move(next);
-                self->m_monitor.setNote(QString::fromStdString(result->note));
+                self->m_monitor.setNote(result->error?errorText(*result->error):QString::fromStdString(result->note));
                 self->m_monitorRetries=0;
                 LinkContext link;link.entryLimit=groupEntryLimit(*self->m_snapshot);
                 size_t used=0,free=0,total=0;

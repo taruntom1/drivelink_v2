@@ -5,8 +5,6 @@
 #include <drivelink/protocol/gen/type_system.hpp>
 #include <QLocale>
 #include <QTime>
-#include <QTimer>
-#include <chrono>
 #include <cmath>
 
 namespace drivelink::gui {
@@ -30,7 +28,11 @@ QString endNote(RunEnd end) {
 } // namespace
 
 IdentifyView::IdentifyView(QObject *parent):QObject(parent) {}
-IdentifyView::~IdentifyView() { if(m_fit.valid()) {m_fit.wait();} }
+IdentifyView::~IdentifyView() { stopFit(); }
+void IdentifyView::stopFit() {
+    if(m_fitThread) {m_fitThread->wait();m_fitThread.reset();}
+    m_fitResult.reset();
+}
 
 std::optional<TuneController> IdentifyView::controllerInfo() const {
     if(!m_snapshot || !m_controller) {return std::nullopt;}
@@ -100,7 +102,8 @@ void IdentifyView::defaults() {
     }
 }
 void IdentifyView::reset() {
-    if(m_fit.valid()) {m_fit.wait();m_fit=std::future<IdentifyResult>();}
+    ++m_fitSerial;
+    stopFit();
     m_snapshot.reset();m_controller.reset();m_deviceId.clear();
     m_confirmed=false;m_modeChosen=false;m_stopping=false;m_lastEpoch=0;
     m_phase=Phase::Idle;m_phaseText.clear();m_progress=-1;
@@ -274,33 +277,37 @@ void IdentifyView::stopStep() {
 }
 
 void IdentifyView::addResult(std::shared_ptr<const DeviceSnapshot> snapshot, RunRecord record, const Setup &s) {
-    if(m_fit.valid()) {m_fit.wait();}
+    ++m_fitSerial;
+    stopFit();
     m_fitTime=QTime::currentTime().toString(QStringLiteral("HH:mm:ss"));
     const auto key=s.run.controller.key;
     const double rate=snapshot?double(loopRateHz(*snapshot,s.run.controller.loop)):0.0;
-    // The fit runs on a worker: the GUI thread handles DISARM.
-    m_fit=std::async(std::launch::async,[snapshot,record=std::move(record),step=s.step,mode=s.mode,rate,open=s.openLoop]() mutable {
+    const auto serial=m_fitSerial;
+    // The fit runs on a QThread worker: the GUI thread handles DISARM, and
+    // QThread avoids Windows MinGW QAdoptedThread FLS teardown crashes.
+    m_fitThread.reset(QThread::create([this,snapshot,record=std::move(record),step=s.step,mode=s.mode,rate,open=s.openLoop]() mutable {
         auto r=snapshot?makeIdentify(*snapshot,std::move(record),step,mode,rate):IdentifyResult{};
         r.openLoop=open;
-        return r;
-    });
+        m_fitResult=std::move(r);
+    }));
+    connect(m_fitThread.get(),&QThread::finished,this,[this,serial] {
+        if(!m_fitThread || m_fitSerial!=serial) {return;}
+        fitDone();
+    },Qt::QueuedConnection);
+    m_fitThread->start();
     m_resultController=key;
     m_result.reset();m_rings.clear();
     emit changed();emit dataChanged();
-    auto *timer=new QTimer(this);
-    timer->setInterval(20);
-    connect(timer,&QTimer::timeout,this,[this,timer] {
-        if(m_fit.valid() && m_fit.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {return;}
-        timer->deleteLater();
-        if(m_fit.valid()) {fitDone();}
-    });
-    timer->start();
 }
 void IdentifyView::waitFit() {
-    if(m_fit.valid()) {m_fit.wait();fitDone();}
+    if(m_fitThread) {fitDone();}
 }
 void IdentifyView::fitDone() {
-    auto result=m_fit.get();
+    if(!m_fitThread) {return;}
+    m_fitThread->wait();
+    m_fitThread.reset();
+    auto result=m_fitResult?std::move(*m_fitResult):IdentifyResult{};
+    m_fitResult.reset();
     // The controller changed while it was fitted: the result is not this one's.
     if(m_resultController!=m_controller) {m_resultController.reset();emit changed();return;}
     m_result=std::move(result);m_resultTime=m_fitTime;
@@ -338,7 +345,7 @@ void IdentifyView::setSpeed(int index) {
 QStringList IdentifyView::speeds() const { return {tr("Robust"),tr("Balanced"),tr("Fast")}; }
 
 QVariantMap IdentifyView::result() const {
-    const bool fitting=m_fit.valid();
+    const bool fitting=m_fitThread!=nullptr;
     const auto *r=current();
     if(!r) {return {{"available",false},{"fitting",fitting}};}
     QVariantMap m{{"available",true},{"fitting",fitting},{"time",m_resultTime},{"end",endNote(r->run.end)},

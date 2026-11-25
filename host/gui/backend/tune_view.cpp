@@ -1445,7 +1445,7 @@ void TuneView::writeAutosave(bool now) {
         return;
     }
     m_tooLargeNoted=false;
-    if(m_autosaveJob.valid()) {
+    if(m_autosaveThread) {
         // The last write still runs: later, or (closing) after it.
         if(!now) {m_autosave.start();return;}
         waitAutosave();
@@ -1459,21 +1459,34 @@ void TuneView::writeAutosave(bool now) {
         if(const auto error=write();!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
         return;
     }
-    // The destructor waits for the job, so `this` outlives it.
-    m_autosaveJob=std::async(std::launch::async,[this,write=std::move(write)]() {
-        auto error=write();
-        QMetaObject::invokeMethod(this,[this] {autosaveDone();},Qt::QueuedConnection);
-        return error;
-    });
+    // The destructor waits for the thread, so `this` outlives it.
+    const auto serial=++m_autosaveSerial;
+    m_autosaveError.clear();
+    m_autosaveThread.reset(QThread::create([this,write=std::move(write)]() {
+        m_autosaveError=write();
+    }));
+    connect(m_autosaveThread.get(),&QThread::finished,this,[this,serial] {
+        if(!m_autosaveThread || m_autosaveSerial!=serial) {return;}
+        autosaveDone();
+    },Qt::QueuedConnection);
+    m_autosaveThread->start();
 }
 void TuneView::autosaveDone() {
-    if(!m_autosaveJob.valid() || m_autosaveJob.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {return;}
-    if(const auto error=m_autosaveJob.get();!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
+    if(!m_autosaveThread) {return;}
+    m_autosaveThread->wait();
+    const auto error=std::move(m_autosaveError);
+    m_autosaveError.clear();
+    m_autosaveThread.reset();
+    if(!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
     if(m_autosaveDue) {m_autosave.start();}
 }
 void TuneView::waitAutosave() {
-    if(!m_autosaveJob.valid()) {return;}
-    if(const auto error=m_autosaveJob.get();!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
+    if(!m_autosaveThread) {return;}
+    m_autosaveThread->wait();
+    const auto error=std::move(m_autosaveError);
+    m_autosaveError.clear();
+    m_autosaveThread.reset();
+    if(!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
 }
 QVariantMap TuneView::recovery() const {
     if(!m_recoveryOffer) {return {{"available",false}};}

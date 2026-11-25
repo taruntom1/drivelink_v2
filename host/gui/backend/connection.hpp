@@ -12,10 +12,11 @@
 #include <drivelink/link.hpp>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QThread>
 #include <QTimer>
 #include <functional>
 #include <atomic>
-#include <thread>
+#include <memory>
 
 namespace drivelink::gui {
 struct GuiDispatch;
@@ -500,13 +501,13 @@ private:
     std::vector<drivelink::agent::HistoryEntry> m_historyEntries;
     QVariantMap m_listing,m_agentFailure;
     RecentAgents m_recentAgents;
-    std::thread m_lister;
+    std::unique_ptr<QThread> m_lister;
     uint64_t m_listSerial=0;
     bool m_listBusy=false,m_listQueued=false; // a lister thread runs / an explicit list waits for it
     std::pair<QString,QString> m_listTarget; // address, token of the last list
     void startList(bool quiet);
     // mDNS browse (connection_remote.cpp): one round at a time on m_browser.
-    std::thread m_browser;
+    std::unique_ptr<QThread> m_browser;
     std::shared_ptr<std::atomic<bool>> m_browserDone; // m_browser's round ended
     QTimer m_browseTimer;
     FoundAgents m_found;
@@ -702,7 +703,7 @@ private:
     void resetLive();
     QString actionCommon() const;
     std::shared_ptr<Context> m_context;
-    std::thread m_opener;
+    std::unique_ptr<QThread> m_opener;
     std::shared_ptr<GuiDispatch> m_dispatch;
     std::shared_ptr<const DeviceSnapshot> m_snapshot;
     InstanceTree m_instances;

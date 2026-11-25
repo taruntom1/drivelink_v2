@@ -15,11 +15,11 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
+#include <QThread>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <functional>
-#include <future>
 #include <memory>
 
 namespace drivelink::gui {
@@ -328,9 +328,12 @@ private:
     QString m_autoNote;
     QString m_sessionName, m_sessionPath, m_recoveryFolder;
     bool m_dirty=false, m_autosaveDue=false, m_tooLargeNoted=false;
-    // The autosave writes on a worker thread from a copy (a large session
-    // must not stall the GUI thread, where DISARM is handled).
-    std::future<QString> m_autosaveJob;
+    // The autosave writes on a QThread worker from a copy (a large session
+    // must not stall the GUI thread, where DISARM is handled). QThread avoids
+    // Windows MinGW QAdoptedThread FLS teardown crashes when constructing QSaveFile.
+    std::unique_ptr<QThread> m_autosaveThread;
+    QString m_autosaveError;
+    uint64_t m_autosaveSerial=0;
     std::optional<QDateTime> m_recoveryOffer;
     // H2e-3.
     IdentifyView m_identify;

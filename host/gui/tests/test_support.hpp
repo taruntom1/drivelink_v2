@@ -13,8 +13,21 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <functional>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef near
+#undef far
+#endif
 
 // The static DriveLink.Shell module's C++ types (PlotItem).
 void qml_register_types_DriveLink_Shell();
@@ -123,4 +136,50 @@ struct Fixture {
         QTest::qWait(150);
     }
 };
+// Regression guard for issue #130 (Windows MinGW + Qt 6.12): Windows catches
+// FLS thread-exit access violations in Qt6Core.dll (destroy_current_thread_data)
+// after WerFault pauses the process, so CTest exits 0 unless we observe the
+// first-chance exception via a Vectored Exception Handler.
+class QtCoreFaultGuard {
+public:
+#ifdef _WIN32
+    QtCoreFaultGuard() {
+        s_faults.store(0,std::memory_order_relaxed);
+        HMODULE mod=::GetModuleHandleW(L"Qt6Core.dll");
+        if(!mod) {mod=::GetModuleHandleW(L"Qt6Cored.dll");}
+        if(mod) {
+            const auto base=reinterpret_cast<uintptr_t>(mod);
+            const auto *dos=reinterpret_cast<const IMAGE_DOS_HEADER *>(base);
+            const auto *nt=reinterpret_cast<const IMAGE_NT_HEADERS *>(base+size_t(dos->e_lfanew));
+            s_base.store(base,std::memory_order_relaxed);
+            s_end.store(base+size_t(nt->OptionalHeader.SizeOfImage),std::memory_order_relaxed);
+        } else {
+            s_base.store(0,std::memory_order_relaxed);
+            s_end.store(0,std::memory_order_relaxed);
+        }
+        m_handle=::AddVectoredExceptionHandler(1,&QtCoreFaultGuard::handler);
+    }
+    ~QtCoreFaultGuard() {
+        if(m_handle) {::RemoveVectoredExceptionHandler(m_handle);}
+    }
+    int faults() const {return s_faults.load(std::memory_order_relaxed);}
+private:
+    static LONG CALLBACK handler(PEXCEPTION_POINTERS info) {
+        if(info && info->ExceptionRecord && info->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION) {
+            const auto addr=reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+            const auto base=s_base.load(std::memory_order_relaxed);
+            const auto end=s_end.load(std::memory_order_relaxed);
+            if(addr>=base && addr<end) {s_faults.fetch_add(1,std::memory_order_relaxed);}
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    void *m_handle=nullptr;
+    static inline std::atomic<uintptr_t> s_base{0};
+    static inline std::atomic<uintptr_t> s_end{0};
+    static inline std::atomic<int> s_faults{0};
+#else
+    int faults() const {return 0;}
+#endif
+};
+
 } // namespace drivelink::gui::test
