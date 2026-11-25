@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build and flash bench or normal firmware on the bare board (never validation).
+"""Build and flash bench, debug or normal firmware on the bare board (never validation).
 
 Run from any directory. Full command output goes to build/bench_fw/<mode>.log.
-After bench checks, always run `python tools/bench_fw.py normal` from the repo
+After bench or debug checks, always run `python tools/bench_fw.py normal` from the repo
 root to restore normal firmware. Both commands default to protocol UART COM3.
 """
 import argparse
@@ -21,12 +21,15 @@ NORMAL = ['-B', 'build', '-D', 'SDKCONFIG=sdkconfig',
           '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults']
 XIP = ['-B', 'build_xip', '-D', 'SDKCONFIG=build_xip/sdkconfig',
        '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.xip']
+DEBUG = ['-B', 'build_debug', '-D', 'SDKCONFIG=build_debug/sdkconfig',
+         '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.debug']
 OTA_IMAGE = ['-B', 'build_ota', '-D', 'SDKCONFIG=build_ota/sdkconfig',
              '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults', '-D', 'PROJECT_VER=f9-candidate']
 
 
 def check_config(mode):
-    folder = {'bench': 'build_bench', 'normal': 'build', 'xip': 'build_xip', 'ota-image': 'build_ota'}[mode]
+    folder = {'bench': 'build_bench', 'normal': 'build', 'xip': 'build_xip', 'debug': 'build_debug',
+              'ota-image': 'build_ota'}[mode]
     header = FIRMWARE / folder / 'config' / 'sdkconfig.h'
     enabled = bool(re.search(r'^\s*#\s*define\s+CONFIG_CORE_BENCH_CRASH\s+1\b',
                              header.read_text(encoding='utf-8'), re.MULTILINE))
@@ -43,6 +46,10 @@ def check_config(mode):
         present = bool(re.search(r'^\s*#\s*define\s+CONFIG_' + option + r'\s+1\b', content, re.MULTILINE))
         if present != (mode == 'xip'):
             raise validate.Failed(f'{header}: CONFIG_{option} must be ' + ('on for xip' if mode == 'xip' else 'off'))
+    for option, on in (('HEAP_POISONING_COMPREHENSIVE', mode == 'debug'),
+                       ('FREERTOS_WATCHPOINT_END_OF_STACK', mode != 'debug')):
+        if bool(re.search(r'^\s*#\s*define\s+CONFIG_' + option + r'\s+1\b', content, re.MULTILINE)) != on:
+            raise validate.Failed(f'{header}: CONFIG_{option} must be ' + ('on' if on else 'off') + f' for {mode}')
 
 
 def main(argv=None):
@@ -51,13 +58,14 @@ def main(argv=None):
     for mode, help_text in [('bench', 'build isolated bench firmware and flash'),
                             ('normal', 'reconfigure, build, verify bench/XiP are off, and flash'),
                             ('xip', 'build isolated PSRAM XiP evaluation firmware and flash; restore normal afterward'),
+                            ('debug', 'build isolated JTAG debug firmware and flash; restore normal afterward'),
                             ('ota-image', 'build and verify an isolated distinct OTA candidate; never flash')]:
         command = sub.add_parser(mode, help=help_text)
         command.add_argument('--port', default='COM3', help='flash port (default: COM3)')
         command.add_argument('--dry-run', action='store_true',
                              help='show commands and config guard without exporting IDF or flashing')
     args = parser.parse_args(argv)
-    options = {'bench': BENCH, 'normal': NORMAL, 'xip': XIP, 'ota-image': OTA_IMAGE}[args.mode]
+    options = {'bench': BENCH, 'normal': NORMAL, 'xip': XIP, 'debug': DEBUG, 'ota-image': OTA_IMAGE}[args.mode]
     actions = ['build'] if args.mode == 'bench' else ['reconfigure', 'build']
     build = [*options, *actions]
     flash = [*options, '-p', args.port, 'flash']

@@ -24,6 +24,7 @@ class BenchTest(unittest.TestCase):
         self.calls = []
         self.enabled = False
         self.xip = False
+        self.debug = False
         for name, value in [('FIRMWARE', self.firmware), ('OUT', self.root / 'logs')]:
             patch = mock.patch.object(bench_fw, name, value)
             patch.start()
@@ -34,11 +35,13 @@ class BenchTest(unittest.TestCase):
         if step.title == 'build':
             build = step.argv[step.argv.index('-B') + 1]
             header = self.firmware / build / 'config' / 'sdkconfig.h'
-            header.parent.mkdir(parents=True)
+            header.parent.mkdir(parents=True, exist_ok=True)
             content = '#define CONFIG_CORE_BENCH_CRASH 1\n' if self.enabled else '/* #undef CONFIG_CORE_BENCH_CRASH */\n'
             content += ''.join(f'#define CONFIG_{x} 1\n' for x in (
                 'PARTITION_TABLE_CUSTOM', 'BOOTLOADER_APP_ROLLBACK_ENABLE', 'ESPTOOLPY_FLASHSIZE_16MB'))
             content += '#define CONFIG_PARTITION_TABLE_CUSTOM_FILENAME "partitions.csv"\n'
+            content += ('#define CONFIG_HEAP_POISONING_COMPREHENSIVE 1\n' if self.debug
+                        else '#define CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK 1\n')
             if self.xip:
                 content += ''.join(f'#define CONFIG_{x} 1\n' for x in (
                     'SPIRAM_XIP_FROM_PSRAM', 'SPIRAM_FETCH_INSTRUCTIONS', 'SPIRAM_RODATA'))
@@ -97,6 +100,25 @@ class BenchTest(unittest.TestCase):
         self.xip = self.enabled = True
         self.assertEqual(self.run_main('xip'), 1)
 
+    def test_debug_is_isolated_and_other_modes_reject_it(self):
+        self.debug = True
+        before = self.normal_config.read_bytes()
+        self.assertEqual(self.run_main('debug'), 0)
+        self.assertEqual([s.title for s in self.calls], ['build', 'flash'])
+        for step in self.calls:
+            self.assertIn('SDKCONFIG=build_debug/sdkconfig', step.argv)
+            self.assertIn('SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.debug', step.argv)
+        self.assertEqual(self.normal_config.read_bytes(), before)
+        self.calls.clear()
+        self.assertEqual(self.run_main('normal'), 1)
+        self.assertEqual([s.title for s in self.calls], ['build'])
+
+    def test_debug_refuses_missing_debug_or_bench_enabled(self):
+        self.assertEqual(self.run_main('debug'), 1)
+        self.debug = self.enabled = True
+        self.assertEqual(self.run_main('debug'), 1)
+        self.assertNotIn('flash', [s.title for s in self.calls])
+
     def test_build_failure_does_not_flash(self):
         def fail(name, step, log, verbose):
             self.calls.append(step)
@@ -127,7 +149,7 @@ class BenchTest(unittest.TestCase):
         with mock.patch.object(validate, 'idf_env') as export, \
                 mock.patch.object(validate, 'run_step') as run, \
                 contextlib.redirect_stdout(io.StringIO()):
-            for mode in ('bench', 'normal', 'xip', 'ota-image'):
+            for mode in ('bench', 'normal', 'xip', 'debug', 'ota-image'):
                 self.assertEqual(bench_fw.main([mode, '--dry-run']), 0)
             with self.assertRaises(SystemExit) as caught:
                 bench_fw.main(['--help'])
