@@ -2,8 +2,8 @@
 
 Plan for [issue 105](https://github.com/taruntom1/drivelink_v2/issues/105): change at
 run time, through the CLI, GUI and agent, what now needs a Kconfig edit and a
-rebuild. Five PRs, one per step, in order. State: **steps 1 to 4 and 5a
-done**; 5b is left, on the same branch and PR as 5a (`claude/runtime-settings-5`).
+rebuild. Five PRs, one per step, in order. State: **steps 1 to 5 done** (step 5a
+and 5b complete on `claude/runtime-settings-5`, PR #120).
 
 ## Why it fits the current design
 

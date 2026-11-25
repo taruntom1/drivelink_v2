@@ -4,7 +4,7 @@ Generic command-line client over [libdrivelink](../libdrivelink/README.md). `dri
 
 ## Invocation
 
-Global options precede the command: `--endpoint tcp://HOST:PORT|serial://PORT`, `--baud` (default 921600), `--timeout-ms` (default 1500), `--json`, and the agent options in [Through an agent](#through-an-agent).
+Global options precede the command: `--endpoint tcp://HOST:PORT|serial://PORT`, `--baud` (default `auto`, or a fixed rate in `9600..4000000`), `--timeout-ms` (default 1500), `--json`, and the agent options in [Through an agent](#through-an-agent).
 
 ```sh
 drivelink-cli --endpoint tcp://127.0.0.1:8765 --json types
@@ -48,6 +48,7 @@ The system params are the items of type 0, instance 0: `items 0` lists them with
 | 0:0:4 | `watchdog_ms` | at once; refused while armed |
 | 0:0:16 to 0:0:23 | `limits.*` | after `save` and `reboot` |
 | 0:0:32 to 0:0:34 | `diag.*` | at once |
+| 0:0:48 to 0:0:50 | `link.baud`, `link.tx_pin`, `link.rx_pin` | after `save` and `reboot` on a 30 s (baud) or 120 s (pin) trial; run `link-confirm` to keep |
 
 ```sh
 drivelink-cli --endpoint tcp://127.0.0.1:8765 get 0:0:16           # the limit that runs, 4
@@ -63,6 +64,21 @@ drivelink-cli --endpoint tcp://127.0.0.1:8765 get 0:0:16           # 6
 - While a setting is staged, `arm` is refused until the reboot (or `discard`, if nothing was saved).
 - A live value lasts until the next boot unless you `save`. `save` also writes every other unsaved change.
 - `discard` drops what is staged but does not undo a `save`: the next boot loads the saved values. To go back after a `save`, `set` the old value and `save` again.
+
+### Serial link settings and trials
+
+`link.baud` (`0:0:48`, rates `115200`..`3000000`, default `921600`), `link.tx_pin` (`0:0:49`, default `43`) and `link.rx_pin` (`0:0:50`, default `44`) run on a trial after `save` and `reboot`. `reboot` stays a plain reboot: when a link change is pending, it prints the trial window, any required wire move and the exact `link-confirm` command to run after the board comes back. With the default `--baud auto`, the next invocation detects the new rate automatically:
+
+```sh
+drivelink-cli --endpoint serial://COM3 set 0:0:48=2000000
+drivelink-cli --endpoint serial://COM3 save
+drivelink-cli --endpoint serial://COM3 reboot
+drivelink-cli --endpoint serial://COM3 link-confirm
+```
+
+- `info` reports `link_trial_ms` (0 when no trial is running). While a trial is active, `arm` and `ota-upload` are refused.
+- `link-confirm` checks the device id, sends `LINK_CONFIRM` once and reports `confirmed`, `reverted`, `no_trial`, `unconfirmed` or `wrong_device`. Through an agent, `link-confirm` is an exclusive operation (`--lease` if another client holds the lease); note that an agent with `"baud": "auto"` confirms a trial automatically on reconnect to the same device id.
+- **Recovery:** resetting or power-cycling the board aborts an unconfirmed trial and restores the last confirmed link. If a confirmed link is unreachable, erase the board's NVS partition over USB with `esptool` (which clears all saved settings, layout and name) so it returns to `921600` on GPIO 43/44. Firmware older than core v12 ignores stored link settings and boots at `921600` on GPIO 43/44.
 
 Through an agent, the same commands take `--device`. `set` needs no lease. `save` and `reboot` are exclusive operations, so they need `--lease` whenever another client holds the lease. `--lease` takes it from that client and disarms the device:
 

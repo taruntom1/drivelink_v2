@@ -46,9 +46,29 @@ If the board is in safe mode, the reboot rows run at their defaults and the card
 
 If another client holds control, as when you [share the device]({{base}}pi/control/), reboot rows say **Needs the control lease**. Live rows ask you to confirm each change.
 
+## Change the serial link (baud rate or pins)
+
+The **LINK** rows (`link.baud`, `link.tx_pin`, and `link.rx_pin`) set the speed and UART pins the board uses for DriveLink traffic. The defaults are **921600** baud on **TX 43 / RX 44**. Changing them starts a timed **trial** so a bad speed or wiring mistake does not lock you out:
+
+- A **baud rate** change runs on a **30 s** trial.
+- A **pin** change runs on a **120 s** trial so you have time to move the UART wires.
+
+If the new link is not confirmed before the timer runs out—or if the board resets or loses power—the board restarts on its previous confirmed link.
+
+1. Make sure the board is disarmed and no firmware update is pending. In **Device settings**, change `link.baud` (for example to `2000000`), or change `link.tx_pin` and `link.rx_pin`. An amber note appears inside the card showing the old and new link and the trial time.
+2. Select **Save and reboot**. A confirmation dialog appears describing the trial window (and the new TX/RX pins if pins changed). **DISARM** remains live in the status bar. Select **Save and reboot** in the dialog.
+3. The app shows a reconnect countdown while the board restarts on the new link. If you changed pins, move the UART wires to the new TX and RX pins now.
+4. Once the board answers on the new link (directly with **Auto** baud, or through `drivelink-agent`), the app confirms the trial automatically. **Device settings** shows a **Serial link confirmed** banner and **Device** shows the new **Link rate**.
+
+If the trial cannot be confirmed in time, the board reverts automatically and **Device settings** shows **Serial link reverted**. If neither the new nor the old link answers before the wait window ends, the app shows **Device not reachable after link change** with recovery steps and **Retry (Auto baud)**.
+
+While a trial is active—for example if you connect to a board that another tool put into a trial—**Device settings** shows a **Serial link on trial** banner with the remaining time and a **Confirm link** button. Arming and firmware updates are paused until the trial is confirmed or reverts. Through an agent, confirming needs the control lease if another client holds it.
+
+> **Warning.** If the board does not answer during a trial, press **Reset** or power-cycle it once so the unconfirmed trial reverts to the previous link. If a **confirmed** link becomes unreachable (for example, after confirming pins you no longer have wired), erase the board’s NVS partition over USB with `esptool` to return to **921600** on **TX 43 / RX 44**. Erasing NVS clears **all** saved settings on the board—layout, parameters, device name, and link settings. Firmware older than core v12 ignores stored link settings and always starts at **921600** on **GPIO 43/44**.
+
 ## The same change from a terminal
 
-The command-line tool is installed with the app on Ubuntu. Replace the port with yours. Setting 0:0:16 is `limits.loops`.
+The command-line tool is installed with the app on Ubuntu and defaults to `--baud auto`. Replace the port with yours. Setting 0:0:16 is `limits.loops`, and 0:0:48 to 0:0:50 are `link.baud`, `link.tx_pin`, and `link.rx_pin`.
 
 ~~~sh
 drivelink-cli --endpoint serial:///dev/ttyUSB0 set 0:0:16=6
@@ -57,6 +77,15 @@ drivelink-cli --endpoint serial:///dev/ttyUSB0 reboot
 drivelink-cli --endpoint serial:///dev/ttyUSB0 get 0:0:16
 ~~~
 
-The first command should report `pending_reboot: true`, and the last should report 6. Run `drivelink-cli --endpoint serial:///dev/ttyUSB0 items 0` to list every setting and its range. Settings 0:0:16 to 0:0:23 are the limits.
+The first command should report `pending_reboot: true`, and the last should report 6. For a serial link change, `reboot` stays a plain reboot and prints the pending trial window and the `link-confirm` command to run after the board restarts:
+
+~~~sh
+drivelink-cli --endpoint serial:///dev/ttyUSB0 set 0:0:48=2000000
+drivelink-cli --endpoint serial:///dev/ttyUSB0 save
+drivelink-cli --endpoint serial:///dev/ttyUSB0 reboot
+drivelink-cli --endpoint serial:///dev/ttyUSB0 link-confirm
+~~~
+
+Run `drivelink-cli --endpoint serial:///dev/ttyUSB0 items 0` to list every setting and its range. Settings 0:0:16 to 0:0:23 are the limits, and 0:0:48 to 0:0:50 are the serial link settings.
 
 Next, add what the new capacity allows on [Layout]({{base}}pc/layout/), or go to [First spin]({{base}}pc/first-spin/).

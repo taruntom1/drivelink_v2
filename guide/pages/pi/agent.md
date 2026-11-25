@@ -15,7 +15,7 @@ You need a Pi running Ubuntu, a [wired board]({{base}}pi/wire/), and the [DriveL
    drivelink-agent --list-ports
    ~~~
 
-3. Open the agent configuration. For the reference UART, set the contents to the example below. If you use the USB-to-UART bridge, change the endpoint to the bridge’s `serial://` entry printed by the previous command. Check that the device has the alias `base` and baud rate `921600`.
+3. Open the agent configuration. For the reference UART, set the contents to the example below. If you use the USB-to-UART bridge, change the endpoint to the bridge’s `serial://` entry printed by the previous command. Check that the device has the alias `base` and `"baud": "auto"` (or a fixed rate if you want to pin it).
 
    ~~~sh
    sudoedit /etc/drivelink/agent.json
@@ -27,7 +27,7 @@ You need a Pi running Ubuntu, a [wired board]({{base}}pi/wire/), and the [DriveL
      "port": 47620,
      "token_file": "token",
      "devices": [
-       {"alias": "base", "endpoint": "serial:///dev/ttyAMA0", "baud": 921600}
+       {"alias": "base", "endpoint": "serial:///dev/ttyAMA0", "baud": "auto"}
      ]
    }
    ~~~
