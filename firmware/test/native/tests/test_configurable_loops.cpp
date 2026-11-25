@@ -14,8 +14,11 @@
 #include "drivelink/protocol/gen/type_actuator_mock.hpp"
 #include "mod_mock/modules.hpp"
 #include <cstdlib>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <thread>
 
 namespace {
@@ -25,6 +28,10 @@ struct ExpectedViolations {
     core_os::native::RealtimeViolationSink previous=core_os::native::setRealtimeViolationSink(nullptr);
     ~ExpectedViolations() { core_os::native::setRealtimeViolationSink(previous); }
 };
+// What a threaded test leaves between a loop's nominal wake and the end of a
+// staging wait (a timed wait ends up to 15.6 ms late on Windows). A 250 Hz loop
+// leaves 13 ms, which a late wake uses up: Busy/Withdrawn.
+constexpr uint32_t kWakeMarginUs=60000;
 core::persist::StoredInstance storedLoop(uint8_t id, bool realtime)
 {
     core::persist::StoredInstance s{};
@@ -227,23 +234,28 @@ TEST_CASE("Configurable loops: limits, sparse ids and empty saved layouts")
 
 TEST_CASE("Configurable loops: pending compatibility, references, SAVE and reload")
 {
+    constexpr uint32_t kSavedHz=20, kSavedPeriodUs=1000000/kSavedHz;
     core_os::KvStore store;
     {
         core::Core c(core::CoreConfig{}); boot(c,store); uint8_t loop=255, motor=255;
         REQUIRE(c.addInstance(defs::kLoopTypeId,255,"third",loop).ok()); CHECK(loop==2);
         REQUIRE(set(c,defs::kLoopTypeId,loop,lp::kRealtime,1).accepted());
-        REQUIRE(set(c,defs::kLoopTypeId,loop,lp::kRateHz,250).accepted());
+        REQUIRE(set(c,defs::kLoopTypeId,loop,lp::kRateHz,kSavedHz).accepted());
         REQUIRE(c.addInstance(112,loop,"motor",motor).ok());
         CHECK(c.removeInstance(defs::kLoopTypeId,loop).detail==core::Detail::Referenced);
         CHECK(set(c,defs::kLoopTypeId,loop,lp::kRealtime,0).detail==core::Detail::LoopMismatch);
         REQUIRE(c.save().ok());
     }
     core::Core c(core::CoreConfig{}); boot(c,store);
-    REQUIRE(c.findLoop(2)); CHECK(c.loop(2).realtime()); CHECK(c.loop(2).periodUs()==4000);
+    REQUIRE(c.findLoop(2)); CHECK(c.loop(2).realtime()); CHECK(c.loop(2).periodUs()==kSavedPeriodUs);
     CHECK(c.findRecord(112,0)->state==core::InstanceState::Running);
-    CHECK(set(c,defs::kLoopTypeId,2,lp::kRateHz,500).ok()); CHECK(c.loop(2).periodUs()==2000);
+    CHECK(set(c,defs::kLoopTypeId,2,lp::kRateHz,40).ok()); CHECK(c.loop(2).periodUs()==25000);
+    // revert() restores the saved rate first, then waits for the loop to take the motor's batch.
+    REQUIRE(core::ParamService::stagingTimeoutUs(kSavedPeriodUs)>=kSavedPeriodUs+kWakeMarginUs);
     REQUIRE(c.start().ok());
-    REQUIRE(c.revert().ok()); CHECK(c.loop(2).periodUs()==4000);
+    const auto reverted=c.revert();
+    INFO("revert: result ",static_cast<int>(reverted.result)," detail ",static_cast<int>(reverted.detail));
+    REQUIRE(reverted.ok()); CHECK(c.loop(2).periodUs()==kSavedPeriodUs);
     c.params().setArmed(true);
     CHECK(set(c,defs::kLoopTypeId,2,lp::kRateHz,100).result==core::Result::Armed);
     core::ActionOut out;
@@ -251,7 +263,52 @@ TEST_CASE("Configurable loops: pending compatibility, references, SAVE and reloa
     c.params().setArmed(false);
     core_os::native::failNextPeriodChange();
     CHECK(set(c,defs::kLoopTypeId,2,lp::kRateHz,100).detail==core::Detail::TimerFailed);
-    CHECK(c.loop(2).periodUs()==4000);
+    CHECK(c.loop(2).periodUs()==kSavedPeriodUs);
+}
+
+TEST_CASE("Configurable loops: REVERT stops at a loop that misses its batch, and a repeat completes it")
+{
+    namespace act = defs::actuator_mock;
+    PlacementObservation observation; // manual scheduling: the loop ticks only when the test does
+    core_os::KvStore store;
+    auto loop=storedLoop(0,true); loop.pairs.push_back({lp::kRateHz,20});
+    core::persist::StoredInstance motor{}; motor.type_id=112; motor.loop=0; std::strcpy(motor.label,"motor");
+    const std::array entries{loop,motor};
+    REQUIRE(core::persist::saveConfig(store,1,entries,{}).ok());
+    core::Core c(core::CoreConfig{}); boot(c,store); REQUIRE(c.start().ok());
+    const auto gain=[&c] {
+        const core::Ref ref{112,0,act::kGain}; uint32_t bits=0;
+        REQUIRE(c.params().get({&ref,1},{&bits,1}).ok());
+        return defs::f32FromBits(bits);
+    };
+    const float saved=gain();
+    const core::SetEntry edit{{112,0,act::kGain},defs::f32Bits(saved+1.F)}; uint32_t applied=0;
+    core::PendingSet pending;
+    REQUIRE(c.params().stage({&edit,1},{&applied,1},pending).ok());
+    c.loop(0).runTick(1);
+    REQUIRE(c.params().complete(pending,0).ok());
+    REQUIRE(set(c,defs::kLoopTypeId,0,lp::kRateHz,40).ok());
+    REQUIRE(c.setName("unsaved").ok());
+
+    // No tick: the motor's batch is withdrawn. The loop's rate, reverted before it, stays.
+    const auto refused=c.revert();
+    CHECK(refused.result==core::Result::Busy); CHECK(refused.detail==core::Detail::Withdrawn);
+    CHECK(c.loop(0).periodUs()==50000);
+    CHECK(c.loop(0).stagingState()==core::StagingState::Empty);
+    CHECK(gain()==saved+1.F); CHECK(std::string(c.name())=="unsaved"); CHECK(c.nvsDirty());
+    c.loop(0).runTick(1); // nothing is left for a later tick to apply
+    CHECK(gain()==saved+1.F);
+
+    // A repeat with the loop running.
+    std::atomic<bool> done{false};
+    std::thread ticker([&] {
+        while (!done.load()) { c.loop(0).runTick(1); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    });
+    const auto repeated=c.revert();
+    done.store(true); ticker.join();
+    CHECK(repeated.ok());
+    CHECK(gain()==saved); CHECK(std::string(c.name()).empty()); CHECK_FALSE(c.nvsDirty());
+    CHECK(c.loop(0).periodUs()==50000);
 }
 
 TEST_CASE("Configurable loops: one task failure leaves other loops and the link usable")

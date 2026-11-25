@@ -147,8 +147,7 @@ private:
     std::vector<SampleRing> m_rings; // measured, fitted
     int m_speed=int(TuneSpeed::Balanced);
     std::unique_ptr<QThread> m_fitThread;
-    std::optional<IdentifyResult> m_fitResult;
-    uint64_t m_fitSerial=0;
+    std::shared_ptr<IdentifyResult> m_fitResult;
     QString m_fitTime;
 
     std::optional<TuneController> controllerInfo() const;
@@ -159,7 +158,6 @@ private:
     void defaults();
     void rebuildRings();
     std::optional<Suggestion> currentSuggestion() const;
-    void stopFit();
     void fitDone();
 };
 } // namespace drivelink::gui

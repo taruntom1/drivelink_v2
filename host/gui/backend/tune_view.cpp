@@ -1447,7 +1447,9 @@ void TuneView::writeAutosave(bool now) {
     m_tooLargeNoted=false;
     if(m_autosaveThread) {
         // The last write still runs: later, or (closing) after it.
-        if(!now) {m_autosave.start();return;}
+        if(m_autosaveThread->isRunning()) {
+            if(!now) {m_autosave.start();return;}
+        }
         waitAutosave();
     }
     m_autosaveDue=false;
@@ -1459,34 +1461,31 @@ void TuneView::writeAutosave(bool now) {
         if(const auto error=write();!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
         return;
     }
-    // The destructor waits for the thread, so `this` outlives it.
-    const auto serial=++m_autosaveSerial;
-    m_autosaveError.clear();
-    m_autosaveThread.reset(QThread::create([this,write=std::move(write)]() {
-        m_autosaveError=write();
+    // The destructor waits for the thread, so `this` outlives it. Using QThread
+    // instead of std::async avoids Qt 6.12 + MinGW emutls/FLS teardown crashes
+    // when QSaveFile adopts a non-QThread.
+    auto result=std::make_shared<QString>();
+    m_autosaveResult=result;
+    m_autosaveThread.reset(QThread::create([write=std::move(write),result]() {
+        *result=write();
     }));
-    connect(m_autosaveThread.get(),&QThread::finished,this,[this,serial] {
-        if(!m_autosaveThread || m_autosaveSerial!=serial) {return;}
-        autosaveDone();
+    QThread *raw=m_autosaveThread.get();
+    connect(raw,&QThread::finished,this,[this,raw] {
+        if(m_autosaveThread.get()==raw) {autosaveDone();}
     },Qt::QueuedConnection);
     m_autosaveThread->start();
 }
 void TuneView::autosaveDone() {
-    if(!m_autosaveThread) {return;}
-    m_autosaveThread->wait();
-    const auto error=std::move(m_autosaveError);
-    m_autosaveError.clear();
-    m_autosaveThread.reset();
-    if(!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
+    if(!m_autosaveThread || m_autosaveThread->isRunning()) {return;}
+    waitAutosave();
     if(m_autosaveDue) {m_autosave.start();}
 }
 void TuneView::waitAutosave() {
     if(!m_autosaveThread) {return;}
     m_autosaveThread->wait();
-    const auto error=std::move(m_autosaveError);
-    m_autosaveError.clear();
     m_autosaveThread.reset();
-    if(!error.isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(error),2);}
+    const auto result=std::move(m_autosaveResult);
+    if(result && !result->isEmpty()) {emit notification(tr("Could not autosave the tuning session: %1").arg(*result),2);}
 }
 QVariantMap TuneView::recovery() const {
     if(!m_recoveryOffer) {return {{"available",false}};}

@@ -329,11 +329,10 @@ private:
     QString m_sessionName, m_sessionPath, m_recoveryFolder;
     bool m_dirty=false, m_autosaveDue=false, m_tooLargeNoted=false;
     // The autosave writes on a QThread worker from a copy (a large session
-    // must not stall the GUI thread, where DISARM is handled). QThread avoids
-    // Windows MinGW QAdoptedThread FLS teardown crashes when constructing QSaveFile.
+    // must not stall the GUI thread, where DISARM is handled, and QThread
+    // tears down QThreadData cleanly on Windows MinGW).
     std::unique_ptr<QThread> m_autosaveThread;
-    QString m_autosaveError;
-    uint64_t m_autosaveSerial=0;
+    std::shared_ptr<QString> m_autosaveResult;
     std::optional<QDateTime> m_recoveryOffer;
     // H2e-3.
     IdentifyView m_identify;
