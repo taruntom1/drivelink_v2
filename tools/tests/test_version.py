@@ -71,7 +71,8 @@ class VersionTest(unittest.TestCase):
 
     def test_check_reports_each_mismatch(self):
         self.assertEqual(version.check(self.root), [])
-        self.write('VERSION', '0.2.0\n')
+        major, minor, patch = (int(part) for part in version.base(self.root).split('.'))
+        self.write('VERSION', f'{major}.{minor}.{patch + 1}\n')
         problems = version.check(self.root)
         self.assertEqual(len(problems), len(version.PACKAGE_XML))
         self.assertTrue(all('<version>' in line for line in problems))

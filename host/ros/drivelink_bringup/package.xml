@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>drivelink_bringup</name><version>0.1.1</version>
+  <name>drivelink_bringup</name><version>0.2.0</version>
   <description>DriveLink ROS 2 example robot, diagnostics and operator recovery.</description>
   <maintainer email="taruntom1@users.noreply.github.com">DriveLink maintainers</maintainer>
   <license>Proprietary</license>
