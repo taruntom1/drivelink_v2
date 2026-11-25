@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <thread>
 
 namespace drivelink::gui {
 namespace {
@@ -126,8 +127,8 @@ LocalConnection::LocalConnection(QObject *parent):Connection(parent),
 }
 LocalConnection::~LocalConnection() {
     finishClose();
-    if(m_lister.joinable()) {m_lister.join();}
-    if(m_browser.joinable()) {m_browser.join();} // a round ends within ~1.3 s
+    if(m_lister) {m_lister->wait();m_lister.reset();}
+    if(m_browser) {m_browser->wait();m_browser.reset();} // a round ends within ~1.3 s
 }
 bool LocalConnection::current(const std::shared_ptr<Context> &c) const {return m_context==c && !c->retired;}
 bool LocalConnection::linked() const {return m_context && m_context->getSession() && !m_linkLost && (!m_snapshot || m_snapshot->connected);}
@@ -237,7 +238,8 @@ void LocalConnection::open(const QString &endpoint,int baud,int lastBaud) {
     // until publication, including an Esc immediately after Connect.
     QTimer::singleShot(0,this,[this,c,queue,self,address,openBaud,hintBaud,reconnecting,hello] {
     if(!current(c)) {return;}
-    m_opener=std::thread([c,queue,self,address,openBaud,hintBaud,reconnecting,hello] {
+    if(m_opener) {m_opener->wait();m_opener.reset();}
+    m_opener.reset(QThread::create([c,queue,self,address,openBaud,hintBaud,reconnecting,hello] {
         try {
             SessionOptions options;options.dispatcher=[queue](Task task){post(queue,std::move(task));};
             options.baud=unsigned(openBaud);
@@ -311,7 +313,7 @@ void LocalConnection::open(const QString &endpoint,int baud,int lastBaud) {
             {std::lock_guard lock(c->mutex);c->model=std::move(model);}
             post(queue,[self,c] {
                 if(!self || !self->current(c)) {return;}
-                if(self->m_opener.joinable()) {self->m_opener.join();}
+                if(self->m_opener) {self->m_opener->wait();self->m_opener.reset();}
                 self->m_loading=false;self->m_seen.start();self->refresh(c);
             });
         } catch(const std::exception &e) {
@@ -329,7 +331,8 @@ void LocalConnection::open(const QString &endpoint,int baud,int lastBaud) {
                 self->report(error);self->finishClose();
             });
         }
-    });
+    }));
+    m_opener->start();
     });
 }
 void LocalConnection::refresh(const std::shared_ptr<Context> &c,bool metadataEvent) {
@@ -930,7 +933,7 @@ void LocalConnection::finishClose(bool lost) {
         c->retired=true;++c->safety;c->stopKeepers();
         if(auto s=c->getSession()) {s->close();}
     }
-    if(m_opener.joinable()) {m_opener.join();}
+    if(m_opener) {m_opener->wait();m_opener.reset();}
     // close() has joined I/O and completed admitted requests; joining the
     // opener prevents further startup posts. Drain callback chains too. An
     // active callback can itself close, so exclude its delivery stack.

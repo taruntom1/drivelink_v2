@@ -12,10 +12,10 @@
 #include "identify_model.hpp"
 #include "tune_session.hpp"
 #include <QObject>
+#include <QThread>
 #include <QVariantList>
 #include <QVariantMap>
 #include <functional>
-#include <future>
 #include <memory>
 
 namespace drivelink::gui {
@@ -146,7 +146,8 @@ private:
     QString m_resultTime;
     std::vector<SampleRing> m_rings; // measured, fitted
     int m_speed=int(TuneSpeed::Balanced);
-    std::future<IdentifyResult> m_fit;
+    std::unique_ptr<QThread> m_fitThread;
+    std::shared_ptr<IdentifyResult> m_fitResult;
     QString m_fitTime;
 
     std::optional<TuneController> controllerInfo() const;
