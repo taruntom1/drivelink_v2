@@ -77,6 +77,7 @@ class Check:
     windows_only: bool = False
     reads_docs: bool = False
     build_dir: Path = None       # removed before a run that follows a warning
+    inputs: tuple = None         # git pathspecs this check reads (None = whole repo)
 
 
 # --- Toolchains ------------------------------------------------------------
@@ -113,6 +114,8 @@ def idf_env():
     """The exported ESP-IDF environment: the caller's, or export.ps1's on Windows."""
     env = dict(os.environ)
     if env.get('IDF_PATH') and env.get('IDF_PYTHON_ENV_PATH'):
+        env.setdefault('CCACHE_BASEDIR', str(ROOT))
+        env.setdefault('CCACHE_NOHASHDIR', '1')
         return env  # exported already: CI, or an IDF shell
     if not WINDOWS:
         raise Unavailable('ESP-IDF is not exported (run `. $IDF_PATH/export.sh` first)')
@@ -137,6 +140,8 @@ def idf_env():
         errors = [line for line in (done.stdout + done.stderr).splitlines() if line.startswith('ERROR')]
         raise Unavailable('ESP-IDF export failed' + (f' ({errors[0]})' if errors else '')
                           + '; see firmware/CLAUDE.md ("Commands")')
+    exported.setdefault('CCACHE_BASEDIR', str(ROOT))
+    exported.setdefault('CCACHE_NOHASHDIR', '1')
     return exported
 
 
@@ -150,9 +155,26 @@ def idf_build(cwd, *options):
     return plan
 
 
+def fw_version_matches():
+    """True when firmware/build already configured this checkout's exact version."""
+    if CI:
+        return False
+    desc = ROOT / 'firmware/build/project_description.json'
+    if not desc.is_file():
+        return False
+    try:
+        built = json.loads(desc.read_text(encoding='utf-8')).get('project_version')
+    except (OSError, ValueError):
+        return False
+    sys.path.insert(0, str(ROOT / 'tools'))
+    import version
+    return built == version.full()
+
+
 def plan_fw_package(jobs):
-    """Reconfigure (the version is read at configure time), build, package."""
-    build = idf_build('firmware', 'reconfigure')(jobs)
+    """Reconfigure when the cached version differs (or in CI), build, package."""
+    options = () if fw_version_matches() else ('reconfigure',)
+    build = idf_build('firmware', *options)(jobs)
     return [*build, Step('package', ['python', 'tools/package_fw.py'], env=build[0].env)]
 
 
@@ -210,12 +232,42 @@ def plan_native(jobs):
     ]
 
 
+def ctest_jobs(jobs):
+    """Cap CTest parallelism so offscreen Qt and vdev processes don't oversubscribe."""
+    return str(max(1, min(4, int(jobs))))
+
+
+def deps_cache_key():
+    """Short hash of pinned FetchContent specs so shared caches rotate on updates."""
+    digest = hashlib.sha256()
+    for rel in ('host/cmake/Dependencies.cmake', 'host/cmake/Json.cmake'):
+        file = ROOT / rel
+        digest.update(file.read_bytes() if file.is_file() else b'missing')
+    return digest.hexdigest()[:12]
+
+
+def wsl_cache_env(env, home):
+    """Pass shared Linux ccache and FetchContent cache paths into WSL."""
+    cache_root = f'{home}/.cache/drivelink'
+    merged = dict(env or os.environ)
+    merged.setdefault('CCACHE_DIR', f'{cache_root}/ccache')
+    merged.setdefault('CCACHE_NOHASHDIR', '1')
+    merged.setdefault('DRIVELINK_DEPS_CACHE', f'{cache_root}/deps-{deps_cache_key()}')
+    names = [item for item in merged.get('WSLENV', '').split(':') if item]
+    for name in ('CCACHE_DIR', 'CCACHE_NOHASHDIR', 'DRIVELINK_DEPS_CACHE'):
+        if name not in names:
+            names.append(name)
+    merged['WSLENV'] = ':'.join(names)
+    return merged
+
+
 def plan_host(preset, configure_preset, jobs, env=None):
     superbuild = ROOT / 'host/superbuild'
     return [
         Step('configure', ['cmake', '--preset', configure_preset], superbuild, env),
         Step('build', ['cmake', '--build', '--preset', preset, '--parallel', jobs], superbuild, env),
-        Step('test', ['ctest', '--preset', preset, '-E', '^host-integration$'], superbuild, env),
+        Step('test', ['ctest', '--preset', preset, '--parallel', ctest_jobs(jobs), '-E', '^host-integration$'],
+             superbuild, env),
         Step('integration (verbose)', ['ctest', '--preset', preset, '-V', '-R', '^host-integration$',
                                       '--no-tests=error'], superbuild, env),
         Step('installed packages', [python(), 'host/test/install_smoke.py', '--build',
@@ -302,16 +354,19 @@ def plan_host_linux(jobs):
     # Linux filesystem (no rename locks) and outside /tmp, which WSL keeps in
     # RAM and loses whenever the idle VM stops.
     wsl, env, home = probe
+    env = wsl_cache_env(env, home)
     build = f'{home}/.cache/drivelink/{worktree_key()}/host-linux'
+    deps = env['DRIVELINK_DEPS_CACHE']
 
     def inside(title, cwd, *command):
         return Step(title, [*wsl, '--cd', str(cwd), '--exec', *command], env=env)
     superbuild = ROOT / 'host/superbuild'
     return [
-        inside('configure', superbuild, 'cmake', '--preset', 'linux', '-B', build),
+        inside('configure', superbuild, 'cmake', '--preset', 'linux', '-B', build,
+               f'-DFETCHCONTENT_BASE_DIR={deps}'),
         inside('build', superbuild, 'cmake', '--build', build, '--parallel', jobs),
         inside('test', superbuild, 'ctest', '--test-dir', build, '--output-on-failure',
-               '-E', '^host-integration$', '-LE', 'agent'),
+               '--parallel', ctest_jobs(jobs), '-E', '^host-integration$', '-LE', 'agent'),
         inside('integration (verbose)', superbuild, 'ctest', '--test-dir', build, '-V',
                '-R', '^host-integration$', '--no-tests=error'),
         inside('installed packages', ROOT, 'python3', 'host/test/install_smoke.py', '--build', build),
@@ -332,12 +387,15 @@ def plan_agent(jobs):
         ]
     # As host-linux: the WSL build directory is on the Linux filesystem.
     wsl, env, home = probe
+    env = wsl_cache_env(env, home)
     build = f'{home}/.cache/drivelink/{worktree_key()}/agent'
+    deps = env['DRIVELINK_DEPS_CACHE']
 
     def inside(title, *command):
         return Step(title, [*wsl, '--cd', str(superbuild), '--exec', *command], env=env)
     return [
-        inside('configure', 'cmake', '--preset', 'linux-no-gui', '-B', build),
+        inside('configure', 'cmake', '--preset', 'linux-no-gui', '-B', build,
+               f'-DFETCHCONTENT_BASE_DIR={deps}'),
         inside('build', 'cmake', '--build', build, '--parallel', jobs),
         inside('test', *test[:1], '--test-dir', build, *test[1:]),
     ]
@@ -359,6 +417,7 @@ def plan_deb(jobs):
     # WSL's git cannot read a Windows worktree: pass this checkout's version.
     # The stage needs a Linux filesystem (dpkg-deb checks file modes).
     wsl, env, home = probe
+    env = wsl_cache_env(env, home)
     sys.path.insert(0, str(ROOT / 'tools'))
     import version
     env = dict(env, DRIVELINK_VERSION_FULL=version.full(),
@@ -416,6 +475,7 @@ def plan_ros(jobs):
         build, wrap, env = (ROOT / 'build/ros').as_posix(), [], None
     else:
         wsl, env, home = probe
+        env = wsl_cache_env(env, home)
         build = f'{home}/.cache/drivelink/{worktree_key()}/ros'
         wrap = [*wsl, '--cd', str(ROOT), '--exec']
     env = dict(version_env(env), DRIVELINK_JOBS=jobs)
@@ -436,8 +496,11 @@ def plan_ros_jazzy(jobs):
     need_docker()
     image = 'drivelink-ros:jazzy'
     env = dict(version_env(None), DRIVELINK_JOBS=jobs)
+    deps = f'/cache/deps-{deps_cache_key()}'
     run = ['docker', 'run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src',
-           '-v', 'drivelink-ros-jazzy:/cache', '-e', 'DRIVELINK_VERSION_FULL', '-e', 'DRIVELINK_JOBS', image]
+           '-v', 'drivelink-ros-jazzy:/cache', '-e', 'DRIVELINK_VERSION_FULL', '-e', 'DRIVELINK_JOBS',
+           '-e', 'CCACHE_DIR=/cache/ccache', '-e', 'CCACHE_BASEDIR=/src', '-e', 'CCACHE_NOHASHDIR=1',
+           '-e', f'DRIVELINK_DEPS_CACHE={deps}', image]
     build = f'/cache/{worktree_key()}'
     return [Step('image (ros:jazzy + setup_linux.sh ros)',
                  ['docker', 'build', '-q', '-t', image, '--build-arg', 'DISTRO=jazzy',
@@ -457,7 +520,8 @@ def plan_ros_deb(jobs):
     package = ['python3', 'tools/package_ros.py', '--jobs', jobs]
     if CI:
         return [Step('Bloom build', package, warning_free=True)]
-    run = ros_deb_docker()
+    run = [*ros_deb_docker(), '-v', 'drivelink-ros-deb-cache:/cache',
+           '-e', 'CCACHE_DIR=/cache/ccache', '-e', 'DRIVELINK_DEPS_CACHE=/cache/deps']
     env = version_env(None)
     steps = []
     for distro in ('jazzy', 'lyrical'):
@@ -482,16 +546,21 @@ def plan_ros_deb_install(jobs):
     run = ros_deb_docker()
     smoke += ['--repo', '/out/apt', '--key', '/out/apt-key.asc']
     image = 'drivelink-ros-deb:jazzy'
+    deps = f'/cache/deps-{deps_cache_key()}'
     return [
         Step('Ubuntu 24.04 agent and CLI packages',
-             [*run, '-e', 'DRIVELINK_VERSION_FULL', '-v', 'drivelink-ros-jazzy:/cache', image,
+             [*run, '-e', 'DRIVELINK_VERSION_FULL', '-v', 'drivelink-ros-jazzy:/cache',
+              '-e', 'CCACHE_DIR=/cache/ccache', '-e', 'CCACHE_BASEDIR=/src', '-e', 'CCACHE_NOHASHDIR=1',
+              '-e', f'DRIVELINK_DEPS_CACHE={deps}', image,
               'python3', 'tools/package_linux.py', '--jobs', jobs, '--out', '/out/linux-jazzy',
               '--build-dir', f'/cache/{worktree_key()}/linux-release'], env=version_env(None)),
         Step('sign the two suites (throwaway key)',
              [*run, image, 'python3', 'tools/apt_repo.py', 'build', '--debs', 'build/deb',
               '--debs', '/out/linux-jazzy', '--debs', '/out/jazzy', '--debs', '/out/lyrical',
               '--out', '/out/apt', '--clean', '--throwaway-key', '--public-key-out', '/out/apt-key.asc']),
-        *(Step(f'{distro} signed apt install and launch', [*run, f'ros:{distro}', *smoke])
+        *(Step(f'{distro} signed apt install and launch',
+               [*run, '-v', f'drivelink-apt-cache-{distro}:/var/cache/apt/archives', f'ros:{distro}',
+                'sh', '-c', 'rm -f /etc/apt/apt.conf.d/docker-clean && exec "$@"', '--', *smoke])
           for distro in ('jazzy', 'lyrical')),
     ]
 
@@ -511,34 +580,83 @@ def plan_guide(jobs):
 NOLOG = ['-B', 'build_variant', '-D', 'SDKCONFIG=build_variant/sdkconfig',
          '-D', 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ci.nolog']
 
+# Per-check input pathspecs so unchanged subsystems reuse their last pass.
+HOST_COMMON_INPUTS = (
+    'host/superbuild', 'host/cmake', 'host/libdrivelink', 'host/vdev', 'host/cli', 'host/test',
+    'protocol', 'firmware/components', 'firmware/test/uart_comm/protocol.py',
+    'firmware/test/native/third_party/doctest', 'cmake', 'VERSION', 'LICENSE', 'tools/validate.py',
+)
+FW_APP_INPUTS = (
+    'firmware', ':(exclude)firmware/test', ':(exclude)firmware/notices',
+    'protocol', 'cmake/DriveLinkVersion.cmake', 'VERSION', 'tools/validate.py',
+)
+
 CHECKS = [
     Check('gen', 'generated files and Theme, generator tests, Python frame reference', plan_gen, reads_docs=True),
-    Check('guide', 'user guide build, search, links and unit tests', plan_guide, reads_docs=True),
-    Check('native', 'native unit tests (firmware/test/native)', plan_native),
-    Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True),
+    Check('guide', 'user guide build, search, links and unit tests', plan_guide, reads_docs=True,
+          inputs=('guide', 'protocol/defs', 'tools/gen', 'tools/guide.py', 'tools/version.py',
+                  'tools/validate.py', 'host/gui/theme', 'packaging/apt', 'VERSION', 'LICENSE')),
+    Check('native', 'native unit tests (firmware/test/native)', plan_native,
+          inputs=('firmware/test/native', 'firmware/components', 'protocol', 'tools/gen', 'tools/validate.py')),
+    Check('host-win', 'host build and tests, Qt MinGW', plan_host_win, windows_only=True,
+          inputs=('host', ':(exclude)host/ros', ':(exclude)host/agent', 'protocol', 'firmware/components',
+                  'firmware/test/uart_comm/protocol.py', 'firmware/test/native/third_party/doctest',
+                  'cmake', 'VERSION', 'LICENSE', 'tools/validate.py')),
     Check('installer', 'Release staging, self-contained smoke and Inno Setup installer', plan_installer,
-          windows_only=True),
-    Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux),
-    Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent),
-    Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb),
+          windows_only=True,
+          inputs=('host', ':(exclude)host/ros', ':(exclude)host/agent', ':(exclude)host/test',
+                  'protocol', 'firmware/components', 'cmake', 'VERSION', 'LICENSE',
+                  'tools/package_win.py', 'tools/package_common.py', 'tools/version.py', 'tools/validate.py')),
+    Check('host-linux', 'host build and tests, Linux (through WSL on Windows)', plan_host_linux,
+          inputs=('host', ':(exclude)host/ros', 'protocol', 'firmware/components',
+                  'firmware/test/uart_comm/protocol.py', 'firmware/test/native/third_party/doctest',
+                  'cmake', 'VERSION', 'LICENSE', 'tools/setup_linux.sh', 'tools/validate.py')),
+    Check('agent', 'agent build, unit and integration tests (through WSL on Windows)', plan_agent,
+          inputs=(*HOST_COMMON_INPUTS, 'host/agent', 'tools/setup_linux.sh')),
+    Check('deb', 'Linux release, staged smoke and the .deb packages (through WSL on Windows)', plan_deb,
+          inputs=('host', ':(exclude)host/ros', ':(exclude)host/test', 'protocol', 'firmware/components',
+                  'cmake', 'VERSION', 'LICENSE', 'tools/package_linux.py', 'tools/package_common.py',
+                  'tools/version.py', 'tools/setup_linux.sh', 'tools/validate.py')),
     Check('apt-repo', 'apt repository from the .deb packages, checked by apt (through WSL on Windows)',
-          plan_apt_repo),
+          plan_apt_repo,
+          inputs=('host', ':(exclude)host/ros', ':(exclude)host/test', 'protocol', 'firmware/components',
+                  'cmake', 'VERSION', 'LICENSE', 'packaging/apt', 'tools/package_linux.py',
+                  'tools/package_common.py', 'tools/apt_repo.py', 'tools/version.py',
+                  'tools/setup_linux.sh', 'tools/validate.py')),
     Check('ros', 'drivelink_hardware: colcon build and tests on ROS 2 (Lyrical through WSL on Windows)',
-          plan_ros),
-    Check('ros-jazzy', 'drivelink_hardware: the ros check on ROS 2 Jazzy in Docker (ros:jazzy)', plan_ros_jazzy),
-    Check('ros-deb', 'Bloom Debian packages for Jazzy and Lyrical in Docker', plan_ros_deb),
+          plan_ros,
+          inputs=(*HOST_COMMON_INPUTS, 'host/agent', 'host/ros',
+                  'tools/ros_check.sh', 'tools/setup_linux.sh', 'tools/version.py')),
+    Check('ros-jazzy', 'drivelink_hardware: the ros check on ROS 2 Jazzy in Docker (ros:jazzy)', plan_ros_jazzy,
+          inputs=(*HOST_COMMON_INPUTS, 'host/agent', 'host/ros',
+                  'tools/ros_check.sh', 'tools/ros.Dockerfile', 'tools/setup_linux.sh', 'tools/version.py')),
+    Check('ros-deb', 'Bloom Debian packages for Jazzy and Lyrical in Docker', plan_ros_deb,
+          inputs=('protocol', 'host/libdrivelink', 'host/ros', 'host/cmake/Dependencies.cmake',
+                  'host/notices', 'cmake/DriveLinkVersion.cmake', 'VERSION', 'LICENSE',
+                  'tools/package_ros.py', 'tools/ros_packages.py', 'tools/package_linux.py',
+                  'tools/package_common.py', 'tools/apt_repo.py', 'tools/version.py',
+                  'tools/setup_linux.sh', 'tools/ros.Dockerfile', 'tools/validate.py')),
     Check('ros-deb-install', 'install the signed ROS packages and run the packaged launch in Docker',
-          plan_ros_deb_install),
+          plan_ros_deb_install,
+          inputs=('host', 'protocol', 'firmware/components', 'cmake', 'VERSION', 'LICENSE', 'packaging/apt',
+                  'tools/package_linux.py', 'tools/package_ros.py', 'tools/ros_packages.py',
+                  'tools/package_common.py', 'tools/apt_repo.py', 'tools/version.py',
+                  'tools/setup_linux.sh', 'tools/ros.Dockerfile', 'tools/validate.py')),
     # Each IDF app is built from inside its directory, so every relative path
     # (build dir, sdkconfig, defaults files) resolves against the app.
     Check('fw', 'firmware build, zero warnings', idf_build('firmware'),
-          build_dir=ROOT / 'firmware/build'),
+          build_dir=ROOT / 'firmware/build', inputs=FW_APP_INPUTS),
     Check('fw-nolog', 'firmware build with console logs off, zero warnings',
-          idf_build('firmware', *NOLOG), build_dir=ROOT / 'firmware/build_variant'),
+          idf_build('firmware', *NOLOG), build_dir=ROOT / 'firmware/build_variant', inputs=FW_APP_INPUTS),
     Check('fw-hil-app', 'HIL test app build, zero warnings', idf_build('firmware/test/uart_comm'),
-          build_dir=ROOT / 'firmware/test/uart_comm/build'),
+          build_dir=ROOT / 'firmware/test/uart_comm/build',
+          inputs=('firmware/test/uart_comm', 'firmware/components', 'protocol',
+                  'cmake/DriveLinkVersion.cmake', 'VERSION', 'tools/validate.py')),
     Check('fw-package', 'firmware release package (merged image, parts, OTA app, notices)',
-          plan_fw_package),
+          plan_fw_package,
+          inputs=('firmware', ':(exclude)firmware/test', 'protocol', 'cmake/DriveLinkVersion.cmake',
+                  'VERSION', 'LICENSE', 'tools/package_fw.py', 'tools/package_common.py',
+                  'tools/version.py', 'tools/validate.py')),
 ]
 
 
@@ -568,7 +686,8 @@ def fingerprint(check):
     """
     if CI:
         return None
-    spec = ['.', *(f':(exclude){path}' for path in NOT_CODE), *([] if check.reads_docs else DOCS)]
+    roots = list(check.inputs) if check.inputs is not None else ['.']
+    spec = [*roots, *(f':(exclude){path}' for path in NOT_CODE), *([] if check.reads_docs else DOCS)]
     try:
         listing = git('ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', *spec)
     except (OSError, subprocess.CalledProcessError):

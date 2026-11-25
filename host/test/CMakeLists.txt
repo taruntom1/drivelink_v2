@@ -27,7 +27,7 @@ target_compile_definitions(host_concurrency_tests PRIVATE DOCTEST_CONFIG_IMPLEME
 target_include_directories(host_concurrency_tests SYSTEM PRIVATE ../../firmware/test/native/third_party/doctest)
 target_link_libraries(host_concurrency_tests PRIVATE drivelink drivelink_asio)
 add_test(NAME host-concurrency COMMAND host_concurrency_tests)
-set_tests_properties(host-concurrency PROPERTIES TIMEOUT 60)
+set_tests_properties(host-concurrency PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 option(DRIVELINK_TSAN "Instrument the host library and concurrency tests with ThreadSanitizer" OFF)
 if(DRIVELINK_TSAN)
   if(WIN32 OR NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
