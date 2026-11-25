@@ -80,6 +80,12 @@ class HostWindowsToolchainTest(unittest.TestCase):
         self.assertEqual(validate.ctest_jobs('1'), '1')
         self.assertEqual(validate.ctest_jobs('3'), '3')
         self.assertEqual(validate.ctest_jobs('16'), '4')
+        self.assertEqual(validate.ctest_jobs('16', cap=2), '2')
+        result = subprocess.CompletedProcess([], 0, stdout='13.1.0\n', stderr='')
+        with mock.patch.object(validate.Path, 'is_dir', return_value=True), \
+                mock.patch.object(validate.subprocess, 'run', return_value=result):
+            steps = validate.plan_host_win('16')
+        self.assertEqual(steps[2].argv[steps[2].argv.index('--parallel') + 1], '2')
 
     def test_other_mingw_versions_are_refused(self):
         for version in ('12.2.0', '15.1.0', ''):

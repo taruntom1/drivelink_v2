@@ -596,8 +596,23 @@ Json run(Client &client, Session &session, const std::vector<std::string> &args,
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
             auto next = std::chrono::steady_clock::now();
             std::optional<TestgenStatus> status;
+            unsigned busy_polls = 0;
             while (!interrupted) {
-                feed(); status = client.testgenStatus(c.loop);
+                feed();
+                try {
+                    status = client.testgenStatus(c.loop);
+                    busy_polls = 0;
+                } catch (const Error &e) {
+                    if (e.kind == ErrorKind::Rejected &&
+                        e.result == static_cast<uint8_t>(protocol::defs::Result::Busy) &&
+                        e.detail == static_cast<uint8_t>(protocol::defs::Detail::StagingBusy) &&
+                        ++busy_polls <= 5) {
+                        if (std::chrono::steady_clock::now() >= deadline) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }
+                        next += std::chrono::milliseconds(period); std::this_thread::sleep_until(next);
+                        continue;
+                    }
+                    throw;
+                }
                 if (status->run != started.run) { throw Error(ErrorKind::Protocol, "testgen run changed"); }
                 if (status->state == TestgenState::Done) { break; }
                 if (std::chrono::steady_clock::now() >= deadline) { throw Error(ErrorKind::Timeout, "testgen did not complete"); }

@@ -232,9 +232,9 @@ def plan_native(jobs):
     ]
 
 
-def ctest_jobs(jobs):
+def ctest_jobs(jobs, cap=4):
     """Cap CTest parallelism so offscreen Qt and vdev processes don't oversubscribe."""
-    return str(max(1, min(4, int(jobs))))
+    return str(max(1, min(cap, int(jobs))))
 
 
 def deps_cache_key():
@@ -261,12 +261,12 @@ def wsl_cache_env(env, home):
     return merged
 
 
-def plan_host(preset, configure_preset, jobs, env=None):
+def plan_host(preset, configure_preset, jobs, env=None, ctest_cap=4):
     superbuild = ROOT / 'host/superbuild'
     return [
         Step('configure', ['cmake', '--preset', configure_preset], superbuild, env),
         Step('build', ['cmake', '--build', '--preset', preset, '--parallel', jobs], superbuild, env),
-        Step('test', ['ctest', '--preset', preset, '--parallel', ctest_jobs(jobs), '-E', '^host-integration$'],
+        Step('test', ['ctest', '--preset', preset, '--parallel', ctest_jobs(jobs, cap=ctest_cap), '-E', '^host-integration$'],
              superbuild, env),
         Step('integration (verbose)', ['ctest', '--preset', preset, '-V', '-R', '^host-integration$',
                                       '--no-tests=error'], superbuild, env),
@@ -291,7 +291,7 @@ def plan_host_win(jobs):
         raise Unavailable(f'cannot query Qt MinGW compiler {compiler}: {error}') from error
     if version != '13.1.0':
         raise Unavailable(f'host-win requires Qt MinGW GCC 13.1.0, found {version!r}')
-    return plan_host('windows-mingw', 'windows-mingw', jobs, env)
+    return plan_host('windows-mingw', 'windows-mingw', jobs, env, ctest_cap=2)
 
 
 ISCC_DIRS = [Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs/Inno Setup 6',

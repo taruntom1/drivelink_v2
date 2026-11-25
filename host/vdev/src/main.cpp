@@ -226,6 +226,8 @@ struct Server
     asio::steady_timer timer{io};
     asio::signal_set signals{io, SIGINT, SIGTERM};
     std::shared_ptr<Peer> peer;
+    std::shared_ptr<Peer> pending_peer;
+    asio::steady_timer pending_timer{io};
     core_os::KvStore store;
     std::unique_ptr<Diagnostics> diag;
     std::unique_ptr<core::Core> core;
@@ -649,6 +651,16 @@ struct Server
                 }
             });
     }
+    void promotePending()
+    {
+        if (stopping || !pending_peer || (peer && !peer->closed))
+        {
+            return;
+        }
+        pending_timer.cancel();
+        peer = std::move(pending_peer);
+        peer->read();
+    }
     void accept()
     {
         auto next = std::make_shared<Peer>(*this, io);
@@ -661,8 +673,31 @@ struct Server
                                   }
                                   if (!peer || peer->closed)
                                   {
+                                      pending_timer.cancel();
+                                      if (pending_peer)
+                                      {
+                                          pending_peer->close();
+                                          pending_peer.reset();
+                                      }
                                       peer = next;
                                       peer->read();
+                                  }
+                                  else if (!pending_peer)
+                                  {
+                                      // A sequential client may connect before the OS delivers the
+                                      // previous client's EOF; hold it briefly and adopt it once
+                                      // the old peer closes, or reject it if the old peer stays active.
+                                      pending_peer = next;
+                                      pending_timer.expires_after(std::chrono::milliseconds(250));
+                                      pending_timer.async_wait(
+                                          [this, next](auto timer_ec)
+                                          {
+                                              if (!timer_ec && pending_peer == next)
+                                              {
+                                                  pending_peer.reset();
+                                                  next->close();
+                                              }
+                                          });
                                   }
                                   else
                                   {
@@ -674,6 +709,12 @@ struct Server
     void stop()
     {
         stopping = true;
+        pending_timer.cancel();
+        if (pending_peer)
+        {
+            pending_peer->close();
+            pending_peer.reset();
+        }
         if (peer)
         {
             peer->close();
@@ -712,6 +753,10 @@ void Peer::close()
         pty->close(ec);
     }
 #endif
+    if (server.peer.get() == this && server.pending_peer)
+    {
+        asio::post(server.io, [s = &server] { s->promotePending(); });
+    }
 }
 // A device that reboots after its reply leaves that reply readable. Closing a
 // TCP socket with unread input (a frame pipelined behind REBOOT) makes the OS
@@ -728,6 +773,10 @@ void Peer::closeAfterReply()
     draining = true;
     stale.cancel();
     write_deadline.cancel();
+    if (server.peer.get() == this && server.pending_peer)
+    {
+        asio::post(server.io, [s = &server] { s->promotePending(); });
+    }
     asio::error_code ec;
     socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
     if (ec)

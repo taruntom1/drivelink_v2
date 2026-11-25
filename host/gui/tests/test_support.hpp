@@ -48,18 +48,33 @@ struct Fixture {
         if(bench) {args<<"--allow-crash";} // BENCH_STALL
         if(linkTrialMs>0) {args<<"--link-trial-ms"<<QString::number(linkTrialMs);}
         process.start(QString::fromUtf8(VDEV_PATH),args);
-        if(!process.waitForStarted(10000) || !process.waitForReadyRead(10000)) {throw std::runtime_error("vdev did not start");}
-        endpoint=QString::fromUtf8(process.readLine()).trimmed().mid(6);
-        if(!endpoint.startsWith("tcp://") && !endpoint.startsWith("serial://")) {throw std::runtime_error("bad vdev endpoint");}
-        if(!safe) {
-            Session s(endpoint.toStdString());Client c(s);auto info=c.info();
-            std::vector<Ref> refs;std::vector<uint32_t> values;
-            for(const auto &loop:info.loops) {refs.push_back({5,loop.id,1});values.push_back(10);}
-            refs.push_back({0,0,defs::system::kWatchdogMs});values.push_back(1000);c.set(refs,values);
-            // A reboot must retain the desktop scheduling allowance too.
-            // Otherwise the reconnect case silently returns to a 1 kHz loop
-            // with an 8 ms group-swap deadline and a 200 ms watchdog.
-            c.system(5);
+        try {
+            if(!process.waitForStarted(10000)) {throw std::runtime_error("vdev did not start");}
+            QElapsedTimer ready;ready.start();
+            while(!process.canReadLine() && ready.elapsed()<10000) {
+                if(!process.waitForReadyRead(std::max<int>(1,10000-int(ready.elapsed())))) {break;}
+            }
+            if(!process.canReadLine()) {throw std::runtime_error("vdev did not print READY");}
+            endpoint=QString::fromUtf8(process.readLine()).trimmed().mid(6);
+            if(!endpoint.startsWith("tcp://") && !endpoint.startsWith("serial://")) {throw std::runtime_error("bad vdev endpoint");}
+            if(!safe) {
+                SessionOptions opts;opts.timeout=std::chrono::milliseconds(5000);
+                Session s(endpoint.toStdString(),opts);Client c(s);auto info=c.info();
+                std::vector<Ref> refs;std::vector<uint32_t> values;
+                for(const auto &loop:info.loops) {refs.push_back({5,loop.id,1});values.push_back(10);}
+                refs.push_back({0,0,defs::system::kWatchdogMs});values.push_back(1000);c.set(refs,values);
+                // A reboot must retain the desktop scheduling allowance too.
+                // Otherwise the reconnect case silently returns to a 1 kHz loop
+                // with an 8 ms group-swap deadline and a 200 ms watchdog.
+                c.system(5);
+            }
+        } catch(const std::exception &e) {
+            qWarning("Fixture setup failed: %s",e.what());
+            process.kill();process.waitForFinished(10000);
+            throw;
+        } catch(...) {
+            process.kill();process.waitForFinished(10000);
+            throw;
         }
     }
     ~Fixture() {process.kill();process.waitForFinished(10000);}
@@ -68,8 +83,19 @@ struct Fixture {
         if(!file.open(QIODevice::WriteOnly)) {throw std::runtime_error("cannot write control");}
         file.write((QString::number(++sequence)+" "+action+"\n").toUtf8());file.close();
         const auto path=directory.path()+"/control";
-        if(QFile::exists(path) && !QFile::remove(path)) {throw std::runtime_error("cannot replace control");}
-        if(!QFile::rename(temp,path)) {throw std::runtime_error("cannot publish control");}
+        // On Windows, vdev's 100 ms scenario poll opens `control` with
+        // std::ifstream without FILE_SHARE_DELETE, so remove/rename can fail
+        // transiently with a sharing violation.
+        QElapsedTimer publish;publish.start();
+        bool published=false;
+        while(publish.elapsed()<1000) {
+            if((!QFile::exists(path) || QFile::remove(path)) && QFile::rename(temp,path)) {published=true;break;}
+            QTest::qWait(10);
+        }
+        if(!published) {
+            qWarning("Fixture::command(%s): cannot publish control",qPrintable(action));
+            throw std::runtime_error("cannot publish control");
+        }
         const auto acknowledgement=(QString("SCENARIO %1 %2\n").arg(sequence).arg(action.section(' ',0,0))).toUtf8();
         // The 100 ms poll is not a scheduling guarantee. Wait for this command's
         // acknowledgement, emitted after its effect and stats-file close.
@@ -78,8 +104,10 @@ struct Fixture {
             return output.contains(acknowledgement) || process.state()==QProcess::NotRunning;
         });
         if(!acknowledged || !output.contains(acknowledgement)) {
-            throw std::runtime_error((QString("vdev did not acknowledge %1: %2 %3")
-                .arg(sequence).arg(QString::fromUtf8(output),QString::fromUtf8(process.readAllStandardError()))).toStdString());
+            const auto msg=(QString("vdev did not acknowledge %1: %2 %3")
+                .arg(sequence).arg(QString::fromUtf8(output),QString::fromUtf8(process.readAllStandardError()))).toStdString();
+            qWarning("Fixture::command(%s): %s",qPrintable(action),msg.c_str());
+            throw std::runtime_error(msg);
         }
         output.clear();
     }
