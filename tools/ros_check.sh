@@ -41,7 +41,11 @@ program() {
 
 case "$phase" in
     superbuild)
-        cmake --preset linux-no-gui -S host/superbuild -B "$out/superbuild" -DBUILD_TESTING=OFF
+        set -- cmake --preset linux-no-gui -S host/superbuild -B "$out/superbuild" -DBUILD_TESTING=OFF
+        if [ -n "${DRIVELINK_DEPS_CACHE:-}" ]; then
+            set -- "$@" "-DFETCHCONTENT_BASE_DIR=$DRIVELINK_DEPS_CACHE"
+        fi
+        "$@"
         cmake --build "$out/superbuild" --parallel "$jobs" \
             --target drivelink-agent drivelink-vdev drivelink-cli
         ;;
@@ -58,10 +62,17 @@ case "$phase" in
         export DRIVELINK_HW_INTEGRATION=1
         common="--base-paths $root/protocol $root/host --build-base $out/build --install-base $out/install"
         if [ "$phase" = build ]; then
+            set -- -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            if [ "${CCACHE_DISABLE:-0}" != "1" ] && command -v ccache >/dev/null 2>&1; then
+                set -- "$@" -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            fi
+            if [ -n "${DRIVELINK_DEPS_CACHE:-}" ]; then
+                set -- "$@" --no-warn-unused-cli "-DFETCHCONTENT_BASE_DIR=$DRIVELINK_DEPS_CACHE"
+            fi
             # shellcheck disable=SC2086 # $common is a word list
             colcon --log-base "$out/log" build $common --parallel-workers 1 \
                 --event-handlers console_direct+ \
-                --cmake-args -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+                --cmake-args "$@"
         else
             # The results summary first, then the run's status.
             status=0

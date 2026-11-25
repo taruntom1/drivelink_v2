@@ -72,7 +72,14 @@ class HostWindowsToolchainTest(unittest.TestCase):
         path = steps[0].env['PATH'].split(';')
         self.assertEqual(path[:3], list(map(str, validate.QT_DIRS)))
         self.assertEqual(steps[0].argv, ['cmake', '--preset', 'windows-mingw'])
+        self.assertIn('--parallel', steps[2].argv)
+        self.assertEqual(steps[2].argv[steps[2].argv.index('--parallel') + 1], '2')
         self.assertEqual(steps[-1].title, 'installed packages')
+
+    def test_ctest_jobs_is_capped_and_honors_low_jobs(self):
+        self.assertEqual(validate.ctest_jobs('1'), '1')
+        self.assertEqual(validate.ctest_jobs('3'), '3')
+        self.assertEqual(validate.ctest_jobs('16'), '4')
 
     def test_other_mingw_versions_are_refused(self):
         for version in ('12.2.0', '15.1.0', ''):
@@ -184,6 +191,47 @@ class FingerprintTest(unittest.TestCase):
         (self.root / 'b.cpp').unlink()
         (self.root / 'a.cpp').unlink()
         self.assertNotIn(validate.fingerprint(self.code), (code, added))
+
+    def test_scoped_inputs_ignore_unrelated_subsystems_and_respect_excludes(self):
+        (self.root / 'firmware/main').mkdir(parents=True)
+        (self.root / 'firmware/test').mkdir(parents=True)
+        (self.root / 'host/gui').mkdir(parents=True)
+        (self.root / 'firmware/main/app.cpp').write_text('v1')
+        (self.root / 'firmware/test/t.cpp').write_text('v1')
+        (self.root / 'host/gui/main.cpp').write_text('v1')
+        fw = validate.Check('fw', '', None, inputs=('firmware', ':(exclude)firmware/test'))
+        gui = validate.Check('gui', '', None, inputs=('host/gui',))
+        fw0, gui0 = validate.fingerprint(fw), validate.fingerprint(gui)
+        (self.root / 'host/gui/main.cpp').write_text('v2')
+        self.assertEqual(validate.fingerprint(fw), fw0)
+        self.assertNotEqual(validate.fingerprint(gui), gui0)
+        (self.root / 'firmware/test/t.cpp').write_text('v2')
+        self.assertEqual(validate.fingerprint(fw), fw0)
+        (self.root / 'firmware/main/app.cpp').write_text('v2')
+        self.assertNotEqual(validate.fingerprint(fw), fw0)
+
+    def test_wsl_cache_env_exports_shared_cache_paths(self):
+        env = validate.wsl_cache_env({'WSLENV': 'EXISTING'}, '/home/user')
+        self.assertEqual(env['CCACHE_DIR'], '/home/user/.cache/drivelink/ccache')
+        self.assertEqual(env['CCACHE_NOHASHDIR'], '1')
+        self.assertTrue(env['DRIVELINK_DEPS_CACHE'].startswith('/home/user/.cache/drivelink/deps-'))
+        wsl_vars = env['WSLENV'].split(':')
+        self.assertEqual(wsl_vars[0], 'EXISTING')
+        for name in ('CCACHE_DIR', 'CCACHE_NOHASHDIR', 'DRIVELINK_DEPS_CACHE'):
+            self.assertIn(name, wsl_vars)
+
+    def test_fw_version_matches_controls_reconfigure(self):
+        desc = self.root / 'firmware/build/project_description.json'
+        desc.parent.mkdir(parents=True)
+        desc.write_text(json.dumps({'project_version': '0.1.1+g1234567'}), encoding='utf-8')
+        fake_version = mock.Mock(full=mock.Mock(return_value='0.1.1+g1234567'))
+        with mock.patch.dict(sys.modules, {'version': fake_version}):
+            self.assertTrue(validate.fw_version_matches())
+            fake_version.full.return_value = '0.1.1+g9999999'
+            self.assertFalse(validate.fw_version_matches())
+            with mock.patch.object(validate, 'CI', True):
+                fake_version.full.return_value = '0.1.1+g1234567'
+                self.assertFalse(validate.fw_version_matches())
 
 
 class RunTest(unittest.TestCase):

@@ -232,8 +232,11 @@ def check_tools(profile):
 
 def build(preset, build_dir, out, jobs):
     log = out / 'build.log'
-    for argv in (['cmake', '--preset', preset, '-B', build_dir],
-                 ['cmake', '--build', build_dir, '--parallel', str(jobs)]):
+    configure = ['cmake', '--preset', preset, '-B', build_dir]
+    deps_cache = os.environ.get('DRIVELINK_DEPS_CACHE')
+    if deps_cache:
+        configure.append(f'-DFETCHCONTENT_BASE_DIR={deps_cache}')
+    for argv in (configure, ['cmake', '--build', build_dir, '--parallel', str(jobs)]):
         run_logged(argv, log, cwd=SUPERBUILD)
     say(f'build: {preset} ok')
 

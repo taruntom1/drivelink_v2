@@ -5,4 +5,7 @@ ARG DISTRO=jazzy
 FROM ros:${DISTRO}
 ARG PROFILE=ros
 COPY setup_linux.sh /tmp/setup_linux.sh
-RUN sh /tmp/setup_linux.sh "$PROFILE" && rm -rf /var/lib/apt/lists/*
+RUN sh /tmp/setup_linux.sh "$PROFILE" \
+    && apt-get update -qq \
+    && apt-get install -y --no-install-recommends ccache \
+    && rm -rf /var/lib/apt/lists/*

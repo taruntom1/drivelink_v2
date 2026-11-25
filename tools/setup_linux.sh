@@ -61,7 +61,12 @@ case "$profile" in
         wanted="$base curl ros-$distro-ros-base ros-$distro-ros2-control ros-$distro-ros2-controllers \
 ros-$distro-ament-cmake-gtest ros-$distro-xacro ros-$distro-robot-state-publisher ros-dev-tools"
         ;;
-    ros-deb) wanted="$base python3-bloom python3-rosdep debhelper fakeroot" ;;
+    ros-deb)
+        distro=$(ros_distro)
+        wanted="$base python3-bloom python3-rosdep debhelper fakeroot \
+ros-$distro-hardware-interface ros-$distro-controller-manager-msgs \
+ros-$distro-diagnostic-msgs ros-$distro-pluginlib ros-$distro-rclcpp-lifecycle"
+        ;;
     guide) wanted="python3 python3-venv ca-certificates" ;;
     *) echo "usage: $0 [base|agent|host|ros|ros-deb|guide]" >&2; exit 2 ;;
 esac

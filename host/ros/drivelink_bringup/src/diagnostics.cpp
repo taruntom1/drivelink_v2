@@ -12,6 +12,7 @@
 #include <std_srvs/srv/trigger.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <future>
 #include <optional>
@@ -47,7 +48,7 @@ void add(Diagnostic &diagnostic, std::string key, std::string value)
 // request from the client, but leave its outcome uncertain and never repeat it.
 template<class Service>
 auto call(rclcpp::Client<Service> &client, typename Service::Request::SharedPtr request,
-          std::chrono::seconds timeout = 3s)
+          std::chrono::milliseconds timeout = 3000ms)
 {
     const std::string name = client.get_service_name();
     if (!client.wait_for_service(1s)) { throw std::runtime_error(name + " is unavailable"); }
@@ -73,6 +74,13 @@ class Diagnostics : public rclcpp::Node
         hardware_ = declare_parameter<std::string>("hardware", "drivelink");
         wanted_ = declare_parameter("recovery_controllers", std::vector<std::string>{});
         const auto manager = declare_parameter<std::string>("controller_manager", "/controller_manager");
+        const auto service_timeout_s = declare_parameter<double>("service_timeout_s", 30.0);
+        if (!std::isfinite(service_timeout_s) || service_timeout_s < 0.1)
+        {
+            throw std::runtime_error("service_timeout_s must be finite and at least 0.1 s");
+        }
+        service_timeout_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::duration<double>(service_timeout_s));
         if (device_.empty() || hardware_.empty()) { throw std::runtime_error("device and hardware are required"); }
         const std::set<std::string> unique(wanted_.begin(), wanted_.end());
         if (unique.empty() || unique.contains("") || unique.size() != wanted_.size())
@@ -312,7 +320,7 @@ class Diagnostics : public rclcpp::Node
         auto request = std::make_shared<cm::SetHardwareComponentState::Request>();
         request->name = hardware_;
         request->target_state.id = target;
-        const auto response = call(*set_hardware_, request, 30s);
+        const auto response = call(*set_hardware_, request, service_timeout_);
         if (!response->ok || response->state.id != target)
         {
             throw std::runtime_error("hardware transition to " + label + " failed; hardware state is " +
@@ -340,7 +348,7 @@ class Diagnostics : public rclcpp::Node
         request->deactivate_controllers = deactivate;
         request->strictness = strictness;
         request->timeout.sec = 10;
-        const auto response = call(*switch_, request, 30s);
+        const auto response = call(*switch_, request, service_timeout_);
         if (!response->ok) { throw std::runtime_error("controller switch refused: " + response->message); }
     }
 
@@ -430,6 +438,7 @@ class Diagnostics : public rclcpp::Node
 
     std::string endpoint_, device_, token_file_, token_, hardware_, device_id_, holder_;
     std::vector<std::string> wanted_;
+    std::chrono::milliseconds service_timeout_{30000ms};
     std::unique_ptr<drivelink::Session> session_;
     uint64_t generation_ = 0;
     uint16_t holder_id_ = 0;

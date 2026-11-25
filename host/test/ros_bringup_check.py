@@ -210,8 +210,8 @@ def check_failed_recovery(args, probe, token_file):
         hw = request.target_state.id
         moves.append(hw)
         if len(moves) == 1:
-            # The first request lands, but its response arrives after the client deadline.
-            time.sleep(30.5)
+            # The first request lands, but its response arrives after the client deadline (1.5 s in this test).
+            time.sleep(2.0)
         response.ok = True
         response.state = State(id=hw, label=labels[hw])
         return response
@@ -238,7 +238,7 @@ def check_failed_recovery(args, probe, token_file):
     worker = Proc('recovery rollback', ['ros2', 'run', 'drivelink_bringup', 'diagnostics',
                   '--ros-args', '-r', f'__node:={node}', '-p', f'controller_manager:={manager}',
                   '-p', f'agent:={args.agent}', '-p', f'device:={args.device}', '-p', f'token_file:={token_file}',
-                  '-p', f'recovery_controllers:=[{DRIVE},{BROADCASTERS[0]}]'])
+                  '-p', f'recovery_controllers:=[{DRIVE},{BROADCASTERS[0]}]', '-p', 'service_timeout_s:=1.5'])
     try:
         wait_for(lambda: probe.diagnostic.get('online') == 'true', 'rollback observer online')
         response = probe.trigger('recover', node)

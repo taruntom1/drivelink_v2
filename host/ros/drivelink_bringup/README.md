@@ -9,7 +9,7 @@ Example two-wheel differential drive with an IMU. Released packages, launch argu
 | Geometry | The launch reads `diff_drive_controller.ros__parameters.wheel_separation` from the selected controller YAML, checks that it is positive and finite, and passes it to Xacro for the wheel joint origins. [Controller defaults](config/controllers.yaml) · [Launch](launch/example.launch.py) · [Robot Xacro](urdf/example.urdf.xacro) |
 | Instance mapping | Xacro passes the left, right and IMU labels into the hardware configuration. [Hardware Xacro](urdf/drivelink.ros2_control.xacro) · [Plugin mapping](../drivelink_hardware/README.md) |
 | Startup | The launch starts the joint-state and IMU broadcasters first. Their spawner must succeed before the drive controller loads inactive. [Launch](launch/example.launch.py) |
-| Recovery | Diagnostics observes through a separate connection. The recovery service acknowledges the fault and restores hardware and the controllers named in `recovery_controllers`. [Diagnostics node](src/diagnostics.cpp) · [Recovery logic](src/recovery.hpp) |
+| Recovery | Diagnostics observes through a separate connection. The recovery service acknowledges the fault and restores hardware and the controllers named in `recovery_controllers` (controller-manager service deadline defaults to 30 s via `service_timeout_s`). [Diagnostics node](src/diagnostics.cpp) · [Recovery logic](src/recovery.hpp) |
 
 ## Build from source
 

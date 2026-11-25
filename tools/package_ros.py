@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build Bloom Debian packages in a disposable ROS build container."""
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -57,19 +58,44 @@ def rosdep_environment(work, distro, codename):
     return env
 
 
-def fetch_dependencies(work):
+def deps_cache_subdir(cache_dir, deps_cmake=ROOT / 'host/cmake/Dependencies.cmake'):
+    """Versioned FetchContent directory keyed by Dependencies.cmake contents."""
+    digest = hashlib.sha256(deps_cmake.read_bytes()).hexdigest()[:16]
+    return Path(cache_dir) / f'deps-{digest}'
+
+
+def dependencies_ready(deps):
+    return all((deps / f'{name}-src' / header).is_file()
+               for name, header in (('asio', 'asio/include/asio.hpp'), ('mdns', 'mdns.h')))
+
+
+def fetch_dependencies(work, cache_dir=None):
     """Use the same URLs and SHA256 pins as the source build."""
+    deps = deps_cache_subdir(cache_dir) if cache_dir else work / 'deps'
+    if dependencies_ready(deps):
+        return deps
+    deps.mkdir(parents=True, exist_ok=True)
     source = work / 'fetch'
     source.mkdir()
     (source / 'CMakeLists.txt').write_text(
         'cmake_minimum_required(VERSION 3.24)\nproject(fetch_dependencies NONE)\n'
         f'include("{ROOT}/host/cmake/Dependencies.cmake")\n', encoding='utf-8')
-    deps = work / 'deps'
     call('cmake', '-S', source, '-B', work / 'fetch-build', f'-DFETCHCONTENT_BASE_DIR={deps}')
     for name, header in (('asio', 'asio/include/asio.hpp'), ('mdns', 'mdns.h')):
         if not (deps / f'{name}-src' / header).is_file():
             raise Failure(f'{name}: verified source is missing {header}')
     return deps
+
+
+def ensure_build_depends(package, build_depends, env, apt_updated):
+    """Install Build-Depends only when dpkg-checkbuilddeps reports missing packages."""
+    if run(['dpkg-checkbuilddeps'], cwd=package, env=env).returncode == 0:
+        return apt_updated
+    if not apt_updated:
+        call('apt-get', 'update', '-qq', env=env)
+        apt_updated = True
+    call('apt-get', '-y', '--no-install-recommends', 'satisfy', build_depends, env=env)
+    return apt_updated
 
 
 def stage(work, relative):
@@ -97,7 +123,7 @@ def pin_dependencies(control, dependencies, pkg_version):
     return control
 
 
-def configure_debian(package, logical, distro, pkg_version, dependencies, deps):
+def configure_debian(package, logical, distro, pkg_version, dependencies, deps, use_ccache=False):
     debian = package / 'debian'
     changelog = debian / 'changelog'
     text = changelog.read_text(encoding='utf-8')
@@ -131,6 +157,8 @@ def configure_debian(package, logical, distro, pkg_version, dependencies, deps):
         raise Failure('Bloom did not generate the expected CMake configure rule')
     # Debhelper supplies CMake options some of the four projects never read.
     options = '--no-warn-unused-cli -DCMAKE_COMPILE_WARNING_AS_ERROR=ON'
+    if use_ccache:
+        options += ' -DCMAKE_CXX_COMPILER_LAUNCHER=ccache'
     if logical == 'drivelink':
         options += (f' -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DFETCHCONTENT_SOURCE_DIR_ASIO={deps}/asio-src'
                     f' -DFETCHCONTENT_SOURCE_DIR_MDNS={deps}/mdns-src')
@@ -138,7 +166,7 @@ def configure_debian(package, logical, distro, pkg_version, dependencies, deps):
     return dict(parse_control(control_text.split('\n\n', 1)[0]))
 
 
-def build_packages(out, jobs):
+def build_packages(out, jobs, deps_dir=None):
     os_name, release = os_release()
     distro = ROS_TARGETS.get(release)
     if os_name != 'ubuntu' or not distro or not (Path('/opt/ros') / distro / 'setup.sh').is_file():
@@ -147,13 +175,17 @@ def build_packages(out, jobs):
     full = version.full()
     pkg_version = package_version(full, os_name, release)
     codename = SUITES[release]
-    call('apt-get', 'update', '-qq')
+    use_ccache = bool(shutil.which('ccache')) and os.environ.get('CCACHE_DISABLE') != '1'
+    apt_updated = False
     with tempfile.TemporaryDirectory(prefix='drivelink-bloom-') as scratch:
         work = Path(scratch)
         env = rosdep_environment(work, distro, codename)
         env.update(DRIVELINK_VERSION_FULL=full, DEB_BUILD_PROFILES='nocheck',
                    DEB_BUILD_OPTIONS=f'parallel={jobs} nocheck noautodbgsym')
-        deps = fetch_dependencies(work)
+        if use_ccache:
+            env['CCACHE_BASEDIR'] = str(work)
+            env['CCACHE_NOHASHDIR'] = '1'
+        deps = fetch_dependencies(work, deps_dir)
         built = []
         for logical, (relative, dependencies) in ROS_PACKAGES.items():
             name = debian_name(distro, logical)
@@ -161,9 +193,9 @@ def build_packages(out, jobs):
             package = stage(work, relative)
             call('bloom-generate', 'rosdebian', '--ros-distro', distro, '--os-name', os_name,
                  '--os-version', codename, '--native', cwd=package, env=env)
-            control = configure_debian(package, logical, distro, pkg_version, dependencies, deps)
-            call('apt-get', '-y', '--no-install-recommends', 'satisfy',
-                 control['Build-Depends'], env=env)
+            control = configure_debian(package, logical, distro, pkg_version, dependencies, deps,
+                                       use_ccache=use_ccache)
+            apt_updated = ensure_build_depends(package, control['Build-Depends'], env, apt_updated)
             build_deb(package, env)
             deb = package.parent / deb_name(name, pkg_version, arch)
             if not deb.is_file():
@@ -193,9 +225,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, default=ROOT / 'build/ros-debs')
     parser.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
+    parser.add_argument('--deps-dir', type=Path, default=os.environ.get('DRIVELINK_DEPS_CACHE'))
     args = parser.parse_args()
     try:
-        build_packages(args.out.resolve(), args.jobs)
+        build_packages(args.out.resolve(), args.jobs,
+                       args.deps_dir.resolve() if args.deps_dir else None)
     except (Failure, RepoError) as error:
         print(f'package_ros: {error}', file=sys.stderr)
         return 1
