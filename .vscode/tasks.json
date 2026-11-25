@@ -1,7 +1,81 @@
 {
-  // Used by launch.json. The server prints READY when GDB may connect.
+  // The task list is in docs/development.md, "VS Code tasks". tools/dev.py sets
+  // up ESP-IDF, Qt and the guide venv. Ports default to this bench's (docs/bench.md).
   "version": "2.0.0",
   "tasks": [
+    // Firmware. The flash prompt doubles as the confirmation.
+    {
+      "label": "Firmware build",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "fw", "build"],
+      "group": "build",
+      "problemMatcher": {
+        "owner": "firmware",
+        "fileLocation": ["autodetect", "${workspaceFolder}/firmware/build"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "Firmware flash",
+      "detail": "Build the normal firmware, check its config, flash",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/bench_fw.py", "normal", "--port", "${input:flashPort}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware flash debug",
+      "detail": "The JTAG debug build; run \"Firmware flash\" afterwards",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/bench_fw.py", "debug", "--port", "${input:flashPort}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware monitor",
+      "detail": "The console, without a reset; Ctrl+] ends it",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "fw", "monitor", "--port", "${input:consolePort}"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware menuconfig",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "fw", "menuconfig"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware size",
+      "detail": "Flash and RAM per component",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "fw", "size"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Firmware fullclean",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "fw", "fullclean"],
+      "problemMatcher": []
+    },
+
+    // JTAG. launch.json uses "JTAG server" (it prints READY when GDB may
+    // connect) and "JTAG stop". Each read halts the board for a moment:
+    // docs/bench.md, "JTAG".
     {
       "label": "JTAG server",
       "type": "process",
@@ -26,6 +100,347 @@
       "linux": { "command": "python3" },
       "args": ["${workspaceFolder}/tools/jtag.py", "stop"],
       "problemMatcher": []
+    },
+    {
+      "label": "JTAG info",
+      "detail": "The running firmware and its ELF",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "info"],
+      "problemMatcher": []
+    },
+    {
+      "label": "JTAG backtraces",
+      "detail": "Every task's backtrace",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "bt"],
+      "problemMatcher": []
+    },
+    {
+      "label": "JTAG tasks",
+      "detail": "Every task: priority, core, free stack, position",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "tasks"],
+      "problemMatcher": []
+    },
+    {
+      "label": "JTAG decode panic",
+      "detail": "Paste the panic, then Ctrl+Z Enter (Linux: Ctrl+D). No board",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "decode"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
+    },
+
+    // Host. The programs are built before they run.
+    {
+      "label": "Host configure",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "host", "configure"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Host build",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "host", "build"],
+      "group": "build",
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "Host tests",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "host", "test"],
+      "group": "test",
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "Host tests (filter)",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "host", "test", "${input:testFilter}"],
+      "group": "test",
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "GUI on vdev",
+      "detail": "No board; state and settings are kept in build/dev/",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "gui", "--vdev"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "GUI on board",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "gui", "--endpoint", "serial://${input:boardPort}"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "GUI",
+      "detail": "Connect from its Connect page",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "gui"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "host",
+        "fileLocation": ["autodetect", "${workspaceFolder}/host/superbuild/build/windows-mingw"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "vdev",
+      "detail": "On tcp://127.0.0.1:8765",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "vdev"],
+      "isBackground": true,
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "vdev reset state",
+      "detail": "Remove build/dev/vdev-state",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "vdev", "--reset"],
+      "problemMatcher": []
+    },
+    {
+      "label": "CLI info on board",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "cli", "--endpoint", "serial://${input:boardPort}", "info"],
+      "problemMatcher": []
+    },
+    {
+      "label": "CLI status on board",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "cli", "--endpoint", "serial://${input:boardPort}", "status"],
+      "problemMatcher": []
+    },
+
+    // Checks. A check whose code is unchanged since it passed is not run again.
+    {
+      "label": "Native tests",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "native", "--force", "--verbose"],
+      "group": "test",
+      "problemMatcher": {
+        "owner": "native",
+        "fileLocation": ["autodetect", "${workspaceFolder}/firmware/test/native/build/ucrt64"],
+        "pattern": { "regexp": "^(.+?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(error|warning):\\s+(.*)$",
+                     "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5 }
+      }
+    },
+    {
+      "label": "Validate quick",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "quick"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Validate full",
+      "detail": "Every check, as CI runs them (30 to 45 min)",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "full"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Validate one check",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "${input:check}", "--verbose"],
+      "problemMatcher": []
+    },
+
+    // Generated files.
+    {
+      "label": "Generate definitions",
+      "detail": "After editing protocol/defs/",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/gen/gen.py"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Generate GUI theme",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/host/gui/theme/gen_theme.py"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Generate notices",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "notices"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Generate check",
+      "detail": "Generated files, versions and tool tests",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "gen", "--force"],
+      "problemMatcher": []
+    },
+
+    // User guide.
+    {
+      "label": "Guide setup",
+      "detail": "Create or update build/guide-venv",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "guide", "setup"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Guide build",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "guide", "build"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Guide serve",
+      "detail": "Build, then serve http://localhost:8000/drivelink_v2/",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/dev.py", "guide", "serve"],
+      "dependsOn": "Guide build",
+      "isBackground": true,
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
+    },
+
+    // Packages. Each also runs its check.
+    {
+      "label": "Package firmware",
+      "detail": "To build/firmware/",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "fw-package", "--force", "--verbose"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Package Windows installer",
+      "detail": "To build/installer/",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "installer", "--force", "--verbose"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Package deb",
+      "detail": "To build/deb/ (WSL on Windows)",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/validate.py", "--only", "deb", "--force", "--verbose"],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "flashPort",
+      "type": "promptString",
+      "description": "Flash port. Cut motor power or DISARM first; Escape cancels",
+      "default": "COM3"
+    },
+    {
+      "id": "consolePort",
+      "type": "promptString",
+      "description": "Console port (native USB)",
+      "default": "COM4"
+    },
+    {
+      "id": "boardPort",
+      "type": "promptString",
+      "description": "Protocol port",
+      "default": "COM3"
+    },
+    {
+      "id": "testFilter",
+      "type": "promptString",
+      "description": "ctest regex (empty: every test)",
+      "default": "^gui-"
+    },
+    {
+      "id": "check",
+      "type": "pickString",
+      "description": "Check (docs/development.md, \"Validation\")",
+      "options": ["gen", "guide", "native", "host-win", "installer", "host-linux", "agent", "deb", "apt-repo",
+        "ros", "ros-jazzy", "ros-deb", "ros-deb-install",
+        "fw", "fw-nolog", "fw-hil-app", "fw-package"]
     }
   ]
 }
