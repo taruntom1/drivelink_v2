@@ -84,7 +84,10 @@ Desktop.ini
 
 
 .clangd
-.vscode/
+# Committed: the JTAG debug config (docs/development.md). The rest is personal.
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 
 # Extra idf.py build dirs (CI config variants, e.g. sdkconfig.ci.nolog)
 build_variant/
@@ -92,4 +95,5 @@ build_variant/
 # Bench-only safe-mode verification build
 build_bench/
 build_xip/
+build_debug/
 build_ota/

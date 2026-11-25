@@ -1,0 +1,31 @@
+{
+  // Used by launch.json. The server prints READY when GDB may connect.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "JTAG server",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "server"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "jtag",
+        "pattern": { "regexp": "^(ERROR): (.*)$", "file": 1, "message": 2, "kind": "file" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^WARNING: halting",
+          "endsPattern": "^(READY|ERROR): "
+        }
+      }
+    },
+    {
+      "label": "JTAG stop",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/jtag.py", "stop"],
+      "problemMatcher": []
+    }
+  ]
+}

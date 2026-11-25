@@ -447,15 +447,61 @@ building or flashing. Logs are in `build/bench_fw/<mode>.log`.
 | `bench` | Builds and flashes `sdkconfig.bench` in isolated `firmware/build_bench/`; enables BenchCrash and BenchStall. |
 | `normal` | Reconfigures/builds normal firmware and refuses to flash if bench or any XiP/code/rodata relocation option is enabled. |
 | `xip` | Builds/flashes `sdkconfig.xip` in `firmware/build_xip/`; verifies bench off and XiP, instruction fetch and rodata relocation on. |
+| `debug` | Builds and flashes `sdkconfig.debug` in isolated `firmware/build_debug/` for [JTAG debugging](#jtag-debugging-toolsjtagpy): both hardware watchpoints free, heap poisoning and a compiler stack guard on. |
 | `ota-image` | Builds a distinct candidate in `firmware/build_ota/`, verifies normal bench/XiP settings, and never flashes. Upload `firmware/build_ota/drivelink_v2.bin` through the CLI OTA workflow. |
 
 All modes verify rollback, the custom dual-slot partition layout and 16 MB
 flash. NVS stays at 0x9000/0x6000. Never erase flash as an update step.
-Always restore `normal` after bench/XiP checks and verify the board refuses
+Always restore `normal` after bench/XiP/debug checks and verify the board refuses
 bench commands. XiP measurements are in
 [the F7b record](../plans/archive/f7b-implementation.md).
 OTA commands and recovery are in [host/README.md](../host/README.md#ota-f9)
 and [the OTA spec](protocol/ota.md).
+
+## JTAG debugging (`tools/jtag.py`)
+
+OpenOCD and GDB over the ESP32-S3's built-in USB-JTAG: the native USB cable that
+also carries the console. The protocol UART stays free. Read the rules and traps
+in [bench.md](bench.md#jtag) first. Setup, once:
+
+- OpenOCD, GDB and the ROM ELFs come with ESP-IDF's `install.ps1 esp32s3`; the
+  tool exports ESP-IDF itself.
+- On Windows the interface "USB JTAG/serial debug unit (Interface 2)" needs the
+  WinUSB driver (Espressif's `idf-driver`, or Zadig). Interface 0, the COM port,
+  keeps its serial driver.
+
+```powershell
+python tools/jtag.py info
+python tools/jtag.py tasks
+python tools/jtag.py break core::Loop::applyStaged --count 3 --dump xTickCount
+```
+
+| Command | Purpose |
+|---|---|
+| `info` | The running firmware and the ELF that matches it. |
+| `bt`, `tasks` | Every task's backtrace; or priority, core, smallest free stack and position. |
+| `print EXPR...` | GDB expressions. An assignment or a function call changes the board. |
+| `break LOC`, `watch EXPR` | Stop, dump backtrace, arguments and locals, run on. `--count` stops, `--timeout` seconds, `--dump EXPR` extra values. |
+| `server`, `stop` | Keep OpenOCD running for GDB or VS Code (GDB port 23333); end it. |
+| `gdb` | Interactive GDB, on a running server or its own. |
+| `decode [FILE]` | Source lines for a panic copied from the console. Needs no board. |
+
+- **The ELF must match.** The tool reads the ELF SHA-256 from the running app and
+  searches `firmware/build*` in every worktree. No match is refused (exit 2);
+  `--elf FILE --allow-mismatch` overrides. `decode` does the same with the
+  SHA prefix in the panic. A released image has no local ELF: build and flash it.
+- **Normal or debug build.** Debug the normal firmware by default. It is `-Og` with
+  symbols. Its stack watchpoint uses one of the two hardware watchpoints. `bench_fw.py
+  debug` frees it and adds heap and stack checks.
+- **Hardware breakpoints only**, two per core: a session never writes flash.
+- **Every session ends with the board running**, also after an error, a timeout,
+  Ctrl+C or a killed OpenOCD. The log is `build/jtag/openocd.log`.
+- **VS Code** (C/C++ extension): "JTAG: start server and attach" starts the
+  server, attaches and stops the server afterwards. "JTAG: attach to a running
+  server" uses one you started. The committed `.vscode/launch.json` names the GDB
+  of a default ESP-IDF 5.5.2 install. The ESP-IDF extension's own debugger
+  bypasses the ELF check and `tools/jtag/openocd.cfg`; don't use it.
+- `validate.py` never runs the tool; `gen` runs its tests.
 
 ## Serial adapter in WSL (`tools/wsl_serial.py`)
 

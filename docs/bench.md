@@ -20,7 +20,7 @@ commands are in [development.md](development.md).
 
 - **COM3** is the CH343 adapter on UART0 (GPIO43/44). It carries the protocol and
   also flashes the board through DTR/RTS.
-- **COM4** is the native USB port, the console.
+- **COM4** is the native USB port, the console. The same cable carries [JTAG](#jtag).
 
 ## The board through the agent (WSL)
 
@@ -101,6 +101,41 @@ for a GUI on another machine than the agent.
 - The host PC bugchecked (0xD1) once during an F5a-2 run on the CH343; the rerun
   passed. Rerun once before suspecting the firmware.
 
+## JTAG
+
+Use `python tools/jtag.py` ([commands](development.md#jtag-debugging-toolsjtagpy)).
+
+**Rules**
+
+- **Cut motor power or DISARM first.** A halt stops control and safety code, but
+  the PWM outputs keep their last value. The tool warns; it does not check.
+- **Reboot before arming.** OpenOCD turns all watchdogs off at the first halt and
+  they stay off until a reset.
+- **Check that nobody else uses the board** (a GUI or CLI on COM3, another
+  session) before attaching: a halt freezes their link too.
+- **Agents.** While the board is bare, an agent may attach, halt, read and resume
+  without asking. It asks before writing memory or registers, calling functions,
+  or resetting through JTAG, and before any session once a motor or sensor is
+  attached.
+
+**Traps**
+
+- **Use `tools/jtag/openocd.cfg`, not `board/esp32s3-builtin.cfg`.** The stock
+  config resets the board when GDB attaches (memory protection is on) and leaves
+  it halted when GDB leaves.
+- **Resume on `gdb-detach`, never `gdb-end`.** `gdb-end` comes at every stop. A
+  resume there ran a core behind GDB's back and, once, left the firmware stuck in
+  `esp_timer`'s list with no watchdog to recover it.
+- **Port 3333** can be reserved by Hyper-V (`netsh interface ipv4 show
+  excludedportrange tcp`), so the tool uses 23333 and 23334.
+- **The first GDB connection** to a new OpenOCD mixes up task names and registers.
+  The tool makes a throwaway connection first.
+- **Don't `stepi` the idle task**: a step of `waiti` fails and GDB hangs.
+- **`xtensa-esp32s3-elf-gdb.exe` is a wrapper.** Killing it leaves the real GDB
+  running; end the process tree.
+- **Overruns are expected.** A one-shot command costs about 45 ms of halt (45
+  overruns at 1 kHz), plus every stop.
+
 ## Smoke scripts
 
 - `firmware/test/uart_comm/smoke_protocol_firmware.py`: diag v3 and time v1 on the
@@ -138,7 +173,7 @@ reset it once: a trial never survives a reset.
 
 ## Bench builds
 
-Use `python tools/bench_fw.py bench|normal|xip|ota-image` (see
+Use `python tools/bench_fw.py bench|normal|xip|debug|ota-image` (see
 [development.md](development.md#guarded-bench-builds)), never an edited normal
 sdkconfig. Always restore `normal` afterwards and check that the board refuses
 bench commands.
