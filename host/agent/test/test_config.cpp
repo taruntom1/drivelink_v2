@@ -113,7 +113,7 @@ TEST_CASE("config: defaults and a full valid file")
     CHECK(c.devices[0].endpoint == "serial:///dev/ttyACM0");
     CHECK(c.devices[0].baud == 115200);
     CHECK(c.devices[1].endpoint == "tcp://127.0.0.1:5000");
-    CHECK(c.devices[1].baud == 921600);
+    CHECK(c.devices[1].baud == drivelink::kBaudAuto);
     CHECK_NOTHROW(validate(c));
 }
 
@@ -335,14 +335,18 @@ TEST_CASE("config: device baud rules")
     const auto dev = [](const std::string &endpoint, const std::string &baud) {
         return deviceJson("{\"alias\":\"d\",\"endpoint\":\"" + endpoint + "\",\"baud\":" + baud + "}");
     };
+    CHECK(parseConfig(dev("serial:///x", "\"auto\"")).devices[0].baud == drivelink::kBaudAuto);
     CHECK(parseConfig(dev("serial:///x", "9600")).devices[0].baud == 9600);
     CHECK(parseConfig(dev("serial:///x", "4000000")).devices[0].baud == 4000000);
     CHECK(refusesJson(dev("serial:///x", "9599"), "baud"));
     CHECK(refusesJson(dev("serial:///x", "4000001"), "baud"));
     CHECK(refusesJson(dev("serial:///x", "0"), "baud"));
     CHECK(refusesJson(dev("serial:///x", "115200.5"), "baud"));
+    CHECK(refusesJson(dev("serial:///x", "\"fast\""), "baud"));
+    CHECK(refusesJson(dev("serial:///x", "\"AUTO\""), "baud"));
     CHECK(refusesJson(dev("tcp://127.0.0.1:5000", "921600"), "baud"));
-    CHECK(parseConfig(deviceJson(R"({"alias":"d","endpoint":"serial:///x"})")).devices[0].baud == 921600);
+    CHECK(refusesJson(dev("tcp://127.0.0.1:5000", "\"auto\""), "baud"));
+    CHECK(parseConfig(deviceJson(R"({"alias":"d","endpoint":"serial:///x"})")).devices[0].baud == drivelink::kBaudAuto);
 }
 
 TEST_CASE("config: device required keys")
@@ -525,7 +529,13 @@ TEST_CASE("command line: --device forms")
     REQUIRE(c.devices.size() == 1);
     CHECK(c.devices[0].alias == "base");
     CHECK(c.devices[0].endpoint == "serial:///dev/ttyACM0");
-    CHECK(c.devices[0].baud == 921600);
+    CHECK(c.devices[0].baud == drivelink::kBaudAuto);
+
+    AgentConfig a;
+    run({"--device=base=serial:///dev/ttyACM0@auto"}, a);
+    REQUIRE(a.devices.size() == 1);
+    CHECK(a.devices[0].endpoint == "serial:///dev/ttyACM0");
+    CHECK(a.devices[0].baud == drivelink::kBaudAuto);
 
     AgentConfig b;
     run({"--device=base=serial:///dev/ttyACM0@115200"}, b);
@@ -559,6 +569,7 @@ TEST_CASE("command line: --device refusals")
     CHECK(refusesFlags({"--device", "a=serial:///x@fast"}, "baud"));
     CHECK(refusesFlags({"--device", "a=serial:///x@"}, "baud"));
     CHECK(refusesFlags({"--device", "a=tcp://127.0.0.1:5000@9600"}, "baud"));
+    CHECK(refusesFlags({"--device", "a=tcp://127.0.0.1:5000@auto"}, "baud"));
     CHECK(refusesFlags({"--device", "a=tcp://host:5000"}, "IPv4"));
     CHECK(refusesFlags({"--device", "a=tcp://127.0.0.1:0"}, "port"));
 }

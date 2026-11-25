@@ -5,7 +5,7 @@
     ],
     "json": false,
     "code": 0,
-    "stdout": "build_id: <identity>\ncapture_capacity: 4194304\ndescriptor_hash: 1080812097\ndevice_id: 02444c000001\nfirmware_version: <identity>\nflags: 0\nloops:\n  [0]\n    flags: 1\n    id: 0\n    name: control\n    rate_hz: 1000\n    realtime: true\n  [1]\n    flags: 0\n    id: 1\n    name: sensor\n    rate_hz: 100\n    realtime: false\nmax_payload: 1024\nname: \nprotocol_version: 12\nrunning_instances: 2\n",
+    "stdout": "build_id: <identity>\ncapture_capacity: 4194304\ndescriptor_hash: 1080812097\ndevice_id: 02444c000001\nfirmware_version: <identity>\nflags: 0\nlink_trial_ms: 0\nloops:\n  [0]\n    flags: 1\n    id: 0\n    name: control\n    rate_hz: 1000\n    realtime: true\n  [1]\n    flags: 0\n    id: 1\n    name: sensor\n    rate_hz: 100\n    realtime: false\nmax_payload: 1024\nname: \nprotocol_version: 12\nrunning_instances: 2\n",
     "stderr": ""
   },
   {
@@ -303,6 +303,7 @@
         "device_id": "02444c000001",
         "firmware_version": "<identity>",
         "flags": 0,
+        "link_trial_ms": 0,
         "loops": [
           {
             "flags": 1,

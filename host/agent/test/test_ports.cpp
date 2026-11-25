@@ -65,11 +65,14 @@ TEST_CASE("ports: aliases are valid, short and unique")
 TEST_CASE("ports: the device line parses as a config entry")
 {
     const auto line = deviceLine("esp-uart", "/dev/serial0");
-    CHECK(line == R"({"alias":"esp-uart","endpoint":"serial:///dev/serial0","baud":921600})");
+    CHECK(line == R"({"alias":"esp-uart","endpoint":"serial:///dev/serial0","baud":"auto"})");
     const auto config = parseConfig(configWith(line));
     REQUIRE(config.devices.size() == 1);
     CHECK(config.devices[0].endpoint == "serial:///dev/serial0");
-    CHECK(config.devices[0].baud == 921600);
+    CHECK(config.devices[0].baud == drivelink::kBaudAuto);
+    const auto fixed = deviceLine("esp-uart", "/dev/serial0", 115200);
+    CHECK(fixed == R"({"alias":"esp-uart","endpoint":"serial:///dev/serial0","baud":115200})");
+    CHECK(parseConfig(configWith(fixed)).devices[0].baud == 115200);
     // A serial number with JSON's special characters stays valid JSON.
     CHECK_NOTHROW(parseConfig(configWith(deviceLine("esp-x", "/dev/drivelink/a\"b\\c"))));
 }
@@ -111,7 +114,7 @@ TEST_CASE("ports: udev names, serial0 and the other UARTs, in order")
     CHECK(ports[3].path == "/dev/ttyAMA10"); // ttyAMA0 is serial0 already
 
     const auto text = portListing(ports);
-    CHECK(text.find(R"({"alias":"esp-7b012345","endpoint":"serial:///dev/drivelink/5A7B012345","baud":921600})") !=
+    CHECK(text.find(R"({"alias":"esp-7b012345","endpoint":"serial:///dev/drivelink/5A7B012345","baud":"auto"})") !=
           std::string::npos);
     CHECK(text.find(R"("alias":"esp-uart")") != std::string::npos);
     CHECK(text.find("systemctl restart drivelink-agent") != std::string::npos);

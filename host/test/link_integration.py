@@ -5,6 +5,7 @@ device cannot be reached at another rate. TCP runs the same trials without them
 (the only transport on Windows).
 """
 import argparse
+import json
 import queue
 import subprocess
 import sys
@@ -76,6 +77,97 @@ class Device:
 
     def state(self):
         return self.probe('--baud', 'auto', 'state')
+
+    def cli(self, *command, ok=True, json_mode=True, timeout=30):
+        argv = [self.args.cli, '--endpoint', self.endpoint, *(['--json'] if json_mode else []), *map(str, command)]
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        assert (result.returncode == 0) == ok, (command, result.returncode, result.stdout, result.stderr)
+        if not json_mode:
+            return result.stdout
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def check_cli(device):
+    """CLI --baud auto (default), link-confirm, info link_trial_ms, and reboot trial hint."""
+    # Default --baud is auto: connects cleanly without --baud and shows link_trial_ms == 0.
+    info = device.cli('info')['data']
+    assert info['link_trial_ms'] == 0, info
+    # No trial running: link-confirm reports no_trial without sending LINK_CONFIRM.
+    before = device.confirms()
+    none = device.cli('link-confirm')['data']
+    assert none['confirmed'] is False and none['outcome'] == 'no_trial', none
+    assert device.confirms() == before
+
+    # Stage 460800 (enum 2), save, reboot (readable output prints pending trial + confirm command).
+    device.cli('set', '0:0:48=2')
+    device.cli('save')
+    text = device.cli('reboot', json_mode=False)
+    assert 'link-confirm' in text and '460800' in text, text
+    # Auto-detect finds 460800 in trial and link-confirm confirms it.
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            trial_info = device.cli('info')['data']
+            if trial_info['link_trial_ms'] > 0:
+                break
+        except AssertionError:
+            pass
+        assert time.monotonic() < deadline, 'CLI did not see link trial after reboot'
+        time.sleep(0.2)
+    confirmed = device.cli('link-confirm')['data']
+    assert confirmed['confirmed'] is True and confirmed['outcome'] == 'confirmed', confirmed
+    assert confirmed['running']['baud'] == 460800 and confirmed['link_trial_ms'] == 0, confirmed
+    if device.pty:
+        assert confirmed['baud'] == 460800, confirmed
+        # Explicit --baud auto and fixed --baud 460800 both work; wrong fixed baud times out.
+        assert device.cli('--baud', 'auto', 'info')['data']['link_trial_ms'] == 0
+        assert device.cli('--baud', '460800', 'info')['data']['link_trial_ms'] == 0
+        device.cli('--baud', '115200', '--timeout-ms', '300', 'info', ok=False)
+
+    # Unconfirmed trial reverts back to 460800.
+    device.cli('set', '0:0:48=0')
+    device.cli('save')
+    reboot = device.cli('reboot')['data']
+    assert reboot['link_trial_pending'] is True and reboot['trial_baud'] == 115200, reboot
+    assert 'link-confirm' in reboot['confirm_command'], reboot
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            trial_info = device.cli('info')['data']
+            if trial_info['link_trial_ms'] > 0:
+                break
+        except AssertionError:
+            pass
+        assert time.monotonic() < deadline, 'CLI did not see unconfirmed trial'
+        time.sleep(0.2)
+    # Wait for the trial (TRIAL_MS) to revert to 460800.
+    deadline = time.monotonic() + TRIAL_MS / 1000 + 8
+    while True:
+        try:
+            after = device.cli('info')['data']
+            running = device.cli('get', '0:0:48')['data']['typed_values'][0]
+            if after['link_trial_ms'] == 0 and running == 2:
+                break
+        except AssertionError:
+            pass
+        assert time.monotonic() < deadline, 'unconfirmed trial did not revert to 460800'
+        time.sleep(0.3)
+
+    # Restore 921600 (enum 3) and confirm.
+    device.cli('set', '0:0:48=3')
+    device.cli('save')
+    device.cli('reboot')
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            res = device.cli('link-confirm')['data']
+            if res['confirmed'] is True:
+                break
+        except AssertionError:
+            pass
+        assert time.monotonic() < deadline, 'CLI could not restore 921600'
+        time.sleep(0.2)
+    assert device.cli('get', '0:0:48')['data']['typed_values'][0] == 3
 
 
 class Output(dict):
@@ -220,6 +312,7 @@ def check_pins(device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--probe', required=True)
+    ap.add_argument('--cli')
     ap.add_argument('--vdev', required=True)
     args = ap.parse_args()
     for pty in (False, True) if sys.platform.startswith('linux') else (False,):
@@ -228,6 +321,8 @@ def main():
             try:
                 device.start()
                 check_trials(device)
+                if args.cli:
+                    check_cli(device)
                 if pty:
                     check_rates(device)
                     check_pins(device)

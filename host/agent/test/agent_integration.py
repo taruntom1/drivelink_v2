@@ -1565,6 +1565,117 @@ def scenario_Q_group_limits(ctx):
     return 'group pools follow limits.sub_groups and limits.cmd_groups across a Boot, larger and smaller'
 
 
+def scenario_R_link_trial_pty(ctx):
+    # PTY vdev carries baud rates: test agent default auto-baud, confirming a trial on
+    # reconnect to the same device id, keeping the found rate, reverting when a fixed-baud
+    # agent cannot reach the trial rate, and enforcing the exclusive lease rule on LINK_CONFIRM.
+    state_dir = ctx['tmp'] / 'link-pty'
+    vdev = Proc('vdev-link', [ctx['vdev'], '--pty', '--link-trial-ms', '6000', '--state', str(state_dir)])
+    agent = None
+
+    def start_agent(label, spec):
+        a = Proc(label, [ctx['agent_exe'], '--port', '0', '--token', TOKEN, '--device', spec,
+                         '--retry-ms', '300', '--no-advertise'])
+        return a, a.next_line(15, 'READY ')[len('READY '):]
+
+    def wait_running_baud(url, expected_enum, timeout=20):
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                info = data(cli(url, 'info', device='lnk', token=TOKEN))
+                running = data(cli(url, 'get', '0:0:48', device='lnk', token=TOKEN))['typed_values'][0]
+                nxt = data(cli(url, 'get-pending', '0:0:48', device='lnk', token=TOKEN))['typed_values'][0]
+                last = (running, nxt, info['link_trial_ms'])
+                if running == expected_enum and nxt == expected_enum and info['link_trial_ms'] == 0:
+                    return info
+            except Fail:
+                pass
+            time.sleep(0.3)
+        fail(f'timeout waiting for running/next link.baud == {expected_enum} and link_trial_ms == 0', last=last)
+
+    try:
+        port = vdev.next_line(15, 'READY ')[len('READY '):]
+        # 1. Default baud ("auto"): connects at 921600 (enum 3), changes to 115200 (enum 0),
+        #    agent reconnects to the same device id, confirms the trial, and keeps 115200.
+        agent, url = start_agent('agent-link-auto', f'lnk={port}')
+        wait_running_baud(url, 3)
+        cli(url, 'set', '0:0:48=0', device='lnk', token=TOKEN)
+        cli(url, 'save', device='lnk', token=TOKEN)
+        reboot = data(cli(url, 'reboot', device='lnk', token=TOKEN))
+        expect(reboot.get('link_trial_pending') is True and reboot.get('trial_baud') == 115200,
+               'CLI reboot notes pending link trial', reboot=reboot)
+        wait_running_baud(url, 0)
+
+        # 2. Second change to 460800 (enum 2), then restart agent with fixed @460800 and test revert.
+        cli(url, 'set', '0:0:48=2', device='lnk', token=TOKEN)
+        cli(url, 'save', device='lnk', token=TOKEN)
+        cli(url, 'reboot', device='lnk', token=TOKEN)
+        wait_running_baud(url, 2)
+        agent.terminate()
+        agent = None
+
+        # 3. Fixed-baud agent at 460800 cannot reach 230400 (enum 1): trial reverts to 460800.
+        agent, url = start_agent('agent-link-fixed', f'lnk={port}@460800')
+        wait_running_baud(url, 2)
+        cli(url, 'set', '0:0:48=1', device='lnk', token=TOKEN)
+        cli(url, 'save', device='lnk', token=TOKEN)
+        cli(url, 'reboot', device='lnk', token=TOKEN)
+        time.sleep(2.5)   # device is in its 6 s trial at 230400; fixed-baud agent cannot confirm it
+        wait_running_baud(url, 2, timeout=20)
+        agent.terminate()
+        agent = None
+
+        # 4. First connect to a device already in a trial does NOT auto-confirm; client LINK_CONFIRM
+        #    is exclusive (refused LeaseRequired while another client holds the lease, works with lease).
+        cli(port, 'set', '0:0:48=3')   # back to 921600
+        cli(port, 'save')
+        cli(port, 'reboot')
+        # Wait until vdev is running at 921600 in a trial before starting the fresh agent.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                if data(cli(port, '--baud', '921600', 'info'))['link_trial_ms'] > 0:
+                    break
+            except Fail:
+                pass
+            expect(time.monotonic() < deadline, 'vdev did not enter trial at 921600')
+            time.sleep(0.2)
+        agent, url = start_agent('agent-link-excl', f'lnk={port}@auto')
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                info = data(cli(url, 'info', device='lnk', token=TOKEN))
+                break
+            except Fail:
+                expect(time.monotonic() < deadline, 'fresh agent did not come online during trial')
+                time.sleep(0.2)
+        expect(info['link_trial_ms'] > 0, 'fresh agent must not confirm a trial on first connect', info=info)
+        old_url = globals()['AGENT_URL']
+        globals()['AGENT_URL'] = url
+        holder = None
+        try:
+            holder = RawClient('link-holder', 'lnk')
+            expect(holder.lease_take()[:2] == (R_OK, 0), 'holder takes lease')
+            refused = cli(url, 'link-confirm', device='lnk', token=TOKEN, code=5)
+            expect(refused['result'] == R_BUSY and refused['detail'] == D_LEASE_REQUIRED,
+                   'LINK_CONFIRM without lease is refused LeaseRequired', envelope=refused)
+            confirmed = data(cli(url, 'link-confirm', device='lnk', token=TOKEN, lease=True))
+            expect(confirmed['confirmed'] is True and confirmed['outcome'] == 'confirmed',
+                   'LINK_CONFIRM with --lease confirms the trial', confirmed=confirmed)
+            expect(data(cli(url, 'info', device='lnk', token=TOKEN))['link_trial_ms'] == 0,
+                   'trial cleared after LINK_CONFIRM')
+        finally:
+            if holder is not None:
+                holder.close()
+            globals()['AGENT_URL'] = old_url
+    finally:
+        if agent is not None:
+            agent.kill()
+        vdev.kill()
+    return 'PTY link trial: auto-baud confirm on reconnect, fixed-baud revert, first-connect unconfirmed + exclusive LINK_CONFIRM'
+
+
 def scenario_9_device_clean_after_agent(ctx):
     # The agent clears client groups when they leave. Only now can vdev be
     # asked directly (it serves one client, the agent held it until now).
@@ -1593,7 +1704,7 @@ SCENARIOS = [scenario_1_agent_devices, scenario_2_access, scenario_3_same_as_dir
              scenario_E_exclusive_ops_cli, scenario_F_client_list, scenario_G_history_on_connect, scenario_H_clock,
              scenario_I_per_device, scenario_J_lobby_ops, scenario_K_device_connection_cap,
              scenario_L_discovery_lan, scenario_M_discovery_quiet, scenario_N_browse_usage,
-             scenario_O_no_devices, scenario_P_pending_setting, scenario_Q_group_limits,
+             scenario_O_no_devices, scenario_P_pending_setting, scenario_Q_group_limits, scenario_R_link_trial_pty,
              scenario_9_device_clean_after_agent]
 
 

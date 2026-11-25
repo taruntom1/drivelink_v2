@@ -113,6 +113,7 @@ Json toJson(const DeviceInfo &v)
             {"max_payload", v.max_payload},
             {"running_instances", v.running_instances},
             {"flags", v.flags},
+            {"link_trial_ms", v.link_trial_ms},
             {"loops", toJson(v.loops)}};
 }
 Json toJson(const OperationResult &v)

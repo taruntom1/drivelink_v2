@@ -121,7 +121,10 @@ std::string deviceLine(const std::string &alias, const std::string &path, unsign
     nlohmann::ordered_json line;
     line["alias"] = alias;
     line["endpoint"] = "serial://" + path;
-    line["baud"] = baud;
+    if (baud == 0)
+        line["baud"] = "auto";
+    else
+        line["baud"] = baud;
     return line.dump();
 }
 

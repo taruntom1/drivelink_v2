@@ -18,7 +18,7 @@ add_test(NAME host-model COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DI
 set_tests_properties(host-model PROPERTIES TIMEOUT 120)
 add_executable(link_probe link_probe.cpp)
 target_link_libraries(link_probe PRIVATE drivelink)
-add_test(NAME host-link COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/link_integration.py --probe $<TARGET_FILE:link_probe> --vdev $<TARGET_FILE:drivelink-vdev>)
+add_test(NAME host-link COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/link_integration.py --probe $<TARGET_FILE:link_probe> --cli $<TARGET_FILE:drivelink-cli> --vdev $<TARGET_FILE:drivelink-vdev>)
 set_tests_properties(host-link PROPERTIES TIMEOUT 300)
 add_executable(async_probe async_probe.cpp)
 target_link_libraries(async_probe PRIVATE drivelink)

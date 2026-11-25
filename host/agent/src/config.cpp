@@ -166,7 +166,27 @@ void checkEndpoint(std::string_view endpoint, std::string_view what)
     throw ConfigError(std::string(what) + ": endpoint must start with serial:// or tcp://, got " + single_quoted(endpoint));
 }
 
-DeviceConfig makeDevice(std::string_view alias, std::string_view endpoint, std::optional<int64_t> baud,
+unsigned parseBaudJson(const json &v, std::string_view what)
+{
+    if (v.is_string())
+    {
+        if (v.get<std::string>() == "auto")
+            return kBaudAuto;
+        throw ConfigError(std::string(what) + " must be \"auto\" or an integer 9600..4000000");
+    }
+    if (!v.is_number_integer())
+        throw ConfigError(std::string(what) + " must be \"auto\" or an integer 9600..4000000");
+    return static_cast<unsigned>(jsonInt(v, what, 9600, 4000000));
+}
+
+unsigned parseBaudFlag(std::string_view text)
+{
+    if (text == "auto")
+        return kBaudAuto;
+    return static_cast<unsigned>(flagInt("--device baud", text, 9600, 4000000));
+}
+
+DeviceConfig makeDevice(std::string_view alias, std::string_view endpoint, std::optional<unsigned> baud,
                         std::string_view what)
 {
     checkAlias(alias, what);
@@ -178,7 +198,7 @@ DeviceConfig makeDevice(std::string_view alias, std::string_view endpoint, std::
     d.alias = std::string(alias);
     d.endpoint = std::string(endpoint);
     if (baud)
-        d.baud = static_cast<unsigned>(*baud);
+        d.baud = *baud;
     return d;
 }
 
@@ -188,7 +208,7 @@ DeviceConfig parseDeviceJson(const json &j, std::size_t index)
     if (!j.is_object())
         throw ConfigError(where + " must be an object");
     std::optional<std::string> alias, endpoint;
-    std::optional<int64_t> baud;
+    std::optional<unsigned> baud;
     for (const auto &[key, value] : j.items())
     {
         if (key == "alias")
@@ -196,7 +216,7 @@ DeviceConfig parseDeviceJson(const json &j, std::size_t index)
         else if (key == "endpoint")
             endpoint = jsonString(value, where + ".endpoint");
         else if (key == "baud")
-            baud = jsonInt(value, where + ".baud", 9600, 4000000);
+            baud = parseBaudJson(value, where + ".baud");
         else
             throw ConfigError("unknown key " + single_quoted(key) + " in " + where);
     }
@@ -214,10 +234,10 @@ DeviceConfig parseDeviceFlag(std::string_view spec)
         throw ConfigError("--device must be ALIAS=ENDPOINT[@BAUD], got " + single_quoted(spec));
     const std::string_view alias = spec.substr(0, eq);
     std::string_view endpoint = spec.substr(eq + 1);
-    std::optional<int64_t> baud;
+    std::optional<unsigned> baud;
     if (const auto at = endpoint.rfind('@'); at != std::string_view::npos)
     {
-        baud = flagInt("--device baud", endpoint.substr(at + 1), 9600, 4000000);
+        baud = parseBaudFlag(endpoint.substr(at + 1));
         endpoint = endpoint.substr(0, at);
     }
     return makeDevice(alias, endpoint, baud, "--device");
@@ -494,7 +514,7 @@ flags:
   --device ALIAS=ENDPOINT[@BAUD]
                              add a device (repeatable; replaces the file's list)
                              ENDPOINT is serial:///dev/ttyACM0 or tcp://127.0.0.1:5000
-                             BAUD is 9600..4000000 (serial only, default 921600)
+                             BAUD is "auto" or 9600..4000000 (serial only, default auto)
   --hello-timeout-ms N       time allowed for a client's Hello (default 5000)
   --retry-ms N               device reconnect interval (default 2000)
   --request-timeout-ms N     device request timeout (default 3000)
@@ -522,7 +542,7 @@ example:
     "port": 47620,
     "token_file": "agent.token",
     "devices": [
-      {"alias": "base", "endpoint": "serial:///dev/ttyACM0", "baud": 921600},
+      {"alias": "base", "endpoint": "serial:///dev/ttyACM0", "baud": "auto"},
       {"alias": "sim", "endpoint": "tcp://127.0.0.1:5000"}
     ]
   }
