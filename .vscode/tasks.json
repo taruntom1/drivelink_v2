@@ -407,6 +407,18 @@
       "linux": { "command": "python3" },
       "args": ["${workspaceFolder}/tools/validate.py", "--only", "deb", "--force", "--verbose"],
       "problemMatcher": []
+    },
+
+    // Release. Bumps VERSION and package.xml, validates, commits, tags and pushes.
+    {
+      "label": "Release version",
+      "detail": "Bump VERSION and package.xml, validate, commit, tag vX.Y.Z and push",
+      "type": "process",
+      "command": "python",
+      "linux": { "command": "python3" },
+      "args": ["${workspaceFolder}/tools/release.py", "${input:releaseVersion}", "--validate", "${input:releaseValidation}"],
+      "presentation": { "panel": "dedicated" },
+      "problemMatcher": []
     }
   ],
   "inputs": [
@@ -441,6 +453,18 @@
       "options": ["gen", "guide", "native", "host-win", "installer", "host-linux", "agent", "deb", "apt-repo",
         "ros", "ros-jazzy", "ros-deb", "ros-deb-install",
         "fw", "fw-nolog", "fw-hil-app", "fw-package"]
+    },
+    {
+      "id": "releaseVersion",
+      "type": "promptString",
+      "description": "Version to release (MAJOR.MINOR.PATCH, e.g. 0.2.2); Escape cancels"
+    },
+    {
+      "id": "releaseValidation",
+      "type": "pickString",
+      "description": "Local validation to run before committing and tagging",
+      "options": ["gen", "quick", "full"],
+      "default": "gen"
     }
   ]
 }

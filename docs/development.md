@@ -109,6 +109,7 @@ Compiler errors go to the Problems panel. Open the repository root as the folder
 | Generated files | `Generate definitions`, `Generate GUI theme`, `Generate notices`, `Generate check` |
 | User guide | `Guide setup`, `Guide build`, `Guide serve` |
 | Packages | `Package firmware`, `Package Windows installer` (Windows only), `Package deb` |
+| Release | `Release version` |
 
 - **Ports are asked**, with this bench's as the default (COM3 protocol and flash,
   COM4 console). For the flash tasks the prompt is also the confirmation: Escape
@@ -293,8 +294,9 @@ worktree. vdev reports `<VERSION>-vdev`. The `package.xml` files repeat it
 literally. `python tools/version.py --check` (in `gen`) fails on any
 mismatch, and `python tools/version.py` prints the full version.
 
-To release, edit `VERSION` and the four `package.xml` files, merge, then push
-tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
+To release, run `python tools/release.py <VERSION>` (or the VS Code task
+`Release version`), or edit `VERSION` and the four `package.xml` files, merge,
+then push tag `v<VERSION>` on that commit. CI runs every job on the tag; when all pass,
 its `release` job checks the tag against `VERSION` and that every package
 carries the plain version, and publishes a GitHub Release with
 `drivelink-firmware-<version>.zip`, `DriveLink-<version>-setup.exe`, 26
