@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import bench_fw
 import dev
 import jtag
+import release
 import validate
 
 
@@ -230,6 +231,17 @@ class TasksTest(unittest.TestCase):
         for task in self.tasks.values():
             if '--only' in task['args']:
                 self.assertIn(task['args'][task['args'].index('--only') + 1], [*names, '${input:check}'])
+
+    def test_release_task_arguments_and_options_are_valid(self):
+        options = self.inputs['releaseValidation']['options']
+        self.assertLessEqual(set(options), set(release.VALIDATE_MODES))
+        task = self.tasks['Release version']
+        self.assertEqual(self.script(task), 'tools/release.py')
+        for mode in options:
+            argv = [arg.replace('${input:releaseVersion}', '0.2.2').replace('${input:releaseValidation}', mode)
+                    for arg in task['args'][1:]]
+            parsed = release.arguments(argv)
+            self.assertEqual((parsed.version, parsed.validate), ('0.2.2', mode))
 
     def test_the_shortcuts_offer_a_list(self):
         groups = {label: task['group'] for label, task in self.tasks.items() if 'group' in task}
