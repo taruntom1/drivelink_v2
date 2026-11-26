@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Build the layout | DriveLink user guide</title>
+  <link rel="stylesheet" href="/drivelink_v2/assets/theme.css">
+  <link rel="stylesheet" href="/drivelink_v2/pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="/drivelink_v2/assets/site.css">
+  <script type="module" src="/drivelink_v2/pagefind/pagefind-component-ui.js"></script>
+  <script defer src="/drivelink_v2/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="/drivelink_v2/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="/drivelink_v2/" bundle-path="/drivelink_v2/pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      <h2>Get DriveLink</h2>
+<ul>
+<li><a href="/drivelink_v2/">Home</a></li>
+<li><a href="/drivelink_v2/downloads/">Downloads</a></li>
+<li><a href="/drivelink_v2/apt/">Install from apt</a></li>
+<li><a href="/drivelink_v2/flash/">Flash in the browser</a></li>
+</ul>
+<h2>Start</h2>
+<ul>
+<li><a href="/drivelink_v2/start/">Start here</a></li>
+</ul>
+<h2>Concepts</h2>
+<ul>
+<li><a href="/drivelink_v2/concepts/firmware/">Firmware and serial</a></li>
+<li><a href="/drivelink_v2/concepts/modules/">Modules, instances, and loops</a></li>
+<li><a href="/drivelink_v2/concepts/control/">Actuators, encoders, and controllers</a></li>
+<li><a href="/drivelink_v2/concepts/imu/">IMU</a></li>
+<li><a href="/drivelink_v2/concepts/safety/">Arming and faults</a></li>
+<li><a href="/drivelink_v2/concepts/saving/">Saving and reverting</a></li>
+<li><a href="/drivelink_v2/concepts/agent/">Agent, leases, and tokens</a></li>
+<li><a href="/drivelink_v2/concepts/ros/">ROS 2 in five minutes</a></li>
+<li><a href="/drivelink_v2/concepts/glossary/">Glossary</a></li>
+</ul>
+<h2>PC bench</h2>
+<ul>
+<li><a href="/drivelink_v2/pc/install/">Install the app</a></li>
+<li><a href="/drivelink_v2/pc/connect/">Connect and tour</a></li>
+<li><a href="/drivelink_v2/pc/wire/">Wire the bench</a></li>
+<li><a href="/drivelink_v2/pc/layout/" aria-current="page">Build the layout</a></li>
+<li><a href="/drivelink_v2/pc/settings/">Device settings</a></li>
+<li><a href="/drivelink_v2/pc/first-spin/">First spin</a></li>
+<li><a href="/drivelink_v2/pc/monitor/">Monitor</a></li>
+<li><a href="/drivelink_v2/pc/tune/">Tune and identify</a></li>
+<li><a href="/drivelink_v2/pc/imu/">Add and calibrate the IMU</a></li>
+<li><a href="/drivelink_v2/pc/update/">Update firmware</a></li>
+</ul>
+<h2>Pi robot</h2>
+<ul>
+<li><a href="/drivelink_v2/pi/prepare/">Prepare the Raspberry Pi</a></li>
+<li><a href="/drivelink_v2/pi/wire/">Wire the Pi to the ESP</a></li>
+<li><a href="/drivelink_v2/pi/agent/">Install the agent and add the device</a></li>
+<li><a href="/drivelink_v2/pi/connect/">Connect the desktop app over the LAN</a></li>
+<li><a href="/drivelink_v2/pi/control/">Share the device safely</a></li>
+<li><a href="/drivelink_v2/pi/maintenance/">Upgrade or remove the agent</a></li>
+</ul>
+<h2>ROS 2 robot</h2>
+<ul>
+<li><a href="/drivelink_v2/ros/install/">Install ROS 2 and DriveLink</a></li>
+<li><a href="/drivelink_v2/ros/example/">Start the two-wheel example</a></li>
+<li><a href="/drivelink_v2/ros/drive/">Drive with the keyboard</a></li>
+<li><a href="/drivelink_v2/ros/robot/">Describe your own robot</a></li>
+<li><a href="/drivelink_v2/ros/recover/">Diagnose and recover the ROS drive</a></li>
+</ul>
+<h2>Reference</h2>
+<ul>
+<li><a href="/drivelink_v2/reference/bench/">Reference build</a></li>
+<li><a href="/drivelink_v2/reference/modules/">Module types and parameters</a></li>
+<li><a href="/drivelink_v2/reference/codes/">Status, fault, and diagnostic codes</a></li>
+<li><a href="/drivelink_v2/reference/gui/">Desktop app screens</a></li>
+<li><a href="/drivelink_v2/reference/agent/">Agent configuration, service, and network</a></li>
+<li><a href="/drivelink_v2/reference/ros/">ROS 2 hardware and launch reference</a></li>
+<li><a href="/drivelink_v2/reference/packages/">Packages, versions, and limits</a></li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+<li><a href="/drivelink_v2/troubleshooting/">Troubleshooting and FAQ</a></li>
+</ul>
+<h2>About</h2>
+<ul>
+<li><a href="/drivelink_v2/about/">About DriveLink</a></li>
+</ul>
+    </nav>
+    <main id="content" class="article" tabindex="-1" data-pagefind-body>
+      <h1 id="build-the-layout">Build the layout</h1>
+<p>You need the app connected to a disarmed board and your <a href="/drivelink_v2/pc/wire/">wiring notes</a>. Keep the motor supply off. You’ll add the motor, encoder, and controller to a shared <a href="/drivelink_v2/concepts/modules/">loop</a> and keep that configuration across a reboot.</p>
+<h2 id="add-the-instances">Add the instances</h2>
+<ol>
+<li>
+<p>Open <strong>Layout</strong>. A fresh board shows the real-time control loop at 1,000 Hz and the sensor loop at 100 Hz. Use the control loop for the motor, encoder, and controller. If you are starting with a layout with no compatible loop, use <strong>Add → Loop</strong>, give the loop a label, enable real-time, and set its rate to 1,000 Hz. The loop should appear as pending.</p>
+</li>
+<li>
+<p>Use <strong>Add → Instance</strong> for each row below. Pick the type, enter the label, and choose the control loop. You should see the labeled instances staged under the same loop.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Label</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>actuator.pwm_dir</code></td>
+<td><code>left_pwm</code></td>
+</tr>
+<tr>
+<td><code>feedback.quadrature</code></td>
+<td><code>left_enc</code></td>
+</tr>
+<tr>
+<td><code>controller.cascade_pid</code></td>
+<td><code>left_drive</code></td>
+</tr>
+</tbody>
+</table></div>
+</li>
+</ol>
+<figure><picture><source data-dark media="(prefers-color-scheme: dark)" srcset="/drivelink_v2/assets/screenshots/layout-add-instance-dark.png"><img src="/drivelink_v2/assets/screenshots/layout-add-instance-light.png" alt="The Add instance dialog lists module types and their compatible loops." width="1920" height="1080"></picture><figcaption>Choose a module type and the loop it will run on.</figcaption></figure>
+<h2 id="set-pins-and-limits">Set pins and limits</h2>
+<ol>
+<li>Select <strong>left_pwm</strong> and open <strong>Params</strong>. Set <code>pwm_pin</code> to 4 and <code>dir_pin</code> to 5 for the reference wiring. Set <code>duty_limit</code> to 0.2 or lower for the first run. Keep <code>pwm_freq_hz</code> at 25000 unless your driver’s datasheet gives a lower maximum PWM frequency. Press Enter after typing each value. Check that each pin shows its pending value and the duty limit shows the cap you set.</li>
+<li>Select <strong>left_enc</strong>. Set <code>pin_a</code> to 6 and <code>pin_b</code> to 7 for the reference wiring. Set <code>counts_per_rev</code> to the counts per motor revolution <strong>after 4× quadrature decoding</strong>. If the datasheet gives complete A-channel cycles per motor revolution, multiply by four. If it already counts all four edges, enter its count directly. Set <code>gear_ratio</code> to the number of motor turns per output turn. Compare the pending values with the exact motor and encoder data.</li>
+<li>Select <strong>left_drive</strong>. In <strong>Wiring</strong>, choose <strong>left_pwm</strong> as the actuator and <strong>left_enc</strong> as the feedback. Set <code>mode</code> to <code>open_loop</code> and <code>duty_limit</code> to 0.2 or lower. You should see the correct wiring targets and both duty limits should be set before any power is applied to the motors.</li>
+<li>For a second motor, repeat with <code>right_pwm</code>, <code>right_enc</code>, and <code>right_drive</code> and the second channel from the pin table. Check each controller’s wiring targets against its wheel label.</li>
+</ol>
+<h2 id="save-and-check">Save and check</h2>
+<ol>
+<li>Use <strong>Review</strong> on the pending banner. Check the staged instances, pins, and wiring before selecting <strong>Save and reboot</strong>. The app should reconnect after the board restarts.</li>
+<li>Return to <strong>Layout</strong>. Check that the pending banner is gone and the expected labels, pins, and wiring are active. Confirm the board is still disarmed.</li>
+</ol>
+<figure><picture><source data-dark media="(prefers-color-scheme: dark)" srcset="/drivelink_v2/assets/screenshots/layout-review-dark.png"><img src="/drivelink_v2/assets/screenshots/layout-review-light.png" alt="The Layout review lists staged changes with their old and new values." width="1920" height="1080"></picture><figcaption>Review pending changes before saving and rebooting.</figcaption></figure>
+<p>If <strong>Add</strong> says <strong>4 of 4 loops: remove a loop first</strong> (or the same for instances), raise that limit in <a href="/drivelink_v2/pc/settings/">Device settings</a>. See <a href="/drivelink_v2/concepts/saving/">Saving and reverting</a> if you need to undo a change. When the active layout matches the wiring, go to <a href="/drivelink_v2/pc/first-spin/">First spin</a>.</p>
+
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="/drivelink_v2/">DriveLink user guide</a>
+    <a href="/drivelink_v2/assets/third-party/">Third-party notices</a>
+    <a href="https://github.com/taruntom1/drivelink_v2">Project on GitHub</a>
+  </footer>
+</body>
+</html>

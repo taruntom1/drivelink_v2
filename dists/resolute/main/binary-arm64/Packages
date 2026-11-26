@@ -1,0 +1,110 @@
+Package: drivelink
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 5211
+Depends: libc6 (>= 2.42), libgcc-s1 (>= 3.0), libqt6core6t64 (>= 6.10.2), libqt6gui6 (>= 6.6.0), libqt6qml6 (>= 6.6.0), libqt6quick6 (>= 6.6.0), libqt6svg6 (>= 6.6.0), libstdc++6 (>= 14), drivelink-cli (= 0.2.1~ubuntu26.04), qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtcore, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-templates, qml6-module-qtquick-layouts, qml6-module-qtquick-window, qml6-module-qtquick-dialogs
+Recommends: qt6-wayland
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink GUI for an ESP32-S3 motion controller
+ drivelink-gui configures, tunes and monitors a DriveLink device over USB
+ serial, TCP or a drivelink-agent. The command line client and the virtual
+ device are in drivelink-cli.
+Filename: pool/main/d/drivelink/drivelink_0.2.1~ubuntu26.04_arm64.deb
+Size: 1890566
+SHA256: d969a25340a31e524958cdb3cd76685ba0ee49fd704f35ea870b8877e774b7fa
+
+Package: drivelink-agent
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1101
+Depends: libc6 (>= 2.42), libgcc-s1 (>= 3.0), libstdc++6 (>= 14), passwd
+Recommends: drivelink-cli
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink agent: shares DriveLink devices over TCP
+ drivelink-agent owns the serial ports of DriveLink devices (ESP32-S3 motion
+ controllers) and shares them with the GUI, the CLI and ROS 2, with access
+ control and a control lease. It runs as the drivelink-agent service on
+ 127.0.0.1 with a generated token until /etc/drivelink/agent.json lists
+ devices; an upgrade never restarts the running agent.
+Filename: pool/main/d/drivelink-agent/drivelink-agent_0.2.1~ubuntu26.04_arm64.deb
+Size: 444060
+SHA256: e9c728444f85c6860e044acdd60bdb362e3ecf4a4676502b2ab7aad78fe8ca1b
+
+Package: drivelink-cli
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1548
+Depends: libc6 (>= 2.43), libgcc-s1 (>= 3.0), libstdc++6 (>= 14)
+Replaces: drivelink
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink command line client and virtual device
+ drivelink-cli configures, monitors and scripts a DriveLink device (an ESP32-S3
+ motion controller) over serial, TCP or a drivelink-agent. drivelink-vdev is a
+ virtual device for trying it without hardware.
+Filename: pool/main/d/drivelink-cli/drivelink-cli_0.2.1~ubuntu26.04_arm64.deb
+Size: 581348
+SHA256: ea3fe0f396697bc6e615520594db0996f86210eafccdf24ae508802df487e1d9
+
+Package: ros-lyrical-drivelink
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 2222
+Depends: ros-lyrical-drivelink-protocol (= 0.2.1~ubuntu26.04)
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink/#lyrical
+Description: DriveLink C++ host session and core services.
+Filename: pool/main/r/ros-lyrical-drivelink/ros-lyrical-drivelink_0.2.1~ubuntu26.04_arm64.deb
+Size: 414142
+SHA256: 1522a58bf567a3aa3a2dfa5828e4d9f4a7a33d54cb580745a22093d944591b8a
+
+Package: ros-lyrical-drivelink-bringup
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 965
+Depends: libc6 (>= 2.42), libgcc-s1 (>= 3.3.1), libstdc++6 (>= 14), python3-yaml, ros-lyrical-ament-index-python, ros-lyrical-controller-manager, ros-lyrical-controller-manager-msgs, ros-lyrical-diagnostic-msgs, ros-lyrical-diff-drive-controller, ros-lyrical-drivelink (= 0.2.1~ubuntu26.04), ros-lyrical-drivelink-hardware (= 0.2.1~ubuntu26.04), ros-lyrical-imu-sensor-broadcaster, ros-lyrical-joint-state-broadcaster, ros-lyrical-launch, ros-lyrical-launch-ros, ros-lyrical-lifecycle-msgs, ros-lyrical-rclcpp, ros-lyrical-robot-state-publisher, ros-lyrical-ros2controlcli, ros-lyrical-ros2launch, ros-lyrical-std-srvs, ros-lyrical-xacro
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_bringup/#lyrical
+Description: DriveLink ROS 2 example robot, diagnostics and operator recovery.
+Filename: pool/main/r/ros-lyrical-drivelink-bringup/ros-lyrical-drivelink-bringup_0.2.1~ubuntu26.04_arm64.deb
+Size: 301338
+SHA256: 03f211d73e223bf93d6b5db4e8d514b62026172255bf414925b52372c01d661b
+
+Package: ros-lyrical-drivelink-hardware
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 930
+Depends: libc6 (>= 2.42), libconsole-bridge1.0 (>= 1.0.1+dfsg2), libfmt10 (>= 10.1.1+ds1), libgcc-s1 (>= 3.3.1), libstdc++6 (>= 14), ros-lyrical-drivelink (= 0.2.1~ubuntu26.04), ros-lyrical-hardware-interface, ros-lyrical-pluginlib, ros-lyrical-rclcpp, ros-lyrical-rclcpp-lifecycle
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_hardware/#lyrical
+Description: ros2_control SystemInterface for a DriveLink device, reached through drivelink-agent.
+Filename: pool/main/r/ros-lyrical-drivelink-hardware/ros-lyrical-drivelink-hardware_0.2.1~ubuntu26.04_arm64.deb
+Size: 324530
+SHA256: 1335c734ae4cee5cb341799deabc3e3945314dc0e8ce1fe02acb2aeca2c630e9
+
+Package: ros-lyrical-drivelink-protocol
+Version: 0.2.1~ubuntu26.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 270
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_protocol/#lyrical
+Description: DriveLink shared wire protocol.
+Filename: pool/main/r/ros-lyrical-drivelink-protocol/ros-lyrical-drivelink-protocol_0.2.1~ubuntu26.04_arm64.deb
+Size: 32682
+SHA256: f04051f8bf829d5adcabc64d07490e4d12d6cb5d488b03558e510859e5b544bd

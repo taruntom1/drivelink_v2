@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROS 2 hardware and launch reference | DriveLink user guide</title>
+  <link rel="stylesheet" href="/drivelink_v2/assets/theme.css">
+  <link rel="stylesheet" href="/drivelink_v2/pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="/drivelink_v2/assets/site.css">
+  <script type="module" src="/drivelink_v2/pagefind/pagefind-component-ui.js"></script>
+  <script defer src="/drivelink_v2/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="/drivelink_v2/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="/drivelink_v2/" bundle-path="/drivelink_v2/pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      <h2>Get DriveLink</h2>
+<ul>
+<li><a href="/drivelink_v2/">Home</a></li>
+<li><a href="/drivelink_v2/downloads/">Downloads</a></li>
+<li><a href="/drivelink_v2/apt/">Install from apt</a></li>
+<li><a href="/drivelink_v2/flash/">Flash in the browser</a></li>
+</ul>
+<h2>Start</h2>
+<ul>
+<li><a href="/drivelink_v2/start/">Start here</a></li>
+</ul>
+<h2>Concepts</h2>
+<ul>
+<li><a href="/drivelink_v2/concepts/firmware/">Firmware and serial</a></li>
+<li><a href="/drivelink_v2/concepts/modules/">Modules, instances, and loops</a></li>
+<li><a href="/drivelink_v2/concepts/control/">Actuators, encoders, and controllers</a></li>
+<li><a href="/drivelink_v2/concepts/imu/">IMU</a></li>
+<li><a href="/drivelink_v2/concepts/safety/">Arming and faults</a></li>
+<li><a href="/drivelink_v2/concepts/saving/">Saving and reverting</a></li>
+<li><a href="/drivelink_v2/concepts/agent/">Agent, leases, and tokens</a></li>
+<li><a href="/drivelink_v2/concepts/ros/">ROS 2 in five minutes</a></li>
+<li><a href="/drivelink_v2/concepts/glossary/">Glossary</a></li>
+</ul>
+<h2>PC bench</h2>
+<ul>
+<li><a href="/drivelink_v2/pc/install/">Install the app</a></li>
+<li><a href="/drivelink_v2/pc/connect/">Connect and tour</a></li>
+<li><a href="/drivelink_v2/pc/wire/">Wire the bench</a></li>
+<li><a href="/drivelink_v2/pc/layout/">Build the layout</a></li>
+<li><a href="/drivelink_v2/pc/settings/">Device settings</a></li>
+<li><a href="/drivelink_v2/pc/first-spin/">First spin</a></li>
+<li><a href="/drivelink_v2/pc/monitor/">Monitor</a></li>
+<li><a href="/drivelink_v2/pc/tune/">Tune and identify</a></li>
+<li><a href="/drivelink_v2/pc/imu/">Add and calibrate the IMU</a></li>
+<li><a href="/drivelink_v2/pc/update/">Update firmware</a></li>
+</ul>
+<h2>Pi robot</h2>
+<ul>
+<li><a href="/drivelink_v2/pi/prepare/">Prepare the Raspberry Pi</a></li>
+<li><a href="/drivelink_v2/pi/wire/">Wire the Pi to the ESP</a></li>
+<li><a href="/drivelink_v2/pi/agent/">Install the agent and add the device</a></li>
+<li><a href="/drivelink_v2/pi/connect/">Connect the desktop app over the LAN</a></li>
+<li><a href="/drivelink_v2/pi/control/">Share the device safely</a></li>
+<li><a href="/drivelink_v2/pi/maintenance/">Upgrade or remove the agent</a></li>
+</ul>
+<h2>ROS 2 robot</h2>
+<ul>
+<li><a href="/drivelink_v2/ros/install/">Install ROS 2 and DriveLink</a></li>
+<li><a href="/drivelink_v2/ros/example/">Start the two-wheel example</a></li>
+<li><a href="/drivelink_v2/ros/drive/">Drive with the keyboard</a></li>
+<li><a href="/drivelink_v2/ros/robot/">Describe your own robot</a></li>
+<li><a href="/drivelink_v2/ros/recover/">Diagnose and recover the ROS drive</a></li>
+</ul>
+<h2>Reference</h2>
+<ul>
+<li><a href="/drivelink_v2/reference/bench/">Reference build</a></li>
+<li><a href="/drivelink_v2/reference/modules/">Module types and parameters</a></li>
+<li><a href="/drivelink_v2/reference/codes/">Status, fault, and diagnostic codes</a></li>
+<li><a href="/drivelink_v2/reference/gui/">Desktop app screens</a></li>
+<li><a href="/drivelink_v2/reference/agent/">Agent configuration, service, and network</a></li>
+<li><a href="/drivelink_v2/reference/ros/" aria-current="page">ROS 2 hardware and launch reference</a></li>
+<li><a href="/drivelink_v2/reference/packages/">Packages, versions, and limits</a></li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+<li><a href="/drivelink_v2/troubleshooting/">Troubleshooting and FAQ</a></li>
+</ul>
+<h2>About</h2>
+<ul>
+<li><a href="/drivelink_v2/about/">About DriveLink</a></li>
+</ul>
+    </nav>
+    <main id="content" class="article" tabindex="-1" data-pagefind-body>
+      <h1 id="ros-2-hardware-and-launch-reference">ROS 2 hardware and launch reference</h1>
+<p>Use this reference with <a href="/drivelink_v2/ros/robot/">your own robot description</a> or the <a href="/drivelink_v2/ros/example/">installed example</a>. The DriveLink hardware system connects through the agent.</p>
+<h2 id="hardware-parameters">Hardware parameters</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Default</th>
+<th>What it controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>device</code></td>
+<td>Required</td>
+<td>Agent alias or 12-digit hexadecimal device ID.</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td><code>tcp://127.0.0.1:47620</code></td>
+<td>Agent address.</td>
+</tr>
+<tr>
+<td><code>token_file</code></td>
+<td><code>/etc/drivelink/token</code></td>
+<td>File containing the token on its first line.</td>
+</tr>
+<tr>
+<td><code>token</code></td>
+<td>Empty</td>
+<td>Inline token for tests. Takes precedence over the token file. A robot description can expose inline parameters.</td>
+</tr>
+<tr>
+<td><code>take_lease</code></td>
+<td><code>refuse</code></td>
+<td>Refuse activation when another client holds the lease. <code>preempt</code> takes the lease and disarms the device before transfer.</td>
+</tr>
+<tr>
+<td><code>state_rate_hz</code></td>
+<td><code>100</code></td>
+<td>Requested state rate in Hz, from 1 to 10,000. The effective rate follows the device loop and its available dividers.</td>
+</tr>
+<tr>
+<td><code>stale_timeout_ms</code></td>
+<td><code>auto</code></td>
+<td>How old a sample may be before causing an error. Automatic uses ten sample periods, with a 100 ms minimum. <code>0</code> disables the age check.</td>
+</tr>
+<tr>
+<td><code>timeout_ms</code></td>
+<td><code>3000</code></td>
+<td>Timeout for agent and device requests during setup and command-mode switching.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="hardware-interfaces">Hardware interfaces</h2>
+<p>Each joint or sensor uses an <code>instance</code> parameter to select its DriveLink label. State interfaces ordinarily read the same-named device signals, with the IMU mappings below. Use <code>state.INTERFACE</code> to choose a different signal.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>State interface</th>
+<th>Device signal and unit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Joint <code>position</code></td>
+<td><code>position</code> in radians</td>
+</tr>
+<tr>
+<td>Joint <code>velocity</code></td>
+<td><code>velocity</code> in radians per second</td>
+</tr>
+<tr>
+<td>Joint <code>duty</code></td>
+<td><code>duty</code>, signed fraction from −1 to 1</td>
+</tr>
+<tr>
+<td>IMU <code>orientation.w/x/y/z</code></td>
+<td><code>quaternion.w/x/y/z</code></td>
+</tr>
+<tr>
+<td>IMU <code>angular_velocity.x/y/z</code></td>
+<td><code>gyro.x/y/z</code> in radians per second</td>
+</tr>
+<tr>
+<td>IMU <code>linear_acceleration.x/y/z</code></td>
+<td><code>accel.x/y/z</code> in metres per second squared, including gravity</td>
+</tr>
+</tbody>
+</table></div>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Joint command</th>
+<th>Device input</th>
+<th>Mode</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>position</code></td>
+<td><code>position_sp</code> in radians</td>
+<td><code>position</code></td>
+</tr>
+<tr>
+<td><code>velocity</code></td>
+<td><code>velocity_sp</code> in radians per second</td>
+<td><code>velocity</code></td>
+</tr>
+<tr>
+<td><code>duty</code></td>
+<td><code>duty_sp</code>, signed fraction from −1 to 1</td>
+<td><code>open_loop</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Use <code>command.INTERFACE</code> and <code>mode.INTERFACE</code> to override the input and mode. Use <code>mode_param</code> to change the parameter name from <code>mode</code>, or set it to <code>none</code> to omit the mode write. Each joint can have one active command interface at a time. Claiming the first command interface arms the device. Releasing the last disarms it. See <a href="/drivelink_v2/ros/recover/">ROS recovery</a> after an error.</p>
+<h2 id="bringup-launch-arguments">Bringup launch arguments</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Default</th>
+<th>What to change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent</code></td>
+<td><code>tcp://127.0.0.1:47620</code></td>
+<td>Set this if the agent is on another computer.</td>
+</tr>
+<tr>
+<td><code>device</code></td>
+<td><code>dev</code></td>
+<td>Use your agent device alias or ID.</td>
+</tr>
+<tr>
+<td><code>token_file</code></td>
+<td><code>/etc/drivelink/token</code></td>
+<td>Point to the token on the ROS computer.</td>
+</tr>
+<tr>
+<td><code>token</code></td>
+<td>Empty</td>
+<td>Inline override for tests.</td>
+</tr>
+<tr>
+<td><code>left_label</code>, <code>right_label</code>, <code>imu_label</code></td>
+<td><code>left</code>, <code>right</code>, <code>imu</code></td>
+<td>Use the label of each running device instance.</td>
+</tr>
+<tr>
+<td><code>controllers_file</code></td>
+<td>Installed <code>config/controllers.yaml</code></td>
+<td>Use a copy with your measured wheel radius and separation.</td>
+</tr>
+<tr>
+<td><code>recovery_controllers</code></td>
+<td><code>joint_state_broadcaster,imu_sensor_broadcaster,diff_drive_controller</code></td>
+<td>Comma-separated list of controllers to restore on recovery. Including the drive controller makes recovery arm the device.</td>
+</tr>
+</tbody>
+</table></div>
+
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="/drivelink_v2/">DriveLink user guide</a>
+    <a href="/drivelink_v2/assets/third-party/">Third-party notices</a>
+    <a href="https://github.com/taruntom1/drivelink_v2">Project on GitHub</a>
+  </footer>
+</body>
+</html>

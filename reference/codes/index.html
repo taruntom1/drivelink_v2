@@ -1,0 +1,1263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Status, fault, and diagnostic codes | DriveLink user guide</title>
+  <link rel="stylesheet" href="/drivelink_v2/assets/theme.css">
+  <link rel="stylesheet" href="/drivelink_v2/pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="/drivelink_v2/assets/site.css">
+  <script type="module" src="/drivelink_v2/pagefind/pagefind-component-ui.js"></script>
+  <script defer src="/drivelink_v2/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="/drivelink_v2/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="/drivelink_v2/" bundle-path="/drivelink_v2/pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      <h2>Get DriveLink</h2>
+<ul>
+<li><a href="/drivelink_v2/">Home</a></li>
+<li><a href="/drivelink_v2/downloads/">Downloads</a></li>
+<li><a href="/drivelink_v2/apt/">Install from apt</a></li>
+<li><a href="/drivelink_v2/flash/">Flash in the browser</a></li>
+</ul>
+<h2>Start</h2>
+<ul>
+<li><a href="/drivelink_v2/start/">Start here</a></li>
+</ul>
+<h2>Concepts</h2>
+<ul>
+<li><a href="/drivelink_v2/concepts/firmware/">Firmware and serial</a></li>
+<li><a href="/drivelink_v2/concepts/modules/">Modules, instances, and loops</a></li>
+<li><a href="/drivelink_v2/concepts/control/">Actuators, encoders, and controllers</a></li>
+<li><a href="/drivelink_v2/concepts/imu/">IMU</a></li>
+<li><a href="/drivelink_v2/concepts/safety/">Arming and faults</a></li>
+<li><a href="/drivelink_v2/concepts/saving/">Saving and reverting</a></li>
+<li><a href="/drivelink_v2/concepts/agent/">Agent, leases, and tokens</a></li>
+<li><a href="/drivelink_v2/concepts/ros/">ROS 2 in five minutes</a></li>
+<li><a href="/drivelink_v2/concepts/glossary/">Glossary</a></li>
+</ul>
+<h2>PC bench</h2>
+<ul>
+<li><a href="/drivelink_v2/pc/install/">Install the app</a></li>
+<li><a href="/drivelink_v2/pc/connect/">Connect and tour</a></li>
+<li><a href="/drivelink_v2/pc/wire/">Wire the bench</a></li>
+<li><a href="/drivelink_v2/pc/layout/">Build the layout</a></li>
+<li><a href="/drivelink_v2/pc/settings/">Device settings</a></li>
+<li><a href="/drivelink_v2/pc/first-spin/">First spin</a></li>
+<li><a href="/drivelink_v2/pc/monitor/">Monitor</a></li>
+<li><a href="/drivelink_v2/pc/tune/">Tune and identify</a></li>
+<li><a href="/drivelink_v2/pc/imu/">Add and calibrate the IMU</a></li>
+<li><a href="/drivelink_v2/pc/update/">Update firmware</a></li>
+</ul>
+<h2>Pi robot</h2>
+<ul>
+<li><a href="/drivelink_v2/pi/prepare/">Prepare the Raspberry Pi</a></li>
+<li><a href="/drivelink_v2/pi/wire/">Wire the Pi to the ESP</a></li>
+<li><a href="/drivelink_v2/pi/agent/">Install the agent and add the device</a></li>
+<li><a href="/drivelink_v2/pi/connect/">Connect the desktop app over the LAN</a></li>
+<li><a href="/drivelink_v2/pi/control/">Share the device safely</a></li>
+<li><a href="/drivelink_v2/pi/maintenance/">Upgrade or remove the agent</a></li>
+</ul>
+<h2>ROS 2 robot</h2>
+<ul>
+<li><a href="/drivelink_v2/ros/install/">Install ROS 2 and DriveLink</a></li>
+<li><a href="/drivelink_v2/ros/example/">Start the two-wheel example</a></li>
+<li><a href="/drivelink_v2/ros/drive/">Drive with the keyboard</a></li>
+<li><a href="/drivelink_v2/ros/robot/">Describe your own robot</a></li>
+<li><a href="/drivelink_v2/ros/recover/">Diagnose and recover the ROS drive</a></li>
+</ul>
+<h2>Reference</h2>
+<ul>
+<li><a href="/drivelink_v2/reference/bench/">Reference build</a></li>
+<li><a href="/drivelink_v2/reference/modules/">Module types and parameters</a></li>
+<li><a href="/drivelink_v2/reference/codes/" aria-current="page">Status, fault, and diagnostic codes</a></li>
+<li><a href="/drivelink_v2/reference/gui/">Desktop app screens</a></li>
+<li><a href="/drivelink_v2/reference/agent/">Agent configuration, service, and network</a></li>
+<li><a href="/drivelink_v2/reference/ros/">ROS 2 hardware and launch reference</a></li>
+<li><a href="/drivelink_v2/reference/packages/">Packages, versions, and limits</a></li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+<li><a href="/drivelink_v2/troubleshooting/">Troubleshooting and FAQ</a></li>
+</ul>
+<h2>About</h2>
+<ul>
+<li><a href="/drivelink_v2/about/">About DriveLink</a></li>
+</ul>
+    </nav>
+    <main id="content" class="article" tabindex="-1" data-pagefind-body>
+      <h1 id="status-fault-and-diagnostic-codes">Status, fault, and diagnostic codes</h1>
+<p>Use this page when the app’s diagnostics or a ROS log shows a code. A request reports a result and can add a detail. Diagnostic entries describe events or conditions. For a fault, fix the cause before acknowledging it. See <a href="/drivelink_v2/troubleshooting/#arm-is-refused">Arm is refused</a> for common actions.</p>
+<h2 id="device-status">Device status</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Arm state</th>
+<th>What you can expect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Disarmed</td>
+<td>Motor output is disabled. You can read the device and prepare a command.</td>
+</tr>
+<tr>
+<td>Armed</td>
+<td>The device can act on fresh motion commands.</td>
+</tr>
+<tr>
+<td>Fault</td>
+<td>Motor output has been disabled. Clear the cause and acknowledge the fault before arming.</td>
+</tr>
+</tbody>
+</table></div>
+<p>The status stream also identifies why the device last disarmed. An explicit disarm can replace an earlier reason. Use the diagnostic record and the ROS log to find the original trigger.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Last disarm code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>The device booted.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>A client or operator requested disarm.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>The command watchdog expired.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>A fault disarmed the device.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>A device loop stalled.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>The device shut down.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="request-result">Request result</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>Ok</code></td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>InvalidArgument</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>NotFound</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>Exists</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>NoMemory</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>Busy</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>Armed</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>NotArmed</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>PendingReboot</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>Fault</code></td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="request-detail">Request detail</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>UnknownRef</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>UnknownType</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>WrongKind</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>WrongType</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>AlreadyBound</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>NullStorage</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>ReadOnly</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>LockedWhileArmed</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>Unsupported</code></td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>BadValue</code></td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>BadEnum</code></td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>NonFiniteFloat</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>CrossLoopBatch</code></td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>StagingBusy</code></td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>Withdrawn</code></td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>BatchTooLarge</code></td>
+</tr>
+<tr>
+<td>17</td>
+<td><code>DuplicateRef</code></td>
+</tr>
+<tr>
+<td>18</td>
+<td><code>BufferTooSmall</code></td>
+</tr>
+<tr>
+<td>19</td>
+<td><code>TimerFailed</code></td>
+</tr>
+<tr>
+<td>20</td>
+<td><code>LoopMismatch</code></td>
+</tr>
+<tr>
+<td>21</td>
+<td><code>LabelInUse</code></td>
+</tr>
+<tr>
+<td>22</td>
+<td><code>BadLabel</code></td>
+</tr>
+<tr>
+<td>23</td>
+<td><code>GpioConflict</code></td>
+</tr>
+<tr>
+<td>24</td>
+<td><code>GpioNotAllowed</code></td>
+</tr>
+<tr>
+<td>25</td>
+<td><code>BadRef</code></td>
+</tr>
+<tr>
+<td>26</td>
+<td><code>WiringCycle</code></td>
+</tr>
+<tr>
+<td>27</td>
+<td><code>Referenced</code></td>
+</tr>
+<tr>
+<td>28</td>
+<td><code>DependencyMissing</code></td>
+</tr>
+<tr>
+<td>29</td>
+<td><code>SafeMode</code></td>
+</tr>
+<tr>
+<td>30</td>
+<td><code>Capacity</code></td>
+</tr>
+<tr>
+<td>31</td>
+<td><code>NotAtBoot</code></td>
+</tr>
+<tr>
+<td>32</td>
+<td><code>StartFailed</code></td>
+</tr>
+<tr>
+<td>33</td>
+<td><code>NoSavedConfig</code></td>
+</tr>
+<tr>
+<td>34</td>
+<td><code>StorageFailed</code></td>
+</tr>
+<tr>
+<td>35</td>
+<td><code>ReservedType</code></td>
+</tr>
+<tr>
+<td>36</td>
+<td><code>DuplicateType</code></td>
+</tr>
+<tr>
+<td>37</td>
+<td><code>NoFactory</code></td>
+</tr>
+<tr>
+<td>38</td>
+<td><code>FaultLatched</code></td>
+</tr>
+<tr>
+<td>39</td>
+<td><code>BlocksArm</code></td>
+</tr>
+<tr>
+<td>40</td>
+<td><code>LayoutInvalid</code></td>
+</tr>
+<tr>
+<td>41</td>
+<td><code>NoCommandGroup</code></td>
+</tr>
+<tr>
+<td>42</td>
+<td><code>DisarmRaced</code></td>
+</tr>
+<tr>
+<td>43</td>
+<td><code>FaultActive</code></td>
+</tr>
+<tr>
+<td>44</td>
+<td><code>MonitorUnavailable</code></td>
+</tr>
+<tr>
+<td>45</td>
+<td><code>RebootPending</code></td>
+</tr>
+<tr>
+<td>46</td>
+<td><code>WrongState</code></td>
+</tr>
+<tr>
+<td>47</td>
+<td><code>OtaActive</code></td>
+</tr>
+<tr>
+<td>48</td>
+<td><code>OtaPendingConfirm</code></td>
+</tr>
+<tr>
+<td>49</td>
+<td><code>OtaOffset</code></td>
+</tr>
+<tr>
+<td>50</td>
+<td><code>OtaHash</code></td>
+</tr>
+<tr>
+<td>51</td>
+<td><code>OtaImage</code></td>
+</tr>
+<tr>
+<td>52</td>
+<td><code>OtaBackend</code></td>
+</tr>
+<tr>
+<td>53</td>
+<td><code>OtaCommitted</code></td>
+</tr>
+<tr>
+<td>54</td>
+<td><code>AgentVersion</code></td>
+</tr>
+<tr>
+<td>55</td>
+<td><code>BadToken</code></td>
+</tr>
+<tr>
+<td>56</td>
+<td><code>UnknownDevice</code></td>
+</tr>
+<tr>
+<td>57</td>
+<td><code>DeviceOffline</code></td>
+</tr>
+<tr>
+<td>58</td>
+<td><code>LeaseRequired</code></td>
+</tr>
+<tr>
+<td>59</td>
+<td><code>LinkTrialActive</code></td>
+</tr>
+<tr>
+<td>60</td>
+<td><code>NoLinkTrial</code></td>
+</tr>
+<tr>
+<td>61</td>
+<td><code>NotEnoughMemory</code></td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="diagnostic-codes">Diagnostic codes</h2>
+<p>Find both the source and the code. Different sources can use the same number. A record describes an event. A counter reports how often something occurred. The <strong>Clears</strong> column tells you whether the diagnostic can report that its condition has cleared.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Code</th>
+<th>Name</th>
+<th>Severity</th>
+<th>Kind</th>
+<th>Clears</th>
+<th>arg0</th>
+<th>arg1</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>system</code> (0x01)</td>
+<td>0x0001</td>
+<td><s>ManagerStartFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>manager id (1 motor_manager, retired in F5b; 2 time_sync, 3 imu retired in F6)</td>
+<td>unused</td>
+<td>A manager failed to start. It is left out, and the rest of the firmware keeps running.</td>
+</tr>
+<tr>
+<td><code>system</code> (0x01)</td>
+<td>0x0002</td>
+<td><s>PeriodicSyncStartFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>unused</td>
+<td>unused</td>
+<td>time_sync started, but its periodic sync task did not. esp_err gives the reason.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0001</td>
+<td>CrcError</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A frame candidate with a valid header was rejected for a CRC16 mismatch.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0002</td>
+<td>PartialFrame</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A partial frame was dropped because the sender stopped mid-frame.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0003</td>
+<td>FrameOrParityError</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>The UART reported a framing or parity error.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0004</td>
+<td>RxOverflow</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>The RX hardware FIFO overflowed or the ring buffer was full.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0005</td>
+<td>LengthError</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A frame candidate with a valid header CRC was rejected because LEN exceeded the maximum payload.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0006</td>
+<td>DiscardedBytes</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Received bytes that were not part of any valid frame (counts bytes, not events).</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0007</td>
+<td>HeaderCrcError</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A frame candidate was rejected for a header CRC (HCRC) mismatch, before its payload was awaited. Also counts false preambles found while resyncing after noise.</td>
+</tr>
+<tr>
+<td><code>diag</code> (0x03)</td>
+<td>0x0001</td>
+<td>RecordDropped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A record or Cleared event was dropped because the diag record queue was full (or diag was not initialized yet).</td>
+</tr>
+<tr>
+<td><code>diag</code> (0x03)</td>
+<td>0x0002</td>
+<td>EventTxDropped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A diag query response could not be queued for UART transmission and was dropped.</td>
+</tr>
+<tr>
+<td><code>diag</code> (0x03)</td>
+<td>0x0003</td>
+<td>QueryDropped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A diag query was dropped because the reporter's query queue was full.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (1 registry, 2 loop task, 3 retired, 4 boot - Core::boot refused, which is a programming error in main)</td>
+<td>for stage 1, the index of the rejected module type; for stage 2, the loop id; else unused</td>
+<td>Core startup failed. Stage 2 leaves the named loop Failed and its modules DependencyMissing; other loops and the config link stay available. Other stages leave the core out; legacy managers keep running. esp_err gives the loop task error.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0002</td>
+<td>InstanceStartFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>type id &lt;&lt; 8 | instance id</td>
+<td>stage (the instance's own stage from fail() - controller.cascade_pid 1 missing or incompatible refs, 2 actuator already claimed - or a core stage - 0x100 create returned null, 0x101 start failed without a stage, 0x102 a bind was rejected, 0x103 a param, signal or input was left unbound)</td>
+<td>A module instance failed to start. It is left out, and the rest of the core keeps running. esp_err is the one passed to fail(), or 0.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0003</td>
+<td>TimerRestartFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>loop instance id</td>
+<td>the period that failed, in us</td>
+<td>A loop's timer could not be restarted with a new rate. The rate change is rolled back and the param SET answers Fault. esp_err gives the reason.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0004</td>
+<td>SafeModeEntered</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>the crash counter (consecutive boots after a panic or a watchdog reset)</td>
+<td>unused</td>
+<td>The device booted in safe mode after 3 or more crash resets in a row. Every configured instance is offline and no instance was created; no loop task starts. Params and the layout can still be read and edited. Any reset that is not a crash, or EXIT_SAFE_MODE, ends it.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0005</td>
+<td>LayoutInvalid</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>type id &lt;&lt; 8 | instance id</td>
+<td>the core Detail of the check that failed (UnknownType, LoopMismatch, BadLabel, LabelInUse, GpioNotAllowed, GpioConflict, BadRef, WiringCycle, Capacity, ...; numbered in registry.yaml from F3b)</td>
+<td>A layout entry loaded from NVS failed validation at boot and was left out. layout_invalid is set. Instances wired to it are left out too (core.DependencyMissing).</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0006</td>
+<td>DependencyMissing</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>type id &lt;&lt; 8 | instance id of the instance left out</td>
+<td>type id &lt;&lt; 8 | instance id of the instance it is wired to, which is not running</td>
+<td>An instance was left out at boot because an instance it is wired to (a ref param) is invalid, failed to start or is itself missing a dependency. Its configuration is kept.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0007</td>
+<td>ConfigLoadFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>the newest layout generation that passed its checks (0 when none did)</td>
+<td>cause (1 no layout blob passed its checks, 2 no generation had every instance blob)</td>
+<td>NVS holds a configuration but no complete generation of it could be loaded, so the device booted with the factory layout. config_loaded_from_nvs is false. Not reported on a blank NVS.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0008</td>
+<td>NvsWriteFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>the namespace, type id &lt;&lt; 8 | instance id (0xFFFF for the layout namespace <code>core</code>, 0xFFFE for the link namespace <code>link</code>)</td>
+<td>operation (1 write a blob, 2 erase a namespace)</td>
+<td>An NVS write or erase failed during SAVE, FACTORY_RESET or LINK_CONFIRM. A failed SAVE answers Fault and leaves the previous generation intact. esp_err gives the reason.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x000A</td>
+<td>LinkReverted</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>the link that was given up: baud rate / 100 &lt;&lt; 16 | TX pin &lt;&lt; 8 | RX pin</td>
+<td>why: 1 the trial ended unconfirmed (reported on the trial link, the device reboots); 2 the device reset before a trial was confirmed; 3 its UART failed to open; 4 the start of the trial could not be stored, so it did not run</td>
+<td>The device left a serial link for an older one. Causes 1 to 4 go back to the confirmed link; cause 3 on the confirmed link itself goes to the factory link. esp_err gives the reason for causes 3 and 4.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0009</td>
+<td>NvsInitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>what happened (1 the partition was full or from a newer NVS version, so it was erased and re-initialised and the stored configuration is lost; 2 NVS could not be initialised and nothing will be saved)</td>
+<td>unused</td>
+<td>Reported by main at boot. esp_err is the error that nvs_flash_init returned (stage 1) or the final error (stage 2).</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0001</td>
+<td><s>InitFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage that failed: 1 mutex, 2 config queue, 3 invalid config (UartComm invalid or max_motors 0), 4 configure callback, 5 setpoint callback, 6 update task, 7 control timer, 8 config task, 9 telemetry stream slot</td>
+<td>unused</td>
+<td>MotorManager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0002</td>
+<td><s>MotorCreateFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>motor id</td>
+<td>hardware stage that failed: 1 motor driver (DIR GPIO or MCPWM), 2 encoder (PCNT)</td>
+<td>CreateMotor passed validation, but the hardware could not be set up. ESP_ERR_NOT_FOUND means the MCPWM or PCNT pool is empty and the response is CAPACITY_REACHED. Anything else is answered with INTERNAL_ERROR.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0003</td>
+<td><s>TimerRestartFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>requested control period (us)</td>
+<td>unused</td>
+<td>SET_TIMING could not restart the control timer at the new period. The old period stays in effect.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0004</td>
+<td><s>ControlTimerStalled</s> (retired)</td>
+<td>warning</td>
+<td>record</td>
+<td>yes</td>
+<td>wait without a tick (ms)</td>
+<td>unused</td>
+<td>The control timer stopped waking the update task, so the control loop is not running. Detected by the config task. Cleared when the timer fires again or the manager stops.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0005</td>
+<td><s>ControlOverrun</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Control ticks that were skipped (the update task ran late, or a configure command held the manager mutex).</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0006</td>
+<td><s>SetpointBadFrame</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A setpoint stream frame was dropped because its header or length was invalid.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0007</td>
+<td><s>SetpointRejected</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A setpoint stream entry was dropped (unknown motor id, invalid kind, non-finite value, or a full mailbox).</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0008</td>
+<td><s>ConfigQueueFull</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A configure command was not applied because the config queue was full. It is answered with detail QueueFull.</td>
+</tr>
+<tr>
+<td><code>motor_manager</code> (0x10)</td>
+<td>0x0009</td>
+<td><s>ResponseTxDropped</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A configure response could not be queued for UART transmission and was dropped. The command itself was still applied.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0106</td>
+<td>BadTimeRequest</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A time ping was dropped because its exact length or independent protocol version was invalid.</td>
+</tr>
+<tr>
+<td><code>time_sync</code> (0x11)</td>
+<td>0x0001</td>
+<td><s>InitFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage that failed: 1 UartComm invalid, 2 mutex, 3 response queue, 4 response callback</td>
+<td>unused</td>
+<td>TimeSync failed to start. esp_err gives the reason. system.ManagerStartFailed follows.</td>
+</tr>
+<tr>
+<td><code>time_sync</code> (0x11)</td>
+<td>0x0002</td>
+<td><s>SyncFailed</s> (retired)</td>
+<td>warning</td>
+<td>record</td>
+<td>yes</td>
+<td>stage that failed: 1 request send, 2 no response before the timeout, 3 host returned an error status, 4 setting the clock</td>
+<td>host status byte (stage 3), else 0</td>
+<td>A periodic time sync failed. Reported once per run of failures, and cleared on the next successful sync or when periodic sync stops. A round skipped because a manual sync was in progress is not reported.</td>
+</tr>
+<tr>
+<td><code>time_sync</code> (0x11)</td>
+<td>0x0003</td>
+<td><s>BadResponseFrame</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A time sync response was dropped because it could not be decoded (bad length or version).</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0001</td>
+<td><s>InitFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage that failed: 1 mutex, 2 invalid config (UartComm invalid, period bounds or operation mode), 3 BNO055 device, 4 default operation mode, 5 config queue, 6 configure callback, 7 config task, 8 stream task, 9 sampling timer, 10 stream slot</td>
+<td>unused</td>
+<td>The IMU manager failed to start. esp_err gives the reason. system.ManagerStartFailed follows.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0002</td>
+<td><s>FallbackToMock</s> (retired)</td>
+<td>warning</td>
+<td>record</td>
+<td>no</td>
+<td>I2C port</td>
+<td>BNO055 I2C address</td>
+<td>The BNO055 did not initialize, so the IMU streams synthesized mock data instead (fallback_to_mock_on_init_failure). esp_err gives the device error.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0003</td>
+<td><s>ModeSwitchFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>requested operation mode</td>
+<td>unused</td>
+<td>SetOperationMode could not write the new mode to the BNO055. A busy device (BUSY response) is not reported here.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0004</td>
+<td><s>StreamReenableFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>cause: 1 manager mutex busy, 2 sampling timer did not restart</td>
+<td>unused</td>
+<td>The stream stayed off after an operation-mode switch. Enable it again with SetStreamEnabled.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0005</td>
+<td><s>CalibrationReadFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>unused</td>
+<td>unused</td>
+<td>ReadCalibration failed on the BNO055 bus. A busy device (BUSY response) is not reported here.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0006</td>
+<td><s>CalibrationApplyFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>unused</td>
+<td>unused</td>
+<td>ApplyCalibration failed to write the offsets to the BNO055. A busy device (BUSY response) is not reported here.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0007</td>
+<td><s>TimerRestartFailed</s> (retired)</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>requested sample period (us)</td>
+<td>unused</td>
+<td>SetStreamTiming could not restart the sampling timer at the new period. The old period stays in effect.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0008</td>
+<td><s>SamplerStalled</s> (retired)</td>
+<td>warning</td>
+<td>record</td>
+<td>yes</td>
+<td>wait without a tick (ms)</td>
+<td>unused</td>
+<td>The stream is enabled, but the sampling timer stopped waking the stream task. A timeout across a timer restart (enable, SetStreamTiming) is not a stall. Cleared when it fires again, the stream is disabled, or the stream task stops.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x0009</td>
+<td><s>SampleLate</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Sample periods that were missed because the stream task ran late.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x000A</td>
+<td><s>DeviceBusy</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Samples skipped because a configure operation held the BNO055.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x000B</td>
+<td><s>ReadError</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Samples that failed to read from the BNO055.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x000C</td>
+<td><s>EncodeError</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>Samples that could not be encoded into a stream packet.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x000D</td>
+<td><s>ConfigQueueFull</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A configure command was not applied because the config queue was full. It is answered with detail QueueFull.</td>
+</tr>
+<tr>
+<td><code>imu</code> (0x12)</td>
+<td>0x000E</td>
+<td><s>ResponseTxDropped</s> (retired)</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A configure response could not be queued for UART transmission and was dropped.</td>
+</tr>
+<tr>
+<td><code>actuator_mock</code> (0x70)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)</td>
+<td>unused</td>
+<td>The module instance failed to start.</td>
+</tr>
+<tr>
+<td><code>feedback_mock</code> (0x71)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)</td>
+<td>unused</td>
+<td>The module instance failed to start.</td>
+</tr>
+<tr>
+<td><code>actuator_pwm_dir</code> (0x21)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (1 a pin left unset, 2 driver setup failed - the DIR GPIO or MCPWM; esp_err ESP_ERR_NOT_FOUND when all six MCPWM operators are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)</td>
+<td>unused</td>
+<td>The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.</td>
+</tr>
+<tr>
+<td><code>feedback_quadrature</code> (0x22)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (1 a pin left unset, 2 driver setup failed - PCNT or the pull-up GPIO; esp_err ESP_ERR_NOT_FOUND when all four PCNT units are taken; core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)</td>
+<td>unused</td>
+<td>The module instance failed to start. Reported in place of core.InstanceStartFailed; esp_err is the driver error, or -1.</td>
+</tr>
+<tr>
+<td><code>imu_mock</code> (0x72)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage (instance-specific below 0x100, core 0x100 create, 0x101 start, 0x102 bind, 0x103 unbound)</td>
+<td>unused</td>
+<td>The module instance failed to start.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0100</td>
+<td>CommandDropped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>The core command queue was full.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0101</td>
+<td>ResponseDropped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A core reply could not be queued for transmission.</td>
+</tr>
+<tr>
+<td><code>uart_comm</code> (0x02)</td>
+<td>0x0008</td>
+<td>StreamSkipped</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A stream write was skipped because its slot was busy.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0102</td>
+<td>LoopOverBudget</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A loop tick took longer than its period; instance identifies the loop.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0103</td>
+<td>CommandFrameRejected</td>
+<td>warning</td>
+<td>counter</td>
+<td>no</td>
+<td>-</td>
+<td>-</td>
+<td>A command group frame was rejected (unconfigured group, version, epoch, length, invalid value or busy mailbox); no value was applied and it cannot feed the watchdog.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0104</td>
+<td>LoopStalled</td>
+<td>error</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>A running loop heartbeat stopped for three periods plus 5 ms. Instance identifies the loop. Recovery clears active; ACK_FAULT is still required.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0105</td>
+<td>WatchdogTimeout</td>
+<td>warning</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>No valid post-ARM command arrived within watchdog_ms. Disarms without latching Fault; active clears immediately, so re-arming is possible.</td>
+</tr>
+<tr>
+<td><code>actuator_mock</code> (0x70)</td>
+<td>0x0002</td>
+<td>FaultInjected</td>
+<td>error</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>A mock diagnostic action raised a disarming fault; clear the condition before ACK_FAULT.</td>
+</tr>
+<tr>
+<td><code>actuator_mock</code> (0x70)</td>
+<td>0x0003</td>
+<td>ArmBlocked</td>
+<td>warning</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>A mock diagnostic action raised an arm-blocking condition.</td>
+</tr>
+<tr>
+<td><code>actuator_pwm_dir</code> (0x21)</td>
+<td>0x0002</td>
+<td>DriverFault</td>
+<td>error</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>An MCPWM or DIR GPIO write, force or release failed; the output is forced low. Active until a later write succeeds; ACK_FAULT is still required.</td>
+</tr>
+<tr>
+<td><code>feedback_quadrature</code> (0x22)</td>
+<td>0x0002</td>
+<td>ReadFailed</td>
+<td>error</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>Reading the PCNT count failed; position and velocity are NaN until a read succeeds. Recovery clears active; ACK_FAULT is still required.</td>
+</tr>
+<tr>
+<td><code>core</code> (0x04)</td>
+<td>0x0107</td>
+<td>OtaFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>OtaStage (1 info, 2 begin, 3 write, 4 read, 5 finish, 6 select, 7 abort, 8 confirm)</td>
+<td>expected upload offset</td>
+<td>OTA backend operation failed; esp_err carries the cause. ARM remains blocked until explicit recovery.</td>
+</tr>
+<tr>
+<td><code>imu_bno055</code> (0x30)</td>
+<td>0x0001</td>
+<td>InitFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>stage: 1 pins, 2 bus, 3 identity/config, 4 calibration restore; core stages 0x100 through 0x103 retain their meaning</td>
+<td>unused</td>
+<td>Instance failed to start; esp_err carries the underlying bus or driver error.</td>
+</tr>
+<tr>
+<td><code>imu_bno055</code> (0x30)</td>
+<td>0x0002</td>
+<td>ReadFailed</td>
+<td>warning</td>
+<td>latched</td>
+<td>yes</td>
+<td>-</td>
+<td>-</td>
+<td>The latest sensor read failed; numeric values are retained and valid is false. Clears after a complete successful sample.</td>
+</tr>
+<tr>
+<td><code>imu_bno055</code> (0x30)</td>
+<td>0x0003</td>
+<td>ActionFailed</td>
+<td>error</td>
+<td>record</td>
+<td>no</td>
+<td>action id</td>
+<td>actual mode (255 when mode restoration failed)</td>
+<td>A mode or calibration bus operation failed. esp_err carries the first bus error.</td>
+</tr>
+</tbody>
+</table></div>
+
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="/drivelink_v2/">DriveLink user guide</a>
+    <a href="/drivelink_v2/assets/third-party/">Third-party notices</a>
+    <a href="https://github.com/taruntom1/drivelink_v2">Project on GitHub</a>
+  </footer>
+</body>
+</html>

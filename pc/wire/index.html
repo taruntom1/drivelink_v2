@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wire the bench | DriveLink user guide</title>
+  <link rel="stylesheet" href="/drivelink_v2/assets/theme.css">
+  <link rel="stylesheet" href="/drivelink_v2/pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="/drivelink_v2/assets/site.css">
+  <script type="module" src="/drivelink_v2/pagefind/pagefind-component-ui.js"></script>
+  <script defer src="/drivelink_v2/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="/drivelink_v2/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="/drivelink_v2/" bundle-path="/drivelink_v2/pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      <h2>Get DriveLink</h2>
+<ul>
+<li><a href="/drivelink_v2/">Home</a></li>
+<li><a href="/drivelink_v2/downloads/">Downloads</a></li>
+<li><a href="/drivelink_v2/apt/">Install from apt</a></li>
+<li><a href="/drivelink_v2/flash/">Flash in the browser</a></li>
+</ul>
+<h2>Start</h2>
+<ul>
+<li><a href="/drivelink_v2/start/">Start here</a></li>
+</ul>
+<h2>Concepts</h2>
+<ul>
+<li><a href="/drivelink_v2/concepts/firmware/">Firmware and serial</a></li>
+<li><a href="/drivelink_v2/concepts/modules/">Modules, instances, and loops</a></li>
+<li><a href="/drivelink_v2/concepts/control/">Actuators, encoders, and controllers</a></li>
+<li><a href="/drivelink_v2/concepts/imu/">IMU</a></li>
+<li><a href="/drivelink_v2/concepts/safety/">Arming and faults</a></li>
+<li><a href="/drivelink_v2/concepts/saving/">Saving and reverting</a></li>
+<li><a href="/drivelink_v2/concepts/agent/">Agent, leases, and tokens</a></li>
+<li><a href="/drivelink_v2/concepts/ros/">ROS 2 in five minutes</a></li>
+<li><a href="/drivelink_v2/concepts/glossary/">Glossary</a></li>
+</ul>
+<h2>PC bench</h2>
+<ul>
+<li><a href="/drivelink_v2/pc/install/">Install the app</a></li>
+<li><a href="/drivelink_v2/pc/connect/">Connect and tour</a></li>
+<li><a href="/drivelink_v2/pc/wire/" aria-current="page">Wire the bench</a></li>
+<li><a href="/drivelink_v2/pc/layout/">Build the layout</a></li>
+<li><a href="/drivelink_v2/pc/settings/">Device settings</a></li>
+<li><a href="/drivelink_v2/pc/first-spin/">First spin</a></li>
+<li><a href="/drivelink_v2/pc/monitor/">Monitor</a></li>
+<li><a href="/drivelink_v2/pc/tune/">Tune and identify</a></li>
+<li><a href="/drivelink_v2/pc/imu/">Add and calibrate the IMU</a></li>
+<li><a href="/drivelink_v2/pc/update/">Update firmware</a></li>
+</ul>
+<h2>Pi robot</h2>
+<ul>
+<li><a href="/drivelink_v2/pi/prepare/">Prepare the Raspberry Pi</a></li>
+<li><a href="/drivelink_v2/pi/wire/">Wire the Pi to the ESP</a></li>
+<li><a href="/drivelink_v2/pi/agent/">Install the agent and add the device</a></li>
+<li><a href="/drivelink_v2/pi/connect/">Connect the desktop app over the LAN</a></li>
+<li><a href="/drivelink_v2/pi/control/">Share the device safely</a></li>
+<li><a href="/drivelink_v2/pi/maintenance/">Upgrade or remove the agent</a></li>
+</ul>
+<h2>ROS 2 robot</h2>
+<ul>
+<li><a href="/drivelink_v2/ros/install/">Install ROS 2 and DriveLink</a></li>
+<li><a href="/drivelink_v2/ros/example/">Start the two-wheel example</a></li>
+<li><a href="/drivelink_v2/ros/drive/">Drive with the keyboard</a></li>
+<li><a href="/drivelink_v2/ros/robot/">Describe your own robot</a></li>
+<li><a href="/drivelink_v2/ros/recover/">Diagnose and recover the ROS drive</a></li>
+</ul>
+<h2>Reference</h2>
+<ul>
+<li><a href="/drivelink_v2/reference/bench/">Reference build</a></li>
+<li><a href="/drivelink_v2/reference/modules/">Module types and parameters</a></li>
+<li><a href="/drivelink_v2/reference/codes/">Status, fault, and diagnostic codes</a></li>
+<li><a href="/drivelink_v2/reference/gui/">Desktop app screens</a></li>
+<li><a href="/drivelink_v2/reference/agent/">Agent configuration, service, and network</a></li>
+<li><a href="/drivelink_v2/reference/ros/">ROS 2 hardware and launch reference</a></li>
+<li><a href="/drivelink_v2/reference/packages/">Packages, versions, and limits</a></li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+<li><a href="/drivelink_v2/troubleshooting/">Troubleshooting and FAQ</a></li>
+</ul>
+<h2>About</h2>
+<ul>
+<li><a href="/drivelink_v2/about/">About DriveLink</a></li>
+</ul>
+    </nav>
+    <main id="content" class="article" tabindex="-1" data-pagefind-body>
+      <h1 id="wire-the-bench">Wire the bench</h1>
+<p>You need the <a href="/drivelink_v2/reference/bench/">reference parts</a> or compatible substitutes, the exact encoder pinout, and a way to check supply polarity and logic voltage. Start with one motor and its encoder. At the end you’ll have checked the wiring and will be ready to enter the matching pins in the app.</p>
+<blockquote class="callout safety">
+<p><strong>Safety.</strong> Unplug USB and switch off the motor supply before wiring. Secure the motor or chassis. Before any powered motion, lift the wheels clear of the ground, use a current-limited supply, set a low duty cap, and keep one hand on the power switch.</p>
+</blockquote>
+<h2 id="motor-and-encoder">Motor and encoder</h2>
+<p>Select a label in the diagram to jump to its connections. The figure shows the first motor channel. Use the table when adding a second channel.</p>
+<figure class="wiring">
+<svg viewBox="0 0 480 290" role="group" aria-label="Motor and encoder wiring. Select a component or connection.">
+  <path d="M146 68H334 M400 100V188 M80 188V100 M316 147H352V100" />
+  <rect x="16" y="40" width="130" height="60" rx="8" />
+  <rect x="334" y="188" width="130" height="66" rx="8" />
+  <rect x="16" y="188" width="130" height="66" rx="8" />
+  <rect x="334" y="40" width="130" height="60" rx="8" />
+  <text x="81" y="76">ESP32-S3</text>
+  <text x="399" y="76">G2 18v17</text>
+  <text x="399" y="214">Motor 1</text>
+  <text x="399" y="237">Power wires</text>
+  <text x="81" y="214">Encoder A/B</text>
+  <text x="81" y="237">and power</text>
+  <a href="#motor-and-encoder-pins" aria-label="Motor driver PWM and direction pins">
+    <rect x="164" y="47" width="152" height="43" rx="8" />
+    <text x="240" y="75">PWM / DIR</text>
+  </a>
+  <a href="#encoder-power-and-levels" aria-label="Encoder power and logic levels">
+    <rect x="16" y="114" width="130" height="61" rx="8" />
+    <text x="81" y="151">GPIO 6 / 7</text>
+  </a>
+  <a href="#motor-power" aria-label="Fused 12 V motor power">
+    <rect x="164" y="119" width="152" height="56" rx="8" />
+    <text x="240" y="153">Fused 12 V</text>
+  </a>
+</svg>
+<figcaption>The fused supply feeds the driver, which powers the motor. The encoder’s A and B wires go back to the ESP. Share signal ground.</figcaption>
+</figure>
+<h3 id="motor-and-encoder-pins">Motor and encoder pins</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>First motor</th>
+<th>Optional second motor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PWM from ESP to driver</td>
+<td>GPIO 4 → first driver PWM</td>
+<td>GPIO 10 → second driver PWM</td>
+</tr>
+<tr>
+<td>Direction from ESP to driver</td>
+<td>GPIO 5 → first driver DIR</td>
+<td>GPIO 11 → second driver DIR</td>
+</tr>
+<tr>
+<td>Encoder A to ESP</td>
+<td>A → GPIO 6</td>
+<td>A → GPIO 12</td>
+</tr>
+<tr>
+<td>Encoder B to ESP</td>
+<td>B → GPIO 7</td>
+<td>B → GPIO 13</td>
+</tr>
+<tr>
+<td>Motor power from driver</td>
+<td>First driver OUTA and OUTB → first motor’s two power wires</td>
+<td>Second driver OUTA and OUTB → second motor’s two power wires</td>
+</tr>
+<tr>
+<td>Ground</td>
+<td>ESP GND, driver GND, and encoder GND</td>
+<td>Same shared ground</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="motor-power">Motor power</h3>
+<ol>
+<li>With all power off, wire the driver’s <strong>VIN</strong> to the fused and switched 12 V supply and connect supply negative to driver <strong>GND</strong>. Use motor-rated wires. Fit the supply capacitor at the driver as described in the <a href="https://www.pololu.com/product/2991#connections">Pololu wiring instructions</a>. Check the capacitor polarity against the markings.</li>
+<li>Wire the motor to <strong>OUTA</strong> and <strong>OUTB</strong>. Connect PWM, DIR, and the shared ground as shown in the table. On the md31c revision, <strong>SLP</strong> defaults to enabled. Leave the driver’s <strong>3V3</strong> output disconnected. You should be able to follow separate wires for motor power and encoder signals.</li>
+<li>Power the ESP from USB. Leave the motor supply off until you’ve configured the layout and reached <a href="/drivelink_v2/pc/first-spin/">First spin</a>.</li>
+</ol>
+<h3 id="encoder-power-and-levels">Encoder power and levels</h3>
+<ol>
+<li>Identify the encoder’s supply, ground, A, and B from its datasheet. Verify the recommended supply and the type of A/B outputs. Wire colours vary by model.</li>
+<li>Power the encoder from a suitable regulated rail. Connect A and B to the ESP only when their logic is compatible with 3.3 V. Use appropriate level translation for higher-voltage outputs. You should be able to trace encoder ground to ESP ground and each channel to its own GPIO.</li>
+</ol>
+<h2 id="imu">IMU</h2>
+<p>You can wire the IMU now or return when you’re ready to <a href="/drivelink_v2/pc/imu/">add the sensor</a>.</p>
+<figure class="wiring">
+<svg viewBox="0 0 480 200" role="group" aria-label="ESP32-S3 to BNO055 wiring. Select a connection.">
+  <path d="M132 56H348 M132 138H348" />
+  <rect x="16" y="28" width="116" height="138" rx="8" />
+  <rect x="348" y="28" width="116" height="138" rx="8" />
+  <text x="74" y="105">ESP32-S3</text>
+  <text x="406" y="105">BNO055</text>
+  <a href="#imu-pins" aria-label="IMU data and clock pins">
+    <rect x="154" y="32" width="172" height="49" rx="8" />
+    <text x="240" y="63">SDA / SCL</text>
+  </a>
+  <a href="#imu-pins" aria-label="IMU power and ground pins">
+    <rect x="154" y="113" width="172" height="49" rx="8" />
+    <text x="240" y="144">3.3 V / GND</text>
+  </a>
+</svg>
+<figcaption>The I²C data and clock lines go between the ESP and the Adafruit breakout.</figcaption>
+</figure>
+<h3 id="imu-pins">IMU pins</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>ESP32-S3</th>
+<th>Adafruit BNO055 breakout</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPIO 8</td>
+<td>SDA, the data line</td>
+</tr>
+<tr>
+<td>GPIO 9</td>
+<td>SCL, the clock line</td>
+</tr>
+<tr>
+<td>3V3</td>
+<td>VIN</td>
+</tr>
+<tr>
+<td>GND</td>
+<td>GND</td>
+</tr>
+</tbody>
+</table></div>
+<p>Use the breakout’s default I²C address, <code>0x28</code>, for this layout. When you finish, check that the IMU is on the ESP’s low-voltage rail and the motor supply is still off.</p>
+<p><a href="/drivelink_v2/pc/layout/">Build the layout</a> using the GPIO numbers above.</p>
+
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="/drivelink_v2/">DriveLink user guide</a>
+    <a href="/drivelink_v2/assets/third-party/">Third-party notices</a>
+    <a href="https://github.com/taruntom1/drivelink_v2">Project on GitHub</a>
+  </footer>
+</body>
+</html>

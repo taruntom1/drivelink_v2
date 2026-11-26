@@ -1,0 +1,92 @@
+Package: drivelink-agent
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1037
+Depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), passwd
+Recommends: drivelink-cli
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink agent: shares DriveLink devices over TCP
+ drivelink-agent owns the serial ports of DriveLink devices (ESP32-S3 motion
+ controllers) and shares them with the GUI, the CLI and ROS 2, with access
+ control and a control lease. It runs as the drivelink-agent service on
+ 127.0.0.1 with a generated token until /etc/drivelink/agent.json lists
+ devices; an upgrade never restarts the running agent.
+Filename: pool/main/d/drivelink-agent/drivelink-agent_0.2.1~ubuntu24.04_arm64.deb
+Size: 429292
+SHA256: c5a0384c1e3536538618aac6659fc7229b69e04a26b6f0f4f5b49c543bc177f3
+
+Package: drivelink-cli
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: DriveLink maintainers <taruntom1@users.noreply.github.com>
+Installed-Size: 1484
+Depends: libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1)
+Replaces: drivelink
+Section: electronics
+Priority: optional
+Homepage: https://github.com/taruntom1/drivelink_v2
+Description: DriveLink command line client and virtual device
+ drivelink-cli configures, monitors and scripts a DriveLink device (an ESP32-S3
+ motion controller) over serial, TCP or a drivelink-agent. drivelink-vdev is a
+ virtual device for trying it without hardware.
+Filename: pool/main/d/drivelink-cli/drivelink-cli_0.2.1~ubuntu24.04_arm64.deb
+Size: 556942
+SHA256: 25080e1354752b0c97bdce1ca71cd74fcafaa6f49565d605a8edeae4e2aa7b7a
+
+Package: ros-jazzy-drivelink
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 2311
+Depends: ros-jazzy-drivelink-protocol (= 0.2.1~ubuntu24.04)
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink/#jazzy
+Description: DriveLink C++ host session and core services.
+Filename: pool/main/r/ros-jazzy-drivelink/ros-jazzy-drivelink_0.2.1~ubuntu24.04_arm64.deb
+Size: 426350
+SHA256: b4d031d778d3cf91ad43c3c3a756441c2960f14ffb86298807816ed28f84bd3d
+
+Package: ros-jazzy-drivelink-bringup
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 1026
+Depends: libc6 (>= 2.38), libgcc-s1 (>= 3.3.1), libstdc++6 (>= 13.1), python3-yaml, ros-jazzy-ament-index-python, ros-jazzy-controller-manager, ros-jazzy-controller-manager-msgs, ros-jazzy-diagnostic-msgs, ros-jazzy-diff-drive-controller, ros-jazzy-drivelink (= 0.2.1~ubuntu24.04), ros-jazzy-drivelink-hardware (= 0.2.1~ubuntu24.04), ros-jazzy-imu-sensor-broadcaster, ros-jazzy-joint-state-broadcaster, ros-jazzy-launch, ros-jazzy-launch-ros, ros-jazzy-lifecycle-msgs, ros-jazzy-rclcpp, ros-jazzy-robot-state-publisher, ros-jazzy-ros2controlcli, ros-jazzy-ros2launch, ros-jazzy-std-srvs, ros-jazzy-xacro
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_bringup/#jazzy
+Description: DriveLink ROS 2 example robot, diagnostics and operator recovery.
+Filename: pool/main/r/ros-jazzy-drivelink-bringup/ros-jazzy-drivelink-bringup_0.2.1~ubuntu24.04_arm64.deb
+Size: 309532
+SHA256: a231a09df7b2a405b4d183229c62f3038c6188d0a52cba2aeeec68281a6e3fa6
+
+Package: ros-jazzy-drivelink-hardware
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 926
+Depends: libc6 (>= 2.38), libconsole-bridge1.0 (>= 1.0.1+dfsg2), libfmt9 (>= 9.1.0+ds1), libgcc-s1 (>= 3.3.1), libstdc++6 (>= 13.1), ros-jazzy-drivelink (= 0.2.1~ubuntu24.04), ros-jazzy-hardware-interface, ros-jazzy-pluginlib, ros-jazzy-rclcpp, ros-jazzy-rclcpp-lifecycle
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_hardware/#jazzy
+Description: ros2_control SystemInterface for a DriveLink device, reached through drivelink-agent.
+Filename: pool/main/r/ros-jazzy-drivelink-hardware/ros-jazzy-drivelink-hardware_0.2.1~ubuntu24.04_arm64.deb
+Size: 326398
+SHA256: f36bca56a8ddee506079ded124b3bd8a11e263490fa92a5f8ffb0ca5532a9a2c
+
+Package: ros-jazzy-drivelink-protocol
+Version: 0.2.1~ubuntu24.04
+Architecture: arm64
+Maintainer: "DriveLink maintainers" <taruntom1@users.noreply.github.com>
+Installed-Size: 270
+Section: misc
+Priority: optional
+Homepage: https://index.ros.org/p/drivelink_protocol/#jazzy
+Description: DriveLink shared wire protocol.
+Filename: pool/main/r/ros-jazzy-drivelink-protocol/ros-jazzy-drivelink-protocol_0.2.1~ubuntu24.04_arm64.deb
+Size: 32914
+SHA256: 50a8082a5cd5809fe508d74bbd66b6b9189ba3691d6d6dabdfe398b1419008c2

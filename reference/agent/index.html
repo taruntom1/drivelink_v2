@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent configuration, service, and network | DriveLink user guide</title>
+  <link rel="stylesheet" href="/drivelink_v2/assets/theme.css">
+  <link rel="stylesheet" href="/drivelink_v2/pagefind/pagefind-component-ui.css">
+  <link rel="stylesheet" href="/drivelink_v2/assets/site.css">
+  <script type="module" src="/drivelink_v2/pagefind/pagefind-component-ui.js"></script>
+  <script defer src="/drivelink_v2/assets/site.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="masthead">
+    <div class="header-inner">
+      <a class="brand" href="/drivelink_v2/">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>DriveLink <small>User guide</small></span>
+      </a>
+      <div class="header-controls">
+        <pagefind-modal-trigger placeholder="Search guide" hide-shortcut></pagefind-modal-trigger>
+        <button class="theme-button" type="button" hidden aria-label="Change color theme">Theme</button>
+      </div>
+    </div>
+  </header>
+  <pagefind-config base-url="/drivelink_v2/" bundle-path="/drivelink_v2/pagefind/"></pagefind-config>
+  <pagefind-modal></pagefind-modal>
+  
+  <div class="layout">
+    <button class="nav-toggle" type="button" aria-controls="guide-navigation" hidden>Browse guide</button>
+    <nav class="navigation" id="guide-navigation" aria-label="Guide">
+      <h2>Get DriveLink</h2>
+<ul>
+<li><a href="/drivelink_v2/">Home</a></li>
+<li><a href="/drivelink_v2/downloads/">Downloads</a></li>
+<li><a href="/drivelink_v2/apt/">Install from apt</a></li>
+<li><a href="/drivelink_v2/flash/">Flash in the browser</a></li>
+</ul>
+<h2>Start</h2>
+<ul>
+<li><a href="/drivelink_v2/start/">Start here</a></li>
+</ul>
+<h2>Concepts</h2>
+<ul>
+<li><a href="/drivelink_v2/concepts/firmware/">Firmware and serial</a></li>
+<li><a href="/drivelink_v2/concepts/modules/">Modules, instances, and loops</a></li>
+<li><a href="/drivelink_v2/concepts/control/">Actuators, encoders, and controllers</a></li>
+<li><a href="/drivelink_v2/concepts/imu/">IMU</a></li>
+<li><a href="/drivelink_v2/concepts/safety/">Arming and faults</a></li>
+<li><a href="/drivelink_v2/concepts/saving/">Saving and reverting</a></li>
+<li><a href="/drivelink_v2/concepts/agent/">Agent, leases, and tokens</a></li>
+<li><a href="/drivelink_v2/concepts/ros/">ROS 2 in five minutes</a></li>
+<li><a href="/drivelink_v2/concepts/glossary/">Glossary</a></li>
+</ul>
+<h2>PC bench</h2>
+<ul>
+<li><a href="/drivelink_v2/pc/install/">Install the app</a></li>
+<li><a href="/drivelink_v2/pc/connect/">Connect and tour</a></li>
+<li><a href="/drivelink_v2/pc/wire/">Wire the bench</a></li>
+<li><a href="/drivelink_v2/pc/layout/">Build the layout</a></li>
+<li><a href="/drivelink_v2/pc/settings/">Device settings</a></li>
+<li><a href="/drivelink_v2/pc/first-spin/">First spin</a></li>
+<li><a href="/drivelink_v2/pc/monitor/">Monitor</a></li>
+<li><a href="/drivelink_v2/pc/tune/">Tune and identify</a></li>
+<li><a href="/drivelink_v2/pc/imu/">Add and calibrate the IMU</a></li>
+<li><a href="/drivelink_v2/pc/update/">Update firmware</a></li>
+</ul>
+<h2>Pi robot</h2>
+<ul>
+<li><a href="/drivelink_v2/pi/prepare/">Prepare the Raspberry Pi</a></li>
+<li><a href="/drivelink_v2/pi/wire/">Wire the Pi to the ESP</a></li>
+<li><a href="/drivelink_v2/pi/agent/">Install the agent and add the device</a></li>
+<li><a href="/drivelink_v2/pi/connect/">Connect the desktop app over the LAN</a></li>
+<li><a href="/drivelink_v2/pi/control/">Share the device safely</a></li>
+<li><a href="/drivelink_v2/pi/maintenance/">Upgrade or remove the agent</a></li>
+</ul>
+<h2>ROS 2 robot</h2>
+<ul>
+<li><a href="/drivelink_v2/ros/install/">Install ROS 2 and DriveLink</a></li>
+<li><a href="/drivelink_v2/ros/example/">Start the two-wheel example</a></li>
+<li><a href="/drivelink_v2/ros/drive/">Drive with the keyboard</a></li>
+<li><a href="/drivelink_v2/ros/robot/">Describe your own robot</a></li>
+<li><a href="/drivelink_v2/ros/recover/">Diagnose and recover the ROS drive</a></li>
+</ul>
+<h2>Reference</h2>
+<ul>
+<li><a href="/drivelink_v2/reference/bench/">Reference build</a></li>
+<li><a href="/drivelink_v2/reference/modules/">Module types and parameters</a></li>
+<li><a href="/drivelink_v2/reference/codes/">Status, fault, and diagnostic codes</a></li>
+<li><a href="/drivelink_v2/reference/gui/">Desktop app screens</a></li>
+<li><a href="/drivelink_v2/reference/agent/" aria-current="page">Agent configuration, service, and network</a></li>
+<li><a href="/drivelink_v2/reference/ros/">ROS 2 hardware and launch reference</a></li>
+<li><a href="/drivelink_v2/reference/packages/">Packages, versions, and limits</a></li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+<li><a href="/drivelink_v2/troubleshooting/">Troubleshooting and FAQ</a></li>
+</ul>
+<h2>About</h2>
+<ul>
+<li><a href="/drivelink_v2/about/">About DriveLink</a></li>
+</ul>
+    </nav>
+    <main id="content" class="article" tabindex="-1" data-pagefind-body>
+      <h1 id="agent-configuration-service-and-network">Agent configuration, service, and network</h1>
+<p>Use this reference after <a href="/drivelink_v2/pi/agent/">installing the agent</a> to look up a setting, network requirement, or service behaviour.</p>
+<h2 id="configuration">Configuration</h2>
+<p>The packaged agent reads <code>/etc/drivelink/agent.json</code> at startup. Edit it while the robot can safely stop and use the restart in <a href="/drivelink_v2/pi/agent/">agent setup</a>.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default or allowed value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bind</code></td>
+<td><code>127.0.0.1</code></td>
+<td>Address the agent listens on. Use the Pi’s LAN address to share it with your PC.</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td><code>47620</code></td>
+<td>TCP port clients use to connect.</td>
+</tr>
+<tr>
+<td><code>token_file</code></td>
+<td><code>token</code></td>
+<td>Path to the token. A relative path is taken from the configuration file’s directory. The agent reads the first line.</td>
+</tr>
+<tr>
+<td><code>token</code></td>
+<td>8–128 printable ASCII bytes</td>
+<td>Inline alternative to <code>token_file</code>. Keep the token private.</td>
+</tr>
+<tr>
+<td><code>devices</code></td>
+<td>Empty list, up to 8 devices</td>
+<td>Each entry names an <code>alias</code>, <code>endpoint</code>, and optional <code>baud</code>. The list has to fit the agent’s 1,024-byte device reply.</td>
+</tr>
+<tr>
+<td><code>devices[].alias</code></td>
+<td>1–32 characters</td>
+<td>Start with a lowercase letter, then use lowercase letters, digits, underscores, or hyphens. A 12-digit hexadecimal string is reserved for a device ID.</td>
+</tr>
+<tr>
+<td><code>devices[].endpoint</code></td>
+<td><code>serial:///dev/ttyAMA0</code> for the reference Pi</td>
+<td>Path to the protocol port. A virtual device can use <code>tcp://IP:PORT</code>.</td>
+</tr>
+<tr>
+<td><code>devices[].baud</code></td>
+<td><code>&quot;auto&quot;</code> (or <code>9600</code>–<code>4000000</code>)</td>
+<td>Serial link speed. <code>&quot;auto&quot;</code> detects the board’s rate, remembers it across reconnects, and confirms serial link trials when the same device ID reconnects.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>Host name</td>
+<td>Name shown in discovery. Use 1–63 bytes of UTF-8 with no period.</td>
+</tr>
+<tr>
+<td><code>advertise</code></td>
+<td><code>true</code></td>
+<td>Advertise non-loopback addresses using multicast DNS (mDNS), a local discovery protocol.</td>
+</tr>
+<tr>
+<td><code>hello_timeout_ms</code></td>
+<td><code>5000</code></td>
+<td>Time allowed for a client’s first request.</td>
+</tr>
+<tr>
+<td><code>retry_ms</code></td>
+<td><code>2000</code></td>
+<td>Delay before reopening an offline device.</td>
+</tr>
+<tr>
+<td><code>request_timeout_ms</code></td>
+<td><code>3000</code></td>
+<td>Time allowed for a device request.</td>
+</tr>
+<tr>
+<td><code>history_size</code></td>
+<td><code>256</code>, range 16–4096</td>
+<td>Number of recent entries retained per device.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="service-and-ports">Service and ports</h2>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Item</th>
+<th>What to check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Service</td>
+<td><code>drivelink-agent</code> runs as the <code>drivelink</code> system user, which is in <code>dialout</code> for access to serial ports. The service logs to the system journal.</td>
+</tr>
+<tr>
+<td>Token</td>
+<td><code>/etc/drivelink/token</code> is readable by root and by members of the <code>drivelink</code> group.</td>
+</tr>
+<tr>
+<td>TCP 47620</td>
+<td>Carries device lists and control traffic. The default loopback bind is reachable from the Pi only.</td>
+</tr>
+<tr>
+<td>UDP 5353</td>
+<td>Carries discovery for <code>_drivelink._tcp.local.</code> on the local network. Type the address manually if discovery is unavailable.</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>Connections use the token without encryption. Use a trusted LAN.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Stopping or restarting the service disarms each online device. See <a href="/drivelink_v2/pi/maintenance/">upgrade or remove the agent</a> for how package updates affect the service.</p>
+
+    </main>
+  </div>
+  <footer class="footer">
+    <a href="/drivelink_v2/">DriveLink user guide</a>
+    <a href="/drivelink_v2/assets/third-party/">Third-party notices</a>
+    <a href="https://github.com/taruntom1/drivelink_v2">Project on GitHub</a>
+  </footer>
+</body>
+</html>

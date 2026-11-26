@@ -1,0 +1,16 @@
+{
+  "name": "DriveLink",
+  "version": "0.2.1",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "drivelink-merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

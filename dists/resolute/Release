@@ -1,0 +1,14 @@
+Origin: DriveLink
+Label: DriveLink
+Suite: resolute
+Codename: resolute
+Version: 26.04
+Date: Thu, 26 Nov 2026 15:43:02 UTC
+Architectures: amd64 arm64
+Components: main
+Description: DriveLink packages for Ubuntu 26.04
+SHA256:
+ 6c558c442266ba395a7cf0ca17bc87ef5f621a52f289d315f464012ca6b07b33             5993 main/binary-amd64/Packages
+ ae7f7409b3b37cfc340c708afead6013cb7397624912357bb5f9558eb4dca7a8             1719 main/binary-amd64/Packages.gz
+ a3262fdbb567324c551cd927fa8e032f328e3cee0873058d0c38374155842ebd             5992 main/binary-arm64/Packages
+ 53a1c9d6a4010392c375ddc170990365420fc9a8f2fd8d773e9977c88ff5e297             1712 main/binary-arm64/Packages.gz

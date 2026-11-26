@@ -1,0 +1,14 @@
+Origin: DriveLink
+Label: DriveLink
+Suite: noble
+Codename: noble
+Version: 24.04
+Date: Thu, 26 Nov 2026 15:43:02 UTC
+Architectures: amd64 arm64
+Components: main
+Description: DriveLink packages for Ubuntu 24.04
+SHA256:
+ 23a86731995795ee336a8b1639c4387e77d55426a9398131c56854eff8ceeb51             4758 main/binary-amd64/Packages
+ daadfaa31ad04a033e168a1905e55bf7c8f93a144016d207ab76ebb221c8ca56             1458 main/binary-amd64/Packages.gz
+ 489643c7b51ba701e84d6b460806565c8cfd1fba6d5c9095ac3e80e1ee3dd334             4758 main/binary-arm64/Packages
+ 8dbedab42f9cdc393730959cfe220d548bff6d11ae36ec541de21a6d885834c7             1458 main/binary-arm64/Packages.gz
