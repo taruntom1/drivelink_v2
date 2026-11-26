@@ -78,7 +78,9 @@ core_os::Err Driver::waitMode(uint8_t expected)
         const auto err = m_bus.read(0x39, health);
         if (err) { m_mode = 255; return err; }
         m_mode = health[4] & 15;
-        if (m_mode != expected || health[1] || health[0] == 1 || health[0] > 6 ||
+        // SYS_ERR is meaningful only while SYS_STATUS reports an error (1);
+        // otherwise it can hold a stale code (seen: 0x09 while fusing).
+        if (m_mode != expected || health[0] == 1 || health[0] > 6 ||
             (expected && (health[2] & 0x97) != 6)) { return kInvalid; }
         // In CONFIG, some firmware retains the last running status; mode 0
         // with no internal error is authoritative once init/self-test ends.
@@ -98,7 +100,7 @@ core_os::Err Driver::readSample(Sample &out)
     if (err) { return err; }
     const auto expected = m_mode;
     m_mode = bytes[53] & 15;
-    if (m_mode != expected || bytes[50] || bytes[49] != (expected >= 8 ? 5 : 6) ||
+    if (m_mode != expected || bytes[49] != (expected >= 8 ? 5 : 6) ||
         (bytes[51] & 0x97) != 6) { return kInvalid; }
     Sample next;
     for (size_t i = 0; i < 3; ++i) {

@@ -44,7 +44,8 @@ The future ROS adapter must account for the sensor frame and convention.
 | 8 | Calibration status |
 
 `valid` requires a complete successful burst, matching mode and units,
-SYS_ERR=0, and running SYS_STATUS (5 for fusion, 6 for raw modes). CONFIG
+and running SYS_STATUS (5 for fusion, 6 for raw modes). SYS_ERR is read only
+through SYS_STATUS=1: some sensors keep a stale nonzero code while running. CONFIG
 publishes invalid data. `sample_count` advances only on complete success;
 `sample_age_us` grows since the last successful sample and saturates at
 0xFFFFFFFF (also its value before any sample). Failed reads retain numeric

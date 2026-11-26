@@ -26,7 +26,7 @@ public:
         if (reg == 0x3D) {
             if (in[0] > 12 || (d.regs[reg] != 0 && in[0] != 0)) { return -109; }
             d.ready_at_ms = d.now_ms + (in[0] == 0 ? 19 : 7);
-            if (d.regs[0x39] != 1 && !d.regs[0x3A]) { d.regs[0x39] = in[0] == 0 ? 0 : (in[0] >= 8 ? 5 : 6); }
+            if (d.regs[0x39] != 1) { d.regs[0x39] = in[0] == 0 ? 0 : (in[0] >= 8 ? 5 : 6); }
         }
         std::copy(in.begin(), in.end(), d.regs.begin()+reg); return 0;
     }

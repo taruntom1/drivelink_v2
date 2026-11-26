@@ -77,9 +77,14 @@ def run(cli_path, endpoint, modules='mock', missing_sensor=False, sda=8, scl=9, 
             levels = ['calibration_status.'+n for n in ('sys','gyro','accel','mag')]
             deadline = time.monotonic()+calibration_wait
             print('Real BNO055: calibrate gyro at rest, then move through accel orientations and magnetometer motions; waiting for levels 3/3/3/3.', flush=True)
+            shown = 0
             while True:
                 last = stream(['valid','actual_mode','sample_age_us',*levels])
                 if last[0] and last[1] == 12 and last[2] < 1000000 and last[3:] == [3,3,3,3]: break
+                if time.monotonic() >= shown:
+                    left = max(0, deadline-time.monotonic())
+                    print('levels sys/gyro/accel/mag: {}/{}/{}/{} ({:.0f} s left)'.format(*last[3:], left), flush=True)
+                    shown = time.monotonic()+5
                 if time.monotonic() >= deadline:
                     raise AssertionError(('real sensor not fully calibrated; rerun with --calibration-wait SECONDS',last))
                 time.sleep(.25)
