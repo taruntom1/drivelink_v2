@@ -481,7 +481,7 @@ void LocalConnection::addLoop(const QString &label,const QVariantMap &fields) {
         if(*parsed.bits!=item->second.descriptor.default_bits) {values.emplace_back(uint16_t(id),*parsed.bits);}
     }
     const auto utf8=label.toStdString();const auto id=deviceId();const QPointer<LocalConnection> self(this);
-    auto failure=std::make_shared<QString>();
+    auto failure=std::make_shared<std::optional<Error>>();
     runLayoutOp("addLoop",[utf8,values,failure](Client &client) {
         const auto added=client.add(defs::kLoopTypeId,utf8,0xFF);
         if(!values.empty()) {
@@ -489,15 +489,15 @@ void LocalConnection::addLoop(const QString &label,const QVariantMap &fields) {
             for(const auto &[item,v]:values) {refs.push_back({defs::kLoopTypeId,added.instance,item});bits.push_back(v);}
             // The loop is staged already; a refused SET leaves it with the
             // defaults and says so (Discard all undoes the add).
-            try {client.set(refs,bits);} catch(const Error &e) {*failure=errorText(e);}
+            try {client.set(refs,bits);} catch(const Error &e) {*failure=e;}
         }
         return int(added.instance);
     },[self,label,id,failure](int instance) {
         if(self) {
             self->m_selected=nodeKey(defs::kLoopTypeId,uint8_t(instance));
             self->noteStaged(id,tr("Added loop %1").arg(label));
-            if(!failure->isEmpty()) {
-                emit self->notification(tr("Loop %1 was added with default settings; its settings were refused: %2").arg(label,*failure),2);
+            if(*failure) {
+                emit self->notification(tr("Loop %1 was added with default settings; its settings were refused: %2").arg(label,errorText(**failure)),2);
             }
         }
         return tr("Loop %1 added; it starts after Save and reboot").arg(label);

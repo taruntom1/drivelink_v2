@@ -491,7 +491,8 @@ void LocalConnection::setupLoopStats() {
     auto c=m_context;auto session=c->getSession();const auto snapshot=m_snapshot;
     m_subsPending=true;m_subsAttempted=true;m_subsGeneration=snapshot->generation;m_subsNote.clear();
     const QPointer<LocalConnection> self(this);
-    using Notes=std::map<uint8_t,std::string>;
+    struct LoopNote { std::string text; std::optional<Error> error; };
+    using Notes=std::map<uint8_t,LoopNote>;
     // Groups this GUI configured before an unrequested loss of the same
     // device; an exact match (id, loop, epoch, refs) can only be ours.
     std::vector<StaleSub> stale;
@@ -504,7 +505,7 @@ void LocalConnection::setupLoopStats() {
             const bool described=type!=snapshot->types.end() && type->second.items.contains(protocol::defs::loop::kLastRunUs) &&
                 type->second.items.contains(protocol::defs::loop::kMaxRunUs);
             if(!described) {
-                for(const auto &loop:snapshot->info.loops) {notes[loop.id]="The device describes no run-time signals";}
+                for(const auto &loop:snapshot->info.loops) {notes[loop.id]={"The device describes no run-time signals",{}};}
                 return notes;
             }
             Client client(*session);
@@ -528,7 +529,7 @@ void LocalConnection::setupLoopStats() {
                 if(c->retired || session->generation()!=snapshot->generation) {throw Error(ErrorKind::Cancelled,"Connection changed during loop statistics setup");}
                 try {
                 // Only free slots: another client's subscriptions are never reused.
-                if(next>=free.size()) {notes[loop.id]="No free subscription slot";continue;}
+                if(next>=free.size()) {notes[loop.id]={"No free subscription slot",{}};continue;}
                 const auto id=free[next++];
                 const std::vector<Ref> refs{{defs::kLoopTypeId,loop.id,protocol::defs::loop::kLastRunUs},
                                             {defs::kLoopTypeId,loop.id,protocol::defs::loop::kMaxRunUs}};
@@ -571,7 +572,7 @@ void LocalConnection::setupLoopStats() {
                 } catch(const Error &e) {
                     // One loop's refusal leaves only that loop without run time.
                     if(e.kind==ErrorKind::Cancelled || e.kind==ErrorKind::Connection) {throw;}
-                    notes[loop.id]=errorText(e).toStdString();
+                    notes[loop.id]={{},e};
                 }
             }
             return notes;
@@ -595,7 +596,9 @@ void LocalConnection::setupLoopStats() {
                     if(std::find(owned.begin(),owned.end(),loop.id)==owned.end()) {self->m_loops.setRunTime(loop.id,std::nullopt,self->m_subsNote);}
                 }
             } else {
-                for(const auto &[loop,note]:*result) {self->m_loops.setRunTime(loop,std::nullopt,QString::fromStdString(note));}
+                for(const auto &[loop,note]:*result) {
+                    self->m_loops.setRunTime(loop,std::nullopt,note.error?errorText(*note.error):QString::fromStdString(note.text));
+                }
             }
             emit self->changed();
         });
