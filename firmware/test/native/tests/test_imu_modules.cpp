@@ -275,6 +275,24 @@ TEST_CASE("IMU readable but unhealthy sensor never publishes a fresh sample") {
     CHECK(f.driver.readSample(sample)!=0); CHECK(sample.yaw==123);
 }
 
+TEST_CASE("IMU ignores a stale SYS_ERR unless SYS_STATUS reports a system error") {
+    // A real BNO055 kept SYS_ERR 0x09 while running fusion (SYS_STATUS 5).
+    DriverFixture f; f.device.regs[0x3A]=9;
+    REQUIRE(f.driver.init()==0); REQUIRE(f.driver.setMode(12)==0);
+    Sample sample; CHECK(f.driver.readSample(sample)==0);
+    f.device.regs[0x39]=1;
+    CHECK(f.driver.readSample(sample)!=0);
+}
+
+TEST_CASE("IMU ignores reserved OPR_MODE bits") {
+    // A real BNO055 read OPR_MODE 0x10 in CONFIG.
+    DriverFixture f; f.device.regs[0x3D]=0x10;
+    REQUIRE(f.driver.init()==0); CHECK(f.driver.mode()==0);
+    REQUIRE(f.driver.setMode(12)==0);
+    f.device.regs[0x3D]|=0x10;
+    Sample sample; CHECK(f.driver.readSample(sample)==0); CHECK(f.driver.mode()==12);
+}
+
 TEST_CASE("IMU initialization health errors gate ARM and readiness waits are bounded") {
     SUBCASE("core start failure") {
         Fixture f(true,{},7); CHECK(f.c->instancesFailed()==1);

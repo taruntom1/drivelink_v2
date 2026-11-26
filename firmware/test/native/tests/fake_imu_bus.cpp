@@ -24,9 +24,9 @@ public:
     core_os::Err write(uint8_t reg, std::span<const uint8_t> in) override {
         const auto e = transfer(true, reg, in.size()); if (e) { return e; }
         if (reg == 0x3D) {
-            if (in[0] > 12 || (d.regs[reg] != 0 && in[0] != 0)) { return -109; }
+            if (in[0] > 12 || ((d.regs[reg] & 15) != 0 && in[0] != 0)) { return -109; }
             d.ready_at_ms = d.now_ms + (in[0] == 0 ? 19 : 7);
-            if (d.regs[0x39] != 1 && !d.regs[0x3A]) { d.regs[0x39] = in[0] == 0 ? 0 : (in[0] >= 8 ? 5 : 6); }
+            if (d.regs[0x39] != 1) { d.regs[0x39] = in[0] == 0 ? 0 : (in[0] >= 8 ? 5 : 6); }
         }
         std::copy(in.begin(), in.end(), d.regs.begin()+reg); return 0;
     }
@@ -40,7 +40,7 @@ private:
         if (reg+length > d.regs.size()) { return -110; }
         if (reg != 7 && d.regs[7] != 0) { return -112; }
         if ((reg == 0x55 || reg == 0x43 || (write && (reg == 0x3B || reg == 0x3E || reg == 0x40 || reg == 0x41 || reg == 0x42))) &&
-            d.regs[0x3D] != 0) { return -111; }
+            (d.regs[0x3D] & 15) != 0) { return -111; }
         return 0;
     }
     fake_imu_bus::Device &d;

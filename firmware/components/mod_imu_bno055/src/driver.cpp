@@ -30,6 +30,7 @@ core_os::Err Driver::init()
     if (err) { return err; }
     uint8_t mode = 0;
     err = m_bus.read(0x3D, {&mode,1});
+    mode &= 15; // OPR_MODE bits 7..4 are reserved; a sensor was seen reading 0x10 in CONFIG
     if (err || mode > 12) { return err ? err : kInvalid; }
     m_mode = mode;
     if ((err = setMode(0))) { return err; }
@@ -51,6 +52,7 @@ core_os::Err Driver::setMode(uint8_t mode)
         m_bus.delayMs(19);
         uint8_t actual = 255;
         const auto err = m_bus.read(0x3D, {&actual,1});
+        actual &= 15;
         if (err || actual > 12) { return err ? err : kInvalid; }
         m_mode = actual;
     }
@@ -78,7 +80,9 @@ core_os::Err Driver::waitMode(uint8_t expected)
         const auto err = m_bus.read(0x39, health);
         if (err) { m_mode = 255; return err; }
         m_mode = health[4] & 15;
-        if (m_mode != expected || health[1] || health[0] == 1 || health[0] > 6 ||
+        // SYS_ERR is meaningful only while SYS_STATUS reports an error (1);
+        // otherwise it can hold a stale code (seen: 0x09 while fusing).
+        if (m_mode != expected || health[0] == 1 || health[0] > 6 ||
             (expected && (health[2] & 0x97) != 6)) { return kInvalid; }
         // In CONFIG, some firmware retains the last running status; mode 0
         // with no internal error is authoritative once init/self-test ends.
@@ -98,7 +102,7 @@ core_os::Err Driver::readSample(Sample &out)
     if (err) { return err; }
     const auto expected = m_mode;
     m_mode = bytes[53] & 15;
-    if (m_mode != expected || bytes[50] || bytes[49] != (expected >= 8 ? 5 : 6) ||
+    if (m_mode != expected || bytes[49] != (expected >= 8 ? 5 : 6) ||
         (bytes[51] & 0x97) != 6) { return kInvalid; }
     Sample next;
     for (size_t i = 0; i < 3; ++i) {
