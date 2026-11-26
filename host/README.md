@@ -69,7 +69,7 @@ Linux integration restarts the vdev on a serial PTY (with `--allow-crash`) for t
 
 ## IMU smoke (F6)
 
-`python host/test/imu_smoke.py --cli <cli> --endpoint <endpoint>` exercises `imu.mock` discovery, typed signal groups, paused calibration actions, rejection, SAVE/reboot restore and modes; integration runs it on vdev. It requires and restores a clean loops-only layout with idle groups. `--modules real --missing-sensor --sda 8 --scl 9` checks the bare board's failed start. With a BNO055 attached, use `--modules real --sda 8 --scl 9 --calibration-wait 300`; move the sensor as prompted until all four levels reach 3. Exact profile comparisons run in CONFIG to avoid automatic recalibration. See the [IMU contract](../docs/protocol/imu.md) for profile encoding and timing.
+`python host/test/imu_smoke.py --cli <cli> --endpoint <endpoint>` exercises `imu.mock` discovery, typed signal groups, paused calibration actions, rejection, SAVE/reboot restore and modes; integration runs it on vdev. It requires and restores a clean loops-only layout with idle groups. `--modules real --missing-sensor --sda 8 --scl 9` checks the bare board's failed start. With a BNO055 attached, use `--modules real --sda 41 --scl 42 --calibration-wait 300`; move the sensor as prompted until all four levels reach 3 (the script prints them every 5 s). `--skip-calibration` skips that wait and runs the profile, reboot and mode checks on the uncalibrated offsets. Exact profile comparisons run in CONFIG to avoid automatic recalibration. See the [IMU contract](../docs/protocol/imu.md) for profile encoding and timing.
 
 ## Capture smoke (F7a)
 

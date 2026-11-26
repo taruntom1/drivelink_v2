@@ -14,7 +14,7 @@ import time
 from motor_smoke import Device, preflight
 
 
-def run(cli_path, endpoint, modules='mock', missing_sensor=False, sda=8, scl=9, address=0x28, stack_wait=0, calibration_wait=0):
+def run(cli_path, endpoint, modules='mock', missing_sensor=False, sda=8, scl=9, address=0x28, stack_wait=0, calibration_wait=0, skip_calibration=False):
     cli = Device(cli_path, endpoint)
     info, original, refs, settings = preflight(cli)
     if modules == 'real' and info['firmware_version'].endswith('-vdev'):
@@ -73,7 +73,9 @@ def run(cli_path, endpoint, modules='mock', missing_sensor=False, sda=8, scl=9, 
         assert values[0] and values[1] > 0 and all(math.isfinite(v) for v in values[2:]), values
         assert abs(values[2]) <= 1.01 and abs(values[4]) <= 20 and -40 <= values[5] <= 85, values
         assert values[6] < 1000000, values
-        if modules == 'real':
+        if modules == 'real' and skip_calibration:
+            print('Real BNO055: calibration gate skipped; profile checks use the uncalibrated offsets.', flush=True)
+        elif modules == 'real':
             levels = ['calibration_status.'+n for n in ('sys','gyro','accel','mag')]
             deadline = time.monotonic()+calibration_wait
             print('Real BNO055: calibrate gyro at rest, then move through accel orientations and magnetometer motions; waiting for levels 3/3/3/3.', flush=True)
@@ -142,11 +144,12 @@ if __name__ == '__main__':
     parser.add_argument('--scl', type=int, default=9)
     parser.add_argument('--address', type=lambda s:int(s,0), default=0x28)
     parser.add_argument('--stack-wait', type=float, default=0, help='hold the test layout for console stack observation')
+    parser.add_argument('--skip-calibration', action='store_true', help='real sensor: skip the 3/3/3/3 gate; the profile, reboot and mode checks still run')
     parser.add_argument('--calibration-wait', type=float, default=0, help='seconds allowed for physical calibration to reach 3/3/3/3 (real sensor only)')
     args = parser.parse_args()
     try:
         if any(not math.isfinite(v) or not 0 <= v <= 3600 for v in (args.stack_wait,args.calibration_wait)):
             parser.error('waits must be finite and between 0 and 3600 seconds')
-        run(args.cli,args.endpoint,args.modules,args.missing_sensor,args.sda,args.scl,args.address,args.stack_wait,args.calibration_wait)
+        run(args.cli,args.endpoint,args.modules,args.missing_sensor,args.sda,args.scl,args.address,args.stack_wait,args.calibration_wait,args.skip_calibration)
     except (AssertionError,RuntimeError) as exc:
         sys.exit(f'imu_smoke.py: {exc}')

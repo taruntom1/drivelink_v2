@@ -30,6 +30,7 @@ core_os::Err Driver::init()
     if (err) { return err; }
     uint8_t mode = 0;
     err = m_bus.read(0x3D, {&mode,1});
+    mode &= 15; // OPR_MODE bits 7..4 are reserved; a sensor was seen reading 0x10 in CONFIG
     if (err || mode > 12) { return err ? err : kInvalid; }
     m_mode = mode;
     if ((err = setMode(0))) { return err; }
@@ -51,6 +52,7 @@ core_os::Err Driver::setMode(uint8_t mode)
         m_bus.delayMs(19);
         uint8_t actual = 255;
         const auto err = m_bus.read(0x3D, {&actual,1});
+        actual &= 15;
         if (err || actual > 12) { return err ? err : kInvalid; }
         m_mode = actual;
     }

@@ -45,7 +45,8 @@ The future ROS adapter must account for the sensor frame and convention.
 
 `valid` requires a complete successful burst, matching mode and units,
 and running SYS_STATUS (5 for fusion, 6 for raw modes). SYS_ERR is read only
-through SYS_STATUS=1: some sensors keep a stale nonzero code while running. CONFIG
+through SYS_STATUS=1: some sensors keep a stale nonzero code while running.
+Only OPR_MODE bits 3..0 are the mode; the reserved upper bits are ignored. CONFIG
 publishes invalid data. `sample_count` advances only on complete success;
 `sample_age_us` grows since the last successful sample and saturates at
 0xFFFFFFFF (also its value before any sample). Failed reads retain numeric
